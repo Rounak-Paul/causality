@@ -69,6 +69,9 @@ static void glfw_window_size_cb(GLFWwindow *glfw, int width, int height)
     ca_event_post(win->instance, &ev);
     /* Immediately rebuild swapchain so it's ready for the next frame */
     ca_renderer_window_resize(win->instance, win, width, height);
+    /* Mark the root layout-dirty so ui_update re-flows and repaints */
+    if (win->root)
+        win->root->dirty |= CA_DIRTY_LAYOUT | CA_DIRTY_CONTENT;
 }
 
 /* ---- System ---- */
@@ -99,7 +102,7 @@ bool ca_window_system_tick(Ca_Instance *inst)
         if (inst->windows[i].in_use)
             inst->windows[i].mouse_click_this_frame = false;
 
-    glfwPollEvents();
+    glfwWaitEvents();
 
     /* Dispatch all queued input / resize events */
     ca_event_dispatch(inst);

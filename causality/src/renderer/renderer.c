@@ -352,6 +352,8 @@ void ca_renderer_frame(Ca_Instance *inst)
     for (int i = 0; i < CA_MAX_WINDOWS; ++i) {
         Ca_Window *win = &inst->windows[i];
         if (!win->in_use || win->sc.swapchain == VK_NULL_HANDLE) continue;
+        if (!win->needs_render) continue;
+        win->needs_render = false;
         ca_swapchain_frame(inst, win);
     }
 }

@@ -74,6 +74,7 @@ void ca_ui_update(Ca_Instance *inst)
                 }
             }
             ca_paint_pass(inst, win);
+            win->needs_render = true;
         }
 
         /* 5. Input pass — hit-test buttons and fire click callbacks */

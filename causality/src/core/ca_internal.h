@@ -277,6 +277,9 @@ struct Ca_Window {
     double        mouse_x, mouse_y;
     bool          mouse_buttons[3];       /* [0]=left [1]=right [2]=middle */
     bool          mouse_click_this_frame; /* cleared at top of each tick   */
+
+    /* Render gating: set by ui.c when draw list changes, cleared after submit */
+    bool          needs_render;
 };
 
 /* ======================================================
