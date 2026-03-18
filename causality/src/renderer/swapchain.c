@@ -288,6 +288,13 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
     };
     vkCmdBeginRendering(f->cmd, &render_info);
 
+    /* Helper: convert logical clip rect to physical scissor rect */
+    int log_w, log_h;
+    glfwGetWindowSize(win->glfw, &log_w, &log_h);
+    float scale_x = (log_w > 0) ? (float)sc->extent.width  / (float)log_w : 1.0f;
+    float scale_y = (log_h > 0) ? (float)sc->extent.height / (float)log_h : 1.0f;
+    VkRect2D full_scissor = { .offset = {0, 0}, .extent = sc->extent };
+
     /* Draw each widget rect using the proper graphics pipeline.
        Index 0 is the root background (already handled as the clear color).
        Nodes with alpha == 0 (e.g. transparent label placeholder) are skipped. */
@@ -301,23 +308,37 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
             .height   = (float)sc->extent.height,
             .minDepth = 0.0f, .maxDepth = 1.0f,
         };
-        VkRect2D scissor = { .offset = {0, 0}, .extent = sc->extent };
         vkCmdSetViewport(f->cmd, 0, 1, &viewport);
-        vkCmdSetScissor(f->cmd,  0, 1, &scissor);
+        vkCmdSetScissor(f->cmd,  0, 1, &full_scissor);
 
         for (uint32_t d = 1; d < win->draw_cmd_count; ++d) {
             const Ca_DrawCmd *cmd = &win->draw_cmds[d];
             if (!cmd->in_use || cmd->type != CA_DRAW_RECT || cmd->a < 0.004f)
                 continue;
 
+            /* Set scissor rect for overflow clipping */
+            if (cmd->has_clip) {
+                int32_t cx = (int32_t)(cmd->clip_x * scale_x);
+                int32_t cy = (int32_t)(cmd->clip_y * scale_y);
+                int32_t cw = (int32_t)(cmd->clip_w * scale_x);
+                int32_t ch = (int32_t)(cmd->clip_h * scale_y);
+                if (cx < 0) { cw += cx; cx = 0; }
+                if (cy < 0) { ch += cy; cy = 0; }
+                if (cw < 0) cw = 0;
+                if (ch < 0) ch = 0;
+                VkRect2D clip = { .offset = {cx, cy},
+                                  .extent = {(uint32_t)cw, (uint32_t)ch} };
+                vkCmdSetScissor(f->cmd, 0, 1, &clip);
+            } else {
+                vkCmdSetScissor(f->cmd, 0, 1, &full_scissor);
+            }
+
             /* Viewport in logical pixels so NDC matches layout coordinates */
-            int vpw, vph;
-            glfwGetWindowSize(win->glfw, &vpw, &vph);
             Ca_RectPushConst pc = {
                 .pos      = { cmd->x, cmd->y },
                 .size     = { cmd->w, cmd->h },
                 .color    = { cmd->r, cmd->g, cmd->b, cmd->a },
-                .viewport = { (float)vpw, (float)vph },
+                .viewport = { (float)log_w, (float)log_h },
             };
             vkCmdPushConstants(f->cmd, inst->rect_pipeline.layout,
                                VK_SHADER_STAGE_VERTEX_BIT,
@@ -341,9 +362,6 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
         }
 
         if (has_glyphs) {
-            int vpw, vph;
-            glfwGetWindowSize(win->glfw, &vpw, &vph);
-
             vkCmdBindPipeline(f->cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
                               inst->text_pipeline.pipeline);
 
@@ -353,9 +371,8 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
                 .height = (float)sc->extent.height,
                 .minDepth = 0.0f, .maxDepth = 1.0f,
             };
-            VkRect2D sci = { .offset = {0,0}, .extent = sc->extent };
             vkCmdSetViewport(f->cmd, 0, 1, &vp);
-            vkCmdSetScissor(f->cmd,  0, 1, &sci);
+            vkCmdSetScissor(f->cmd,  0, 1, &full_scissor);
 
             vkCmdBindDescriptorSets(f->cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
                                     inst->text_pipeline.layout,
@@ -368,12 +385,29 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
                     cmd->a < 0.004f)
                     continue;
 
+                /* Set scissor rect for overflow clipping */
+                if (cmd->has_clip) {
+                    int32_t cx = (int32_t)(cmd->clip_x * scale_x);
+                    int32_t cy = (int32_t)(cmd->clip_y * scale_y);
+                    int32_t cw = (int32_t)(cmd->clip_w * scale_x);
+                    int32_t ch = (int32_t)(cmd->clip_h * scale_y);
+                    if (cx < 0) { cw += cx; cx = 0; }
+                    if (cy < 0) { ch += cy; cy = 0; }
+                    if (cw < 0) cw = 0;
+                    if (ch < 0) ch = 0;
+                    VkRect2D clip = { .offset = {cx, cy},
+                                      .extent = {(uint32_t)cw, (uint32_t)ch} };
+                    vkCmdSetScissor(f->cmd, 0, 1, &clip);
+                } else {
+                    vkCmdSetScissor(f->cmd, 0, 1, &full_scissor);
+                }
+
                 Ca_TextPushConst pc = {
                     .pos      = { cmd->x, cmd->y },
                     .size     = { cmd->w, cmd->h },
                     .uv       = { cmd->u0, cmd->v0, cmd->u1, cmd->v1 },
                     .color    = { cmd->r, cmd->g, cmd->b, cmd->a },
-                    .viewport = { (float)vpw, (float)vph },
+                    .viewport = { (float)log_w, (float)log_h },
                 };
                 vkCmdPushConstants(f->cmd, inst->text_pipeline.layout,
                                    VK_SHADER_STAGE_VERTEX_BIT,

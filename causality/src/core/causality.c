@@ -3,6 +3,7 @@
 #include "event.h"
 #include "renderer.h"
 #include "ui.h"
+#include "css.h"
 
 #include <stdlib.h>
 
@@ -58,5 +59,11 @@ int ca_instance_exec(Ca_Instance *instance)
     }
     ca_instance_destroy(instance);
     return 0;
+}
+
+void ca_instance_set_stylesheet(Ca_Instance *instance, Ca_Stylesheet *ss)
+{
+    if (!instance) return;
+    instance->stylesheet = ss;
 }
 

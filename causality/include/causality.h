@@ -179,6 +179,7 @@ typedef struct Ca_DivDesc {
     int      direction;            /* CA_HORIZONTAL (0) or CA_VERTICAL (1)  */
     uint32_t background;           /* ca_color(r,g,b,a)                     */
     float    corner_radius;
+    const char *style;             /* space-separated CSS class names       */
 } Ca_DivDesc;
 
 /* <p> / text — leaf text element. */
@@ -186,6 +187,7 @@ typedef struct Ca_TextDesc {
     const char *text;
     float       width, height;     /* 0 = auto                              */
     uint32_t    color;             /* text foreground colour                */
+    const char *style;             /* space-separated CSS class names       */
 } Ca_TextDesc;
 
 /* <button> — clickable element, can also nest children.
@@ -202,17 +204,20 @@ typedef struct Ca_BtnDesc {
     float       corner_radius;
     Ca_ClickFn  on_click;          /* NULL = no callback                    */
     void       *click_data;
+    const char *style;             /* space-separated CSS class names       */
 } Ca_BtnDesc;
 
 /* <hr> — horizontal rule / separator. */
 typedef struct Ca_HrDesc {
     float    thickness;            /* default 1                             */
     uint32_t color;                /* default grey                          */
+    const char *style;             /* space-separated CSS class names       */
 } Ca_HrDesc;
 
 /* spacer — invisible spacing element. */
 typedef struct Ca_SpacerDesc {
     float width, height;
+    const char *style;             /* space-separated CSS class names       */
 } Ca_SpacerDesc;
 
 /* ---- Tree root ---- */
@@ -256,6 +261,53 @@ Ca_Label *ca_h6(const Ca_TextDesc *desc);        /* 12px */
 void ca_label_set_text(Ca_Label *label, const char *text);
 void ca_button_set_text(Ca_Button *button, const char *text);
 void ca_button_set_background(Ca_Button *button, uint32_t color);
+
+/* ============================================================
+   CSS STYLESHEET
+   ============================================================
+
+   Load a CSS stylesheet from a string and attach it to an instance.
+   All windows belonging to that instance will use the stylesheet
+   for style resolution.
+
+   Supported selectors:
+     - Type:       div, button, text, h1-h6, hr, spacer, list, li
+     - Class:      .classname
+     - Compound:   div.foo, .a.b
+     - Descendant: .parent .child
+     - Child:      .parent > .child
+     - Comma:      .a, .b
+     - Universal:  *
+
+   Supported properties:
+     width, height, min-width, max-width, min-height, max-height,
+     padding (shorthand + longhands), margin (shorthand + longhands),
+     gap, display (flex/block/none), flex-direction, flex-wrap,
+     align-items, justify-content, flex-grow, flex-shrink,
+     background-color / background, color, border-radius, opacity,
+     font-size, overflow (shorthand + overflow-x/y)
+
+   Values: px, %, auto, #hex, rgb(), rgba(), named colours, keywords
+
+   Example:
+     ca_instance_load_css(inst,
+         ".container { padding: 16px; gap: 8px; flex-direction: column; }\n"
+         ".btn-primary { background: #3366ee; color: white; border-radius: 4px; }\n"
+     );
+
+   Elements reference classes via the 'style' field of their descriptor:
+     ca_div_begin(&(Ca_DivDesc){ .style = "container" });
+     ca_btn(&(Ca_BtnDesc){ .text = "OK", .style = "btn-primary" });
+   ============================================================ */
+
+typedef struct Ca_Stylesheet Ca_Stylesheet;
+
+Ca_Stylesheet *ca_css_parse(const char *css_text);
+void           ca_css_destroy(Ca_Stylesheet *ss);
+
+/* Attach a parsed stylesheet to the instance.  Ownership is NOT transferred;
+   the caller must keep the stylesheet alive and destroy it after the instance. */
+void ca_instance_set_stylesheet(Ca_Instance *instance, Ca_Stylesheet *ss);
 
 #ifdef __cplusplus
 }

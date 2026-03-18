@@ -136,6 +136,13 @@ typedef struct {
     Ca_Align     justify_content;
     uint32_t     background;
     float        corner_radius;
+    /* Flex properties */
+    float        flex_grow;
+    float        flex_shrink;
+    /* Overflow clipping / scrolling */
+    uint8_t      overflow_x;   /* 0=visible, 1=hidden, 2=scroll, 3=auto */
+    uint8_t      overflow_y;
+    bool         hidden;       /* display: none */
 } Ca_NodeDesc;
 
 /* Internal state descriptor — used by ca_state_create inside the library. */
@@ -154,7 +161,7 @@ typedef struct {
 #define CA_MAX_NODE_CHILDREN         32
 #define CA_MAX_NODE_SUBS              8
 #define CA_MAX_STATE_SUBSCRIBERS     64
-#define CA_MAX_DRAW_CMDS_PER_WINDOW 512
+#define CA_MAX_DRAW_CMDS_PER_WINDOW 4096
 
 #define CA_MAX_LABELS_PER_WINDOW    256
 #define CA_MAX_BUTTONS_PER_WINDOW   128
@@ -178,6 +185,9 @@ typedef struct {
     /* CA_DRAW_GLYPH: normalised UV coords in the font atlas */
     float       u0, v0, u1, v1;
     bool        in_use;
+    /* Clip rect for overflow: hidden/scroll — in logical pixels */
+    bool        has_clip;
+    float       clip_x, clip_y, clip_w, clip_h;
 } Ca_DrawCmd;
 
 /* ======================================================
@@ -208,6 +218,8 @@ struct Ca_State {
    UI — Node (full definition)
    ====================================================== */
 
+#define CA_NODE_CLASS_MAX 128
+
 struct Ca_Node {
     Ca_NodeType   type;
     uint8_t       dirty;           /* Ca_DirtyFlags bits              */
@@ -222,6 +234,12 @@ struct Ca_Node {
     uint8_t       sub_flags[CA_MAX_NODE_SUBS];
     uint32_t      sub_count;
     int32_t       draw_cmd_idx;    /* -1 = no slot assigned           */
+    /* CSS integration */
+    uint8_t       elem_type;       /* Ca_ElementType from style.h     */
+    char          classes[CA_NODE_CLASS_MAX]; /* space-separated CSS classes */
+    /* Scroll state (for overflow: scroll) */
+    float         scroll_x, scroll_y;
+    float         content_w, content_h; /* natural content size        */
 };
 
 /* ======================================================
@@ -272,6 +290,8 @@ struct Ca_Window {
     double        mouse_x, mouse_y;
     bool          mouse_buttons[3];       /* [0]=left [1]=right [2]=middle */
     bool          mouse_click_this_frame; /* cleared at top of each tick   */
+    double        scroll_dx, scroll_dy;   /* accumulated scroll this frame */
+    bool          scroll_this_frame;
 
     /* Render gating: set by ui.c when draw list changes, cleared after submit */
     bool          needs_render;
@@ -304,6 +324,9 @@ struct Ca_Instance {
     /* Font config (copied from Ca_InstanceDesc, used on first window init) */
     char  font_path[512];
     float font_size_px;
+
+    /* CSS stylesheet (owned by instance; NULL if none loaded) */
+    struct Ca_Stylesheet *stylesheet;
 
     /* UI state pool */
     Ca_State        *state_pool;

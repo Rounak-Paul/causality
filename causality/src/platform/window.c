@@ -50,6 +50,9 @@ static void glfw_cursor_pos_cb(GLFWwindow *glfw, double x, double y)
 static void glfw_scroll_cb(GLFWwindow *glfw, double dx, double dy)
 {
     Ca_Window *win = (Ca_Window *)glfwGetWindowUserPointer(glfw);
+    win->scroll_dx += dx;
+    win->scroll_dy += dy;
+    win->scroll_this_frame = true;
     Ca_Event ev;
     ev.type            = CA_EVENT_MOUSE_SCROLL;
     ev.window          = win;
@@ -99,8 +102,12 @@ bool ca_window_system_tick(Ca_Instance *inst)
 {
     /* Clear per-frame click flags before GLFW fires callbacks */
     for (int i = 0; i < CA_MAX_WINDOWS; ++i)
-        if (inst->windows[i].in_use)
+        if (inst->windows[i].in_use) {
             inst->windows[i].mouse_click_this_frame = false;
+            inst->windows[i].scroll_dx = 0;
+            inst->windows[i].scroll_dy = 0;
+            inst->windows[i].scroll_this_frame = false;
+        }
 
     glfwWaitEvents();
 
