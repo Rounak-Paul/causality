@@ -156,7 +156,6 @@ typedef struct {
 #define CA_MAX_STATE_SUBSCRIBERS     64
 #define CA_MAX_DRAW_CMDS_PER_WINDOW 512
 
-#define CA_MAX_PANELS_PER_WINDOW    128
 #define CA_MAX_LABELS_PER_WINDOW    256
 #define CA_MAX_BUTTONS_PER_WINDOW   128
 #define CA_LABEL_TEXT_MAX           256
@@ -229,12 +228,6 @@ struct Ca_Node {
    UI — Widget structs (full definitions; opaque in public header)
    ====================================================== */
 
-struct Ca_Panel {
-    Ca_Node   *node;
-    Ca_Window *window;
-    bool       in_use;
-};
-
 struct Ca_Label {
     Ca_Node  *node;
     char      text[CA_LABEL_TEXT_MAX];
@@ -269,9 +262,11 @@ struct Ca_Window {
     uint32_t      draw_cmd_count;
 
     /* Widget pools */
-    Ca_Panel     *panel_pool;
     Ca_Label     *label_pool;
     Ca_Button    *button_pool;
+
+    /* UI scale factor (1.0 = default, 2.0 = 200%, like browser zoom) */
+    float         ui_scale;
 
     /* Input state (updated by GLFW callbacks each tick) */
     double        mouse_x, mouse_y;

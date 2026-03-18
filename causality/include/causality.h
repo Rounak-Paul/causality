@@ -22,7 +22,6 @@ typedef struct Ca_Thread   Ca_Thread;
 
 /* ---- Widget handles ---- */
 
-typedef struct Ca_Panel  Ca_Panel;
 typedef struct Ca_Label  Ca_Label;
 typedef struct Ca_Button Ca_Button;
 
@@ -61,6 +60,12 @@ void       ca_window_destroy(Ca_Window *window);
    Safe to call from button callbacks or any other context.
    The window is fully destroyed by the event loop on the next frame. */
 void       ca_window_close(Ca_Window *window);
+
+/* UI scale factor — like browser zoom.
+   1.0 = 100% (default), 1.5 = 150%, 2.0 = 200%, etc.
+   Affects all widget sizes, paddings, gaps, and text rendering. */
+void       ca_window_set_scale(Ca_Window *window, float scale);
+float      ca_window_get_scale(Ca_Window *window);
 
 /* ============================================================
    EVENTS
@@ -123,60 +128,134 @@ void       ca_thread_detach(Ca_Thread *thread); /* fire-and-forget, frees handle
    UI — WIDGETS
    ============================================================ */
 
-typedef enum Ca_Orientation {
-    CA_HORIZONTAL = 0,
-    CA_VERTICAL   = 1,
-} Ca_Orientation;
+typedef void (*Ca_ClickFn)(Ca_Button *button, void *user_data);
 
-/* Panel — layout container with optional background.
-   Analogous to a QWidget with a QBoxLayout.            */
-typedef struct Ca_PanelDesc {
-    float          width, height;       /* 0 = fill available space  */
-    float          padding_top;
-    float          padding_right;
-    float          padding_bottom;
-    float          padding_left;
-    float          gap;                 /* space between children    */
-    Ca_Orientation orientation;
-    uint32_t       background;          /* ca_color(r,g,b,a)         */
-    float          corner_radius;
-} Ca_PanelDesc;
+/* Layout direction constants */
+#define CA_HORIZONTAL 0
+#define CA_VERTICAL   1
 
-/* Label — static text (GPU text rendering is a future TODO). */
-typedef struct Ca_LabelDesc {
+/* ============================================================
+   UI — DECLARATIVE BUILDER (HTML-like)
+   ============================================================
+
+   Every element can nest children, just like HTML.
+   An implicit parent stack tracks hierarchy automatically.
+
+       ca_ui_begin(window, &(Ca_DivDesc){ .direction = CA_VERTICAL });
+
+         ca_h1(&(Ca_TextDesc){ .text = "My App", .color = WHITE });
+
+         ca_btn_begin(&(Ca_BtnDesc){ .on_click = handler, .background = BLUE });
+           ca_text(&(Ca_TextDesc){ .text = "Click me" });
+         ca_btn_end();
+
+         ca_list_begin(NULL);
+           ca_li_begin(NULL);
+             ca_text(&(Ca_TextDesc){ .text = "Item 1" });
+           ca_li_end();
+         ca_list_end();
+
+         ca_hr(NULL);
+         ca_spacer(&(Ca_SpacerDesc){ .height = 16 });
+
+       ca_ui_end();
+
+   Components are plain functions:
+
+       void sidebar(void) {
+           ca_div_begin(&(Ca_DivDesc){ .width = 240 });
+             ca_text(&(Ca_TextDesc){ .text = "Nav" });
+           ca_div_end();
+       }
+   ============================================================ */
+
+/* ---- Descriptors ---- */
+
+/* <div> — generic layout container. */
+typedef struct Ca_DivDesc {
+    float    width, height;        /* 0 = fill available space              */
+    float    padding[4];           /* top, right, bottom, left              */
+    float    gap;                  /* space between children                */
+    int      direction;            /* CA_HORIZONTAL (0) or CA_VERTICAL (1)  */
+    uint32_t background;           /* ca_color(r,g,b,a)                     */
+    float    corner_radius;
+} Ca_DivDesc;
+
+/* <p> / text — leaf text element. */
+typedef struct Ca_TextDesc {
     const char *text;
-    float       width, height;          /* 0 = auto                  */
-    uint32_t    color;                  /* text foreground colour    */
-} Ca_LabelDesc;
+    float       width, height;     /* 0 = auto                              */
+    uint32_t    color;             /* text foreground colour                */
+} Ca_TextDesc;
 
-/* Button — clickable box with a text label. */
-typedef struct Ca_ButtonDesc {
-    const char *text;
-    float       width, height;          /* 0 = auto (120x36)         */
+/* <button> — clickable element, can also nest children.
+   When used with ca_btn (self-closing), built-in text is rendered.
+   When used with ca_btn_begin / ca_btn_end, nest children inside. */
+typedef struct Ca_BtnDesc {
+    const char *text;              /* built-in label (for self-closing ca_btn) */
+    float       width, height;     /* 0 = auto (72x24)                     */
+    float       padding[4];        /* inner padding (for nested content)    */
+    float       gap;               /* gap between nested children           */
+    int         direction;         /* layout direction for nested children  */
     uint32_t    background;
     uint32_t    text_color;
     float       corner_radius;
-} Ca_ButtonDesc;
+    Ca_ClickFn  on_click;          /* NULL = no callback                    */
+    void       *click_data;
+} Ca_BtnDesc;
 
-typedef void (*Ca_ClickFn)(Ca_Button *button, void *user_data);
+/* <hr> — horizontal rule / separator. */
+typedef struct Ca_HrDesc {
+    float    thickness;            /* default 1                             */
+    uint32_t color;                /* default grey                          */
+} Ca_HrDesc;
 
-/* Panels */
-Ca_Panel *ca_panel_create(Ca_Window *window, const Ca_PanelDesc *desc);
-Ca_Panel *ca_panel_add(Ca_Panel *parent, const Ca_PanelDesc *desc);
-void      ca_panel_destroy(Ca_Panel *panel);
-void      ca_panel_set_background(Ca_Panel *panel, uint32_t color);
+/* spacer — invisible spacing element. */
+typedef struct Ca_SpacerDesc {
+    float width, height;
+} Ca_SpacerDesc;
 
-/* Labels */
-Ca_Label *ca_label_add(Ca_Panel *parent, const Ca_LabelDesc *desc);
-void      ca_label_destroy(Ca_Label *label);
-void      ca_label_set_text(Ca_Label *label, const char *text);
+/* ---- Tree root ---- */
 
-/* Buttons */
-Ca_Button *ca_button_add(Ca_Panel *parent, const Ca_ButtonDesc *desc);
-void       ca_button_destroy(Ca_Button *button);
-void       ca_button_set_text(Ca_Button *button, const char *text);
-void       ca_button_set_background(Ca_Button *button, uint32_t color);
-void       ca_button_on_click(Ca_Button *button, Ca_ClickFn fn, void *user_data);
+void ca_ui_begin(Ca_Window *window, const Ca_DivDesc *root_desc);
+void ca_ui_end(void);
+
+/* ---- Container elements (push / pop the parent stack) ---- */
+
+void ca_div_begin(const Ca_DivDesc *desc);
+void ca_div_end(void);
+
+Ca_Button *ca_btn_begin(const Ca_BtnDesc *desc); /* nestable button      */
+void       ca_btn_end(void);
+
+void ca_list_begin(const Ca_DivDesc *desc);      /* list (vertical, gap 4) */
+void ca_list_end(void);
+
+void ca_li_begin(const Ca_DivDesc *desc);        /* list item (horiz, gap 8) */
+void ca_li_end(void);
+
+/* ---- Self-closing elements ---- */
+
+Ca_Label  *ca_text(const Ca_TextDesc *desc);
+Ca_Button *ca_btn(const Ca_BtnDesc *desc);       /* self-closing button  */
+
+void ca_hr(const Ca_HrDesc *desc);               /* horizontal rule      */
+void ca_spacer(const Ca_SpacerDesc *desc);       /* invisible space      */
+
+/* ---- Headings (convenience — text with default heights) ---- */
+
+Ca_Label *ca_h1(const Ca_TextDesc *desc);        /* 24px */
+Ca_Label *ca_h2(const Ca_TextDesc *desc);        /* 20px */
+Ca_Label *ca_h3(const Ca_TextDesc *desc);        /* 18px */
+Ca_Label *ca_h4(const Ca_TextDesc *desc);        /* 16px */
+Ca_Label *ca_h5(const Ca_TextDesc *desc);        /* 14px */
+Ca_Label *ca_h6(const Ca_TextDesc *desc);        /* 12px */
+
+/* ---- Runtime setters ---- */
+
+void ca_label_set_text(Ca_Label *label, const char *text);
+void ca_button_set_text(Ca_Button *button, const char *text);
+void ca_button_set_background(Ca_Button *button, uint32_t color);
 
 #ifdef __cplusplus
 }

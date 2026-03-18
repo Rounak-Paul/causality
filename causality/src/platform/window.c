@@ -175,6 +175,7 @@ Ca_Window *ca_window_create(Ca_Instance *inst, const Ca_WindowDesc *desc)
     slot->glfw     = glfw;
     slot->instance = inst;
     slot->in_use   = true;
+    slot->ui_scale = 1.0f;
 
     glfwSetWindowUserPointer(glfw, slot);
     glfwSetKeyCallback(glfw, glfw_key_cb);
@@ -227,5 +228,21 @@ void ca_window_close(Ca_Window *window)
 {
     if (!window || !window->in_use || !window->glfw) return;
     glfwSetWindowShouldClose(window->glfw, GLFW_TRUE);
+}
+
+void ca_window_set_scale(Ca_Window *window, float scale)
+{
+    if (!window || !window->in_use) return;
+    if (scale < 0.25f) scale = 0.25f;
+    if (scale > 4.0f)  scale = 4.0f;
+    window->ui_scale = scale;
+    if (window->root)
+        window->root->dirty |= CA_DIRTY_LAYOUT | CA_DIRTY_CONTENT;
+}
+
+float ca_window_get_scale(Ca_Window *window)
+{
+    if (!window || !window->in_use) return 1.0f;
+    return window->ui_scale;
 }
 

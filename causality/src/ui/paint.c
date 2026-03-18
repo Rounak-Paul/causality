@@ -53,7 +53,9 @@ static void paint_text(Ca_Window *win, Ca_Font *font,
         a = (float)((packed_color)       & 0xFF) / 255.0f;
     }
 
-    float cs = font->content_scale;
+    /* Effective content scale: divide by ui_scale so glyphs grow with zoom */
+    float ui_s = win->ui_scale > 0.0f ? win->ui_scale : 1.0f;
+    float cs   = font->content_scale / ui_s;
 
     /* Measure total advance width in logical pixels */
     float text_w = 0.0f;
