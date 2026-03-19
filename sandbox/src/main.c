@@ -16,7 +16,7 @@ static const char *g_css =
 
     /* ---- Global / layout ---- */
     ".body {"
-    "  background: #010117;"
+    "  background: #000000;"
     "  padding: 20px;"
     "  gap: 12px;"
     "}"

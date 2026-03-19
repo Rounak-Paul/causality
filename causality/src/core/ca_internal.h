@@ -224,6 +224,22 @@ typedef enum {
     CA_NODE_BOX = 0,
 } Ca_NodeType;
 
+typedef enum {
+    CA_WIDGET_NONE       = 0,
+    CA_WIDGET_LABEL      = 1,
+    CA_WIDGET_BUTTON     = 2,
+    CA_WIDGET_TEXT_INPUT = 3,
+    CA_WIDGET_CHECKBOX   = 4,
+    CA_WIDGET_RADIO      = 5,
+    CA_WIDGET_SLIDER     = 6,
+    CA_WIDGET_TOGGLE     = 7,
+    CA_WIDGET_PROGRESS   = 8,
+    CA_WIDGET_SELECT     = 9,
+    CA_WIDGET_TABBAR     = 10,
+    CA_WIDGET_TREENODE   = 11,
+    CA_WIDGET_TABLE      = 12,
+} Ca_WidgetType;
+
 /* ======================================================
    UI — State (full definition)
    ====================================================== */
@@ -276,6 +292,13 @@ struct Ca_Node {
     uint8_t       sub_flags[CA_MAX_NODE_SUBS];
     uint32_t      sub_count;
     int32_t       draw_cmd_idx;    /* -1 = no slot assigned           */
+    uint8_t       widget_type;     /* Ca_WidgetType — for unified per-node paint */
+    void         *widget;          /* back-pointer to widget struct (Ca_Label* etc.) */
+    /* Paint cache — per-node incremental rendering */
+    uint32_t      cache_start;     /* index into win->paint_cache (pre-children cmds) */
+    uint32_t      cache_count;
+    uint32_t      cache_post_start; /* post-children cmds (scrollbars) */
+    uint32_t      cache_post_count;
     /* CSS integration */
     uint8_t       elem_type;       /* Ca_ElementType from style.h     */
     char          classes[CA_NODE_CLASS_MAX]; /* space-separated CSS classes */
@@ -448,6 +471,9 @@ struct Ca_Window {
     Ca_Node      *root;
     Ca_DrawCmd   *draw_cmds;
     uint32_t      draw_cmd_count;
+    /* Incremental paint cache — mirrors draw_cmds for per-node caching */
+    Ca_DrawCmd   *paint_cache;
+    uint32_t      paint_cache_used;
 
     /* Widget pools */
     Ca_Label     *label_pool;

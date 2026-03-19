@@ -139,6 +139,8 @@ static Ca_Label *add_label(Ca_Window *win, Ca_Node *parent, const Ca_TextDesc *d
     slot->node   = node;
     slot->in_use = true;
     slot->color  = desc->color;
+    node->widget_type = CA_WIDGET_LABEL;
+    node->widget      = slot;
     if (desc->text)
         snprintf(slot->text, CA_LABEL_TEXT_MAX, "%s", desc->text);
     return slot;
@@ -168,6 +170,8 @@ static Ca_Button *add_button(Ca_Window *win, Ca_Node *parent, const Ca_BtnDesc *
     slot->node       = node;
     slot->in_use     = true;
     slot->text_color = desc->text_color;
+    node->widget_type = CA_WIDGET_BUTTON;
+    node->widget      = slot;
     if (desc->text)
         snprintf(slot->text, CA_BUTTON_TEXT_MAX, "%s", desc->text);
     if (desc->on_click) {
@@ -547,6 +551,8 @@ Ca_TextInput *ca_input(const Ca_InputDesc *desc)
     inp->node       = node;
     inp->in_use     = true;
     inp->text_color = desc->text_color;
+    node->widget_type = CA_WIDGET_TEXT_INPUT;
+    node->widget      = inp;
     inp->cursor     = 0;
     inp->sel_start  = -1;
     inp->placeholder_color = ca_color(0.5f, 0.5f, 0.5f, 1.0f);
@@ -704,6 +710,8 @@ Ca_Checkbox *ca_checkbox(const Ca_CheckboxDesc *desc)
     cb->node = node;
     cb->in_use = true;
     cb->checked = desc->checked;
+    node->widget_type = CA_WIDGET_CHECKBOX;
+    node->widget      = cb;
     cb->text_color = 0; /* default white */
     if (desc->text) snprintf(cb->text, CA_LABEL_TEXT_MAX, "%s", desc->text);
     else cb->text[0] = '\0';
@@ -755,6 +763,8 @@ Ca_Radio *ca_radio(const Ca_RadioDesc *desc)
     r->in_use = true;
     r->group = desc->group;
     r->value = desc->value;
+    node->widget_type = CA_WIDGET_RADIO;
+    node->widget      = r;
     r->text_color = 0;
     if (desc->text) snprintf(r->text, CA_LABEL_TEXT_MAX, "%s", desc->text);
     else r->text[0] = '\0';
@@ -813,6 +823,8 @@ Ca_Slider *ca_slider(const Ca_SliderDesc *desc)
     sl->node = node;
     sl->in_use = true;
     sl->min_val = desc->min;
+    node->widget_type = CA_WIDGET_SLIDER;
+    node->widget      = sl;
     sl->max_val = desc->max;
     sl->value = desc->value;
     sl->on_change = desc->on_change;
@@ -858,6 +870,8 @@ Ca_Toggle *ca_toggle(const Ca_ToggleDesc *desc)
     t->node = node;
     t->in_use = true;
     t->on = desc->on;
+    node->widget_type = CA_WIDGET_TOGGLE;
+    node->widget      = t;
     t->on_change = desc->on_change;
     t->change_data = desc->change_data;
 
@@ -899,6 +913,8 @@ Ca_Progress *ca_progress(const Ca_ProgressDesc *desc)
     p->node = node;
     p->in_use = true;
     p->value = desc->value;
+    node->widget_type = CA_WIDGET_PROGRESS;
+    node->widget      = p;
     p->bar_color = desc->bar_color ? desc->bar_color : ca_color(0.2f, 0.6f, 1.0f, 1.0f);
 
     uint32_t dummy = 0;
@@ -937,6 +953,8 @@ Ca_Select *ca_select(const Ca_SelectDesc *desc)
     sel->node = node;
     sel->in_use = true;
     sel->selected = desc->selected;
+    node->widget_type = CA_WIDGET_SELECT;
+    node->widget      = sel;
     sel->open = false;
     sel->option_count = desc->option_count;
     if (sel->option_count > CA_MAX_SELECT_OPTIONS)
@@ -1015,6 +1033,8 @@ Ca_TabBar *ca_tabs(const Ca_TabBarDesc *desc)
         Ca_Node *tab_node = ca_node_add(node, &tnd);
         if (tab_node) {
             tab_node->elem_type = CA_ELEM_TAB;
+            tab_node->widget_type = CA_WIDGET_TABBAR;
+            tab_node->widget      = tb;
             tb->tab_nodes[i] = tab_node;
         }
     }
@@ -1066,6 +1086,8 @@ Ca_TreeNode *ca_tree_node_begin(const Ca_TreeNodeDesc *desc)
     tn->node = node;
     tn->in_use = true;
     tn->expanded = desc->expanded;
+    node->widget_type = CA_WIDGET_TREENODE;
+    node->widget      = tn;
     tn->text_color = 0;
     if (desc->text) snprintf(tn->text, CA_LABEL_TEXT_MAX, "%s", desc->text);
     else tn->text[0] = '\0';

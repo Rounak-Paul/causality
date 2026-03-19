@@ -46,6 +46,17 @@ static void set_clip(Ca_DrawCmd *cmd, ClipRect clip)
     }
 }
 
+/* Forward declarations — used by paint_node_content before definition */
+static void paint_text(Ca_Window *win, Ca_Font *font,
+                       Ca_Node *node,
+                       const char *text, uint32_t packed_color);
+static void paint_text_left(Ca_Window *win, Ca_Font *font,
+                            Ca_Node *node,
+                            const char *text, uint32_t packed_color);
+static void paint_cursor(Ca_Window *win, Ca_Font *font,
+                         Ca_Node *node, const char *text, int cursor_pos);
+static void paint_focus_ring(Ca_Window *win, Ca_Node *node);
+
 /* Walk up from a node and compute its effective clip rect from ancestors
    with overflow != visible. */
 static ClipRect find_clip_for_node(Ca_Node *node)
@@ -61,43 +72,301 @@ static ClipRect find_clip_for_node(Ca_Node *node)
     return clip;
 }
 
-static void paint_node(Ca_Window *win, Ca_Node *node, ClipRect clip)
+/* Paint a single node's OWN visual content (background rect + widget-specific).
+   Does NOT recurse into children.  Does NOT paint scrollbars (post-children). */
+static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, ClipRect clip)
 {
     if (!node->in_use) return;
     if (node->desc.hidden) return;
 
-    if (node->dirty & CA_DIRTY_CONTENT) {
-        if (win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
-            node->draw_cmd_idx = (int32_t)win->draw_cmd_count;
-            Ca_DrawCmd *cmd    = &win->draw_cmds[win->draw_cmd_count++];
-            memset(cmd, 0, sizeof(*cmd));
-            cmd->type          = CA_DRAW_RECT;
-            cmd->x             = node->x;
-            cmd->y             = node->y;
-            cmd->w             = node->w;
-            cmd->h             = node->h;
-            unpack_color(node->desc.background, &cmd->r, &cmd->g, &cmd->b, &cmd->a);
-            /* Apply opacity (0 means not set = fully opaque) */
-            float op = (node->desc.opacity > 0.0f) ? node->desc.opacity : 1.0f;
-            cmd->a *= op;
-            cmd->corner_radius = node->desc.corner_radius;
-            cmd->in_use        = true;
-            set_clip(cmd, clip);
+    /* ---- Background rect ---- */
+    if (win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
+        node->draw_cmd_idx = (int32_t)win->draw_cmd_count;
+        Ca_DrawCmd *cmd    = &win->draw_cmds[win->draw_cmd_count++];
+        memset(cmd, 0, sizeof(*cmd));
+        cmd->type          = CA_DRAW_RECT;
+        cmd->x             = node->x;
+        cmd->y             = node->y;
+        cmd->w             = node->w;
+        cmd->h             = node->h;
+        unpack_color(node->desc.background, &cmd->r, &cmd->g, &cmd->b, &cmd->a);
+        float op = (node->desc.opacity > 0.0f) ? node->desc.opacity : 1.0f;
+        cmd->a *= op;
+        cmd->corner_radius = node->desc.corner_radius;
+        cmd->in_use        = true;
+        set_clip(cmd, clip);
+    }
+
+    /* ---- Widget-specific content ---- */
+    if (!font) return;
+
+    switch (node->widget_type) {
+    case CA_WIDGET_LABEL: {
+        Ca_Label *lbl = (Ca_Label *)node->widget;
+        if (lbl && lbl->in_use && lbl->text[0])
+            paint_text(win, font, node, lbl->text, lbl->color);
+        break;
+    }
+    case CA_WIDGET_BUTTON: {
+        Ca_Button *btn = (Ca_Button *)node->widget;
+        if (btn && btn->in_use && btn->text[0])
+            paint_text(win, font, node, btn->text, btn->text_color);
+        break;
+    }
+    case CA_WIDGET_TEXT_INPUT: {
+        Ca_TextInput *inp = (Ca_TextInput *)node->widget;
+        if (inp && inp->in_use) {
+            if (inp->text[0] != '\0')
+                paint_text_left(win, font, node, inp->text, inp->text_color);
+            else if (inp->placeholder[0] != '\0')
+                paint_text_left(win, font, node, inp->placeholder,
+                                inp->placeholder_color);
+            /* Cursor is painted in the decoration pass, not cached */
         }
-        node->dirty &= ~CA_DIRTY_CONTENT;
+        break;
     }
-
-    /* Determine clip rect for children if overflow is hidden/scroll */
-    ClipRect child_clip = clip;
-    bool clips = (node->desc.overflow_x >= 1) || (node->desc.overflow_y >= 1);
-    if (clips) {
-        child_clip = clip_intersect(clip, node->x, node->y, node->w, node->h);
+    case CA_WIDGET_CHECKBOX: {
+        Ca_Checkbox *cb = (Ca_Checkbox *)node->widget;
+        if (!cb || !cb->in_use) break;
+        float bs = node->h * 0.8f;
+        float bx = node->x + 1.0f;
+        float by = node->y + (node->h - bs) * 0.5f;
+        /* Box background */
+        if (win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
+            Ca_DrawCmd *c = &win->draw_cmds[win->draw_cmd_count++];
+            memset(c, 0, sizeof(*c));
+            c->type = CA_DRAW_RECT;
+            c->x = bx; c->y = by; c->w = bs; c->h = bs;
+            c->corner_radius = 3.0f;
+            if (cb->checked) { c->r = 0.25f; c->g = 0.55f; c->b = 1.0f; c->a = 1.0f; }
+            else             { c->r = 0.3f;  c->g = 0.3f;  c->b = 0.35f; c->a = 1.0f; }
+            c->in_use = true;
+        }
+        /* Checkmark */
+        if (cb->checked && win->draw_cmd_count + 1 < CA_MAX_DRAW_CMDS_PER_WINDOW) {
+            float cx = bx + bs * 0.25f, cy = by + bs * 0.5f;
+            Ca_DrawCmd *c1 = &win->draw_cmds[win->draw_cmd_count++];
+            memset(c1, 0, sizeof(*c1));
+            c1->type = CA_DRAW_RECT;
+            c1->x = cx; c1->y = cy; c1->w = bs * 0.2f; c1->h = bs * 0.35f;
+            c1->r = 1; c1->g = 1; c1->b = 1; c1->a = 1;
+            c1->in_use = true;
+            Ca_DrawCmd *c2 = &win->draw_cmds[win->draw_cmd_count++];
+            memset(c2, 0, sizeof(*c2));
+            c2->type = CA_DRAW_RECT;
+            c2->x = cx + bs * 0.15f; c2->y = by + bs * 0.25f;
+            c2->w = bs * 0.4f; c2->h = bs * 0.2f;
+            c2->r = 1; c2->g = 1; c2->b = 1; c2->a = 1;
+            c2->in_use = true;
+        }
+        /* Label text */
+        if (cb->text[0]) {
+            Ca_Node tn = *node;
+            tn.x = bx + bs + 6.0f;
+            tn.w = node->w - bs - 6.0f;
+            paint_text(win, font, &tn, cb->text, cb->text_color);
+        }
+        break;
     }
+    case CA_WIDGET_RADIO: {
+        Ca_Radio *r = (Ca_Radio *)node->widget;
+        if (!r || !r->in_use) break;
+        float bs = node->h * 0.8f;
+        float bx = node->x + 1.0f;
+        float by = node->y + (node->h - bs) * 0.5f;
+        /* Outer circle */
+        if (win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
+            Ca_DrawCmd *c = &win->draw_cmds[win->draw_cmd_count++];
+            memset(c, 0, sizeof(*c));
+            c->type = CA_DRAW_RECT;
+            c->x = bx; c->y = by; c->w = bs; c->h = bs;
+            c->corner_radius = bs * 0.5f;
+            c->r = 0.3f; c->g = 0.3f; c->b = 0.35f; c->a = 1.0f;
+            c->in_use = true;
+        }
+        /* Inner dot when selected */
+        if (r->value && win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
+            float ds = bs * 0.5f;
+            Ca_DrawCmd *c = &win->draw_cmds[win->draw_cmd_count++];
+            memset(c, 0, sizeof(*c));
+            c->type = CA_DRAW_RECT;
+            c->x = bx + (bs - ds) * 0.5f;
+            c->y = by + (bs - ds) * 0.5f;
+            c->w = ds; c->h = ds;
+            c->corner_radius = ds * 0.5f;
+            c->r = 0.25f; c->g = 0.55f; c->b = 1.0f; c->a = 1.0f;
+            c->in_use = true;
+        }
+        /* Label text */
+        if (r->text[0]) {
+            Ca_Node tn = *node;
+            tn.x = bx + bs + 6.0f;
+            tn.w = node->w - bs - 6.0f;
+            paint_text(win, font, &tn, r->text, r->text_color);
+        }
+        break;
+    }
+    case CA_WIDGET_SLIDER: {
+        Ca_Slider *sl = (Ca_Slider *)node->widget;
+        if (!sl || !sl->in_use) break;
+        float track_h = 4.0f;
+        float track_y = node->y + (node->h - track_h) * 0.5f;
+        float pct = (sl->max_val > sl->min_val)
+            ? (sl->value - sl->min_val) / (sl->max_val - sl->min_val) : 0;
+        /* Track background */
+        if (win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
+            Ca_DrawCmd *c = &win->draw_cmds[win->draw_cmd_count++];
+            memset(c, 0, sizeof(*c));
+            c->type = CA_DRAW_RECT;
+            c->x = node->x; c->y = track_y; c->w = node->w; c->h = track_h;
+            c->corner_radius = 2.0f;
+            c->r = 0.25f; c->g = 0.25f; c->b = 0.3f; c->a = 1.0f;
+            c->in_use = true;
+        }
+        /* Fill */
+        float fill_w = node->w * pct;
+        if (fill_w > 0 && win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
+            Ca_DrawCmd *c = &win->draw_cmds[win->draw_cmd_count++];
+            memset(c, 0, sizeof(*c));
+            c->type = CA_DRAW_RECT;
+            c->x = node->x; c->y = track_y; c->w = fill_w; c->h = track_h;
+            c->corner_radius = 2.0f;
+            c->r = 0.25f; c->g = 0.55f; c->b = 1.0f; c->a = 1.0f;
+            c->in_use = true;
+        }
+        /* Thumb */
+        if (win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
+            float thumb_sz = 14.0f;
+            float tx = node->x + fill_w - thumb_sz * 0.5f;
+            float ty = node->y + (node->h - thumb_sz) * 0.5f;
+            Ca_DrawCmd *c = &win->draw_cmds[win->draw_cmd_count++];
+            memset(c, 0, sizeof(*c));
+            c->type = CA_DRAW_RECT;
+            c->x = tx; c->y = ty; c->w = thumb_sz; c->h = thumb_sz;
+            c->corner_radius = thumb_sz * 0.5f;
+            c->r = 1.0f; c->g = 1.0f; c->b = 1.0f; c->a = 1.0f;
+            c->in_use = true;
+        }
+        break;
+    }
+    case CA_WIDGET_TOGGLE: {
+        Ca_Toggle *t = (Ca_Toggle *)node->widget;
+        if (!t || !t->in_use) break;
+        /* Track */
+        if (win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
+            Ca_DrawCmd *c = &win->draw_cmds[win->draw_cmd_count++];
+            memset(c, 0, sizeof(*c));
+            c->type = CA_DRAW_RECT;
+            c->x = node->x; c->y = node->y; c->w = node->w; c->h = node->h;
+            c->corner_radius = node->h * 0.5f;
+            if (t->on) { c->r = 0.2f; c->g = 0.6f; c->b = 0.3f; c->a = 1.0f; }
+            else       { c->r = 0.3f; c->g = 0.3f; c->b = 0.35f; c->a = 1.0f; }
+            c->in_use = true;
+        }
+        /* Thumb */
+        if (win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
+            float inset = 2.0f;
+            float thumb_d = node->h - inset * 2;
+            float tx = t->on ? (node->x + node->w - thumb_d - inset) : (node->x + inset);
+            Ca_DrawCmd *c = &win->draw_cmds[win->draw_cmd_count++];
+            memset(c, 0, sizeof(*c));
+            c->type = CA_DRAW_RECT;
+            c->x = tx; c->y = node->y + inset;
+            c->w = thumb_d; c->h = thumb_d;
+            c->corner_radius = thumb_d * 0.5f;
+            c->r = 1.0f; c->g = 1.0f; c->b = 1.0f; c->a = 1.0f;
+            c->in_use = true;
+        }
+        break;
+    }
+    case CA_WIDGET_PROGRESS: {
+        Ca_Progress *p = (Ca_Progress *)node->widget;
+        if (!p || !p->in_use) break;
+        float rad = node->h * 0.5f;
+        /* Track */
+        if (win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
+            Ca_DrawCmd *c = &win->draw_cmds[win->draw_cmd_count++];
+            memset(c, 0, sizeof(*c));
+            c->type = CA_DRAW_RECT;
+            c->x = node->x; c->y = node->y; c->w = node->w; c->h = node->h;
+            c->corner_radius = rad;
+            c->r = 0.2f; c->g = 0.2f; c->b = 0.25f; c->a = 1.0f;
+            c->in_use = true;
+        }
+        /* Fill */
+        float fw = node->w * p->value;
+        if (fw > 0 && win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
+            float fr, fg, fb, fa;
+            unpack_color(p->bar_color, &fr, &fg, &fb, &fa);
+            Ca_DrawCmd *c = &win->draw_cmds[win->draw_cmd_count++];
+            memset(c, 0, sizeof(*c));
+            c->type = CA_DRAW_RECT;
+            c->x = node->x; c->y = node->y; c->w = fw; c->h = node->h;
+            c->corner_radius = rad;
+            c->r = fr; c->g = fg; c->b = fb; c->a = fa;
+            c->in_use = true;
+        }
+        break;
+    }
+    case CA_WIDGET_SELECT: {
+        Ca_Select *sel = (Ca_Select *)node->widget;
+        if (!sel || !sel->in_use) break;
+        /* Current selection text */
+        if (sel->selected >= 0 && sel->selected < sel->option_count)
+            paint_text(win, font, node, sel->options[sel->selected], 0);
+        /* Down arrow indicator */
+        if (win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
+            float asz = 6.0f;
+            Ca_DrawCmd *c = &win->draw_cmds[win->draw_cmd_count++];
+            memset(c, 0, sizeof(*c));
+            c->type = CA_DRAW_RECT;
+            c->x = node->x + node->w - asz - 6.0f;
+            c->y = node->y + (node->h - asz * 0.5f) * 0.5f;
+            c->w = asz; c->h = asz * 0.5f;
+            c->r = 0.7f; c->g = 0.7f; c->b = 0.7f; c->a = 1.0f;
+            c->in_use = true;
+        }
+        /* Open dropdown overlay is painted in the overlay pass, not cached */
+        break;
+    }
+    case CA_WIDGET_TABBAR: {
+        /* Called for each tab_node (child of tabbar's main node) */
+        Ca_TabBar *tb = (Ca_TabBar *)node->widget;
+        if (!tb || !tb->in_use) break;
+        for (int ti = 0; ti < tb->count; ++ti) {
+            if (tb->tab_nodes[ti] == node) {
+                uint32_t tc = (ti == tb->active)
+                    ? ca_color(1,1,1,1) : ca_color(0.6f,0.6f,0.6f,1);
+                paint_text(win, font, node, tb->labels[ti], tc);
+                break;
+            }
+        }
+        break;
+    }
+    case CA_WIDGET_TREENODE: {
+        Ca_TreeNode *tn = (Ca_TreeNode *)node->widget;
+        if (!tn || !tn->in_use) break;
+        if (node->child_count == 0) break;
+        Ca_Node *hdr = node->children[0];
+        if (!hdr || hdr->desc.hidden) break;
+        const char *indicator = tn->expanded ? "-" : "+";
+        Ca_Node ind_n = *hdr;
+        ind_n.w = 16.0f;
+        paint_text(win, font, &ind_n, indicator, ca_color(0.6f,0.6f,0.6f,1));
+        Ca_Node txt_n = *hdr;
+        txt_n.x = hdr->x + 16.0f;
+        txt_n.w = hdr->w - 16.0f;
+        paint_text(win, font, &txt_n, tn->text, tn->text_color);
+        break;
+    }
+    default: break;
+    }
+}
 
-    for (uint32_t i = 0; i < node->child_count; ++i)
-        paint_node(win, node->children[i], child_clip);
-
-    /* ---- Scrollbar overlay for overflow:scroll / auto ---- */
+/* Paint scrollbar overlays for a node (post-children, so they draw on top). */
+static void paint_scrollbars(Ca_Window *win, Ca_Node *node, ClipRect clip)
+{
+    /* ---- Y scrollbar ---- */
     if (node->desc.overflow_y >= 2 && node->content_h > node->h) {
         float bar_w   = 6.0f;
         float margin  = 2.0f;
@@ -112,7 +381,7 @@ static void paint_node(Ca_Window *win, Ca_Node *node, ClipRect clip)
         float thumb_y    = node->y + margin + scroll_pct * (track_h - thumb_h);
         float bar_x      = node->x + node->w - bar_w - margin;
 
-        /* Track (subtle background) */
+        /* Track */
         if (win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
             Ca_DrawCmd *cmd = &win->draw_cmds[win->draw_cmd_count++];
             memset(cmd, 0, sizeof(*cmd));
@@ -141,6 +410,7 @@ static void paint_node(Ca_Window *win, Ca_Node *node, ClipRect clip)
             set_clip(cmd, clip);
         }
     }
+    /* ---- X scrollbar ---- */
     if (node->desc.overflow_x >= 2 && node->content_w > node->w) {
         float bar_h   = 6.0f;
         float margin  = 2.0f;
@@ -401,371 +671,145 @@ static void paint_focus_ring(Ca_Window *win, Ca_Node *node)
     }
 }
 
-void ca_paint_pass(Ca_Instance *inst, Ca_Window *win)
+/* ================================================================
+   INCREMENTAL PAINT — cache infrastructure
+   ================================================================ */
+
+/* Copy a range of freshly-painted draw commands into the per-node cache. */
+static void cache_commands(Ca_Window *win, Ca_Node *node,
+                           uint32_t draw_start, uint32_t count, bool post)
 {
-    if (!win->root) return;
+    uint32_t *cs = post ? &node->cache_post_start : &node->cache_start;
+    uint32_t *cc = post ? &node->cache_post_count : &node->cache_count;
 
-    /* 1. Rectangle pass — one solid-colour quad per node */
-    ClipRect no_clip = { .active = false };
-    paint_node(win, win->root, no_clip);
+    if (count == 0) { *cc = 0; return; }
 
-    /* 2. Text pass — glyph quads for labels and buttons */
+    if (count <= *cc) {
+        /* Fits in existing cache slot — overwrite in-place */
+        memcpy(&win->paint_cache[*cs],
+               &win->draw_cmds[draw_start],
+               count * sizeof(Ca_DrawCmd));
+    } else {
+        /* Allocate fresh space at end of cache pool */
+        if (win->paint_cache_used + count > CA_MAX_DRAW_CMDS_PER_WINDOW) {
+            /* Cache full — commands are already in draw_cmds, just skip caching */
+            *cc = 0;
+            return;
+        }
+        *cs = win->paint_cache_used;
+        memcpy(&win->paint_cache[*cs],
+               &win->draw_cmds[draw_start],
+               count * sizeof(Ca_DrawCmd));
+        win->paint_cache_used += count;
+    }
+    *cc = count;
+}
+
+/* DFS tree walk with per-node paint caching.
+   - Dirty nodes: paint fresh → cache → commands already in draw_cmds
+   - Clean nodes: copy from cache → draw_cmds */
+static void paint_tree_cached(Ca_Instance *inst, Ca_Window *win,
+                              Ca_Node *node, ClipRect clip)
+{
+    if (!node || !node->in_use || node->desc.hidden) return;
+
+    bool was_dirty = (node->dirty & CA_DIRTY_CONTENT) != 0;
+
+    /* ---- Pre-children: background + widget visuals ---- */
+    if (was_dirty) {
+        uint32_t start = win->draw_cmd_count;
+        paint_node_content(win, inst->font, node, clip);
+        uint32_t count = win->draw_cmd_count - start;
+        cache_commands(win, node, start, count, false);
+        node->dirty &= ~CA_DIRTY_CONTENT;
+    } else if (node->cache_count > 0 &&
+               win->draw_cmd_count + node->cache_count <= CA_MAX_DRAW_CMDS_PER_WINDOW)
+    {
+        memcpy(&win->draw_cmds[win->draw_cmd_count],
+               &win->paint_cache[node->cache_start],
+               node->cache_count * sizeof(Ca_DrawCmd));
+        node->draw_cmd_idx = (int32_t)win->draw_cmd_count;
+        win->draw_cmd_count += node->cache_count;
+    }
+
+    /* ---- Child clip ---- */
+    ClipRect child_clip = clip;
+    if (node->desc.overflow_x >= 1 || node->desc.overflow_y >= 1)
+        child_clip = clip_intersect(clip, node->x, node->y, node->w, node->h);
+
+    /* ---- Recurse children ---- */
+    for (uint32_t i = 0; i < node->child_count; ++i)
+        paint_tree_cached(inst, win, node->children[i], child_clip);
+
+    /* ---- Post-children: scrollbars ---- */
+    if (was_dirty) {
+        uint32_t sb_start = win->draw_cmd_count;
+        paint_scrollbars(win, node, clip);
+        uint32_t sb_count = win->draw_cmd_count - sb_start;
+        cache_commands(win, node, sb_start, sb_count, true);
+    } else if (node->cache_post_count > 0 &&
+               win->draw_cmd_count + node->cache_post_count <= CA_MAX_DRAW_CMDS_PER_WINDOW)
+    {
+        memcpy(&win->draw_cmds[win->draw_cmd_count],
+               &win->paint_cache[node->cache_post_start],
+               node->cache_post_count * sizeof(Ca_DrawCmd));
+        win->draw_cmd_count += node->cache_post_count;
+    }
+}
+
+/* ================================================================
+   OVERLAY PASS — always regenerated (not cached)
+   ================================================================ */
+
+static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
+{
     Ca_Font *font = inst->font;
-    if (!font) return;
 
-    /* Labels */
-    if (win->label_pool) {
-        for (uint32_t i = 0; i < CA_MAX_LABELS_PER_WINDOW; ++i) {
-            Ca_Label *lbl = &win->label_pool[i];
-            if (!lbl->in_use || lbl->text[0] == '\0') continue;
-            paint_text(win, font, lbl->node, lbl->text, lbl->color);
-        }
-    }
-
-    /* Buttons */
-    if (win->button_pool) {
-        for (uint32_t i = 0; i < CA_MAX_BUTTONS_PER_WINDOW; ++i) {
-            Ca_Button *btn = &win->button_pool[i];
-            if (!btn->in_use || btn->text[0] == '\0') continue;
-            paint_text(win, font, btn->node, btn->text, btn->text_color);
-        }
-    }
-
-    /* Text inputs */
-    if (win->input_pool) {
-        for (uint32_t i = 0; i < CA_MAX_INPUTS_PER_WINDOW; ++i) {
-            Ca_TextInput *inp = &win->input_pool[i];
-            if (!inp->in_use || !inp->node) continue;
-            bool focused = (win->focused_node == inp->node);
-            if (inp->text[0] != '\0') {
-                paint_text_left(win, font, inp->node, inp->text, inp->text_color);
-            } else if (inp->placeholder[0] != '\0') {
-                paint_text_left(win, font, inp->node, inp->placeholder,
-                                inp->placeholder_color);
-            }
-            if (focused)
-                paint_cursor(win, font, inp->node, inp->text, inp->cursor);
-        }
-    }
-
-    /* Focus ring on the currently focused element */
-    if (win->focused_node)
-        paint_focus_ring(win, win->focused_node);
-
-    /* ---- New widgets ---- */
-
-    /* Checkboxes: box + checkmark + text */
-    if (win->checkbox_pool) {
-        for (uint32_t i = 0; i < CA_MAX_CHECKBOXES_PER_WINDOW; ++i) {
-            Ca_Checkbox *cb = &win->checkbox_pool[i];
-            if (!cb->in_use || !cb->node || cb->node->desc.hidden) continue;
-            Ca_Node *n = cb->node;
-            float bs = n->h * 0.8f; /* box size */
-            float bx = n->x + 1.0f;
-            float by = n->y + (n->h - bs) * 0.5f;
-
-            /* Box background */
-            if (win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
-                Ca_DrawCmd *c = &win->draw_cmds[win->draw_cmd_count++];
-                memset(c, 0, sizeof(*c));
-                c->type = CA_DRAW_RECT;
-                c->x = bx; c->y = by; c->w = bs; c->h = bs;
-                c->corner_radius = 3.0f;
-                if (cb->checked) { c->r = 0.25f; c->g = 0.55f; c->b = 1.0f; c->a = 1.0f; }
-                else             { c->r = 0.3f;  c->g = 0.3f;  c->b = 0.35f; c->a = 1.0f; }
-                c->in_use = true;
-            }
-            /* Checkmark (two small rects forming an L-shape) */
-            if (cb->checked && win->draw_cmd_count + 1 < CA_MAX_DRAW_CMDS_PER_WINDOW) {
-                float cx = bx + bs * 0.25f, cy = by + bs * 0.5f;
-                Ca_DrawCmd *c1 = &win->draw_cmds[win->draw_cmd_count++];
-                memset(c1, 0, sizeof(*c1));
-                c1->type = CA_DRAW_RECT;
-                c1->x = cx; c1->y = cy; c1->w = bs * 0.2f; c1->h = bs * 0.35f;
-                c1->r = 1; c1->g = 1; c1->b = 1; c1->a = 1;
-                c1->in_use = true;
-                Ca_DrawCmd *c2 = &win->draw_cmds[win->draw_cmd_count++];
-                memset(c2, 0, sizeof(*c2));
-                c2->type = CA_DRAW_RECT;
-                c2->x = cx + bs * 0.15f; c2->y = by + bs * 0.25f;
-                c2->w = bs * 0.4f; c2->h = bs * 0.2f;
-                c2->r = 1; c2->g = 1; c2->b = 1; c2->a = 1;
-                c2->in_use = true;
-            }
-            /* Label text */
-            if (cb->text[0] && font) {
-                /* Create a temporary pseudo-node for text positioning */
-                Ca_Node tn = *n;
-                tn.x = bx + bs + 6.0f;
-                tn.w = n->w - bs - 6.0f;
-                paint_text(win, font, &tn, cb->text, cb->text_color);
-            }
-        }
-    }
-
-    /* Radio buttons: circle + dot + text */
-    if (win->radio_pool) {
-        for (uint32_t i = 0; i < CA_MAX_RADIOS_PER_WINDOW; ++i) {
-            Ca_Radio *r = &win->radio_pool[i];
-            if (!r->in_use || !r->node || r->node->desc.hidden) continue;
-            Ca_Node *n = r->node;
-            float bs = n->h * 0.8f;
-            float bx = n->x + 1.0f;
-            float by = n->y + (n->h - bs) * 0.5f;
-
-            /* Outer circle */
-            if (win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
-                Ca_DrawCmd *c = &win->draw_cmds[win->draw_cmd_count++];
-                memset(c, 0, sizeof(*c));
-                c->type = CA_DRAW_RECT;
-                c->x = bx; c->y = by; c->w = bs; c->h = bs;
-                c->corner_radius = bs * 0.5f;
-                c->r = 0.3f; c->g = 0.3f; c->b = 0.35f; c->a = 1.0f;
-                c->in_use = true;
-            }
-            /* Inner dot when selected */
-            if (r->value && win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
-                float ds = bs * 0.5f;
-                Ca_DrawCmd *c = &win->draw_cmds[win->draw_cmd_count++];
-                memset(c, 0, sizeof(*c));
-                c->type = CA_DRAW_RECT;
-                c->x = bx + (bs - ds) * 0.5f;
-                c->y = by + (bs - ds) * 0.5f;
-                c->w = ds; c->h = ds;
-                c->corner_radius = ds * 0.5f;
-                c->r = 0.25f; c->g = 0.55f; c->b = 1.0f; c->a = 1.0f;
-                c->in_use = true;
-            }
-            /* Label text */
-            if (r->text[0] && font) {
-                Ca_Node tn = *n;
-                tn.x = bx + bs + 6.0f;
-                tn.w = n->w - bs - 6.0f;
-                paint_text(win, font, &tn, r->text, r->text_color);
-            }
-        }
-    }
-
-    /* Sliders: track + fill + thumb */
-    if (win->slider_pool) {
-        for (uint32_t i = 0; i < CA_MAX_SLIDERS_PER_WINDOW; ++i) {
-            Ca_Slider *sl = &win->slider_pool[i];
-            if (!sl->in_use || !sl->node || sl->node->desc.hidden) continue;
-            Ca_Node *n = sl->node;
-            float track_h = 4.0f;
-            float track_y = n->y + (n->h - track_h) * 0.5f;
-            float pct = (sl->max_val > sl->min_val)
-                ? (sl->value - sl->min_val) / (sl->max_val - sl->min_val) : 0;
-
-            /* Track background */
-            if (win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
-                Ca_DrawCmd *c = &win->draw_cmds[win->draw_cmd_count++];
-                memset(c, 0, sizeof(*c));
-                c->type = CA_DRAW_RECT;
-                c->x = n->x; c->y = track_y; c->w = n->w; c->h = track_h;
-                c->corner_radius = 2.0f;
-                c->r = 0.25f; c->g = 0.25f; c->b = 0.3f; c->a = 1.0f;
-                c->in_use = true;
-            }
-            /* Fill */
-            float fill_w = n->w * pct;
-            if (fill_w > 0 && win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
-                Ca_DrawCmd *c = &win->draw_cmds[win->draw_cmd_count++];
-                memset(c, 0, sizeof(*c));
-                c->type = CA_DRAW_RECT;
-                c->x = n->x; c->y = track_y; c->w = fill_w; c->h = track_h;
-                c->corner_radius = 2.0f;
-                c->r = 0.25f; c->g = 0.55f; c->b = 1.0f; c->a = 1.0f;
-                c->in_use = true;
-            }
-            /* Thumb */
-            if (win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
-                float thumb_sz = 14.0f;
-                float tx = n->x + fill_w - thumb_sz * 0.5f;
-                float ty = n->y + (n->h - thumb_sz) * 0.5f;
-                Ca_DrawCmd *c = &win->draw_cmds[win->draw_cmd_count++];
-                memset(c, 0, sizeof(*c));
-                c->type = CA_DRAW_RECT;
-                c->x = tx; c->y = ty; c->w = thumb_sz; c->h = thumb_sz;
-                c->corner_radius = thumb_sz * 0.5f;
-                c->r = 1.0f; c->g = 1.0f; c->b = 1.0f; c->a = 1.0f;
-                c->in_use = true;
-            }
-        }
-    }
-
-    /* Toggle switches: pill track + circle thumb */
-    if (win->toggle_pool) {
-        for (uint32_t i = 0; i < CA_MAX_TOGGLES_PER_WINDOW; ++i) {
-            Ca_Toggle *t = &win->toggle_pool[i];
-            if (!t->in_use || !t->node || t->node->desc.hidden) continue;
-            Ca_Node *n = t->node;
-
-            /* Track */
-            if (win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
-                Ca_DrawCmd *c = &win->draw_cmds[win->draw_cmd_count++];
-                memset(c, 0, sizeof(*c));
-                c->type = CA_DRAW_RECT;
-                c->x = n->x; c->y = n->y; c->w = n->w; c->h = n->h;
-                c->corner_radius = n->h * 0.5f;
-                if (t->on) { c->r = 0.2f; c->g = 0.6f; c->b = 0.3f; c->a = 1.0f; }
-                else       { c->r = 0.3f; c->g = 0.3f; c->b = 0.35f; c->a = 1.0f; }
-                c->in_use = true;
-            }
-            /* Thumb */
-            if (win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
-                float inset = 2.0f;
-                float thumb_d = n->h - inset * 2;
-                float tx = t->on ? (n->x + n->w - thumb_d - inset) : (n->x + inset);
-                Ca_DrawCmd *c = &win->draw_cmds[win->draw_cmd_count++];
-                memset(c, 0, sizeof(*c));
-                c->type = CA_DRAW_RECT;
-                c->x = tx; c->y = n->y + inset;
-                c->w = thumb_d; c->h = thumb_d;
-                c->corner_radius = thumb_d * 0.5f;
-                c->r = 1.0f; c->g = 1.0f; c->b = 1.0f; c->a = 1.0f;
-                c->in_use = true;
-            }
-        }
-    }
-
-    /* Progress bars: track + fill */
-    if (win->progress_pool) {
-        for (uint32_t i = 0; i < CA_MAX_PROGRESS_PER_WINDOW; ++i) {
-            Ca_Progress *p = &win->progress_pool[i];
-            if (!p->in_use || !p->node || p->node->desc.hidden) continue;
-            Ca_Node *n = p->node;
-            float rad = n->h * 0.5f;
-
-            /* Track */
-            if (win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
-                Ca_DrawCmd *c = &win->draw_cmds[win->draw_cmd_count++];
-                memset(c, 0, sizeof(*c));
-                c->type = CA_DRAW_RECT;
-                c->x = n->x; c->y = n->y; c->w = n->w; c->h = n->h;
-                c->corner_radius = rad;
-                c->r = 0.2f; c->g = 0.2f; c->b = 0.25f; c->a = 1.0f;
-                c->in_use = true;
-            }
-            /* Fill */
-            float fw = n->w * p->value;
-            if (fw > 0 && win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
-                float fr, fg, fb, fa;
-                unpack_color(p->bar_color, &fr, &fg, &fb, &fa);
-                Ca_DrawCmd *c = &win->draw_cmds[win->draw_cmd_count++];
-                memset(c, 0, sizeof(*c));
-                c->type = CA_DRAW_RECT;
-                c->x = n->x; c->y = n->y; c->w = fw; c->h = n->h;
-                c->corner_radius = rad;
-                c->r = fr; c->g = fg; c->b = fb; c->a = fa;
-                c->in_use = true;
-            }
-        }
-    }
-
-    /* Select / Dropdown: button display + dropdown overlay */
+    /* ---- Select dropdown overlays ---- */
     if (win->select_pool && font) {
         for (uint32_t i = 0; i < CA_MAX_SELECTS_PER_WINDOW; ++i) {
             Ca_Select *sel = &win->select_pool[i];
             if (!sel->in_use || !sel->node || sel->node->desc.hidden) continue;
+            if (!sel->open) continue;
             Ca_Node *n = sel->node;
 
-            /* Draw current selection text */
-            if (sel->selected >= 0 && sel->selected < sel->option_count) {
-                paint_text(win, font, n, sel->options[sel->selected], 0);
-            }
-
-            /* Down arrow indicator */
+            float opt_h = n->h;
+            float drop_y = n->y + n->h;
+            /* Dropdown background */
             if (win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
-                float asz = 6.0f;
                 Ca_DrawCmd *c = &win->draw_cmds[win->draw_cmd_count++];
                 memset(c, 0, sizeof(*c));
                 c->type = CA_DRAW_RECT;
-                c->x = n->x + n->w - asz - 6.0f;
-                c->y = n->y + (n->h - asz * 0.5f) * 0.5f;
-                c->w = asz; c->h = asz * 0.5f;
-                c->r = 0.7f; c->g = 0.7f; c->b = 0.7f; c->a = 1.0f;
+                c->x = n->x; c->y = drop_y;
+                c->w = n->w; c->h = opt_h * (float)sel->option_count;
+                c->corner_radius = 4.0f;
+                c->r = 0.15f; c->g = 0.15f; c->b = 0.2f; c->a = 0.95f;
                 c->in_use = true;
+                c->overlay = true;
             }
-
-            /* Open dropdown overlay (rendered after everything) */
-            if (sel->open) {
-                float opt_h = n->h;
-                float drop_y = n->y + n->h;
-                /* Dropdown background */
-                if (win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
+            /* Options */
+            for (int oi = 0; oi < sel->option_count; ++oi) {
+                float oy = drop_y + opt_h * (float)oi;
+                if (oi == sel->selected && win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
                     Ca_DrawCmd *c = &win->draw_cmds[win->draw_cmd_count++];
                     memset(c, 0, sizeof(*c));
                     c->type = CA_DRAW_RECT;
-                    c->x = n->x; c->y = drop_y;
-                    c->w = n->w; c->h = opt_h * (float)sel->option_count;
-                    c->corner_radius = 4.0f;
-                    c->r = 0.15f; c->g = 0.15f; c->b = 0.2f; c->a = 0.95f;
+                    c->x = n->x; c->y = oy; c->w = n->w; c->h = opt_h;
+                    c->r = 0.25f; c->g = 0.25f; c->b = 0.35f; c->a = 1.0f;
                     c->in_use = true;
                     c->overlay = true;
                 }
-                /* Options */
-                for (int oi = 0; oi < sel->option_count; ++oi) {
-                    float oy = drop_y + opt_h * (float)oi;
-                    /* Highlight selected */
-                    if (oi == sel->selected && win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
-                        Ca_DrawCmd *c = &win->draw_cmds[win->draw_cmd_count++];
-                        memset(c, 0, sizeof(*c));
-                        c->type = CA_DRAW_RECT;
-                        c->x = n->x; c->y = oy; c->w = n->w; c->h = opt_h;
-                        c->r = 0.25f; c->g = 0.25f; c->b = 0.35f; c->a = 1.0f;
-                        c->in_use = true;
-                        c->overlay = true;
-                    }
-                    /* Option text (use a temporary node) — mark glyphs as overlay */
-                    uint32_t glyph_start = win->draw_cmd_count;
-                    Ca_Node tmp = *n;
-                    tmp.x = n->x; tmp.y = oy; tmp.h = opt_h;
-                    paint_text(win, font, &tmp, sel->options[oi], 0);
-                    for (uint32_t gi = glyph_start; gi < win->draw_cmd_count; ++gi)
-                        win->draw_cmds[gi].overlay = true;
-                }
+                uint32_t glyph_start = win->draw_cmd_count;
+                Ca_Node tmp = *n;
+                tmp.x = n->x; tmp.y = oy; tmp.h = opt_h;
+                paint_text(win, font, &tmp, sel->options[oi], 0);
+                for (uint32_t gi = glyph_start; gi < win->draw_cmd_count; ++gi)
+                    win->draw_cmds[gi].overlay = true;
             }
         }
     }
 
-    /* Tab bar headers: text in each tab */
-    if (win->tabbar_pool && font) {
-        for (uint32_t i = 0; i < CA_MAX_TABBARS_PER_WINDOW; ++i) {
-            Ca_TabBar *tb = &win->tabbar_pool[i];
-            if (!tb->in_use || !tb->node) continue;
-            for (int ti = 0; ti < tb->count; ++ti) {
-                if (!tb->tab_nodes[ti]) continue;
-                uint32_t tc = (ti == tb->active) ? ca_color(1,1,1,1) : ca_color(0.6f,0.6f,0.6f,1);
-                paint_text(win, font, tb->tab_nodes[ti], tb->labels[ti], tc);
-            }
-        }
-    }
-
-    /* Tree node headers: expand indicator + text */
-    if (win->treenode_pool && font) {
-        for (uint32_t i = 0; i < CA_MAX_TREENODES_PER_WINDOW; ++i) {
-            Ca_TreeNode *tn = &win->treenode_pool[i];
-            if (!tn->in_use || !tn->node || tn->node->desc.hidden) continue;
-            if (tn->node->child_count == 0) continue;
-            Ca_Node *hdr = tn->node->children[0];
-            if (!hdr || hdr->desc.hidden) continue;
-
-            /* Expand indicator */
-            const char *indicator = tn->expanded ? "-" : "+";
-            Ca_Node ind_n = *hdr;
-            ind_n.w = 16.0f;
-            paint_text(win, font, &ind_n, indicator, ca_color(0.6f,0.6f,0.6f,1));
-
-            /* Label text */
-            Ca_Node txt_n = *hdr;
-            txt_n.x = hdr->x + 16.0f;
-            txt_n.w = hdr->w - 16.0f;
-            paint_text(win, font, &txt_n, tn->text, tn->text_color);
-        }
-    }
-
-    /* Tooltips: rendered as overlay when hovering the target node */
+    /* ---- Tooltips ---- */
     if (win->tooltip_pool && font && win->hovered_node) {
         for (uint32_t i = 0; i < CA_MAX_TOOLTIPS_PER_WINDOW; ++i) {
             Ca_Tooltip *tt = &win->tooltip_pool[i];
@@ -794,7 +838,6 @@ void ca_paint_pass(Ca_Instance *inst, Ca_Window *win)
             float tip_y = tt->node->y - tip_h - 4.0f;
             if (tip_y < 0) tip_y = tt->node->y + tt->node->h + 4.0f;
 
-            /* Background */
             if (win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
                 Ca_DrawCmd *c = &win->draw_cmds[win->draw_cmd_count++];
                 memset(c, 0, sizeof(*c));
@@ -805,7 +848,6 @@ void ca_paint_pass(Ca_Instance *inst, Ca_Window *win)
                 c->in_use = true;
                 c->overlay = true;
             }
-            /* Text */
             uint32_t glyph_start = win->draw_cmd_count;
             Ca_Node tmp;
             memset(&tmp, 0, sizeof(tmp));
@@ -818,7 +860,7 @@ void ca_paint_pass(Ca_Instance *inst, Ca_Window *win)
         }
     }
 
-    /* Context menus: overlay at right-click position */
+    /* ---- Context menus ---- */
     if (win->ctxmenu_pool && font) {
         for (uint32_t i = 0; i < CA_MAX_CTXMENUS_PER_WINDOW; ++i) {
             Ca_CtxMenu *cm = &win->ctxmenu_pool[i];
@@ -828,7 +870,6 @@ void ca_paint_pass(Ca_Instance *inst, Ca_Window *win)
             float menu_w = 120.0f;
             float menu_h = item_h * (float)cm->item_count;
 
-            /* Background */
             if (win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
                 Ca_DrawCmd *c = &win->draw_cmds[win->draw_cmd_count++];
                 memset(c, 0, sizeof(*c));
@@ -840,7 +881,6 @@ void ca_paint_pass(Ca_Instance *inst, Ca_Window *win)
                 c->in_use = true;
                 c->overlay = true;
             }
-            /* Items */
             for (int mi = 0; mi < cm->item_count; ++mi) {
                 uint32_t glyph_start = win->draw_cmd_count;
                 Ca_Node tmp;
@@ -858,7 +898,7 @@ void ca_paint_pass(Ca_Instance *inst, Ca_Window *win)
         }
     }
 
-    /* Modals: overlay background */
+    /* ---- Modals ---- */
     if (win->modal_pool) {
         for (uint32_t i = 0; i < CA_MAX_MODALS_PER_WINDOW; ++i) {
             Ca_Modal *m = &win->modal_pool[i];
@@ -878,4 +918,42 @@ void ca_paint_pass(Ca_Instance *inst, Ca_Window *win)
             }
         }
     }
+}
+
+/* ================================================================
+   PUBLIC — paint pass entry point
+   ================================================================ */
+
+void ca_paint_pass(Ca_Instance *inst, Ca_Window *win)
+{
+    if (!win->root) return;
+
+    /* 1. Reset the draw command list — it is rebuilt from cached + fresh data */
+    win->draw_cmd_count = 0;
+
+    /* 2. Incremental tree walk: only dirty nodes repaint, clean reuse cache */
+    ClipRect no_clip = { .active = false };
+    paint_tree_cached(inst, win, win->root, no_clip);
+
+    /* 3. Decorations — always fresh, never cached (depend on global focus state) */
+    Ca_Font *font = inst->font;
+    if (font) {
+        /* Focus ring on the currently focused element */
+        if (win->focused_node)
+            paint_focus_ring(win, win->focused_node);
+
+        /* Cursor for focused text input */
+        if (win->focused_node && win->input_pool) {
+            for (uint32_t i = 0; i < CA_MAX_INPUTS_PER_WINDOW; ++i) {
+                Ca_TextInput *inp = &win->input_pool[i];
+                if (inp->in_use && inp->node == win->focused_node) {
+                    paint_cursor(win, font, inp->node, inp->text, inp->cursor);
+                    break;
+                }
+            }
+        }
+    }
+
+    /* 4. Overlays — always fresh (dropdowns, tooltips, context menus, modals) */
+    paint_overlays(inst, win);
 }

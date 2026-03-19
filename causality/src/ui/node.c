@@ -26,6 +26,8 @@ void ca_node_system_init(Ca_Window *win)
     win->modal_pool     = (Ca_Modal *)calloc(CA_MAX_MODALS_PER_WINDOW, sizeof(Ca_Modal));
     win->root           = NULL;
     win->draw_cmd_count = 0;
+    win->paint_cache     = (Ca_DrawCmd *)calloc(CA_MAX_DRAW_CMDS_PER_WINDOW, sizeof(Ca_DrawCmd));
+    win->paint_cache_used = 0;
     win->hovered_node   = NULL;
     win->drag_node      = NULL;
 
@@ -53,8 +55,10 @@ void ca_node_system_shutdown(Ca_Window *win)
     free(win->tooltip_pool);
     free(win->ctxmenu_pool);
     free(win->modal_pool);
+    free(win->paint_cache);
     win->node_pool      = NULL;
     win->draw_cmds      = NULL;
+    win->paint_cache    = NULL;
     win->label_pool     = NULL;
     win->button_pool    = NULL;
     win->input_pool     = NULL;

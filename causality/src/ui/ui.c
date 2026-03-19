@@ -145,52 +145,7 @@ void ca_ui_update(Ca_Instance *inst)
         Ca_Window *win = &inst->windows[i];
         if (!win->in_use || !win->root || !win->node_pool) continue;
 
-        /* 2. Check what kind of work this window needs */
-        bool any_layout  = false;
-        bool any_content = false;
-
-        for (uint32_t j = 0; j < CA_MAX_NODES_PER_WINDOW; ++j) {
-            Ca_Node *n = &win->node_pool[j];
-            if (!n->in_use) continue;
-            if (n->dirty & (CA_DIRTY_LAYOUT | CA_DIRTY_CHILDREN)) any_layout  = true;
-            if (n->dirty & CA_DIRTY_CONTENT)                       any_content = true;
-        }
-
-        /* 3. Layout pass — propagate upward then recompute rects */
-        if (any_layout) {
-            ca_node_propagate_layout(win);
-            ca_layout_pass(win);
-
-            /* After re-layout all positions changed, so all nodes need repaint */
-            for (uint32_t j = 0; j < CA_MAX_NODES_PER_WINDOW; ++j) {
-                Ca_Node *n = &win->node_pool[j];
-                if (n->in_use) n->dirty |= CA_DIRTY_CONTENT;
-            }
-            any_content = true;
-        }
-
-        /* 4. Paint pass — full draw-list rebuild */
-        if (any_content) {
-            /* Reset slots and mark every node dirty so paint_node rebuilds
-               the ENTIRE draw list (not just the changed nodes).  Otherwise
-               clean siblings would be missing from the draw commands after a
-               partial update (e.g. one button's colour changed). */
-            win->draw_cmd_count = 0;
-            for (uint32_t j = 0; j < CA_MAX_NODES_PER_WINDOW; ++j) {
-                Ca_Node *n = &win->node_pool[j];
-                if (n->in_use) {
-                    n->draw_cmd_idx = -1;
-                    n->dirty |= CA_DIRTY_CONTENT;
-                }
-            }
-            ca_paint_pass(inst, win);
-            win->needs_render = true;
-        }
-
-        /* 5. Input pass — hit-test buttons and fire click callbacks */
-        ca_widget_input_pass(win);
-
-        /* 6. Transition tick — animate CSS transitions */
+        /* 2. Transition tick — update animated properties, mark dirty */
         double now = glfwGetTime();
         bool any_transitions = false;
         for (uint32_t j = 0; j < CA_MAX_NODES_PER_WINDOW; ++j) {
@@ -201,18 +156,76 @@ void ca_ui_update(Ca_Instance *inst)
                 n->dirty |= CA_DIRTY_CONTENT;
             }
         }
-        if (any_transitions) {
-            /* Re-paint to show animated values */
-            win->draw_cmd_count = 0;
+
+        /* 3. Check what kind of work this window needs */
+        bool any_layout  = false;
+        bool any_content = false;
+
+        for (uint32_t j = 0; j < CA_MAX_NODES_PER_WINDOW; ++j) {
+            Ca_Node *n = &win->node_pool[j];
+            if (!n->in_use) continue;
+            if (n->dirty & (CA_DIRTY_LAYOUT | CA_DIRTY_CHILDREN)) any_layout  = true;
+            if (n->dirty & CA_DIRTY_CONTENT)                       any_content = true;
+        }
+
+        /* 4. Layout pass — propagate upward then recompute rects */
+        if (any_layout) {
+            ca_node_propagate_layout(win);
+            ca_layout_pass(win);
+
+            /* After re-layout all positions changed — reset paint cache and
+               mark every node dirty so the cache is rebuilt from scratch. */
+            win->paint_cache_used = 0;
             for (uint32_t j = 0; j < CA_MAX_NODES_PER_WINDOW; ++j) {
                 Ca_Node *n = &win->node_pool[j];
                 if (n->in_use) {
-                    n->draw_cmd_idx = -1;
                     n->dirty |= CA_DIRTY_CONTENT;
+                    n->cache_count      = 0;
+                    n->cache_post_count = 0;
                 }
             }
+            any_content = true;
+        }
+
+        /* 5. Input pass — hit-test buttons and fire click callbacks.
+              Run BEFORE paint so that input-driven dirty flags are
+              picked up in the same frame's paint pass.  */
+        Ca_Node *prev_hovered = win->hovered_node;
+        Ca_Node *prev_focused = win->focused_node;
+        ca_widget_input_pass(win);
+
+        /* Mark hover and focus changes so repaint catches them */
+        if (win->hovered_node != prev_hovered) {
+            if (prev_hovered)       prev_hovered->dirty       |= CA_DIRTY_CONTENT;
+            if (win->hovered_node)  win->hovered_node->dirty  |= CA_DIRTY_CONTENT;
+        }
+        if (win->focused_node != prev_focused) {
+            if (prev_focused)       prev_focused->dirty       |= CA_DIRTY_CONTENT;
+            if (win->focused_node)  win->focused_node->dirty  |= CA_DIRTY_CONTENT;
+        }
+
+        /* Re-scan for content dirty after input (widget state changes may
+           have dirtied nodes that weren't dirty before). */
+        if (!any_content) {
+            for (uint32_t j = 0; j < CA_MAX_NODES_PER_WINDOW; ++j) {
+                Ca_Node *n = &win->node_pool[j];
+                if (n->in_use && (n->dirty & CA_DIRTY_CONTENT)) {
+                    any_content = true;
+                    break;
+                }
+            }
+        }
+
+        /* 6. Incremental paint pass — only dirty nodes are repainted;
+              clean nodes reuse cached draw commands.  */
+        if (any_content) {
             ca_paint_pass(inst, win);
             win->needs_render = true;
         }
+
+        /* 7. Request another tick for active transitions so we don't stall
+              inside glfwWaitEvents() while animations are running.  */
+        if (any_transitions)
+            glfwPostEmptyEvent();
     }
 }
