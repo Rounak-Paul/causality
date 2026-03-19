@@ -25,6 +25,18 @@ typedef struct Ca_Thread   Ca_Thread;
 typedef struct Ca_Label     Ca_Label;
 typedef struct Ca_Button    Ca_Button;
 typedef struct Ca_TextInput Ca_TextInput;
+typedef struct Ca_Checkbox  Ca_Checkbox;
+typedef struct Ca_Radio     Ca_Radio;
+typedef struct Ca_Slider    Ca_Slider;
+typedef struct Ca_Toggle    Ca_Toggle;
+typedef struct Ca_Progress  Ca_Progress;
+typedef struct Ca_Select    Ca_Select;
+typedef struct Ca_TabBar    Ca_TabBar;
+typedef struct Ca_TreeNode  Ca_TreeNode;
+typedef struct Ca_Table     Ca_Table;
+typedef struct Ca_Tooltip   Ca_Tooltip;
+typedef struct Ca_CtxMenu   Ca_CtxMenu;
+typedef struct Ca_Modal     Ca_Modal;
 
 /* ============================================================
    INSTANCE
@@ -133,6 +145,13 @@ void       ca_thread_detach(Ca_Thread *thread); /* fire-and-forget, frees handle
 
 typedef void (*Ca_ClickFn)(Ca_Button *button, void *user_data);
 typedef void (*Ca_ChangeFn)(Ca_TextInput *input, void *user_data);
+typedef void (*Ca_CheckFn)(Ca_Checkbox *cb, void *user_data);
+typedef void (*Ca_SliderFn)(Ca_Slider *slider, void *user_data);
+typedef void (*Ca_ToggleFn)(Ca_Toggle *toggle, void *user_data);
+typedef void (*Ca_SelectFn)(Ca_Select *sel, void *user_data);
+typedef void (*Ca_TabFn)(Ca_TabBar *tabs, void *user_data);
+typedef void (*Ca_TreeToggleFn)(Ca_TreeNode *tn, void *user_data);
+typedef void (*Ca_MenuFn)(int item_index, void *user_data);
 
 /* Layout direction constants */
 #define CA_HORIZONTAL 0
@@ -288,6 +307,161 @@ void ca_button_set_text(Ca_Button *button, const char *text);
 void ca_button_set_background(Ca_Button *button, uint32_t color);
 void ca_input_set_text(Ca_TextInput *input, const char *text);
 const char *ca_input_get_text(const Ca_TextInput *input);
+
+/* ============================================================
+   UI — NEW WIDGET DESCRIPTORS
+   ============================================================ */
+
+typedef struct Ca_CheckboxDesc {
+    const char *text;
+    bool        checked;
+    Ca_CheckFn  on_change;
+    void       *change_data;
+    const char *id, *style;
+} Ca_CheckboxDesc;
+
+typedef struct Ca_RadioDesc {
+    const char *text;
+    int         group;
+    int         value;
+    Ca_CheckFn  on_change;     /* reuses check callback signature */
+    void       *change_data;
+    const char *id, *style;
+} Ca_RadioDesc;
+
+typedef struct Ca_SliderDesc {
+    float       min, max, value;
+    float       width;
+    Ca_SliderFn on_change;
+    void       *change_data;
+    const char *id, *style;
+} Ca_SliderDesc;
+
+typedef struct Ca_ToggleDesc {
+    bool        on;
+    Ca_ToggleFn on_change;
+    void       *change_data;
+    const char *id, *style;
+} Ca_ToggleDesc;
+
+typedef struct Ca_ProgressDesc {
+    float       value;         /* 0.0 – 1.0 */
+    float       width, height;
+    uint32_t    bar_color;
+    const char *id, *style;
+} Ca_ProgressDesc;
+
+typedef struct Ca_SelectDesc {
+    const char **options;
+    int          option_count;
+    int          selected;
+    float        width;
+    Ca_SelectFn  on_change;
+    void        *change_data;
+    const char  *id, *style;
+} Ca_SelectDesc;
+
+typedef struct Ca_TabBarDesc {
+    const char **labels;
+    int          count;
+    int          active;
+    Ca_TabFn     on_change;
+    void        *change_data;
+    const char  *id, *style;
+} Ca_TabBarDesc;
+
+typedef struct Ca_TreeNodeDesc {
+    const char      *text;
+    bool             expanded;
+    Ca_TreeToggleFn  on_toggle;
+    void            *toggle_data;
+    const char      *id, *style;
+} Ca_TreeNodeDesc;
+
+typedef struct Ca_TableDesc {
+    int          column_count;
+    const float *column_widths;
+    const char  *id, *style;
+} Ca_TableDesc;
+
+typedef struct Ca_TooltipDesc {
+    const char *text;
+    const char *id, *style;
+} Ca_TooltipDesc;
+
+typedef struct Ca_CtxMenuDesc {
+    const char **items;
+    int          item_count;
+    Ca_MenuFn    on_select;
+    void        *select_data;
+    const char  *id, *style;
+} Ca_CtxMenuDesc;
+
+typedef struct Ca_ModalDesc {
+    bool        visible;
+    uint32_t    overlay_color;
+    const char *id, *style;
+} Ca_ModalDesc;
+
+/* ============================================================
+   UI — NEW WIDGET API
+   ============================================================ */
+
+/* Checkbox */
+Ca_Checkbox *ca_checkbox(const Ca_CheckboxDesc *desc);
+void         ca_checkbox_set(Ca_Checkbox *cb, bool checked);
+bool         ca_checkbox_get(const Ca_Checkbox *cb);
+
+/* Radio button */
+Ca_Radio    *ca_radio(const Ca_RadioDesc *desc);
+int          ca_radio_group_get(Ca_Window *win, int group);
+
+/* Slider */
+Ca_Slider   *ca_slider(const Ca_SliderDesc *desc);
+void         ca_slider_set(Ca_Slider *s, float value);
+float        ca_slider_get(const Ca_Slider *s);
+
+/* Toggle switch */
+Ca_Toggle   *ca_toggle(const Ca_ToggleDesc *desc);
+void         ca_toggle_set(Ca_Toggle *t, bool on);
+bool         ca_toggle_get(const Ca_Toggle *t);
+
+/* Progress bar */
+Ca_Progress *ca_progress(const Ca_ProgressDesc *desc);
+void         ca_progress_set(Ca_Progress *p, float value);
+
+/* Select / dropdown */
+Ca_Select   *ca_select(const Ca_SelectDesc *desc);
+void         ca_select_set(Ca_Select *s, int index);
+int          ca_select_get(const Ca_Select *s);
+
+/* Tab bar */
+Ca_TabBar   *ca_tabs(const Ca_TabBarDesc *desc);
+int          ca_tabs_active(const Ca_TabBar *t);
+
+/* Tree view */
+void         ca_tree_begin(const Ca_DivDesc *desc);
+void         ca_tree_end(void);
+Ca_TreeNode *ca_tree_node_begin(const Ca_TreeNodeDesc *desc);
+void         ca_tree_node_end(void);
+bool         ca_tree_node_expanded(const Ca_TreeNode *n);
+
+/* Table */
+void ca_table_begin(const Ca_TableDesc *desc);
+void ca_table_end(void);
+void ca_table_row_begin(const Ca_DivDesc *desc);
+void ca_table_row_end(void);
+void ca_table_cell(const Ca_TextDesc *desc);
+
+/* Tooltip — attach to the previously created element */
+void ca_tooltip(const Ca_TooltipDesc *desc);
+
+/* Context menu — attach to the previously created element */
+void ca_context_menu(const Ca_CtxMenuDesc *desc);
+
+/* Modal / dialog */
+void ca_modal_begin(const Ca_ModalDesc *desc);
+void ca_modal_end(void);
 
 /* ============================================================
    CSS STYLESHEET

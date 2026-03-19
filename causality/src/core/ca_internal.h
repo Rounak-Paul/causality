@@ -70,16 +70,18 @@ typedef struct {
 typedef struct Ca_Font Ca_Font;
 
 /* Must exactly match the push_constant block in the vertex shader:
-     vec2 pos      (offset  0)
-     vec2 size     (offset  8)
-     vec4 color    (offset 16)
-     vec2 viewport (offset 32)
-   Total: 40 bytes.                                               */
+     vec2 pos           (offset  0)
+     vec2 size          (offset  8)
+     vec4 color         (offset 16)
+     vec2 viewport      (offset 32)
+     float corner_radius(offset 40)
+   Total: 44 bytes.                                               */
 typedef struct {
     float pos[2];
     float size[2];
     float color[4];
     float viewport[2];
+    float corner_radius;
 } Ca_RectPushConst;
 
 /* ======================================================
@@ -130,12 +132,15 @@ typedef struct {
     float        max_w,  max_h;
     float        padding_top,    padding_right,
                  padding_bottom, padding_left;
+    float        margin_top,     margin_right,
+                 margin_bottom,  margin_left;
     float        gap;
     Ca_Direction direction;
     Ca_Align     align_items;
     Ca_Align     justify_content;
     uint32_t     background;
     float        corner_radius;
+    float        opacity;        /* 0 = not set (default 1.0) */
     /* Flex properties */
     float        flex_grow;
     float        flex_shrink;
@@ -157,19 +162,35 @@ typedef struct {
    ====================================================== */
 
 #define CA_MAX_STATES               512
-#define CA_MAX_NODES_PER_WINDOW     512
-#define CA_MAX_NODE_CHILDREN         32
+#define CA_MAX_NODES_PER_WINDOW    1024
+#define CA_MAX_NODE_CHILDREN        128
 #define CA_MAX_NODE_SUBS              8
 #define CA_MAX_STATE_SUBSCRIBERS     64
-#define CA_MAX_DRAW_CMDS_PER_WINDOW 4096
+#define CA_MAX_DRAW_CMDS_PER_WINDOW 8192
 #define CA_MAX_TRANSITIONS_PER_NODE  4
 
 #define CA_MAX_LABELS_PER_WINDOW    256
 #define CA_MAX_BUTTONS_PER_WINDOW   128
 #define CA_MAX_INPUTS_PER_WINDOW     64
+#define CA_MAX_CHECKBOXES_PER_WINDOW 64
+#define CA_MAX_RADIOS_PER_WINDOW     64
+#define CA_MAX_SLIDERS_PER_WINDOW    32
+#define CA_MAX_TOGGLES_PER_WINDOW    32
+#define CA_MAX_PROGRESS_PER_WINDOW   32
+#define CA_MAX_SELECTS_PER_WINDOW    16
+#define CA_MAX_TABBARS_PER_WINDOW     8
+#define CA_MAX_TREENODES_PER_WINDOW  64
+#define CA_MAX_TABLES_PER_WINDOW      8
+#define CA_MAX_TOOLTIPS_PER_WINDOW   32
+#define CA_MAX_CTXMENUS_PER_WINDOW    8
+#define CA_MAX_MODALS_PER_WINDOW      4
+#define CA_MAX_SELECT_OPTIONS        16
+#define CA_MAX_TAB_LABELS            16
+#define CA_MAX_CTXMENU_ITEMS         16
 #define CA_LABEL_TEXT_MAX           256
 #define CA_BUTTON_TEXT_MAX          128
 #define CA_INPUT_TEXT_MAX           512
+#define CA_OPTION_TEXT_MAX          128
 #define CA_CHAR_BUF_MAX             32
 
 /* ======================================================
@@ -189,6 +210,7 @@ typedef struct {
     /* CA_DRAW_GLYPH: normalised UV coords in the font atlas */
     float       u0, v0, u1, v1;
     bool        in_use;
+    bool        overlay;   /* true = drawn in overlay pass (on top of all normal content) */
     /* Clip rect for overflow: hidden/scroll — in logical pixels */
     bool        has_clip;
     float       clip_x, clip_y, clip_w, clip_h;
@@ -300,6 +322,116 @@ struct Ca_TextInput {
     bool        in_use;
 };
 
+/* ---- New widgets ---- */
+
+struct Ca_Checkbox {
+    Ca_Node      *node;
+    char          text[CA_LABEL_TEXT_MAX];
+    uint32_t      text_color;
+    bool          checked;
+    Ca_CheckFn    on_change;
+    void         *change_data;
+    bool          in_use;
+};
+
+struct Ca_Radio {
+    Ca_Node      *node;
+    char          text[CA_LABEL_TEXT_MAX];
+    uint32_t      text_color;
+    int           group;
+    int           value;
+    Ca_CheckFn    on_change;
+    void         *change_data;
+    bool          in_use;
+};
+
+struct Ca_Slider {
+    Ca_Node      *node;
+    float         min_val, max_val, value;
+    Ca_SliderFn   on_change;
+    void         *change_data;
+    bool          in_use;
+};
+
+struct Ca_Toggle {
+    Ca_Node      *node;
+    bool          on;
+    Ca_ToggleFn   on_change;
+    void         *change_data;
+    bool          in_use;
+};
+
+struct Ca_Progress {
+    Ca_Node      *node;
+    float         value;        /* 0.0 – 1.0 */
+    uint32_t      bar_color;
+    bool          in_use;
+};
+
+struct Ca_Select {
+    Ca_Node      *node;
+    char          options[CA_MAX_SELECT_OPTIONS][CA_OPTION_TEXT_MAX];
+    int           option_count;
+    int           selected;
+    bool          open;
+    Ca_SelectFn   on_change;
+    void         *change_data;
+    bool          in_use;
+};
+
+struct Ca_TabBar {
+    Ca_Node      *node;
+    Ca_Node      *tab_nodes[CA_MAX_TAB_LABELS]; /* one per tab header */
+    char          labels[CA_MAX_TAB_LABELS][CA_OPTION_TEXT_MAX];
+    int           count;
+    int           active;
+    Ca_TabFn      on_change;
+    void         *change_data;
+    bool          in_use;
+};
+
+struct Ca_TreeNode {
+    Ca_Node      *node;
+    char          text[CA_LABEL_TEXT_MAX];
+    uint32_t      text_color;
+    bool          expanded;
+    int           depth;
+    Ca_TreeToggleFn on_toggle;
+    void         *toggle_data;
+    bool          in_use;
+};
+
+struct Ca_Table {
+    Ca_Node      *node;
+    int           column_count;
+    float         column_widths[16];
+    bool          in_use;
+};
+
+struct Ca_Tooltip {
+    Ca_Node      *node;       /* the target element */
+    char          text[CA_LABEL_TEXT_MAX];
+    bool          in_use;
+};
+
+struct Ca_CtxMenu {
+    Ca_Node      *node;       /* the target element */
+    char          items[CA_MAX_CTXMENU_ITEMS][CA_OPTION_TEXT_MAX];
+    int           item_count;
+    bool          open;
+    float         open_x, open_y;
+    Ca_MenuFn     on_select;
+    void         *select_data;
+    bool          in_use;
+};
+
+struct Ca_Modal {
+    Ca_Node      *node;       /* modal container node */
+    bool          visible;
+    uint32_t      overlay_color;
+    bool          in_use;
+};
+
 /* ======================================================
    WINDOW
    ====================================================== */
@@ -321,6 +453,24 @@ struct Ca_Window {
     Ca_Label     *label_pool;
     Ca_Button    *button_pool;
     Ca_TextInput *input_pool;
+    Ca_Checkbox  *checkbox_pool;
+    Ca_Radio     *radio_pool;
+    Ca_Slider    *slider_pool;
+    Ca_Toggle    *toggle_pool;
+    Ca_Progress  *progress_pool;
+    Ca_Select    *select_pool;
+    Ca_TabBar    *tabbar_pool;
+    Ca_TreeNode  *treenode_pool;
+    Ca_Table     *table_pool;
+    Ca_Tooltip   *tooltip_pool;
+    Ca_CtxMenu   *ctxmenu_pool;
+    Ca_Modal     *modal_pool;
+
+    /* Hover / drag state for interactive widgets */
+    Ca_Node      *hovered_node;
+    Ca_Node      *drag_node;
+    float         drag_start_x;
+    float         drag_start_value;
 
     /* UI scale factor (1.0 = default, 2.0 = 200%, like browser zoom) */
     float         ui_scale;

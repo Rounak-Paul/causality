@@ -188,11 +188,31 @@ static void layout_node(Ca_Node *node, float x, float y, float avail_w, float av
     float avail_main  = is_row ? inner_w : inner_h;
     float avail_cross = is_row ? inner_h : inner_w;
 
-    /* Pre-compute each child's hypothetical main-axis size */
+    /* Pre-compute each child's hypothetical main-axis size (including margins) */
     float child_hypo_main[CA_MAX_NODE_CHILDREN];
+    float child_margin_before[CA_MAX_NODE_CHILDREN];  /* main-axis leading margin */
+    float child_margin_after[CA_MAX_NODE_CHILDREN];   /* main-axis trailing margin */
+    float child_margin_cross0[CA_MAX_NODE_CHILDREN];  /* cross-axis start margin */
+    float child_margin_cross1[CA_MAX_NODE_CHILDREN];  /* cross-axis end margin */
     for (uint32_t i = 0; i < node->child_count; ++i) {
         Ca_Node *child = node->children[i];
-        if (child->desc.hidden) { child_hypo_main[i] = 0; continue; }
+        if (child->desc.hidden) {
+            child_hypo_main[i] = 0;
+            child_margin_before[i] = child_margin_after[i] = 0;
+            child_margin_cross0[i] = child_margin_cross1[i] = 0;
+            continue;
+        }
+        if (is_row) {
+            child_margin_before[i] = child->desc.margin_left;
+            child_margin_after[i]  = child->desc.margin_right;
+            child_margin_cross0[i] = child->desc.margin_top;
+            child_margin_cross1[i] = child->desc.margin_bottom;
+        } else {
+            child_margin_before[i] = child->desc.margin_top;
+            child_margin_after[i]  = child->desc.margin_bottom;
+            child_margin_cross0[i] = child->desc.margin_left;
+            child_margin_cross1[i] = child->desc.margin_right;
+        }
         float ms = is_row ? child->desc.width : child->desc.height;
         if (ms > 0.0f) {
             child_hypo_main[i] = ms;
@@ -200,6 +220,8 @@ static void layout_node(Ca_Node *node, float x, float y, float avail_w, float av
             float nat = content_size(child, !is_row);
             child_hypo_main[i] = nat > 0.0f ? nat : 0.0f;
         }
+        /* Include margins in the hypothetical space consumption */
+        child_hypo_main[i] += child_margin_before[i] + child_margin_after[i];
     }
 
     /* Build flex lines */
@@ -367,23 +389,33 @@ static void layout_node(Ca_Node *node, float x, float y, float avail_w, float av
             float cm = cm_arr[i];
             float cc = cc_arr[i];
 
+            /* Subtract margins from available child content size */
+            float mb = child_margin_before[i];
+            float ma = child_margin_after[i];
+            float mc0 = child_margin_cross0[i];
+            float mc1 = child_margin_cross1[i];
+            float cm_content = cm - mb - ma;
+            float cc_content = cc - mc0 - mc1;
+            if (cm_content < 0) cm_content = 0;
+            if (cc_content < 0) cc_content = 0;
+
             /* Align-items: cross-axis positioning within the line */
-            float cross_offset = 0;
+            float cross_offset = mc0;
             Ca_Align align = node->desc.align_items;
             if (align == CA_ALIGN_CENTER)
-                cross_offset = (line_avail_cross - cc) * 0.5f;
+                cross_offset = (line_avail_cross - cc_content - mc0 - mc1) * 0.5f + mc0;
             else if (align == CA_ALIGN_END)
-                cross_offset = line_avail_cross - cc;
+                cross_offset = line_avail_cross - cc_content - mc1;
 
             float cx, cy, cw, ch;
             if (is_row) {
-                cx = inner_x + main_cursor - scroll_off_x;
+                cx = inner_x + main_cursor + mb - scroll_off_x;
                 cy = inner_y + cross_cursor + cross_offset - scroll_off_y;
-                cw = cm;  ch = cc;
+                cw = cm_content;  ch = cc_content;
             } else {
                 cx = inner_x + cross_cursor + cross_offset - scroll_off_x;
-                cy = inner_y + main_cursor - scroll_off_y;
-                cw = cc;  ch = cm;
+                cy = inner_y + main_cursor + mb - scroll_off_y;
+                cw = cc_content;  ch = cm_content;
             }
 
             layout_node(child, cx, cy, cw, ch);

@@ -92,6 +92,27 @@ static Ca_TextInput *alloc_input(Ca_Window *win)
     return NULL;
 }
 
+#define ALLOC_POOL_FN(name, type, pool, max_const)              \
+static type *alloc_##name(Ca_Window *win) {                     \
+    for (uint32_t i = 0; i < max_const; ++i) {                 \
+        if (!win->pool[i].in_use) return &win->pool[i];        \
+    }                                                           \
+    fprintf(stderr, "[causality] " #name " pool exhausted\n"); \
+    return NULL;                                                \
+}
+ALLOC_POOL_FN(checkbox,  Ca_Checkbox,  checkbox_pool,  CA_MAX_CHECKBOXES_PER_WINDOW)
+ALLOC_POOL_FN(radio,     Ca_Radio,     radio_pool,     CA_MAX_RADIOS_PER_WINDOW)
+ALLOC_POOL_FN(slider,    Ca_Slider,    slider_pool,    CA_MAX_SLIDERS_PER_WINDOW)
+ALLOC_POOL_FN(toggle,    Ca_Toggle,    toggle_pool,    CA_MAX_TOGGLES_PER_WINDOW)
+ALLOC_POOL_FN(progress,  Ca_Progress,  progress_pool,  CA_MAX_PROGRESS_PER_WINDOW)
+ALLOC_POOL_FN(select,    Ca_Select,    select_pool,    CA_MAX_SELECTS_PER_WINDOW)
+ALLOC_POOL_FN(tabbar,    Ca_TabBar,    tabbar_pool,    CA_MAX_TABBARS_PER_WINDOW)
+ALLOC_POOL_FN(treenode,  Ca_TreeNode,  treenode_pool,  CA_MAX_TREENODES_PER_WINDOW)
+ALLOC_POOL_FN(table,     Ca_Table,     table_pool,     CA_MAX_TABLES_PER_WINDOW)
+ALLOC_POOL_FN(tooltip,   Ca_Tooltip,   tooltip_pool,   CA_MAX_TOOLTIPS_PER_WINDOW)
+ALLOC_POOL_FN(ctxmenu,   Ca_CtxMenu,   ctxmenu_pool,   CA_MAX_CTXMENUS_PER_WINDOW)
+ALLOC_POOL_FN(modal,     Ca_Modal,     modal_pool,     CA_MAX_MODALS_PER_WINDOW)
+
 /* ============================================================
    INTERNAL — node creation helpers
    ============================================================ */
@@ -225,6 +246,10 @@ static void apply_css(Ca_Node *node, Ca_NodeDesc *nd,
     rs.padding[3]   = s(rs.padding[3]);
     rs.gap          = s(rs.gap);
     rs.border_radius = s(rs.border_radius);
+    rs.margin[0]    = s(rs.margin[0]);
+    rs.margin[1]    = s(rs.margin[1]);
+    rs.margin[2]    = s(rs.margin[2]);
+    rs.margin[3]    = s(rs.margin[3]);
 
     ca_style_apply_to_node(&rs, nd, out_color);
 
@@ -660,6 +685,615 @@ const char *ca_input_get_text(const Ca_TextInput *input)
 }
 
 /* ============================================================
+   PUBLIC — Checkbox
+   ============================================================ */
+
+Ca_Checkbox *ca_checkbox(const Ca_CheckboxDesc *desc)
+{
+    assert(g_ctx.active && desc);
+    Ca_Checkbox *cb = alloc_checkbox(g_ctx.window);
+    if (!cb) return NULL;
+
+    Ca_NodeDesc nd = {0};
+    nd.direction = CA_DIR_ROW;
+    nd.height = s(20.0f);
+
+    Ca_Node *node = ca_node_add(ctx_top(), &nd);
+    if (!node) return NULL;
+
+    cb->node = node;
+    cb->in_use = true;
+    cb->checked = desc->checked;
+    cb->text_color = 0; /* default white */
+    if (desc->text) snprintf(cb->text, CA_LABEL_TEXT_MAX, "%s", desc->text);
+    else cb->text[0] = '\0';
+    cb->on_change = desc->on_change;
+    cb->change_data = desc->change_data;
+
+    uint32_t dummy = 0;
+    apply_css(node, &node->desc, CA_ELEM_CHECKBOX, desc->style, desc->id, &cb->text_color);
+
+    /* Auto-width from text */
+    if (node->desc.width <= 0.0f) {
+        float tw = measure_text_px(g_ctx.window, desc->text);
+        node->desc.width = s(20.0f) + s(6.0f) + (tw > 0 ? tw : 0);
+    }
+    return cb;
+}
+
+void ca_checkbox_set(Ca_Checkbox *cb, bool checked)
+{
+    assert(cb && cb->in_use);
+    cb->checked = checked;
+    cb->node->dirty |= CA_DIRTY_CONTENT;
+}
+
+bool ca_checkbox_get(const Ca_Checkbox *cb)
+{
+    assert(cb && cb->in_use);
+    return cb->checked;
+}
+
+/* ============================================================
+   PUBLIC — Radio button
+   ============================================================ */
+
+Ca_Radio *ca_radio(const Ca_RadioDesc *desc)
+{
+    assert(g_ctx.active && desc);
+    Ca_Radio *r = alloc_radio(g_ctx.window);
+    if (!r) return NULL;
+
+    Ca_NodeDesc nd = {0};
+    nd.direction = CA_DIR_ROW;
+    nd.height = s(20.0f);
+
+    Ca_Node *node = ca_node_add(ctx_top(), &nd);
+    if (!node) return NULL;
+
+    r->node = node;
+    r->in_use = true;
+    r->group = desc->group;
+    r->value = desc->value;
+    r->text_color = 0;
+    if (desc->text) snprintf(r->text, CA_LABEL_TEXT_MAX, "%s", desc->text);
+    else r->text[0] = '\0';
+    r->on_change = desc->on_change;
+    r->change_data = desc->change_data;
+
+    uint32_t dummy = 0;
+    apply_css(node, &node->desc, CA_ELEM_RADIO, desc->style, desc->id, &r->text_color);
+
+    if (node->desc.width <= 0.0f) {
+        float tw = measure_text_px(g_ctx.window, desc->text);
+        node->desc.width = s(20.0f) + s(6.0f) + (tw > 0 ? tw : 0);
+    }
+    return r;
+}
+
+int ca_radio_group_get(Ca_Window *win, int group)
+{
+    if (!win || !win->radio_pool) return -1;
+    for (uint32_t i = 0; i < CA_MAX_RADIOS_PER_WINDOW; ++i) {
+        Ca_Radio *r = &win->radio_pool[i];
+        if (r->in_use && r->group == group) {
+            /* Find the selected one — we check all in paint pass, but return
+               the first marked selected during last click pass */
+        }
+    }
+    /* Walk and find the currently-active radio in this group.
+       The "selected" state is that exactly one radio per group is checked.
+       We store this by checking which radio's node is flagged. For simplicity,
+       we track selection per-radio and return the value of the first checked. */
+    for (uint32_t i = 0; i < CA_MAX_RADIOS_PER_WINDOW; ++i) {
+        Ca_Radio *r = &win->radio_pool[i];
+        if (r->in_use && r->group == group && r->value == 1)
+            return (int)i;
+    }
+    return -1;
+}
+
+/* ============================================================
+   PUBLIC — Slider
+   ============================================================ */
+
+Ca_Slider *ca_slider(const Ca_SliderDesc *desc)
+{
+    assert(g_ctx.active && desc);
+    Ca_Slider *sl = alloc_slider(g_ctx.window);
+    if (!sl) return NULL;
+
+    Ca_NodeDesc nd = {0};
+    nd.width  = desc->width > 0 ? s(desc->width) : s(160.0f);
+    nd.height = s(20.0f);
+
+    Ca_Node *node = ca_node_add(ctx_top(), &nd);
+    if (!node) return NULL;
+
+    sl->node = node;
+    sl->in_use = true;
+    sl->min_val = desc->min;
+    sl->max_val = desc->max;
+    sl->value = desc->value;
+    sl->on_change = desc->on_change;
+    sl->change_data = desc->change_data;
+
+    uint32_t dummy = 0;
+    apply_css(node, &node->desc, CA_ELEM_SLIDER, desc->style, desc->id, &dummy);
+    return sl;
+}
+
+void ca_slider_set(Ca_Slider *s, float value)
+{
+    assert(s && s->in_use);
+    if (value < s->min_val) value = s->min_val;
+    if (value > s->max_val) value = s->max_val;
+    s->value = value;
+    s->node->dirty |= CA_DIRTY_CONTENT;
+}
+
+float ca_slider_get(const Ca_Slider *s)
+{
+    assert(s && s->in_use);
+    return s->value;
+}
+
+/* ============================================================
+   PUBLIC — Toggle switch
+   ============================================================ */
+
+Ca_Toggle *ca_toggle(const Ca_ToggleDesc *desc)
+{
+    assert(g_ctx.active && desc);
+    Ca_Toggle *t = alloc_toggle(g_ctx.window);
+    if (!t) return NULL;
+
+    Ca_NodeDesc nd = {0};
+    nd.width  = s(40.0f);
+    nd.height = s(22.0f);
+
+    Ca_Node *node = ca_node_add(ctx_top(), &nd);
+    if (!node) return NULL;
+
+    t->node = node;
+    t->in_use = true;
+    t->on = desc->on;
+    t->on_change = desc->on_change;
+    t->change_data = desc->change_data;
+
+    uint32_t dummy = 0;
+    apply_css(node, &node->desc, CA_ELEM_TOGGLE, desc->style, desc->id, &dummy);
+    return t;
+}
+
+void ca_toggle_set(Ca_Toggle *t, bool on)
+{
+    assert(t && t->in_use);
+    t->on = on;
+    t->node->dirty |= CA_DIRTY_CONTENT;
+}
+
+bool ca_toggle_get(const Ca_Toggle *t)
+{
+    assert(t && t->in_use);
+    return t->on;
+}
+
+/* ============================================================
+   PUBLIC — Progress bar
+   ============================================================ */
+
+Ca_Progress *ca_progress(const Ca_ProgressDesc *desc)
+{
+    assert(g_ctx.active && desc);
+    Ca_Progress *p = alloc_progress(g_ctx.window);
+    if (!p) return NULL;
+
+    Ca_NodeDesc nd = {0};
+    nd.width  = desc->width > 0 ? s(desc->width) : s(200.0f);
+    nd.height = desc->height > 0 ? s(desc->height) : s(8.0f);
+
+    Ca_Node *node = ca_node_add(ctx_top(), &nd);
+    if (!node) return NULL;
+
+    p->node = node;
+    p->in_use = true;
+    p->value = desc->value;
+    p->bar_color = desc->bar_color ? desc->bar_color : ca_color(0.2f, 0.6f, 1.0f, 1.0f);
+
+    uint32_t dummy = 0;
+    apply_css(node, &node->desc, CA_ELEM_PROGRESS, desc->style, desc->id, &dummy);
+    return p;
+}
+
+void ca_progress_set(Ca_Progress *p, float value)
+{
+    assert(p && p->in_use);
+    if (value < 0.0f) value = 0.0f;
+    if (value > 1.0f) value = 1.0f;
+    p->value = value;
+    p->node->dirty |= CA_DIRTY_CONTENT;
+}
+
+/* ============================================================
+   PUBLIC — Select / Dropdown
+   ============================================================ */
+
+Ca_Select *ca_select(const Ca_SelectDesc *desc)
+{
+    assert(g_ctx.active && desc);
+    Ca_Select *sel = alloc_select(g_ctx.window);
+    if (!sel) return NULL;
+
+    Ca_NodeDesc nd = {0};
+    nd.width  = desc->width > 0 ? s(desc->width) : s(140.0f);
+    nd.height = s(26.0f);
+    nd.corner_radius = s(4.0f);
+    nd.background = ca_color(0.2f, 0.2f, 0.25f, 1.0f);
+
+    Ca_Node *node = ca_node_add(ctx_top(), &nd);
+    if (!node) return NULL;
+
+    sel->node = node;
+    sel->in_use = true;
+    sel->selected = desc->selected;
+    sel->open = false;
+    sel->option_count = desc->option_count;
+    if (sel->option_count > CA_MAX_SELECT_OPTIONS)
+        sel->option_count = CA_MAX_SELECT_OPTIONS;
+    for (int i = 0; i < sel->option_count; ++i) {
+        if (desc->options[i])
+            snprintf(sel->options[i], CA_OPTION_TEXT_MAX, "%s", desc->options[i]);
+    }
+    sel->on_change = desc->on_change;
+    sel->change_data = desc->change_data;
+
+    uint32_t dummy = 0;
+    apply_css(node, &node->desc, CA_ELEM_SELECT, desc->style, desc->id, &dummy);
+    return sel;
+}
+
+void ca_select_set(Ca_Select *s, int index)
+{
+    assert(s && s->in_use);
+    if (index >= 0 && index < s->option_count) {
+        s->selected = index;
+        s->node->dirty |= CA_DIRTY_CONTENT;
+    }
+}
+
+int ca_select_get(const Ca_Select *s)
+{
+    assert(s && s->in_use);
+    return s->selected;
+}
+
+/* ============================================================
+   PUBLIC — Tab bar
+   ============================================================ */
+
+Ca_TabBar *ca_tabs(const Ca_TabBarDesc *desc)
+{
+    assert(g_ctx.active && desc);
+    Ca_TabBar *tb = alloc_tabbar(g_ctx.window);
+    if (!tb) return NULL;
+
+    Ca_NodeDesc nd = {0};
+    nd.direction = CA_DIR_ROW;
+    nd.height = s(32.0f);
+    nd.gap = s(2.0f);
+
+    Ca_Node *node = ca_node_add(ctx_top(), &nd);
+    if (!node) return NULL;
+
+    tb->node = node;
+    tb->in_use = true;
+    tb->active = desc->active;
+    tb->count = desc->count;
+    if (tb->count > CA_MAX_TAB_LABELS) tb->count = CA_MAX_TAB_LABELS;
+    for (int i = 0; i < tb->count; ++i) {
+        if (desc->labels[i])
+            snprintf(tb->labels[i], CA_OPTION_TEXT_MAX, "%s", desc->labels[i]);
+        tb->tab_nodes[i] = NULL;
+    }
+    tb->on_change = desc->on_change;
+    tb->change_data = desc->change_data;
+
+    uint32_t dummy = 0;
+    apply_css(node, &node->desc, CA_ELEM_TABBAR, desc->style, desc->id, &dummy);
+
+    /* Create child nodes for each tab header */
+    for (int i = 0; i < tb->count; ++i) {
+        Ca_NodeDesc tnd = {0};
+        float tw = measure_text_px(g_ctx.window, tb->labels[i]);
+        tnd.width = (tw > 0 ? tw : s(40.0f)) + s(16.0f);
+        tnd.height = s(28.0f);
+        tnd.corner_radius = s(4.0f);
+        tnd.background = (i == tb->active)
+            ? ca_color(0.3f, 0.3f, 0.4f, 1.0f)
+            : ca_color(0.15f, 0.15f, 0.2f, 1.0f);
+        Ca_Node *tab_node = ca_node_add(node, &tnd);
+        if (tab_node) {
+            tab_node->elem_type = CA_ELEM_TAB;
+            tb->tab_nodes[i] = tab_node;
+        }
+    }
+    return tb;
+}
+
+int ca_tabs_active(const Ca_TabBar *t)
+{
+    assert(t && t->in_use);
+    return t->active;
+}
+
+/* ============================================================
+   PUBLIC — Tree view
+   ============================================================ */
+
+void ca_tree_begin(const Ca_DivDesc *desc)
+{
+    assert(g_ctx.active);
+    Ca_NodeDesc nd = div_to_nd(desc);
+    nd.direction = CA_DIR_COLUMN;
+    if (nd.gap <= 0.0f) nd.gap = s(1.0f);
+    Ca_Node *node = add_container(ctx_top(), &nd);
+    assert(node);
+    uint32_t dummy = 0;
+    apply_css(node, &node->desc, CA_ELEM_TREE,
+              desc ? desc->style : NULL, desc ? desc->id : NULL, &dummy);
+    ctx_push(node);
+}
+
+void ca_tree_end(void)
+{
+    assert(g_ctx.active && g_ctx.depth > 0);
+    ctx_pop();
+}
+
+Ca_TreeNode *ca_tree_node_begin(const Ca_TreeNodeDesc *desc)
+{
+    assert(g_ctx.active && desc);
+    Ca_TreeNode *tn = alloc_treenode(g_ctx.window);
+    if (!tn) return NULL;
+
+    Ca_NodeDesc nd = {0};
+    nd.direction = CA_DIR_COLUMN;
+
+    Ca_Node *node = ca_node_add(ctx_top(), &nd);
+    if (!node) return NULL;
+
+    tn->node = node;
+    tn->in_use = true;
+    tn->expanded = desc->expanded;
+    tn->text_color = 0;
+    if (desc->text) snprintf(tn->text, CA_LABEL_TEXT_MAX, "%s", desc->text);
+    else tn->text[0] = '\0';
+    tn->on_toggle = desc->on_toggle;
+    tn->toggle_data = desc->toggle_data;
+
+    /* Compute depth from parent chain (count tree node ancestors) */
+    tn->depth = 0;
+    Ca_Node *p = node->parent;
+    while (p) {
+        if (p->elem_type == CA_ELEM_TREENODE) tn->depth++;
+        p = p->parent;
+    }
+
+    uint32_t dummy = 0;
+    apply_css(node, &node->desc, CA_ELEM_TREENODE, desc->style, desc->id, &tn->text_color);
+
+    /* Create a header row node for the clickable label */
+    Ca_NodeDesc hdr = {0};
+    hdr.direction = CA_DIR_ROW;
+    hdr.height = s(22.0f);
+    hdr.padding_left = s(16.0f) * (float)tn->depth;
+    Ca_Node *hdr_node = ca_node_add(node, &hdr);
+    (void)hdr_node;
+
+    ctx_push(node);
+    return tn;
+}
+
+void ca_tree_node_end(void)
+{
+    assert(g_ctx.active && g_ctx.depth > 0);
+    ctx_pop();
+}
+
+bool ca_tree_node_expanded(const Ca_TreeNode *n)
+{
+    assert(n && n->in_use);
+    return n->expanded;
+}
+
+/* ============================================================
+   PUBLIC — Table
+   ============================================================ */
+
+void ca_table_begin(const Ca_TableDesc *desc)
+{
+    assert(g_ctx.active && desc);
+    Ca_Table *tbl = alloc_table(g_ctx.window);
+    if (!tbl) return;
+
+    Ca_NodeDesc nd = {0};
+    nd.direction = CA_DIR_COLUMN;
+
+    Ca_Node *node = ca_node_add(ctx_top(), &nd);
+    if (!node) return;
+
+    tbl->node = node;
+    tbl->in_use = true;
+    tbl->column_count = desc->column_count;
+    if (tbl->column_count > 16) tbl->column_count = 16;
+    for (int i = 0; i < tbl->column_count; ++i)
+        tbl->column_widths[i] = desc->column_widths ? s(desc->column_widths[i]) : s(80.0f);
+
+    uint32_t dummy = 0;
+    apply_css(node, &node->desc, CA_ELEM_TABLE, desc->style, desc->id, &dummy);
+    ctx_push(node);
+}
+
+void ca_table_end(void)
+{
+    assert(g_ctx.active && g_ctx.depth > 0);
+    ctx_pop();
+}
+
+void ca_table_row_begin(const Ca_DivDesc *desc)
+{
+    assert(g_ctx.active);
+    Ca_NodeDesc nd = div_to_nd(desc);
+    nd.direction = CA_DIR_ROW;
+    Ca_Node *node = add_container(ctx_top(), &nd);
+    assert(node);
+    uint32_t dummy = 0;
+    apply_css(node, &node->desc, CA_ELEM_TABLE_ROW,
+              desc ? desc->style : NULL, desc ? desc->id : NULL, &dummy);
+
+    /* Apply column widths from the table ancestor */
+    Ca_Node *p = node->parent;
+    while (p) {
+        if (p->elem_type == CA_ELEM_TABLE) break;
+        p = p->parent;
+    }
+
+    ctx_push(node);
+}
+
+void ca_table_row_end(void)
+{
+    assert(g_ctx.active && g_ctx.depth > 0);
+    ctx_pop();
+}
+
+void ca_table_cell(const Ca_TextDesc *desc)
+{
+    assert(g_ctx.active && desc);
+
+    /* Find the table ancestor and look up column width */
+    Ca_Node *row = ctx_top();
+    Ca_Node *tbl_node = row->parent;
+    float cell_w = s(80.0f);
+    if (tbl_node && tbl_node->elem_type == CA_ELEM_TABLE) {
+        /* Find this table's pool entry to get column widths */
+        Ca_Window *win = g_ctx.window;
+        for (uint32_t i = 0; i < CA_MAX_TABLES_PER_WINDOW; ++i) {
+            Ca_Table *t = &win->table_pool[i];
+            if (t->in_use && t->node == tbl_node) {
+                int col = (int)row->child_count;
+                if (col < t->column_count) cell_w = t->column_widths[col];
+                break;
+            }
+        }
+    }
+
+    Ca_Label *lbl = alloc_label(g_ctx.window);
+    if (!lbl) return;
+
+    Ca_NodeDesc nd = {0};
+    nd.width = cell_w;
+    nd.height = s(24.0f);
+    nd.padding_left = s(4.0f);
+    nd.padding_right = s(4.0f);
+
+    Ca_Node *node = ca_node_add(ctx_top(), &nd);
+    if (!node) return;
+
+    lbl->node = node;
+    lbl->in_use = true;
+    lbl->color = desc->color;
+    if (desc->text) snprintf(lbl->text, CA_LABEL_TEXT_MAX, "%s", desc->text);
+
+    apply_css(node, &node->desc, CA_ELEM_TABLE_CELL, desc->style, desc->id, &lbl->color);
+}
+
+/* ============================================================
+   PUBLIC — Tooltip (attach to previously created element)
+   ============================================================ */
+
+void ca_tooltip(const Ca_TooltipDesc *desc)
+{
+    assert(g_ctx.active && desc);
+    Ca_Tooltip *tt = alloc_tooltip(g_ctx.window);
+    if (!tt) return;
+
+    /* Attach to the last child of the current parent (the element just created) */
+    Ca_Node *parent = ctx_top();
+    if (parent->child_count == 0) return;
+    Ca_Node *target = parent->children[parent->child_count - 1];
+
+    tt->node = target;
+    tt->in_use = true;
+    if (desc->text) snprintf(tt->text, CA_LABEL_TEXT_MAX, "%s", desc->text);
+    else tt->text[0] = '\0';
+}
+
+/* ============================================================
+   PUBLIC — Context menu (attach to previously created element)
+   ============================================================ */
+
+void ca_context_menu(const Ca_CtxMenuDesc *desc)
+{
+    assert(g_ctx.active && desc);
+    Ca_CtxMenu *cm = alloc_ctxmenu(g_ctx.window);
+    if (!cm) return;
+
+    Ca_Node *parent = ctx_top();
+    if (parent->child_count == 0) return;
+    Ca_Node *target = parent->children[parent->child_count - 1];
+
+    cm->node = target;
+    cm->in_use = true;
+    cm->open = false;
+    cm->item_count = desc->item_count;
+    if (cm->item_count > CA_MAX_CTXMENU_ITEMS)
+        cm->item_count = CA_MAX_CTXMENU_ITEMS;
+    for (int i = 0; i < cm->item_count; ++i) {
+        if (desc->items[i])
+            snprintf(cm->items[i], CA_OPTION_TEXT_MAX, "%s", desc->items[i]);
+    }
+    cm->on_select = desc->on_select;
+    cm->select_data = desc->select_data;
+}
+
+/* ============================================================
+   PUBLIC — Modal / Dialog
+   ============================================================ */
+
+void ca_modal_begin(const Ca_ModalDesc *desc)
+{
+    assert(g_ctx.active && desc);
+    Ca_Modal *m = alloc_modal(g_ctx.window);
+    if (!m) return;
+
+    Ca_NodeDesc nd = {0};
+    /* The modal takes full parent size, overlay renders in paint */
+    nd.hidden = !desc->visible;
+
+    Ca_Node *node = ca_node_add(ctx_top(), &nd);
+    if (!node) return;
+
+    m->node = node;
+    m->in_use = true;
+    m->visible = desc->visible;
+    m->overlay_color = desc->overlay_color
+        ? desc->overlay_color
+        : ca_color(0.0f, 0.0f, 0.0f, 0.5f);
+
+    uint32_t dummy = 0;
+    apply_css(node, &node->desc, CA_ELEM_MODAL, desc->style, desc->id, &dummy);
+    ctx_push(node);
+}
+
+void ca_modal_end(void)
+{
+    assert(g_ctx.active && g_ctx.depth > 0);
+    ctx_pop();
+}
+
+/* ============================================================
    INPUT PASS — hit-test, focus, keyboard
    ============================================================ */
 
@@ -944,6 +1578,214 @@ void ca_widget_input_pass(Ca_Window *win)
                 if (!btn->in_use || !btn->on_click || !btn->node) continue;
                 if (point_in_node(btn->node, mx, my))
                     btn->on_click(btn, btn->click_data);
+            }
+        }
+
+        /* Checkbox toggle */
+        if (win->checkbox_pool) {
+            for (uint32_t i = 0; i < CA_MAX_CHECKBOXES_PER_WINDOW; ++i) {
+                Ca_Checkbox *cb = &win->checkbox_pool[i];
+                if (!cb->in_use || !cb->node) continue;
+                if (point_in_node(cb->node, mx, my)) {
+                    cb->checked = !cb->checked;
+                    cb->node->dirty |= CA_DIRTY_CONTENT;
+                    if (cb->on_change) cb->on_change(cb, cb->change_data);
+                }
+            }
+        }
+
+        /* Radio select */
+        if (win->radio_pool) {
+            for (uint32_t i = 0; i < CA_MAX_RADIOS_PER_WINDOW; ++i) {
+                Ca_Radio *r = &win->radio_pool[i];
+                if (!r->in_use || !r->node) continue;
+                if (point_in_node(r->node, mx, my)) {
+                    /* Deselect all radios in the same group */
+                    for (uint32_t j = 0; j < CA_MAX_RADIOS_PER_WINDOW; ++j) {
+                        Ca_Radio *o = &win->radio_pool[j];
+                        if (o->in_use && o->group == r->group && o->value) {
+                            o->value = 0;
+                            o->node->dirty |= CA_DIRTY_CONTENT;
+                        }
+                    }
+                    r->value = 1;
+                    r->node->dirty |= CA_DIRTY_CONTENT;
+                    if (r->on_change) r->on_change((Ca_Checkbox*)r, r->change_data);
+                }
+            }
+        }
+
+        /* Toggle */
+        if (win->toggle_pool) {
+            for (uint32_t i = 0; i < CA_MAX_TOGGLES_PER_WINDOW; ++i) {
+                Ca_Toggle *t = &win->toggle_pool[i];
+                if (!t->in_use || !t->node) continue;
+                if (point_in_node(t->node, mx, my)) {
+                    t->on = !t->on;
+                    t->node->dirty |= CA_DIRTY_CONTENT;
+                    if (t->on_change) t->on_change(t, t->change_data);
+                }
+            }
+        }
+
+        /* Select dropdown — toggle open/close, or pick option */
+        if (win->select_pool) {
+            bool select_handled = false;
+            for (uint32_t i = 0; i < CA_MAX_SELECTS_PER_WINDOW; ++i) {
+                Ca_Select *sel = &win->select_pool[i];
+                if (!sel->in_use || !sel->node) continue;
+                if (sel->open) {
+                    /* Check if clicked on a dropdown option */
+                    float opt_y = sel->node->y + sel->node->h;
+                    float opt_h = sel->node->h;
+                    for (int oi = 0; oi < sel->option_count; ++oi) {
+                        float oy = opt_y + opt_h * (float)oi;
+                        if (mx >= sel->node->x && mx <= sel->node->x + sel->node->w &&
+                            my >= oy && my <= oy + opt_h) {
+                            sel->selected = oi;
+                            sel->open = false;
+                            sel->node->dirty |= CA_DIRTY_CONTENT;
+                            if (sel->on_change) sel->on_change(sel, sel->change_data);
+                            select_handled = true;
+                            break;
+                        }
+                    }
+                    if (!select_handled) {
+                        /* Click anywhere else closes the dropdown */
+                        sel->open = false;
+                        sel->node->dirty |= CA_DIRTY_CONTENT;
+                        select_handled = true;
+                    }
+                } else if (point_in_node(sel->node, mx, my)) {
+                    sel->open = true;
+                    sel->node->dirty |= CA_DIRTY_CONTENT;
+                    select_handled = true;
+                }
+            }
+        }
+
+        /* Tab bar clicks */
+        if (win->tabbar_pool) {
+            for (uint32_t i = 0; i < CA_MAX_TABBARS_PER_WINDOW; ++i) {
+                Ca_TabBar *tb = &win->tabbar_pool[i];
+                if (!tb->in_use || !tb->node) continue;
+                for (int ti = 0; ti < tb->count; ++ti) {
+                    if (!tb->tab_nodes[ti]) continue;
+                    if (point_in_node(tb->tab_nodes[ti], mx, my)) {
+                        if (tb->active != ti) {
+                            /* Update backgrounds */
+                            if (tb->active >= 0 && tb->active < tb->count && tb->tab_nodes[tb->active])
+                                tb->tab_nodes[tb->active]->desc.background = ca_color(0.15f, 0.15f, 0.2f, 1.0f);
+                            tb->active = ti;
+                            tb->tab_nodes[ti]->desc.background = ca_color(0.3f, 0.3f, 0.4f, 1.0f);
+                            tb->tab_nodes[ti]->dirty |= CA_DIRTY_CONTENT;
+                            if (tb->on_change) tb->on_change(tb, tb->change_data);
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+
+        /* Tree node expand/collapse */
+        if (win->treenode_pool) {
+            for (uint32_t i = 0; i < CA_MAX_TREENODES_PER_WINDOW; ++i) {
+                Ca_TreeNode *tn = &win->treenode_pool[i];
+                if (!tn->in_use || !tn->node) continue;
+                /* Click on the first child (header row) toggles */
+                if (tn->node->child_count > 0) {
+                    Ca_Node *hdr = tn->node->children[0];
+                    if (point_in_node(hdr, mx, my)) {
+                        tn->expanded = !tn->expanded;
+                        /* Hide/show children after the header */
+                        for (uint32_t ci = 1; ci < tn->node->child_count; ++ci) {
+                            tn->node->children[ci]->desc.hidden = !tn->expanded;
+                            tn->node->children[ci]->dirty |= CA_DIRTY_LAYOUT | CA_DIRTY_CONTENT;
+                        }
+                        tn->node->dirty |= CA_DIRTY_LAYOUT | CA_DIRTY_CONTENT;
+                        if (tn->on_toggle) tn->on_toggle(tn, tn->toggle_data);
+                    }
+                }
+            }
+        }
+
+        /* Context menu — right-click detection is below */
+    }
+
+    /* --- Right-click for context menus --- */
+    if (win->mouse_buttons[1] && win->ctxmenu_pool) {
+        /* Check mouse_buttons[1] (right button) just became pressed */
+        static bool prev_right = false;
+        bool right_now = win->mouse_buttons[1];
+        if (right_now && !prev_right) {
+            for (uint32_t i = 0; i < CA_MAX_CTXMENUS_PER_WINDOW; ++i) {
+                Ca_CtxMenu *cm = &win->ctxmenu_pool[i];
+                if (!cm->in_use || !cm->node) continue;
+                if (point_in_node(cm->node, mx, my)) {
+                    cm->open = true;
+                    cm->open_x = mx;
+                    cm->open_y = my;
+                    cm->node->dirty |= CA_DIRTY_CONTENT;
+                    break;
+                }
+            }
+        }
+        prev_right = right_now;
+    }
+
+    /* --- Slider drag handling --- */
+    if (win->slider_pool) {
+        bool left_down = win->mouse_buttons[0];
+        if (left_down && !win->drag_node) {
+            /* Check if we're starting a drag on a slider */
+            for (uint32_t i = 0; i < CA_MAX_SLIDERS_PER_WINDOW; ++i) {
+                Ca_Slider *sl = &win->slider_pool[i];
+                if (!sl->in_use || !sl->node) continue;
+                if (point_in_node(sl->node, mx, my)) {
+                    win->drag_node = sl->node;
+                    win->drag_start_x = mx;
+                    win->drag_start_value = sl->value;
+                    break;
+                }
+            }
+        }
+        if (win->drag_node && left_down) {
+            /* Update slider value from drag */
+            for (uint32_t i = 0; i < CA_MAX_SLIDERS_PER_WINDOW; ++i) {
+                Ca_Slider *sl = &win->slider_pool[i];
+                if (!sl->in_use || sl->node != win->drag_node) continue;
+                float range = sl->max_val - sl->min_val;
+                float pct = (mx - sl->node->x) / sl->node->w;
+                if (pct < 0.0f) pct = 0.0f;
+                if (pct > 1.0f) pct = 1.0f;
+                float new_val = sl->min_val + pct * range;
+                if (new_val != sl->value) {
+                    sl->value = new_val;
+                    sl->node->dirty |= CA_DIRTY_CONTENT;
+                    if (sl->on_change) sl->on_change(sl, sl->change_data);
+                }
+                break;
+            }
+        }
+        if (!left_down && win->drag_node) {
+            win->drag_node = NULL;
+        }
+    }
+
+    /* --- Hover tracking --- */
+    win->hovered_node = NULL;
+    if (win->node_pool) {
+        /* Find the smallest node under the cursor (most specific hit) */
+        float best_area = 1e18f;
+        for (uint32_t i = 0; i < CA_MAX_NODES_PER_WINDOW; ++i) {
+            Ca_Node *n = &win->node_pool[i];
+            if (!n->in_use || n->desc.hidden) continue;
+            if (point_in_node(n, mx, my)) {
+                float area = n->w * n->h;
+                if (area < best_area) {
+                    best_area = area;
+                    win->hovered_node = n;
+                }
             }
         }
     }

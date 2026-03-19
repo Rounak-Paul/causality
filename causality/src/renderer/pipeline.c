@@ -18,40 +18,64 @@
 /* Vertex shader:
      Generates a 2-triangle quad from gl_VertexIndex (0-5).
      Converts pixel-space coordinates to NDC using the viewport size
-     passed in push constants.                                        */
+     passed in push constants.  Outputs local position, size, and
+     corner radius to the fragment shader for SDF evaluation.          */
 static const char *VERT_GLSL =
     "#version 450\n"
     "\n"
     "layout(push_constant) uniform PC {\n"
-    "    vec2 pos;\n"
-    "    vec2 size;\n"
-    "    vec4 color;\n"
-    "    vec2 viewport;\n"
+    "    vec2  pos;\n"
+    "    vec2  size;\n"
+    "    vec4  color;\n"
+    "    vec2  viewport;\n"
+    "    float corner_radius;\n"
     "} pc;\n"
     "\n"
-    "layout(location = 0) out vec4 v_color;\n"
+    "layout(location = 0) out vec4  v_color;\n"
+    "layout(location = 1) out vec2  v_local;\n"
+    "layout(location = 2) out vec2  v_size;\n"
+    "layout(location = 3) out float v_radius;\n"
     "\n"
     "void main() {\n"
     "    const vec2 offsets[6] = vec2[6](\n"
     "        vec2(0.0, 0.0), vec2(1.0, 0.0), vec2(0.0, 1.0),\n"
     "        vec2(1.0, 0.0), vec2(1.0, 1.0), vec2(0.0, 1.0)\n"
     "    );\n"
-    "    vec2 pixel = pc.pos + offsets[gl_VertexIndex] * pc.size;\n"
+    "    vec2 off   = offsets[gl_VertexIndex];\n"
+    "    vec2 pixel = pc.pos + off * pc.size;\n"
     "    vec2 ndc   = (pixel / pc.viewport) * 2.0 - 1.0;\n"
     "    gl_Position = vec4(ndc, 0.0, 1.0);\n"
-    "    v_color = pc.color;\n"
+    "    v_color  = pc.color;\n"
+    "    v_local  = off * pc.size;\n"
+    "    v_size   = pc.size;\n"
+    "    v_radius = pc.corner_radius;\n"
     "}\n";
 
-/* Fragment shader: plain colour output.
-   Corner-radius SDF can be added here later.                         */
+/* Fragment shader: rounded-rectangle SDF with anti-aliased edges.
+   When corner_radius is 0, falls back to plain colour output.         */
 static const char *FRAG_GLSL =
     "#version 450\n"
     "\n"
-    "layout(location = 0) in  vec4 v_color;\n"
-    "layout(location = 0) out vec4 out_color;\n"
+    "layout(location = 0) in  vec4  v_color;\n"
+    "layout(location = 1) in  vec2  v_local;\n"
+    "layout(location = 2) in  vec2  v_size;\n"
+    "layout(location = 3) in  float v_radius;\n"
+    "layout(location = 0) out vec4  out_color;\n"
+    "\n"
+    "float roundedBoxSDF(vec2 p, vec2 b, float r) {\n"
+    "    vec2 d = abs(p) - b + vec2(r);\n"
+    "    return length(max(d, vec2(0.0))) + min(max(d.x, d.y), 0.0) - r;\n"
+    "}\n"
     "\n"
     "void main() {\n"
-    "    out_color = v_color;\n"
+    "    if (v_radius > 0.0) {\n"
+    "        vec2 p = v_local - v_size * 0.5;\n"
+    "        float d = roundedBoxSDF(p, v_size * 0.5, v_radius);\n"
+    "        float aa = 1.0 - smoothstep(-0.5, 0.5, d);\n"
+    "        out_color = vec4(v_color.rgb, v_color.a * aa);\n"
+    "    } else {\n"
+    "        out_color = v_color;\n"
+    "    }\n"
     "}\n";
 
 /* ======================================================

@@ -5,6 +5,11 @@
 /* Forward declarations */
 static void on_toggle_click(Ca_Button *btn, void *user_data);
 static void on_popup_click(Ca_Button *btn, void *user_data);
+static void on_check_change(Ca_Checkbox *cb, void *user_data);
+static void on_slider_change(Ca_Slider *sl, void *user_data);
+static void on_toggle_sw_change(Ca_Toggle *tg, void *user_data);
+static void on_select_change(Ca_Select *sel, void *user_data);
+static void on_tab_change(Ca_TabBar *tb, void *user_data);
 
 /* ---- CSS Stylesheet ---- */
 static const char *g_css =
@@ -170,6 +175,12 @@ static void *worker_fn(void *data)
 static int       g_toggle       = 0;
 static Ca_Label *g_status_label = NULL;
 static Ca_Label *g_input_echo   = NULL;
+static Ca_Label *g_slider_label = NULL;
+static Ca_Label *g_check_label  = NULL;
+static Ca_Label *g_toggle_label = NULL;
+static Ca_Label *g_select_label = NULL;
+static Ca_Label *g_tab_label    = NULL;
+static float     g_progress_val = 0.35f;
 
 /* ---- Button callbacks ---- */
 
@@ -213,6 +224,42 @@ static void on_name_change(Ca_TextInput *input, void *user_data)
 }
 
 /* ---- Popup component ---- */
+
+static void on_check_change(Ca_Checkbox *cb, void *user_data)
+{
+    (void)user_data;
+    ca_label_set_text(g_check_label, ca_checkbox_get(cb) ? "Checked!" : "Unchecked");
+}
+
+static void on_slider_change(Ca_Slider *sl, void *user_data)
+{
+    (void)user_data;
+    char buf[64];
+    snprintf(buf, sizeof(buf), "Value: %.1f", ca_slider_get(sl));
+    ca_label_set_text(g_slider_label, buf);
+}
+
+static void on_toggle_sw_change(Ca_Toggle *tg, void *user_data)
+{
+    (void)user_data;
+    ca_label_set_text(g_toggle_label, ca_toggle_get(tg) ? "ON" : "OFF");
+}
+
+static void on_select_change(Ca_Select *sel, void *user_data)
+{
+    (void)user_data;
+    char buf[128];
+    snprintf(buf, sizeof(buf), "Selected: index %d", ca_select_get(sel));
+    ca_label_set_text(g_select_label, buf);
+}
+
+static void on_tab_change(Ca_TabBar *tb, void *user_data)
+{
+    (void)user_data;
+    char buf[64];
+    snprintf(buf, sizeof(buf), "Active tab: %d", ca_tabs_active(tb));
+    ca_label_set_text(g_tab_label, buf);
+}
 
 static void on_close_click(Ca_Button *btn, void *user_data)
 {
@@ -488,6 +535,172 @@ int main(void)
         ca_spacer(&(Ca_SpacerDesc){ .height = 4 });
         ca_text(&(Ca_TextDesc){
             .text  = "Press Tab to cycle focus between buttons and inputs.",
+            .style = "muted",
+        });
+
+        ca_hr(NULL);
+
+        /* ---- 9. Checkbox & Radio ---- */
+        ca_h3(&(Ca_TextDesc){ .text = "Checkbox & Radio", .style = "section" });
+
+        ca_div_begin(&(Ca_DivDesc){ .direction = CA_HORIZONTAL, .gap = 16 });
+            ca_checkbox(&(Ca_CheckboxDesc){
+                .text = "Enable feature",
+                .checked = true,
+                .on_change = on_check_change,
+            });
+            ca_checkbox(&(Ca_CheckboxDesc){
+                .text = "Dark mode",
+            });
+        ca_div_end();
+        g_check_label = ca_text(&(Ca_TextDesc){ .text = "Checked!", .style = "body-text" });
+
+        ca_spacer(&(Ca_SpacerDesc){ .height = 4 });
+
+        ca_div_begin(&(Ca_DivDesc){ .direction = CA_HORIZONTAL, .gap = 12 });
+            ca_radio(&(Ca_RadioDesc){ .text = "Small",  .group = 1, .value = 1 });
+            ca_radio(&(Ca_RadioDesc){ .text = "Medium", .group = 1 });
+            ca_radio(&(Ca_RadioDesc){ .text = "Large",  .group = 1 });
+        ca_div_end();
+
+        ca_hr(NULL);
+
+        /* ---- 10. Slider ---- */
+        ca_h3(&(Ca_TextDesc){ .text = "Slider", .style = "section" });
+
+        ca_slider(&(Ca_SliderDesc){
+            .min = 0, .max = 100, .value = 42,
+            .width = 240,
+            .on_change = on_slider_change,
+        });
+        g_slider_label = ca_text(&(Ca_TextDesc){ .text = "Value: 42.0", .style = "body-text" });
+
+        ca_hr(NULL);
+
+        /* ---- 11. Toggle & Progress ---- */
+        ca_h3(&(Ca_TextDesc){ .text = "Toggle & Progress", .style = "section" });
+
+        ca_div_begin(&(Ca_DivDesc){ .direction = CA_HORIZONTAL, .gap = 12 });
+            ca_toggle(&(Ca_ToggleDesc){
+                .on = true,
+                .on_change = on_toggle_sw_change,
+            });
+            g_toggle_label = ca_text(&(Ca_TextDesc){ .text = "ON", .style = "body-text" });
+        ca_div_end();
+
+        ca_spacer(&(Ca_SpacerDesc){ .height = 6 });
+        ca_text(&(Ca_TextDesc){ .text = "Progress:", .style = "body-text" });
+        ca_progress(&(Ca_ProgressDesc){
+            .value = g_progress_val,
+            .width = 240,
+            .height = 8,
+        });
+
+        ca_hr(NULL);
+
+        /* ---- 12. Select / Dropdown ---- */
+        ca_h3(&(Ca_TextDesc){ .text = "Select / Dropdown", .style = "section" });
+
+        {
+            static const char *opts[] = { "Apple", "Banana", "Cherry", "Date" };
+            ca_select(&(Ca_SelectDesc){
+                .options = opts,
+                .option_count = 4,
+                .selected = 0,
+                .width = 160,
+                .on_change = on_select_change,
+            });
+        }
+        g_select_label = ca_text(&(Ca_TextDesc){ .text = "Selected: index 0", .style = "body-text" });
+
+        ca_hr(NULL);
+
+        /* ---- 13. Tab Bar ---- */
+        ca_h3(&(Ca_TextDesc){ .text = "Tab Bar", .style = "section" });
+
+        {
+            static const char *tabs[] = { "General", "Settings", "About" };
+            ca_tabs(&(Ca_TabBarDesc){
+                .labels = tabs,
+                .count = 3,
+                .active = 0,
+                .on_change = on_tab_change,
+            });
+        }
+        g_tab_label = ca_text(&(Ca_TextDesc){ .text = "Active tab: 0", .style = "body-text" });
+
+        ca_hr(NULL);
+
+        /* ---- 14. Tree View ---- */
+        ca_h3(&(Ca_TextDesc){ .text = "Tree View", .style = "section" });
+
+        ca_tree_begin(&(Ca_DivDesc){ .gap = 1 });
+            ca_tree_node_begin(&(Ca_TreeNodeDesc){ .text = "Root", .expanded = true });
+                ca_tree_node_begin(&(Ca_TreeNodeDesc){ .text = "Child A", .expanded = false });
+                    ca_tree_node_begin(&(Ca_TreeNodeDesc){ .text = "Leaf A.1", .expanded = false });
+                    ca_tree_node_end();
+                ca_tree_node_end();
+                ca_tree_node_begin(&(Ca_TreeNodeDesc){ .text = "Child B", .expanded = true });
+                    ca_tree_node_begin(&(Ca_TreeNodeDesc){ .text = "Leaf B.1", .expanded = false });
+                    ca_tree_node_end();
+                    ca_tree_node_begin(&(Ca_TreeNodeDesc){ .text = "Leaf B.2", .expanded = false });
+                    ca_tree_node_end();
+                ca_tree_node_end();
+            ca_tree_node_end();
+        ca_tree_end();
+
+        ca_hr(NULL);
+
+        /* ---- 15. Table ---- */
+        ca_h3(&(Ca_TextDesc){ .text = "Table", .style = "section" });
+
+        {
+            static const float col_w[] = { 80, 120, 60 };
+            ca_table_begin(&(Ca_TableDesc){
+                .column_count = 3,
+                .column_widths = col_w,
+            });
+                /* Header */
+                ca_table_row_begin(&(Ca_DivDesc){
+                    .background = ca_color(0.2f, 0.2f, 0.28f, 1.0f),
+                });
+                    ca_table_cell(&(Ca_TextDesc){ .text = "Name",  .color = ca_color(0.8f,0.85f,1,1) });
+                    ca_table_cell(&(Ca_TextDesc){ .text = "Email", .color = ca_color(0.8f,0.85f,1,1) });
+                    ca_table_cell(&(Ca_TextDesc){ .text = "Age",   .color = ca_color(0.8f,0.85f,1,1) });
+                ca_table_row_end();
+                /* Rows */
+                ca_table_row_begin(NULL);
+                    ca_table_cell(&(Ca_TextDesc){ .text = "Alice", .style = "body-text" });
+                    ca_table_cell(&(Ca_TextDesc){ .text = "alice@ex.com", .style = "body-text" });
+                    ca_table_cell(&(Ca_TextDesc){ .text = "28",    .style = "body-text" });
+                ca_table_row_end();
+                ca_table_row_begin(NULL);
+                    ca_table_cell(&(Ca_TextDesc){ .text = "Bob",   .style = "body-text" });
+                    ca_table_cell(&(Ca_TextDesc){ .text = "bob@ex.com", .style = "body-text" });
+                    ca_table_cell(&(Ca_TextDesc){ .text = "34",    .style = "body-text" });
+                ca_table_row_end();
+            ca_table_end();
+        }
+
+        ca_hr(NULL);
+
+        /* ---- 16. Tooltip ---- */
+        ca_h3(&(Ca_TextDesc){ .text = "Tooltip", .style = "section" });
+
+        ca_btn(&(Ca_BtnDesc){
+            .text = "Hover me",
+            .style = "btn-accent",
+        });
+        ca_tooltip(&(Ca_TooltipDesc){
+            .text = "This is a tooltip!",
+        });
+
+        ca_hr(NULL);
+
+        /* ---- 17. Modal / Dialog ---- */
+        ca_h3(&(Ca_TextDesc){ .text = "Modal (hidden by default)", .style = "section" });
+        ca_text(&(Ca_TextDesc){
+            .text  = "Modals render an overlay - set visible=true to show.",
             .style = "muted",
         });
 

@@ -10,20 +10,36 @@
    ============================================================ */
 
 static const char *s_elem_names[CA_ELEM_COUNT] = {
-    [CA_ELEM_DIV]     = "div",
-    [CA_ELEM_TEXT]    = "text",
-    [CA_ELEM_BUTTON]  = "button",
-    [CA_ELEM_INPUT]   = "input",
-    [CA_ELEM_H1]      = "h1",
-    [CA_ELEM_H2]      = "h2",
-    [CA_ELEM_H3]      = "h3",
-    [CA_ELEM_H4]      = "h4",
-    [CA_ELEM_H5]      = "h5",
-    [CA_ELEM_H6]      = "h6",
-    [CA_ELEM_HR]      = "hr",
-    [CA_ELEM_SPACER]  = "spacer",
-    [CA_ELEM_LIST]    = "list",
-    [CA_ELEM_LI]      = "li",
+    [CA_ELEM_DIV]       = "div",
+    [CA_ELEM_TEXT]      = "text",
+    [CA_ELEM_BUTTON]    = "button",
+    [CA_ELEM_INPUT]     = "input",
+    [CA_ELEM_H1]        = "h1",
+    [CA_ELEM_H2]        = "h2",
+    [CA_ELEM_H3]        = "h3",
+    [CA_ELEM_H4]        = "h4",
+    [CA_ELEM_H5]        = "h5",
+    [CA_ELEM_H6]        = "h6",
+    [CA_ELEM_HR]        = "hr",
+    [CA_ELEM_SPACER]    = "spacer",
+    [CA_ELEM_LIST]      = "list",
+    [CA_ELEM_LI]        = "li",
+    [CA_ELEM_CHECKBOX]  = "checkbox",
+    [CA_ELEM_RADIO]     = "radio",
+    [CA_ELEM_SLIDER]    = "slider",
+    [CA_ELEM_TOGGLE]    = "toggle",
+    [CA_ELEM_PROGRESS]  = "progress",
+    [CA_ELEM_SELECT]    = "select",
+    [CA_ELEM_TABBAR]    = "tabbar",
+    [CA_ELEM_TAB]       = "tab",
+    [CA_ELEM_TREE]      = "tree",
+    [CA_ELEM_TREENODE]  = "treenode",
+    [CA_ELEM_TABLE]     = "table",
+    [CA_ELEM_TABLE_ROW] = "tr",
+    [CA_ELEM_TABLE_CELL]= "td",
+    [CA_ELEM_TOOLTIP]   = "tooltip",
+    [CA_ELEM_CTXMENU]   = "contextmenu",
+    [CA_ELEM_MODAL]     = "modal",
 };
 
 const char *ca_elem_type_name(Ca_ElementType type)
@@ -354,6 +370,16 @@ void ca_style_apply_to_node(const Ca_ResolvedStyle *style,
     if (nd->padding_right  <= 0.0f && STYLE_SET(CA_CSS_PROP_PADDING_RIGHT))  nd->padding_right  = style->padding[1];
     if (nd->padding_bottom <= 0.0f && STYLE_SET(CA_CSS_PROP_PADDING_BOTTOM)) nd->padding_bottom = style->padding[2];
     if (nd->padding_left   <= 0.0f && STYLE_SET(CA_CSS_PROP_PADDING_LEFT))   nd->padding_left   = style->padding[3];
+
+    /* Margin — CSS fills if zero */
+    if (nd->margin_top    <= 0.0f && STYLE_SET(CA_CSS_PROP_MARGIN_TOP))    nd->margin_top    = style->margin[0];
+    if (nd->margin_right  <= 0.0f && STYLE_SET(CA_CSS_PROP_MARGIN_RIGHT))  nd->margin_right  = style->margin[1];
+    if (nd->margin_bottom <= 0.0f && STYLE_SET(CA_CSS_PROP_MARGIN_BOTTOM)) nd->margin_bottom = style->margin[2];
+    if (nd->margin_left   <= 0.0f && STYLE_SET(CA_CSS_PROP_MARGIN_LEFT))   nd->margin_left   = style->margin[3];
+
+    /* Opacity — 0 means not set, default is 1.0 */
+    if (nd->opacity <= 0.0f && STYLE_SET(CA_CSS_PROP_OPACITY))
+        nd->opacity = style->opacity;
 
     /* Gap */
     if (nd->gap <= 0.0f && STYLE_SET(CA_CSS_PROP_GAP)) nd->gap = style->gap;

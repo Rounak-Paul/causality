@@ -12,8 +12,22 @@ void ca_node_system_init(Ca_Window *win)
     win->label_pool     = (Ca_Label *)calloc(CA_MAX_LABELS_PER_WINDOW,  sizeof(Ca_Label));
     win->button_pool    = (Ca_Button *)calloc(CA_MAX_BUTTONS_PER_WINDOW, sizeof(Ca_Button));
     win->input_pool     = (Ca_TextInput *)calloc(CA_MAX_INPUTS_PER_WINDOW, sizeof(Ca_TextInput));
+    win->checkbox_pool  = (Ca_Checkbox *)calloc(CA_MAX_CHECKBOXES_PER_WINDOW, sizeof(Ca_Checkbox));
+    win->radio_pool     = (Ca_Radio *)calloc(CA_MAX_RADIOS_PER_WINDOW, sizeof(Ca_Radio));
+    win->slider_pool    = (Ca_Slider *)calloc(CA_MAX_SLIDERS_PER_WINDOW, sizeof(Ca_Slider));
+    win->toggle_pool    = (Ca_Toggle *)calloc(CA_MAX_TOGGLES_PER_WINDOW, sizeof(Ca_Toggle));
+    win->progress_pool  = (Ca_Progress *)calloc(CA_MAX_PROGRESS_PER_WINDOW, sizeof(Ca_Progress));
+    win->select_pool    = (Ca_Select *)calloc(CA_MAX_SELECTS_PER_WINDOW, sizeof(Ca_Select));
+    win->tabbar_pool    = (Ca_TabBar *)calloc(CA_MAX_TABBARS_PER_WINDOW, sizeof(Ca_TabBar));
+    win->treenode_pool  = (Ca_TreeNode *)calloc(CA_MAX_TREENODES_PER_WINDOW, sizeof(Ca_TreeNode));
+    win->table_pool     = (Ca_Table *)calloc(CA_MAX_TABLES_PER_WINDOW, sizeof(Ca_Table));
+    win->tooltip_pool   = (Ca_Tooltip *)calloc(CA_MAX_TOOLTIPS_PER_WINDOW, sizeof(Ca_Tooltip));
+    win->ctxmenu_pool   = (Ca_CtxMenu *)calloc(CA_MAX_CTXMENUS_PER_WINDOW, sizeof(Ca_CtxMenu));
+    win->modal_pool     = (Ca_Modal *)calloc(CA_MAX_MODALS_PER_WINDOW, sizeof(Ca_Modal));
     win->root           = NULL;
     win->draw_cmd_count = 0;
+    win->hovered_node   = NULL;
+    win->drag_node      = NULL;
 
     /* Pre-set all draw_cmd_idx to -1 (0 is a valid slot index) */
     for (uint32_t i = 0; i < CA_MAX_NODES_PER_WINDOW; ++i)
@@ -27,11 +41,35 @@ void ca_node_system_shutdown(Ca_Window *win)
     free(win->label_pool);
     free(win->button_pool);
     free(win->input_pool);
+    free(win->checkbox_pool);
+    free(win->radio_pool);
+    free(win->slider_pool);
+    free(win->toggle_pool);
+    free(win->progress_pool);
+    free(win->select_pool);
+    free(win->tabbar_pool);
+    free(win->treenode_pool);
+    free(win->table_pool);
+    free(win->tooltip_pool);
+    free(win->ctxmenu_pool);
+    free(win->modal_pool);
     win->node_pool      = NULL;
     win->draw_cmds      = NULL;
     win->label_pool     = NULL;
     win->button_pool    = NULL;
     win->input_pool     = NULL;
+    win->checkbox_pool  = NULL;
+    win->radio_pool     = NULL;
+    win->slider_pool    = NULL;
+    win->toggle_pool    = NULL;
+    win->progress_pool  = NULL;
+    win->select_pool    = NULL;
+    win->tabbar_pool    = NULL;
+    win->treenode_pool  = NULL;
+    win->table_pool     = NULL;
+    win->tooltip_pool   = NULL;
+    win->ctxmenu_pool   = NULL;
+    win->modal_pool     = NULL;
     win->root           = NULL;
     win->draw_cmd_count = 0;
 }

@@ -295,95 +295,32 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
     float scale_y = (log_h > 0) ? (float)sc->extent.height / (float)log_h : 1.0f;
     VkRect2D full_scissor = { .offset = {0, 0}, .extent = sc->extent };
 
-    /* Draw each widget rect using the proper graphics pipeline.
-       Index 0 is the root background (already handled as the clear color).
-       Nodes with alpha == 0 (e.g. transparent label placeholder) are skipped. */
-    if (inst->rect_pipeline.pipeline != VK_NULL_HANDLE && win->draw_cmd_count > 1) {
-        vkCmdBindPipeline(f->cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                          inst->rect_pipeline.pipeline);
+    /* Rendering uses two phases so that overlay content (dropdowns, tooltips,
+       context menus, modals) always appears on top of all normal content.
+       Phase 0: non-overlay rects → non-overlay glyphs
+       Phase 1: overlay   rects → overlay   glyphs                         */
+    for (int phase = 0; phase < 2; ++phase) {
+        const bool want_overlay = (phase == 1);
 
-        VkViewport viewport = {
-            .x        = 0.0f, .y        = 0.0f,
-            .width    = (float)sc->extent.width,
-            .height   = (float)sc->extent.height,
-            .minDepth = 0.0f, .maxDepth = 1.0f,
-        };
-        vkCmdSetViewport(f->cmd, 0, 1, &viewport);
-        vkCmdSetScissor(f->cmd,  0, 1, &full_scissor);
-
-        for (uint32_t d = 1; d < win->draw_cmd_count; ++d) {
-            const Ca_DrawCmd *cmd = &win->draw_cmds[d];
-            if (!cmd->in_use || cmd->type != CA_DRAW_RECT || cmd->a < 0.004f)
-                continue;
-
-            /* Set scissor rect for overflow clipping */
-            if (cmd->has_clip) {
-                int32_t cx = (int32_t)(cmd->clip_x * scale_x);
-                int32_t cy = (int32_t)(cmd->clip_y * scale_y);
-                int32_t cw = (int32_t)(cmd->clip_w * scale_x);
-                int32_t ch = (int32_t)(cmd->clip_h * scale_y);
-                if (cx < 0) { cw += cx; cx = 0; }
-                if (cy < 0) { ch += cy; cy = 0; }
-                if (cw < 0) cw = 0;
-                if (ch < 0) ch = 0;
-                VkRect2D clip = { .offset = {cx, cy},
-                                  .extent = {(uint32_t)cw, (uint32_t)ch} };
-                vkCmdSetScissor(f->cmd, 0, 1, &clip);
-            } else {
-                vkCmdSetScissor(f->cmd, 0, 1, &full_scissor);
-            }
-
-            /* Viewport in logical pixels so NDC matches layout coordinates */
-            Ca_RectPushConst pc = {
-                .pos      = { cmd->x, cmd->y },
-                .size     = { cmd->w, cmd->h },
-                .color    = { cmd->r, cmd->g, cmd->b, cmd->a },
-                .viewport = { (float)log_w, (float)log_h },
-            };
-            vkCmdPushConstants(f->cmd, inst->rect_pipeline.layout,
-                               VK_SHADER_STAGE_VERTEX_BIT,
-                               0, sizeof(Ca_RectPushConst), &pc);
-            vkCmdDraw(f->cmd, 6, 1, 0, 0);
-        }
-    }
-
-    /* ---- Text glyphs ---- */
-    if (inst->text_pipeline.pipeline != VK_NULL_HANDLE &&
-        inst->font != NULL) {
-
-        /* Check whether any glyph commands are queued */
-        bool has_glyphs = false;
-        for (uint32_t d = 0; d < win->draw_cmd_count; ++d) {
-            if (win->draw_cmds[d].in_use &&
-                win->draw_cmds[d].type == CA_DRAW_GLYPH) {
-                has_glyphs = true;
-                break;
-            }
-        }
-
-        if (has_glyphs) {
+        /* ---- Rects ---- */
+        if (inst->rect_pipeline.pipeline != VK_NULL_HANDLE && win->draw_cmd_count > 1) {
             vkCmdBindPipeline(f->cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                              inst->text_pipeline.pipeline);
+                              inst->rect_pipeline.pipeline);
 
-            VkViewport vp = {
-                .x = 0.0f, .y = 0.0f,
-                .width  = (float)sc->extent.width,
-                .height = (float)sc->extent.height,
+            VkViewport viewport = {
+                .x        = 0.0f, .y        = 0.0f,
+                .width    = (float)sc->extent.width,
+                .height   = (float)sc->extent.height,
                 .minDepth = 0.0f, .maxDepth = 1.0f,
             };
-            vkCmdSetViewport(f->cmd, 0, 1, &vp);
+            vkCmdSetViewport(f->cmd, 0, 1, &viewport);
             vkCmdSetScissor(f->cmd,  0, 1, &full_scissor);
 
-            vkCmdBindDescriptorSets(f->cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                    inst->text_pipeline.layout,
-                                    0, 1, &inst->text_pipeline.desc_set,
-                                    0, NULL);
-
-            for (uint32_t d = 0; d < win->draw_cmd_count; ++d) {
+            for (uint32_t d = 1; d < win->draw_cmd_count; ++d) {
                 const Ca_DrawCmd *cmd = &win->draw_cmds[d];
-                if (!cmd->in_use || cmd->type != CA_DRAW_GLYPH ||
-                    cmd->a < 0.004f)
+                if (!cmd->in_use || cmd->type != CA_DRAW_RECT || cmd->a < 0.004f)
                     continue;
+                if (cmd->overlay != want_overlay) continue;
 
                 /* Set scissor rect for overflow clipping */
                 if (cmd->has_clip) {
@@ -402,20 +339,90 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
                     vkCmdSetScissor(f->cmd, 0, 1, &full_scissor);
                 }
 
-                Ca_TextPushConst pc = {
+                Ca_RectPushConst pc = {
                     .pos      = { cmd->x, cmd->y },
                     .size     = { cmd->w, cmd->h },
-                    .uv       = { cmd->u0, cmd->v0, cmd->u1, cmd->v1 },
                     .color    = { cmd->r, cmd->g, cmd->b, cmd->a },
                     .viewport = { (float)log_w, (float)log_h },
+                    .corner_radius = cmd->corner_radius,
                 };
-                vkCmdPushConstants(f->cmd, inst->text_pipeline.layout,
+                vkCmdPushConstants(f->cmd, inst->rect_pipeline.layout,
                                    VK_SHADER_STAGE_VERTEX_BIT,
-                                   0, sizeof(Ca_TextPushConst), &pc);
+                                   0, sizeof(Ca_RectPushConst), &pc);
                 vkCmdDraw(f->cmd, 6, 1, 0, 0);
             }
         }
-    }
+
+        /* ---- Text glyphs ---- */
+        if (inst->text_pipeline.pipeline != VK_NULL_HANDLE &&
+            inst->font != NULL) {
+
+            bool has_glyphs = false;
+            for (uint32_t d = 0; d < win->draw_cmd_count; ++d) {
+                if (win->draw_cmds[d].in_use &&
+                    win->draw_cmds[d].type == CA_DRAW_GLYPH &&
+                    win->draw_cmds[d].overlay == want_overlay) {
+                    has_glyphs = true;
+                    break;
+                }
+            }
+
+            if (has_glyphs) {
+                vkCmdBindPipeline(f->cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                  inst->text_pipeline.pipeline);
+
+                VkViewport vp = {
+                    .x = 0.0f, .y = 0.0f,
+                    .width  = (float)sc->extent.width,
+                    .height = (float)sc->extent.height,
+                    .minDepth = 0.0f, .maxDepth = 1.0f,
+                };
+                vkCmdSetViewport(f->cmd, 0, 1, &vp);
+                vkCmdSetScissor(f->cmd,  0, 1, &full_scissor);
+
+                vkCmdBindDescriptorSets(f->cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                        inst->text_pipeline.layout,
+                                        0, 1, &inst->text_pipeline.desc_set,
+                                        0, NULL);
+
+                for (uint32_t d = 0; d < win->draw_cmd_count; ++d) {
+                    const Ca_DrawCmd *cmd = &win->draw_cmds[d];
+                    if (!cmd->in_use || cmd->type != CA_DRAW_GLYPH ||
+                        cmd->a < 0.004f)
+                        continue;
+                    if (cmd->overlay != want_overlay) continue;
+
+                    if (cmd->has_clip) {
+                        int32_t cx = (int32_t)(cmd->clip_x * scale_x);
+                        int32_t cy = (int32_t)(cmd->clip_y * scale_y);
+                        int32_t cw = (int32_t)(cmd->clip_w * scale_x);
+                        int32_t ch = (int32_t)(cmd->clip_h * scale_y);
+                        if (cx < 0) { cw += cx; cx = 0; }
+                        if (cy < 0) { ch += cy; cy = 0; }
+                        if (cw < 0) cw = 0;
+                        if (ch < 0) ch = 0;
+                        VkRect2D clip = { .offset = {cx, cy},
+                                          .extent = {(uint32_t)cw, (uint32_t)ch} };
+                        vkCmdSetScissor(f->cmd, 0, 1, &clip);
+                    } else {
+                        vkCmdSetScissor(f->cmd, 0, 1, &full_scissor);
+                    }
+
+                    Ca_TextPushConst pc = {
+                        .pos      = { cmd->x, cmd->y },
+                        .size     = { cmd->w, cmd->h },
+                        .uv       = { cmd->u0, cmd->v0, cmd->u1, cmd->v1 },
+                        .color    = { cmd->r, cmd->g, cmd->b, cmd->a },
+                        .viewport = { (float)log_w, (float)log_h },
+                    };
+                    vkCmdPushConstants(f->cmd, inst->text_pipeline.layout,
+                                       VK_SHADER_STAGE_VERTEX_BIT,
+                                       0, sizeof(Ca_TextPushConst), &pc);
+                    vkCmdDraw(f->cmd, 6, 1, 0, 0);
+                }
+            }
+        }
+    } /* end phase loop */
 
     vkCmdEndRendering(f->cmd);
 
