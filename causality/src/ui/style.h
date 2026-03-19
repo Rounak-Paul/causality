@@ -12,6 +12,7 @@ typedef enum {
     CA_ELEM_DIV = 0,
     CA_ELEM_TEXT,
     CA_ELEM_BUTTON,
+    CA_ELEM_INPUT,
     CA_ELEM_H1, CA_ELEM_H2, CA_ELEM_H3,
     CA_ELEM_H4, CA_ELEM_H5, CA_ELEM_H6,
     CA_ELEM_HR,
@@ -58,6 +59,10 @@ typedef struct {
     int      align_items;
     int      justify_content;
     int      overflow_x, overflow_y;  /* Ca_Overflow */
+
+    /* Transition */
+    float    transition_duration;     /* seconds */
+    uint64_t transition_props;        /* bitmask of Ca_CssPropId to animate */
 } Ca_ResolvedStyle;
 
 /* ============================================================

@@ -13,6 +13,7 @@ static const char *s_elem_names[CA_ELEM_COUNT] = {
     [CA_ELEM_DIV]     = "div",
     [CA_ELEM_TEXT]    = "text",
     [CA_ELEM_BUTTON]  = "button",
+    [CA_ELEM_INPUT]   = "input",
     [CA_ELEM_H1]      = "h1",
     [CA_ELEM_H2]      = "h2",
     [CA_ELEM_H3]      = "h3",
@@ -67,12 +68,19 @@ static bool has_class(const char *class_str, const char *cls)
 /* Match a simple selector against a single node */
 static bool match_simple(const Ca_CssSimpleSel *sel,
                          Ca_ElementType elem_type,
-                         const char *classes)
+                         const char *classes,
+                         const char *id)
 {
     /* Element match */
     if (sel->element[0] != '\0' && sel->element[0] != '*') {
         const char *ename = ca_elem_type_name(elem_type);
         if (strcasecmp(sel->element, ename) != 0)
+            return false;
+    }
+
+    /* ID match */
+    if (sel->id[0] != '\0') {
+        if (!id || id[0] == '\0' || strcasecmp(sel->id, id) != 0)
             return false;
     }
 
@@ -82,8 +90,8 @@ static bool match_simple(const Ca_CssSimpleSel *sel,
             return false;
     }
 
-    /* At least one of element or class must be specified */
-    if (sel->element[0] == '\0' && sel->class_count == 0)
+    /* At least one of element, id, or class must be specified */
+    if (sel->element[0] == '\0' && sel->id[0] == '\0' && sel->class_count == 0)
         return false;
 
     return true;
@@ -105,7 +113,7 @@ static bool match_selector(const Ca_CssSelector *sel,
 
     /* The subject is the last part — must match the current node */
     int idx = sel->part_count - 1;
-    if (!match_simple(&sel->parts[idx], elem_type, classes))
+    if (!match_simple(&sel->parts[idx], elem_type, classes, node->id))
         return false;
 
     if (idx == 0) return true; /* Only one part, no ancestors to check */
@@ -120,7 +128,7 @@ static bool match_selector(const Ca_CssSelector *sel,
         if (comb == CA_CSS_COMB_CHILD) {
             /* Direct parent must match */
             if (!match_simple(&sel->parts[idx],
-                              (Ca_ElementType)cur->elem_type, cur->classes))
+                              (Ca_ElementType)cur->elem_type, cur->classes, cur->id))
                 return false;
             idx--;
             cur = cur->parent;
@@ -129,7 +137,7 @@ static bool match_selector(const Ca_CssSelector *sel,
             bool found = false;
             while (cur) {
                 if (match_simple(&sel->parts[idx],
-                                 (Ca_ElementType)cur->elem_type, cur->classes)) {
+                                 (Ca_ElementType)cur->elem_type, cur->classes, cur->id)) {
                     found = true;
                     cur = cur->parent;
                     break;
@@ -149,10 +157,10 @@ static bool match_selector(const Ca_CssSelector *sel,
    ============================================================ */
 
 /* Returns specificity as a single comparable integer.
-   Format: (id_count << 20) | (class_count << 10) | element_count
-   We don't support IDs, so id part is always 0. */
+   Format: (id_count << 20) | (class_count << 10) | element_count */
 static int calc_specificity(const Ca_CssSelector *sel)
 {
+    int ids      = 0;
     int elements = 0;
     int classes  = 0;
 
@@ -160,10 +168,12 @@ static int calc_specificity(const Ca_CssSelector *sel)
         const Ca_CssSimpleSel *part = &sel->parts[i];
         if (part->element[0] != '\0' && part->element[0] != '*')
             elements++;
+        if (part->id[0] != '\0')
+            ids++;
         classes += part->class_count;
     }
 
-    return (classes << 10) | elements;
+    return (ids << 20) | (classes << 10) | elements;
 }
 
 /* ============================================================
@@ -303,6 +313,16 @@ void ca_style_resolve(Ca_Stylesheet *ss,
                     if (val->type == CA_CSS_VAL_KEYWORD)
                         out->overflow_y = val->keyword;
                     break;
+                case CA_CSS_PROP_TRANSITION: {
+                    int tprop = val->keyword;
+                    float dur = val->number;
+                    out->transition_duration = dur;
+                    if (tprop == (int)CA_CSS_PROP_COUNT)
+                        out->transition_props = ~0ULL; /* all */
+                    else if (tprop > 0)
+                        out->transition_props |= (1ULL << tprop);
+                    break;
+                }
                 default: break;
             }
         }
@@ -398,7 +418,15 @@ void ca_style_apply_to_node(const Ca_ResolvedStyle *style,
     if (nd->flex_grow  <= 0.0f && STYLE_SET(CA_CSS_PROP_FLEX_GROW))  nd->flex_grow  = style->flex_grow;
     if (nd->flex_shrink <= 0.0f && STYLE_SET(CA_CSS_PROP_FLEX_SHRINK)) nd->flex_shrink = style->flex_shrink;
 
+    /* Flex wrap */
+    if (nd->flex_wrap == 0 && STYLE_SET(CA_CSS_PROP_FLEX_WRAP)) {
+        if (style->flex_wrap == CA_CSS_WRAP_WRAP) nd->flex_wrap = 1;
+    }
+
     /* Text/foreground color — output separately */
     if (out_color && *out_color == 0 && STYLE_SET(CA_CSS_PROP_COLOR))
         *out_color = style->color;
+
+    /* Store transition config on the node via nd (will be copied later) */
+    /* The caller (apply_css in widget.c) reads these via the Ca_Node pointer. */
 }

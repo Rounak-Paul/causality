@@ -94,8 +94,8 @@ bool ca_font_create(Ca_Instance *inst, GLFWwindow *glfw_win,
     }
 
     /* Bake a greyscale atlas */
-    out_font->atlas_w = 512;
-    out_font->atlas_h = 512;
+    out_font->atlas_w = 1024;
+    out_font->atlas_h = 1024;
     unsigned char *bitmap =
         (unsigned char *)calloc(1, (size_t)(out_font->atlas_w * out_font->atlas_h));
 

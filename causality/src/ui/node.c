@@ -11,6 +11,7 @@ void ca_node_system_init(Ca_Window *win)
     win->draw_cmds      = (Ca_DrawCmd *)calloc(CA_MAX_DRAW_CMDS_PER_WINDOW, sizeof(Ca_DrawCmd));
     win->label_pool     = (Ca_Label *)calloc(CA_MAX_LABELS_PER_WINDOW,  sizeof(Ca_Label));
     win->button_pool    = (Ca_Button *)calloc(CA_MAX_BUTTONS_PER_WINDOW, sizeof(Ca_Button));
+    win->input_pool     = (Ca_TextInput *)calloc(CA_MAX_INPUTS_PER_WINDOW, sizeof(Ca_TextInput));
     win->root           = NULL;
     win->draw_cmd_count = 0;
 
@@ -25,10 +26,12 @@ void ca_node_system_shutdown(Ca_Window *win)
     free(win->draw_cmds);
     free(win->label_pool);
     free(win->button_pool);
+    free(win->input_pool);
     win->node_pool      = NULL;
     win->draw_cmds      = NULL;
     win->label_pool     = NULL;
     win->button_pool    = NULL;
+    win->input_pool     = NULL;
     win->root           = NULL;
     win->draw_cmd_count = 0;
 }

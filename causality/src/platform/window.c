@@ -8,6 +8,14 @@
 static void glfw_key_cb(GLFWwindow *glfw, int key, int scancode, int action, int mods)
 {
     Ca_Window *win = (Ca_Window *)glfwGetWindowUserPointer(glfw);
+    /* Buffer key presses for focus/input handling */
+    if ((action == GLFW_PRESS || action == GLFW_REPEAT) &&
+        win->key_count < CA_CHAR_BUF_MAX) {
+        win->key_buf[win->key_count]        = key;
+        win->key_action_buf[win->key_count] = action;
+        win->key_mods_buf[win->key_count]   = mods;
+        win->key_count++;
+    }
     Ca_Event ev;
     ev.type         = CA_EVENT_KEY;
     ev.window       = win;
@@ -15,6 +23,18 @@ static void glfw_key_cb(GLFWwindow *glfw, int key, int scancode, int action, int
     ev.key.scancode = scancode;
     ev.key.action   = action;
     ev.key.mods     = mods;
+    ca_event_post(win->instance, &ev);
+}
+
+static void glfw_char_cb(GLFWwindow *glfw, unsigned int codepoint)
+{
+    Ca_Window *win = (Ca_Window *)glfwGetWindowUserPointer(glfw);
+    if (win->char_count < CA_CHAR_BUF_MAX)
+        win->char_buf[win->char_count++] = codepoint;
+    Ca_Event ev;
+    ev.type              = CA_EVENT_CHAR;
+    ev.window            = win;
+    ev.character.codepoint = codepoint;
     ca_event_post(win->instance, &ev);
 }
 
@@ -107,6 +127,8 @@ bool ca_window_system_tick(Ca_Instance *inst)
             inst->windows[i].scroll_dx = 0;
             inst->windows[i].scroll_dy = 0;
             inst->windows[i].scroll_this_frame = false;
+            inst->windows[i].char_count = 0;
+            inst->windows[i].key_count  = 0;
         }
 
     glfwWaitEvents();
@@ -186,6 +208,7 @@ Ca_Window *ca_window_create(Ca_Instance *inst, const Ca_WindowDesc *desc)
 
     glfwSetWindowUserPointer(glfw, slot);
     glfwSetKeyCallback(glfw, glfw_key_cb);
+    glfwSetCharCallback(glfw, glfw_char_cb);
     glfwSetMouseButtonCallback(glfw, glfw_mouse_button_cb);
     glfwSetCursorPosCallback(glfw, glfw_cursor_pos_cb);
     glfwSetScrollCallback(glfw, glfw_scroll_cb);

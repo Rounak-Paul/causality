@@ -7,7 +7,7 @@
 #include <stb_truetype.h>
 
 #define CA_FONT_GLYPH_FIRST 32
-#define CA_FONT_GLYPH_COUNT 96   /* printable ASCII 32–127 */
+#define CA_FONT_GLYPH_COUNT 224   /* printable ASCII + Latin-1 Supplement 32–255 */
 
 typedef struct Ca_Font {
     stbtt_bakedchar glyphs[CA_FONT_GLYPH_COUNT];

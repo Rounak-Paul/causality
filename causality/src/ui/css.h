@@ -71,6 +71,8 @@ typedef enum {
     CA_CSS_PROP_OVERFLOW,
     CA_CSS_PROP_OVERFLOW_X,
     CA_CSS_PROP_OVERFLOW_Y,
+    /* Transitions */
+    CA_CSS_PROP_TRANSITION,
     CA_CSS_PROP_COUNT
 } Ca_CssPropId;
 
@@ -125,9 +127,10 @@ typedef enum {
     CA_CSS_COMB_CHILD,        /* '>'        */
 } Ca_CssCombinator;
 
-/* A single simple selector (e.g. div.foo.bar) */
+/* A single simple selector (e.g. div#my-id.foo.bar) */
 typedef struct {
     char     element[32];
+    char     id[CA_CSS_CLASS_NAME_MAX]; /* e.g. #my-id → "my-id" */
     char     classes[CA_CSS_MAX_CLASSES_SEL][CA_CSS_CLASS_NAME_MAX];
     int      class_count;
     Ca_CssCombinator combinator;  /* how this relates to PREVIOUS part */

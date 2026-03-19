@@ -139,6 +139,7 @@ typedef struct {
     /* Flex properties */
     float        flex_grow;
     float        flex_shrink;
+    uint8_t      flex_wrap;    /* 0=nowrap, 1=wrap */
     /* Overflow clipping / scrolling */
     uint8_t      overflow_x;   /* 0=visible, 1=hidden, 2=scroll, 3=auto */
     uint8_t      overflow_y;
@@ -156,17 +157,20 @@ typedef struct {
    ====================================================== */
 
 #define CA_MAX_STATES               512
-#define CA_STATE_DATA_MAX            64
 #define CA_MAX_NODES_PER_WINDOW     512
 #define CA_MAX_NODE_CHILDREN         32
 #define CA_MAX_NODE_SUBS              8
 #define CA_MAX_STATE_SUBSCRIBERS     64
 #define CA_MAX_DRAW_CMDS_PER_WINDOW 4096
+#define CA_MAX_TRANSITIONS_PER_NODE  4
 
 #define CA_MAX_LABELS_PER_WINDOW    256
 #define CA_MAX_BUTTONS_PER_WINDOW   128
+#define CA_MAX_INPUTS_PER_WINDOW     64
 #define CA_LABEL_TEXT_MAX           256
 #define CA_BUTTON_TEXT_MAX          128
+#define CA_INPUT_TEXT_MAX           512
+#define CA_CHAR_BUF_MAX             32
 
 /* ======================================================
    UI — draw command (CPU-side, one per visible node or glyph)
@@ -208,17 +212,33 @@ struct Ca_State {
     uint16_t      data_size;
     bool          dirty;
     bool          in_use;
-    uint8_t       data[CA_STATE_DATA_MAX];
+    uint8_t      *data;       /* heap-allocated, data_size bytes */
     Ca_Node      *subscribers[CA_MAX_STATE_SUBSCRIBERS];
     uint8_t       sub_flags[CA_MAX_STATE_SUBSCRIBERS];
     uint32_t      sub_count;
 };
 
 /* ======================================================
+   UI — node transition (for CSS transition property)
+   ====================================================== */
+
+typedef struct {
+    uint8_t  prop;           /* Ca_CssPropId being animated */
+    bool     active;
+    float    from_f;         /* start value (float) or unpacked from color */
+    float    to_f;           /* target value (float) */
+    uint32_t from_color;     /* start RGBA (for color props) */
+    uint32_t to_color;       /* target RGBA */
+    double   start_time;     /* glfwGetTime() when transition began */
+    float    duration;       /* seconds */
+} Ca_Transition;
+
+/* ======================================================
    UI — Node (full definition)
    ====================================================== */
 
 #define CA_NODE_CLASS_MAX 128
+#define CA_NODE_ID_MAX     64
 
 struct Ca_Node {
     Ca_NodeType   type;
@@ -237,9 +257,14 @@ struct Ca_Node {
     /* CSS integration */
     uint8_t       elem_type;       /* Ca_ElementType from style.h     */
     char          classes[CA_NODE_CLASS_MAX]; /* space-separated CSS classes */
+    char          id[CA_NODE_ID_MAX];         /* CSS id (without #)          */
     /* Scroll state (for overflow: scroll) */
     float         scroll_x, scroll_y;
     float         content_w, content_h; /* natural content size        */
+    /* Transition animations */
+    Ca_Transition transitions[CA_MAX_TRANSITIONS_PER_NODE];
+    float         transition_duration;   /* default duration from CSS (sec) */
+    uint64_t      transition_props;      /* bitmask of props that should animate */
 };
 
 /* ======================================================
@@ -259,6 +284,19 @@ struct Ca_Button {
     uint32_t    text_color;  /* packed RGBA; 0 → white default */
     Ca_ClickFn  on_click;
     void       *click_data;
+    bool        in_use;
+};
+
+struct Ca_TextInput {
+    Ca_Node    *node;
+    char        text[CA_INPUT_TEXT_MAX];
+    uint32_t    text_color;
+    uint32_t    placeholder_color;
+    char        placeholder[CA_INPUT_TEXT_MAX];
+    int         cursor;       /* byte offset into text */
+    int         sel_start;    /* selection anchor (-1 = no selection) */
+    Ca_ChangeFn on_change;
+    void       *change_data;
     bool        in_use;
 };
 
@@ -282,6 +320,7 @@ struct Ca_Window {
     /* Widget pools */
     Ca_Label     *label_pool;
     Ca_Button    *button_pool;
+    Ca_TextInput *input_pool;
 
     /* UI scale factor (1.0 = default, 2.0 = 200%, like browser zoom) */
     float         ui_scale;
@@ -292,6 +331,15 @@ struct Ca_Window {
     bool          mouse_click_this_frame; /* cleared at top of each tick   */
     double        scroll_dx, scroll_dy;   /* accumulated scroll this frame */
     bool          scroll_this_frame;
+
+    /* Keyboard / focus state */
+    Ca_Node      *focused_node;           /* NULL = nothing focused */
+    uint32_t      char_buf[CA_CHAR_BUF_MAX]; /* Unicode codepoints this frame */
+    uint32_t      char_count;
+    int           key_buf[CA_CHAR_BUF_MAX];  /* GLFW key codes this frame     */
+    int           key_action_buf[CA_CHAR_BUF_MAX];
+    int           key_mods_buf[CA_CHAR_BUF_MAX];
+    uint32_t      key_count;
 
     /* Render gating: set by ui.c when draw list changes, cleared after submit */
     bool          needs_render;

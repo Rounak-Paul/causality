@@ -12,6 +12,12 @@ void ca_state_system_init(Ca_Instance *inst)
 
 void ca_state_system_shutdown(Ca_Instance *inst)
 {
+    if (inst->state_pool) {
+        for (uint32_t i = 0; i < CA_MAX_STATES; ++i) {
+            Ca_State *s = &inst->state_pool[i];
+            if (s->in_use) free(s->data);
+        }
+    }
     free(inst->state_pool);
     inst->state_pool = NULL;
 }
@@ -39,14 +45,19 @@ void ca_state_flush_dirty(Ca_Instance *inst)
 Ca_State *ca_state_create(Ca_Instance *instance, const Ca_StateDesc *desc)
 {
     assert(instance && desc);
-    assert(desc->data_size > 0 && desc->data_size <= CA_STATE_DATA_MAX);
+    assert(desc->data_size > 0);
 
     for (uint32_t i = 0; i < CA_MAX_STATES; ++i) {
         Ca_State *s = &instance->state_pool[i];
         if (s->in_use) continue;
+
+        /* Free any previous allocation (shouldn't happen, but safe) */
+        free(s->data);
         memset(s, 0, sizeof(*s));
+
         s->instance  = instance;
         s->data_size = (uint16_t)desc->data_size;
+        s->data      = (uint8_t *)calloc(1, desc->data_size);
         s->in_use    = true;
         if (desc->initial)
             memcpy(s->data, desc->initial, desc->data_size);
@@ -60,6 +71,7 @@ Ca_State *ca_state_create(Ca_Instance *instance, const Ca_StateDesc *desc)
 void ca_state_destroy(Ca_State *state)
 {
     if (!state || !state->in_use) return;
+    free(state->data);
     memset(state, 0, sizeof(*state));
 }
 

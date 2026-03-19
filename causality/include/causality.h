@@ -22,8 +22,9 @@ typedef struct Ca_Thread   Ca_Thread;
 
 /* ---- Widget handles ---- */
 
-typedef struct Ca_Label  Ca_Label;
-typedef struct Ca_Button Ca_Button;
+typedef struct Ca_Label     Ca_Label;
+typedef struct Ca_Button    Ca_Button;
+typedef struct Ca_TextInput Ca_TextInput;
 
 /* ============================================================
    INSTANCE
@@ -80,6 +81,7 @@ typedef enum Ca_EventType {
     CA_EVENT_WINDOW_CLOSE,
     CA_EVENT_WINDOW_RESIZE,
     CA_EVENT_KEY,
+    CA_EVENT_CHAR,
     CA_EVENT_MOUSE_BUTTON,
     CA_EVENT_MOUSE_MOVE,
     CA_EVENT_MOUSE_SCROLL,
@@ -92,6 +94,7 @@ typedef struct Ca_Event {
     union {
         struct { int width, height; }               resize;
         struct { int key, scancode, action, mods; } key;
+        struct { uint32_t codepoint; }              character;
         struct { int button, action, mods; }        mouse_button;
         struct { double x, y; }                     mouse_pos;
         struct { double dx, dy; }                   mouse_scroll;
@@ -129,6 +132,7 @@ void       ca_thread_detach(Ca_Thread *thread); /* fire-and-forget, frees handle
    ============================================================ */
 
 typedef void (*Ca_ClickFn)(Ca_Button *button, void *user_data);
+typedef void (*Ca_ChangeFn)(Ca_TextInput *input, void *user_data);
 
 /* Layout direction constants */
 #define CA_HORIZONTAL 0
@@ -179,6 +183,7 @@ typedef struct Ca_DivDesc {
     int      direction;            /* CA_HORIZONTAL (0) or CA_VERTICAL (1)  */
     uint32_t background;           /* ca_color(r,g,b,a)                     */
     float    corner_radius;
+    const char *id;                /* CSS id  (without #)                   */
     const char *style;             /* space-separated CSS class names       */
 } Ca_DivDesc;
 
@@ -187,6 +192,7 @@ typedef struct Ca_TextDesc {
     const char *text;
     float       width, height;     /* 0 = auto                              */
     uint32_t    color;             /* text foreground colour                */
+    const char *id;                /* CSS id  (without #)                   */
     const char *style;             /* space-separated CSS class names       */
 } Ca_TextDesc;
 
@@ -204,6 +210,7 @@ typedef struct Ca_BtnDesc {
     float       corner_radius;
     Ca_ClickFn  on_click;          /* NULL = no callback                    */
     void       *click_data;
+    const char *id;                /* CSS id  (without #)                   */
     const char *style;             /* space-separated CSS class names       */
 } Ca_BtnDesc;
 
@@ -211,14 +218,31 @@ typedef struct Ca_BtnDesc {
 typedef struct Ca_HrDesc {
     float    thickness;            /* default 1                             */
     uint32_t color;                /* default grey                          */
+    const char *id;                /* CSS id  (without #)                   */
     const char *style;             /* space-separated CSS class names       */
 } Ca_HrDesc;
 
 /* spacer — invisible spacing element. */
 typedef struct Ca_SpacerDesc {
     float width, height;
+    const char *id;                /* CSS id  (without #)                   */
     const char *style;             /* space-separated CSS class names       */
 } Ca_SpacerDesc;
+
+/* <input> — single-line text input field. */
+typedef struct Ca_InputDesc {
+    const char *text;              /* initial text (NULL = empty)            */
+    const char *placeholder;       /* placeholder text (greyed out)          */
+    float       width, height;     /* 0 = auto                              */
+    uint32_t    text_color;        /* foreground colour                      */
+    uint32_t    background;
+    float       corner_radius;
+    float       padding[4];
+    Ca_ChangeFn on_change;         /* called on every edit                   */
+    void       *change_data;
+    const char *id;                /* CSS id  (without #)                    */
+    const char *style;             /* space-separated CSS class names        */
+} Ca_InputDesc;
 
 /* ---- Tree root ---- */
 
@@ -241,8 +265,9 @@ void ca_li_end(void);
 
 /* ---- Self-closing elements ---- */
 
-Ca_Label  *ca_text(const Ca_TextDesc *desc);
-Ca_Button *ca_btn(const Ca_BtnDesc *desc);       /* self-closing button  */
+Ca_Label     *ca_text(const Ca_TextDesc *desc);
+Ca_Button    *ca_btn(const Ca_BtnDesc *desc);       /* self-closing button  */
+Ca_TextInput *ca_input(const Ca_InputDesc *desc);    /* text input field     */
 
 void ca_hr(const Ca_HrDesc *desc);               /* horizontal rule      */
 void ca_spacer(const Ca_SpacerDesc *desc);       /* invisible space      */
@@ -261,6 +286,8 @@ Ca_Label *ca_h6(const Ca_TextDesc *desc);        /* 12px */
 void ca_label_set_text(Ca_Label *label, const char *text);
 void ca_button_set_text(Ca_Button *button, const char *text);
 void ca_button_set_background(Ca_Button *button, uint32_t color);
+void ca_input_set_text(Ca_TextInput *input, const char *text);
+const char *ca_input_get_text(const Ca_TextInput *input);
 
 /* ============================================================
    CSS STYLESHEET

@@ -209,23 +209,28 @@ static void paint_text(Ca_Window *win, Ca_Font *font,
     /* Measure total advance width in logical pixels */
     float text_w = 0.0f;
     for (const char *p = text; *p; p++) {
-        unsigned char c = (unsigned char)(*p);
+        int c = (unsigned char)(*p);
         if (c >= CA_FONT_GLYPH_FIRST &&
             c <  CA_FONT_GLYPH_FIRST + CA_FONT_GLYPH_COUNT)
             text_w += font->glyphs[c - CA_FONT_GLYPH_FIRST].xadvance / cs;
     }
 
-    /* Compute baseline (vertically centred) and left edge (horizontally centred) */
+    /* Compute baseline (vertically centred) and left edge (horizontally centred).
+       If text is wider than the node, left-align instead of centering. */
     float baseline_logical =
         node->y + node->h * 0.5f + (font->ascent + font->descent) * 0.5f;
-    float left_logical = node->x + (node->w - text_w) * 0.5f;
+    float left_logical;
+    if (text_w > node->w)
+        left_logical = node->x + node->desc.padding_left;
+    else
+        left_logical = node->x + (node->w - text_w) * 0.5f;
 
     /* GetBakedQuad works in native (baked) pixel space */
     float xpos = left_logical * cs;
     float ypos = baseline_logical * cs;
 
     for (const char *p = text; *p; p++) {
-        unsigned char c = (unsigned char)(*p);
+        int c = (unsigned char)(*p);
         if (c < CA_FONT_GLYPH_FIRST ||
             c >= CA_FONT_GLYPH_FIRST + CA_FONT_GLYPH_COUNT)
             continue;
@@ -252,9 +257,143 @@ static void paint_text(Ca_Window *win, Ca_Font *font,
         cmd->u1 = q.s1;  cmd->v1 = q.t1;
         cmd->in_use = true;
 
-        /* Inherit clip rect from node's ancestor overflow containers */
+        /* Clip to node bounds + ancestor overflow containers */
         ClipRect clip = find_clip_for_node(node);
-        set_clip(cmd, clip);
+        ClipRect node_clip = clip_intersect(clip, node->x, node->y, node->w, node->h);
+        set_clip(cmd, node_clip);
+    }
+}
+
+/* Emit glyph draw commands for a text string LEFT-ALIGNED in the given node rect,
+   respecting padding. Used for text inputs. */
+static void paint_text_left(Ca_Window *win, Ca_Font *font,
+                            Ca_Node *node,
+                            const char *text, uint32_t packed_color)
+{
+    if (!text || text[0] == '\0') return;
+    if (!node || !node->in_use)   return;
+    if (node->desc.hidden)        return;
+
+    float r, g, b, a;
+    if (packed_color == 0)
+        r = g = b = a = 1.0f;
+    else
+        unpack_color(packed_color, &r, &g, &b, &a);
+
+    float ui_s = win->ui_scale > 0.0f ? win->ui_scale : 1.0f;
+    float cs   = font->content_scale / ui_s;
+
+    float baseline_logical =
+        node->y + node->h * 0.5f + (font->ascent + font->descent) * 0.5f;
+    float left_logical = node->x + node->desc.padding_left;
+
+    float xpos = left_logical * cs;
+    float ypos = baseline_logical * cs;
+
+    for (const char *p = text; *p; p++) {
+        int c = (unsigned char)(*p);
+        if (c < CA_FONT_GLYPH_FIRST ||
+            c >= CA_FONT_GLYPH_FIRST + CA_FONT_GLYPH_COUNT)
+            continue;
+        if (win->draw_cmd_count >= CA_MAX_DRAW_CMDS_PER_WINDOW) break;
+
+        stbtt_aligned_quad q;
+        stbtt_GetBakedQuad(font->glyphs,
+                           font->atlas_w, font->atlas_h,
+                           c - CA_FONT_GLYPH_FIRST,
+                           &xpos, &ypos, &q, 1);
+
+        float gw = (q.x1 - q.x0) / cs;
+        float gh = (q.y1 - q.y0) / cs;
+        if (gw < 0.5f || gh < 0.5f) continue;
+
+        Ca_DrawCmd *cmd = &win->draw_cmds[win->draw_cmd_count++];
+        memset(cmd, 0, sizeof(*cmd));
+        cmd->type   = CA_DRAW_GLYPH;
+        cmd->x = q.x0 / cs;  cmd->y = q.y0 / cs;
+        cmd->w = gw;          cmd->h = gh;
+        cmd->r = r;  cmd->g = g;  cmd->b = b;  cmd->a = a;
+        cmd->u0 = q.s0;  cmd->v0 = q.t0;
+        cmd->u1 = q.s1;  cmd->v1 = q.t1;
+        cmd->in_use = true;
+
+        ClipRect clip = find_clip_for_node(node);
+        /* Also clip to the input's own bounds */
+        ClipRect input_clip = clip_intersect(clip, node->x, node->y, node->w, node->h);
+        set_clip(cmd, input_clip);
+    }
+}
+
+/* Measure x-advance for a substring of text */
+static float measure_text_advance(Ca_Font *font, const char *text, int byte_count,
+                                  float content_scale, float ui_scale)
+{
+    float cs = content_scale / (ui_scale > 0.0f ? ui_scale : 1.0f);
+    float w = 0.0f;
+    int i = 0;
+    for (const char *p = text; *p && i < byte_count; p++, i++) {
+        int c = (unsigned char)(*p);
+        if (c >= CA_FONT_GLYPH_FIRST &&
+            c <  CA_FONT_GLYPH_FIRST + CA_FONT_GLYPH_COUNT)
+            w += font->glyphs[c - CA_FONT_GLYPH_FIRST].xadvance / cs;
+    }
+    return w;
+}
+
+/* Paint a thin cursor line at the given cursor byte offset in the input text */
+static void paint_cursor(Ca_Window *win, Ca_Font *font,
+                         Ca_Node *node, const char *text, int cursor_pos)
+{
+    if (win->draw_cmd_count >= CA_MAX_DRAW_CMDS_PER_WINDOW) return;
+
+    float advance = measure_text_advance(font, text, cursor_pos,
+                                         font->content_scale, win->ui_scale);
+    float cursor_x = node->x + node->desc.padding_left + advance;
+    float cursor_h = node->h * 0.7f;
+    float cursor_y = node->y + (node->h - cursor_h) * 0.5f;
+
+    Ca_DrawCmd *cmd = &win->draw_cmds[win->draw_cmd_count++];
+    memset(cmd, 0, sizeof(*cmd));
+    cmd->type   = CA_DRAW_RECT;
+    cmd->x      = cursor_x;
+    cmd->y      = cursor_y;
+    cmd->w      = 1.5f;
+    cmd->h      = cursor_h;
+    cmd->r = 1.0f; cmd->g = 1.0f; cmd->b = 1.0f; cmd->a = 0.9f;
+    cmd->in_use = true;
+
+    ClipRect clip = find_clip_for_node(node);
+    ClipRect input_clip = clip_intersect(clip, node->x, node->y, node->w, node->h);
+    set_clip(cmd, input_clip);
+}
+
+/* Paint a focus ring (outline) around a node */
+static void paint_focus_ring(Ca_Window *win, Ca_Node *node)
+{
+    if (!node || !node->in_use || node->desc.hidden) return;
+
+    float thickness = 2.0f;
+    float inset     = -2.0f; /* negative = outside */
+
+    /* We draw 4 thin rects around the node (top, bottom, left, right) */
+    struct { float x, y, w, h; } sides[4] = {
+        { node->x + inset, node->y + inset, node->w - 2*inset, thickness }, /* top */
+        { node->x + inset, node->y + node->h - inset - thickness, node->w - 2*inset, thickness }, /* bottom */
+        { node->x + inset, node->y + inset, thickness, node->h - 2*inset }, /* left */
+        { node->x + node->w - inset - thickness, node->y + inset, thickness, node->h - 2*inset }, /* right */
+    };
+
+    for (int i = 0; i < 4; ++i) {
+        if (win->draw_cmd_count >= CA_MAX_DRAW_CMDS_PER_WINDOW) break;
+        Ca_DrawCmd *cmd = &win->draw_cmds[win->draw_cmd_count++];
+        memset(cmd, 0, sizeof(*cmd));
+        cmd->type   = CA_DRAW_RECT;
+        cmd->x      = sides[i].x;
+        cmd->y      = sides[i].y;
+        cmd->w      = sides[i].w;
+        cmd->h      = sides[i].h;
+        cmd->r = 0.4f; cmd->g = 0.6f; cmd->b = 1.0f; cmd->a = 0.85f;
+        cmd->in_use = true;
     }
 }
 
@@ -287,4 +426,25 @@ void ca_paint_pass(Ca_Instance *inst, Ca_Window *win)
             paint_text(win, font, btn->node, btn->text, btn->text_color);
         }
     }
+
+    /* Text inputs */
+    if (win->input_pool) {
+        for (uint32_t i = 0; i < CA_MAX_INPUTS_PER_WINDOW; ++i) {
+            Ca_TextInput *inp = &win->input_pool[i];
+            if (!inp->in_use || !inp->node) continue;
+            bool focused = (win->focused_node == inp->node);
+            if (inp->text[0] != '\0') {
+                paint_text_left(win, font, inp->node, inp->text, inp->text_color);
+            } else if (inp->placeholder[0] != '\0') {
+                paint_text_left(win, font, inp->node, inp->placeholder,
+                                inp->placeholder_color);
+            }
+            if (focused)
+                paint_cursor(win, font, inp->node, inp->text, inp->cursor);
+        }
+    }
+
+    /* Focus ring on the currently focused element */
+    if (win->focused_node)
+        paint_focus_ring(win, win->focused_node);
 }

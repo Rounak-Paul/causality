@@ -129,7 +129,7 @@ static Token next_token(Lexer *lex)
         return tok;
     }
 
-    /* Hash (#color) */
+    /* Hash (#color or #id) */
     if (c == '#') {
         advance(lex);
         int i = 0;
@@ -715,6 +715,56 @@ static void parse_declarations(Parser *p, Ca_CssRule *rule)
             continue;
         }
 
+        /* Handle 'transition' shorthand:
+           transition: <property> <duration> [<easing>]
+           We store the duration as a number value and encode the target
+           property id in the keyword field.  Multiple transitions
+           (comma-separated) are not yet supported — only the first is used. */
+        if (strcasecmp(prop_name, "transition") == 0) {
+            skip_ws(p);
+            Token prop_tok = parser_next(p);
+            Ca_CssPropId trans_prop = CA_CSS_PROP_NONE;
+            if (prop_tok.type == TOK_IDENT) {
+                if (strcasecmp(prop_tok.text, "all") == 0) {
+                    trans_prop = CA_CSS_PROP_COUNT; /* sentinel: all */
+                } else {
+                    trans_prop = lookup_property(prop_tok.text);
+                }
+            }
+
+            /* Duration (in seconds or ms) */
+            float duration = 0.0f;
+            skip_ws(p);
+            Token dur_tok = parser_peek(p);
+            if (dur_tok.type == TOK_DIMENSION || dur_tok.type == TOK_NUMBER) {
+                parser_next(p);
+                duration = dur_tok.number;
+                if (dur_tok.type == TOK_DIMENSION &&
+                    strcasecmp(dur_tok.unit, "ms") == 0)
+                    duration /= 1000.0f;
+            }
+
+            /* Skip optional easing / rest of value */
+            while (1) {
+                Token pk = parser_peek(p);
+                if (pk.type == TOK_SEMICOLON || pk.type == TOK_RBRACE || pk.type == TOK_EOF) break;
+                parser_next(p);
+            }
+
+            if (trans_prop != CA_CSS_PROP_NONE && duration > 0.0f) {
+                Ca_CssValue tv = {0};
+                tv.type    = CA_CSS_VAL_NUMBER;
+                tv.number  = duration;
+                tv.keyword = (int)trans_prop;
+                add_decl(rule, CA_CSS_PROP_TRANSITION, tv);
+            }
+
+            skip_ws(p);
+            t = parser_peek(p);
+            if (t.type == TOK_SEMICOLON) parser_next(p);
+            continue;
+        }
+
         /* Normal property */
         if (prop_id != CA_CSS_PROP_NONE) {
             Ca_CssValue val = parse_value(p, prop_id);
@@ -757,6 +807,14 @@ static void parse_simple_selector(Parser *p, Ca_CssSimpleSel *sel)
         snprintf(sel->element, sizeof(sel->element), "%s", t.text);
     }
 
+    /* ID selector (#id) — TOK_HASH contains the text after '#' */
+    while (parser_peek(p).type == TOK_HASH) {
+        t = parser_next(p);
+        /* Only take the first ID (CSS spec: multiple IDs are unusual) */
+        if (sel->id[0] == '\0')
+            snprintf(sel->id, CA_CSS_CLASS_NAME_MAX, "%s", t.text);
+    }
+
     /* Class selectors (.foo.bar) — no whitespace between them */
     while (parser_peek(p).type == TOK_DOT) {
         parser_next(p); /* consume dot */
@@ -765,6 +823,13 @@ static void parse_simple_selector(Parser *p, Ca_CssSimpleSel *sel)
             snprintf(sel->classes[sel->class_count], CA_CSS_CLASS_NAME_MAX, "%s", t.text);
             sel->class_count++;
         }
+    }
+
+    /* Also allow ID after classes: div.foo#bar */
+    while (parser_peek(p).type == TOK_HASH) {
+        t = parser_next(p);
+        if (sel->id[0] == '\0')
+            snprintf(sel->id, CA_CSS_CLASS_NAME_MAX, "%s", t.text);
     }
 }
 
@@ -799,7 +864,7 @@ static void parse_selector(Parser *p, Ca_CssSelector *sel)
                 part->combinator = CA_CSS_COMB_CHILD;
                 sel->part_count++;
             } else if (nxt.type == TOK_IDENT || nxt.type == TOK_DOT ||
-                       nxt.type == TOK_STAR) {
+                       nxt.type == TOK_STAR || nxt.type == TOK_HASH) {
                 /* Descendant combinator */
                 Ca_CssSimpleSel *part = &sel->parts[sel->part_count];
                 parse_simple_selector(p, part);
