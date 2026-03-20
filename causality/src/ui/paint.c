@@ -480,19 +480,26 @@ static void paint_text(Ca_Window *win, Ca_Font *font,
     float ui_s = win->ui_scale > 0.0f ? win->ui_scale : 1.0f;
     float cs   = font->content_scale / ui_s;
 
+    /* Per-node font size scaling */
+    float baked_logical = font->baked_px / font->content_scale;
+    float desired_size  = node->desc.font_size > 0.0f ? node->desc.font_size : baked_logical;
+    float font_scale    = desired_size / baked_logical;
+    float cs_eff        = cs / font_scale;
+
     /* Measure total advance width in logical pixels */
     float text_w = 0.0f;
     for (const char *p = text; *p; p++) {
         int c = (unsigned char)(*p);
         if (c >= CA_FONT_GLYPH_FIRST &&
             c <  CA_FONT_GLYPH_FIRST + CA_FONT_GLYPH_COUNT)
-            text_w += font->glyphs[c - CA_FONT_GLYPH_FIRST].xadvance / cs;
+            text_w += font->glyphs[c - CA_FONT_GLYPH_FIRST].xadvance / cs_eff;
     }
 
     /* Compute baseline (vertically centred) and left edge (horizontally centred).
        If text is wider than the node, left-align instead of centering. */
     float baseline_logical =
-        node->y + node->h * 0.5f + (font->ascent + font->descent) * 0.5f;
+        node->y + node->h * 0.5f
+        + (font->ascent * font_scale + font->descent * font_scale) * 0.5f;
     float left_logical;
     if (text_w > node->w)
         left_logical = node->x + node->desc.padding_left;
@@ -500,8 +507,8 @@ static void paint_text(Ca_Window *win, Ca_Font *font,
         left_logical = node->x + (node->w - text_w) * 0.5f;
 
     /* GetBakedQuad works in native (baked) pixel space */
-    float xpos = left_logical * cs;
-    float ypos = baseline_logical * cs;
+    float xpos = left_logical * cs_eff;
+    float ypos = baseline_logical * cs_eff;
 
     for (const char *p = text; *p; p++) {
         int c = (unsigned char)(*p);
@@ -517,14 +524,14 @@ static void paint_text(Ca_Window *win, Ca_Font *font,
                            c - CA_FONT_GLYPH_FIRST,
                            &xpos, &ypos, &q, 1);
 
-        float gw = (q.x1 - q.x0) / cs;
-        float gh = (q.y1 - q.y0) / cs;
+        float gw = (q.x1 - q.x0) / cs_eff;
+        float gh = (q.y1 - q.y0) / cs_eff;
         if (gw < 0.5f || gh < 0.5f) continue; /* skip whitespace */
 
         Ca_DrawCmd *cmd = &win->draw_cmds[win->draw_cmd_count++];
         memset(cmd, 0, sizeof(*cmd));
         cmd->type   = CA_DRAW_GLYPH;
-        cmd->x = q.x0 / cs;  cmd->y = q.y0 / cs;
+        cmd->x = q.x0 / cs_eff;  cmd->y = q.y0 / cs_eff;
         cmd->w = gw;          cmd->h = gh;
         cmd->r = r;  cmd->g = g;  cmd->b = b;  cmd->a = a;
         cmd->u0 = q.s0;  cmd->v0 = q.t0;
@@ -557,12 +564,19 @@ static void paint_text_left(Ca_Window *win, Ca_Font *font,
     float ui_s = win->ui_scale > 0.0f ? win->ui_scale : 1.0f;
     float cs   = font->content_scale / ui_s;
 
+    /* Per-node font size scaling */
+    float baked_logical = font->baked_px / font->content_scale;
+    float desired_size  = node->desc.font_size > 0.0f ? node->desc.font_size : baked_logical;
+    float font_scale    = desired_size / baked_logical;
+    float cs_eff        = cs / font_scale;
+
     float baseline_logical =
-        node->y + node->h * 0.5f + (font->ascent + font->descent) * 0.5f;
+        node->y + node->h * 0.5f
+        + (font->ascent * font_scale + font->descent * font_scale) * 0.5f;
     float left_logical = node->x + node->desc.padding_left;
 
-    float xpos = left_logical * cs;
-    float ypos = baseline_logical * cs;
+    float xpos = left_logical * cs_eff;
+    float ypos = baseline_logical * cs_eff;
 
     for (const char *p = text; *p; p++) {
         int c = (unsigned char)(*p);
@@ -577,14 +591,14 @@ static void paint_text_left(Ca_Window *win, Ca_Font *font,
                            c - CA_FONT_GLYPH_FIRST,
                            &xpos, &ypos, &q, 1);
 
-        float gw = (q.x1 - q.x0) / cs;
-        float gh = (q.y1 - q.y0) / cs;
+        float gw = (q.x1 - q.x0) / cs_eff;
+        float gh = (q.y1 - q.y0) / cs_eff;
         if (gw < 0.5f || gh < 0.5f) continue;
 
         Ca_DrawCmd *cmd = &win->draw_cmds[win->draw_cmd_count++];
         memset(cmd, 0, sizeof(*cmd));
         cmd->type   = CA_DRAW_GLYPH;
-        cmd->x = q.x0 / cs;  cmd->y = q.y0 / cs;
+        cmd->x = q.x0 / cs_eff;  cmd->y = q.y0 / cs_eff;
         cmd->w = gw;          cmd->h = gh;
         cmd->r = r;  cmd->g = g;  cmd->b = b;  cmd->a = a;
         cmd->u0 = q.s0;  cmd->v0 = q.t0;

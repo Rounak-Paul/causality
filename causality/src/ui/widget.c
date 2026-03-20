@@ -592,7 +592,7 @@ Ca_TextInput *ca_input(const Ca_InputDesc *desc)
    ============================================================ */
 
 static Ca_Label *heading(const Ca_TextDesc *desc, float default_height,
-                         Ca_ElementType elem_type)
+                         float default_font_size, Ca_ElementType elem_type)
 {
     assert(g_ctx.active && desc);
     Ca_Label *lbl = add_label(g_ctx.window, ctx_top(), desc);
@@ -602,16 +602,19 @@ static Ca_Label *heading(const Ca_TextDesc *desc, float default_height,
         /* Default heading height if neither user nor CSS set it */
         if (lbl->node->desc.height <= 0.0f)
             lbl->node->desc.height = s(default_height);
+        /* Default heading font size if neither user nor CSS set it */
+        if (lbl->node->desc.font_size <= 0.0f)
+            lbl->node->desc.font_size = default_font_size;
     }
     return lbl;
 }
 
-Ca_Label *ca_h1(const Ca_TextDesc *desc) { return heading(desc, 24.0f, CA_ELEM_H1); }
-Ca_Label *ca_h2(const Ca_TextDesc *desc) { return heading(desc, 20.0f, CA_ELEM_H2); }
-Ca_Label *ca_h3(const Ca_TextDesc *desc) { return heading(desc, 18.0f, CA_ELEM_H3); }
-Ca_Label *ca_h4(const Ca_TextDesc *desc) { return heading(desc, 16.0f, CA_ELEM_H4); }
-Ca_Label *ca_h5(const Ca_TextDesc *desc) { return heading(desc, 14.0f, CA_ELEM_H5); }
-Ca_Label *ca_h6(const Ca_TextDesc *desc) { return heading(desc, 12.0f, CA_ELEM_H6); }
+Ca_Label *ca_h1(const Ca_TextDesc *desc) { return heading(desc, 36.0f, 28.0f, CA_ELEM_H1); }
+Ca_Label *ca_h2(const Ca_TextDesc *desc) { return heading(desc, 28.0f, 22.0f, CA_ELEM_H2); }
+Ca_Label *ca_h3(const Ca_TextDesc *desc) { return heading(desc, 24.0f, 18.0f, CA_ELEM_H3); }
+Ca_Label *ca_h4(const Ca_TextDesc *desc) { return heading(desc, 20.0f, 16.0f, CA_ELEM_H4); }
+Ca_Label *ca_h5(const Ca_TextDesc *desc) { return heading(desc, 18.0f, 14.0f, CA_ELEM_H5); }
+Ca_Label *ca_h6(const Ca_TextDesc *desc) { return heading(desc, 16.0f, 12.0f, CA_ELEM_H6); }
 
 /* ============================================================
    PUBLIC — runtime setters
@@ -1120,6 +1123,15 @@ Ca_TreeNode *ca_tree_node_begin(const Ca_TreeNodeDesc *desc)
 void ca_tree_node_end(void)
 {
     assert(g_ctx.active && g_ctx.depth > 0);
+    /* If tree node starts collapsed, hide all children except the header */
+    Ca_Node *node = ctx_top();
+    if (node->widget_type == CA_WIDGET_TREENODE) {
+        Ca_TreeNode *tn = (Ca_TreeNode *)node->widget;
+        if (tn && !tn->expanded) {
+            for (uint32_t i = 1; i < node->child_count; ++i)
+                node->children[i]->desc.hidden = true;
+        }
+    }
     ctx_pop();
 }
 
@@ -1226,6 +1238,8 @@ void ca_table_cell(const Ca_TextDesc *desc)
     lbl->node = node;
     lbl->in_use = true;
     lbl->color = desc->color;
+    node->widget_type = CA_WIDGET_LABEL;
+    node->widget      = lbl;
     if (desc->text) snprintf(lbl->text, CA_LABEL_TEXT_MAX, "%s", desc->text);
 
     apply_css(node, &node->desc, CA_ELEM_TABLE_CELL, desc->style, desc->id, &lbl->color);

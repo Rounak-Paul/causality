@@ -146,6 +146,7 @@ typedef struct {
     float        flex_shrink;
     uint8_t      flex_wrap;    /* 0=nowrap, 1=wrap */
     /* Overflow clipping / scrolling */
+    float        font_size;     /* 0 = use default baked size */
     uint8_t      overflow_x;   /* 0=visible, 1=hidden, 2=scroll, 3=auto */
     uint8_t      overflow_y;
     bool         hidden;       /* display: none */

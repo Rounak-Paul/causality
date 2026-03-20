@@ -449,6 +449,10 @@ void ca_style_apply_to_node(const Ca_ResolvedStyle *style,
         if (style->flex_wrap == CA_CSS_WRAP_WRAP) nd->flex_wrap = 1;
     }
 
+    /* Font size */
+    if (nd->font_size <= 0.0f && STYLE_SET(CA_CSS_PROP_FONT_SIZE))
+        nd->font_size = style->font_size;
+
     /* Text/foreground color — output separately */
     if (out_color && *out_color == 0 && STYLE_SET(CA_CSS_PROP_COLOR))
         *out_color = style->color;
