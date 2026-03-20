@@ -316,7 +316,6 @@ int main(void)
     Ca_InstanceDesc inst_desc = {
         .app_name             = "Causality Sandbox",
         .prefer_dedicated_gpu = true,
-        .font_path            = CA_FONT_PATH,
         .font_size_px         = 14.0f,
     };
     Ca_Instance *instance = ca_instance_create(&inst_desc);

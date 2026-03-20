@@ -56,8 +56,11 @@ static void end_once(Ca_Instance *inst, VkCommandBuffer cmd)
 
 /* ---- Public API ---- */
 
-bool ca_font_create(Ca_Instance *inst, GLFWwindow *glfw_win,
-                    Ca_Font *out_font, const char *path, float font_px)
+/* Internal: create font from raw TTF/OTF bytes in memory */
+static bool font_create_internal(Ca_Instance *inst, GLFWwindow *glfw_win,
+                                 Ca_Font *out_font,
+                                 const unsigned char *ttf_data,
+                                 size_t ttf_size, float font_px)
 {
     memset(out_font, 0, sizeof(*out_font));
 
@@ -67,23 +70,9 @@ bool ca_font_create(Ca_Instance *inst, GLFWwindow *glfw_win,
     out_font->content_scale = cx;
     out_font->baked_px      = (float)(int)(font_px * cx + 0.5f);
 
-    /* Load font file */
-    FILE *f = fopen(path, "rb");
-    if (!f) {
-        fprintf(stderr, "[font] cannot open: %s\n", path);
-        return false;
-    }
-    fseek(f, 0, SEEK_END);
-    long file_sz = ftell(f);
-    rewind(f);
-    unsigned char *ttf = (unsigned char *)malloc((size_t)file_sz);
-    if (!ttf) { fclose(f); return false; }
-    fread(ttf, 1, (size_t)file_sz, f);
-    fclose(f);
-
-    /* Extract metrics (must be done before freeing ttf) */
+    /* Extract metrics */
     stbtt_fontinfo info = {0};
-    stbtt_InitFont(&info, ttf, stbtt_GetFontOffsetForIndex(ttf, 0));
+    stbtt_InitFont(&info, ttf_data, stbtt_GetFontOffsetForIndex(ttf_data, 0));
     float scale = stbtt_ScaleForPixelHeight(&info, out_font->baked_px);
     {
         int a, d, lg;
@@ -99,12 +88,11 @@ bool ca_font_create(Ca_Instance *inst, GLFWwindow *glfw_win,
     unsigned char *bitmap =
         (unsigned char *)calloc(1, (size_t)(out_font->atlas_w * out_font->atlas_h));
 
-    int rows = stbtt_BakeFontBitmap(ttf, 0, out_font->baked_px,
+    int rows = stbtt_BakeFontBitmap(ttf_data, 0, out_font->baked_px,
                                     bitmap,
                                     out_font->atlas_w, out_font->atlas_h,
                                     CA_FONT_GLYPH_FIRST, CA_FONT_GLYPH_COUNT,
                                     out_font->glyphs);
-    free(ttf);
 
     if (rows <= 0) {
         fprintf(stderr, "[font] stbtt_BakeFontBitmap failed (rows=%d), "
@@ -247,6 +235,37 @@ bool ca_font_create(Ca_Instance *inst, GLFWwindow *glfw_win,
            out_font->baked_px, cx,
            out_font->ascent, out_font->descent);
     return true;
+}
+
+bool ca_font_create(Ca_Instance *inst, GLFWwindow *glfw_win,
+                    Ca_Font *out_font, const char *path, float font_px)
+{
+    FILE *f = fopen(path, "rb");
+    if (!f) {
+        fprintf(stderr, "[font] cannot open: %s\n", path);
+        return false;
+    }
+    fseek(f, 0, SEEK_END);
+    long file_sz = ftell(f);
+    rewind(f);
+    unsigned char *ttf = (unsigned char *)malloc((size_t)file_sz);
+    if (!ttf) { fclose(f); return false; }
+    fread(ttf, 1, (size_t)file_sz, f);
+    fclose(f);
+
+    bool ok = font_create_internal(inst, glfw_win, out_font,
+                                   ttf, (size_t)file_sz, font_px);
+    free(ttf);
+    return ok;
+}
+
+bool ca_font_create_from_memory(Ca_Instance *inst, GLFWwindow *glfw_win,
+                                Ca_Font *out_font,
+                                const unsigned char *data, unsigned int data_size,
+                                float font_px)
+{
+    return font_create_internal(inst, glfw_win, out_font,
+                                data, (size_t)data_size, font_px);
 }
 
 void ca_font_destroy(Ca_Instance *inst, Ca_Font *font)

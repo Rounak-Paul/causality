@@ -45,9 +45,10 @@ typedef struct Ca_Modal     Ca_Modal;
 typedef struct Ca_InstanceDesc {
     const char *app_name;
     bool        prefer_dedicated_gpu;
-    /* Font — leave NULL / 0 to skip text rendering */
-    const char *font_path;       /* path to a .ttf or .otf file */
-    float       font_size_px;    /* desired size in logical pixels (e.g. 18.0) */
+    /* Font — leave NULL to use the built-in Roboto Mono Nerd Font.
+       Set font_path to override with a custom .ttf or .otf file. */
+    const char *font_path;       /* path to a .ttf or .otf file, or NULL */
+    float       font_size_px;    /* desired size in logical pixels (default: 14) */
 } Ca_InstanceDesc;
 
 Ca_Instance *ca_instance_create(const Ca_InstanceDesc *desc);

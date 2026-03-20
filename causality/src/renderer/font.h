@@ -38,5 +38,12 @@ typedef struct Ca_Font {
 bool ca_font_create(Ca_Instance *inst, GLFWwindow *glfw_win,
                     Ca_Font *out_font, const char *path, float font_px);
 
+/* Create a font atlas from in-memory TTF/OTF data.
+   The data pointer must remain valid for the duration of this call. */
+bool ca_font_create_from_memory(Ca_Instance *inst, GLFWwindow *glfw_win,
+                                Ca_Font *out_font,
+                                const unsigned char *data, unsigned int data_size,
+                                float font_px);
+
 /* Destroy all GPU resources. Safe to call on a zeroed struct. */
 void ca_font_destroy(Ca_Instance *inst, Ca_Font *font);

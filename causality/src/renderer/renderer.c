@@ -310,14 +310,25 @@ bool ca_renderer_window_init(Ca_Instance *inst, Ca_Window *win)
 
     /* Load font atlas and text pipeline on the first window init */
     if (inst->text_pipeline.pipeline == VK_NULL_HANDLE) {
+        inst->font = (Ca_Font *)calloc(1, sizeof(Ca_Font));
+        bool font_ok = false;
         if (inst->font_path[0] != '\0') {
-            inst->font = (Ca_Font *)calloc(1, sizeof(Ca_Font));
-            if (!ca_font_create(inst, win->glfw,
-                                inst->font, inst->font_path,
-                                inst->font_size_px)) {
-                free(inst->font);
-                inst->font = NULL;
-            }
+            /* User-specified font file */
+            font_ok = ca_font_create(inst, win->glfw,
+                                     inst->font, inst->font_path,
+                                     inst->font_size_px);
+        }
+        if (!font_ok) {
+            /* Fall back to embedded Roboto Mono Nerd Font */
+            #include "embedded_font.h"
+            font_ok = ca_font_create_from_memory(
+                        inst, win->glfw, inst->font,
+                        ca_embedded_font_data, ca_embedded_font_size,
+                        inst->font_size_px);
+        }
+        if (!font_ok) {
+            free(inst->font);
+            inst->font = NULL;
         }
         if (!ca_text_pipeline_create(inst, win->sc.format))
             return false;
