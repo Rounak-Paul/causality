@@ -166,13 +166,54 @@ static void layout_node(Ca_Node *node, float x, float y, float avail_w, float av
     node->h = h;
     node->dirty &= ~(CA_DIRTY_LAYOUT | CA_DIRTY_CHILDREN);
 
-    /* Count visible children */
+    /* --- Splitter custom layout: size two panes based on ratio --- */
+    if (node->widget_type == CA_WIDGET_SPLITTER && node->widget) {
+        Ca_Splitter *sp = (Ca_Splitter *)node->widget;
+        bool is_h = (sp->direction == CA_HORIZONTAL);
+        float total = is_h ? w : h;
+        float pane_space = total - sp->bar_size;
+        if (pane_space < 0.0f) pane_space = 0.0f;
+        float pane1 = pane_space * sp->ratio;
+        float pane2 = pane_space - pane1;
+
+        /* Lay out visible children: first two non-hidden become pane1 and pane2 */
+        uint32_t pane_idx = 0;
+        for (uint32_t i = 0; i < node->child_count; ++i) {
+            Ca_Node *child = node->children[i];
+            if (child->desc.hidden) {
+                layout_node(child, 0, 0, 0, 0);
+                continue;
+            }
+            if (pane_idx == 0) {
+                if (is_h)
+                    layout_node(child, x, y, pane1, h);
+                else
+                    layout_node(child, x, y, w, pane1);
+            } else if (pane_idx == 1) {
+                if (is_h)
+                    layout_node(child, x + pane1 + sp->bar_size, y, pane2, h);
+                else
+                    layout_node(child, x, y + pane1 + sp->bar_size, w, pane2);
+            } else {
+                /* Extra children beyond two: hide them */
+                layout_node(child, 0, 0, 0, 0);
+            }
+            pane_idx++;
+        }
+        node->content_w = w;
+        node->content_h = h;
+        return;
+    }
+
+    /* Count visible children that participate in flex flow.
+       Children with position: absolute/fixed are out of flow. */
     uint32_t visible_count = 0;
     for (uint32_t i = 0; i < node->child_count; ++i) {
-        if (!node->children[i]->desc.hidden)
+        Ca_Node *c = node->children[i];
+        if (!c->desc.hidden && c->desc.position == CA_POSITION_RELATIVE)
             visible_count++;
     }
-    if (visible_count == 0) return;
+    if (visible_count == 0) goto out_of_flow;
 
     /* Inner area after padding */
     float inner_x = x + node->desc.padding_left;
@@ -196,7 +237,7 @@ static void layout_node(Ca_Node *node, float x, float y, float avail_w, float av
     float child_margin_cross1[CA_MAX_NODE_CHILDREN];  /* cross-axis end margin */
     for (uint32_t i = 0; i < node->child_count; ++i) {
         Ca_Node *child = node->children[i];
-        if (child->desc.hidden) {
+        if (child->desc.hidden || child->desc.position != CA_POSITION_RELATIVE) {
             child_hypo_main[i] = 0;
             child_margin_before[i] = child_margin_after[i] = 0;
             child_margin_cross0[i] = child_margin_cross1[i] = 0;
@@ -240,7 +281,7 @@ static void layout_node(Ca_Node *node, float x, float y, float avail_w, float av
         uint32_t vis = 0;
         for (uint32_t i = 0; i < node->child_count; ++i) {
             Ca_Node *child = node->children[i];
-            if (child->desc.hidden) continue;
+            if (child->desc.hidden || child->desc.position != CA_POSITION_RELATIVE) continue;
             vis++;
             float ms = child_hypo_main[i];
             if (ms > 0.0f)
@@ -263,7 +304,7 @@ static void layout_node(Ca_Node *node, float x, float y, float avail_w, float av
 
         for (uint32_t i = 0; i < node->child_count; ++i) {
             Ca_Node *child = node->children[i];
-            if (child->desc.hidden) continue;
+            if (child->desc.hidden || child->desc.position != CA_POSITION_RELATIVE) continue;
 
             float ms = child_hypo_main[i];
             if (ms <= 0.0f) ms = 20.0f; /* minimum for wrapping purposes */
@@ -330,7 +371,7 @@ static void layout_node(Ca_Node *node, float x, float y, float avail_w, float av
 
         for (uint32_t i = child_idx; i < node->child_count && vis_in_line < ln->count; ++i) {
             Ca_Node *child = node->children[i];
-            if (child->desc.hidden) { cm_arr[i] = 0; cc_arr[i] = 0; continue; }
+            if (child->desc.hidden || child->desc.position != CA_POSITION_RELATIVE) { cm_arr[i] = 0; cc_arr[i] = 0; continue; }
 
             float cm = child_hypo_main[i];
             float cc = is_row ? child->desc.height : child->desc.width;
@@ -381,8 +422,8 @@ static void layout_node(Ca_Node *node, float x, float y, float avail_w, float av
         vis_in_line = 0;
         for (uint32_t i = line_child_start; i < node->child_count && vis_in_line < ln->count; ++i) {
             Ca_Node *child = node->children[i];
-            if (child->desc.hidden) {
-                layout_node(child, 0, 0, 0, 0);
+            if (child->desc.hidden || child->desc.position != CA_POSITION_RELATIVE) {
+                if (child->desc.hidden) layout_node(child, 0, 0, 0, 0);
                 continue;
             }
 
@@ -467,6 +508,26 @@ static void layout_node(Ca_Node *node, float x, float y, float avail_w, float av
     if (auto_w && node->child_count > 0 && node->desc.overflow_x < 2) {
         if (node->content_w > 0.0f)
             node->w = node->content_w;
+    }
+
+out_of_flow:
+    /* Position absolute/fixed children (they are out of the flex flow) */
+    for (uint32_t i = 0; i < node->child_count; ++i) {
+        Ca_Node *child = node->children[i];
+        if (child->desc.hidden || child->desc.position == CA_POSITION_RELATIVE)
+            continue;
+        float cw = child->desc.width  > 0.0f ? child->desc.width  : node->w;
+        float ch = child->desc.height > 0.0f ? child->desc.height : node->h;
+        float cx, cy;
+        if (child->desc.position == CA_POSITION_ABSOLUTE) {
+            /* Relative to parent's content box */
+            cx = node->x + node->desc.padding_left + child->desc.pos_x;
+            cy = node->y + node->desc.padding_top  + child->desc.pos_y;
+        } else { /* CA_POSITION_FIXED — relative to window origin */
+            cx = child->desc.pos_x;
+            cy = child->desc.pos_y;
+        }
+        layout_node(child, cx, cy, cw, ch);
     }
 }
 

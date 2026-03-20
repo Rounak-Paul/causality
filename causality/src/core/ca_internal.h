@@ -130,6 +130,9 @@ typedef enum {
     CA_ALIGN_STRETCH = 3,
 } Ca_Align;
 
+/* Position mode values defined in causality.h:
+   CA_POSITION_RELATIVE (0), CA_POSITION_ABSOLUTE (1), CA_POSITION_FIXED (2) */
+
 typedef struct {
     float        width,  height;
     float        min_w,  min_h;
@@ -155,6 +158,9 @@ typedef struct {
     uint8_t      overflow_x;   /* 0=visible, 1=hidden, 2=scroll, 3=auto */
     uint8_t      overflow_y;
     bool         hidden;       /* display: none */
+    /* Positioning */
+    uint8_t      position;     /* Ca_Position: 0=relative, 1=absolute, 2=fixed */
+    float        pos_x, pos_y; /* used when position != relative */
 } Ca_NodeDesc;
 
 /* Internal state descriptor — used by ca_state_create inside the library. */
@@ -190,6 +196,7 @@ typedef struct {
 #define CA_MAX_TOOLTIPS_PER_WINDOW   32
 #define CA_MAX_CTXMENUS_PER_WINDOW    8
 #define CA_MAX_MODALS_PER_WINDOW      4
+#define CA_MAX_SPLITTERS_PER_WINDOW   16
 #define CA_MAX_SELECT_OPTIONS        16
 #define CA_MAX_TAB_LABELS            16
 #define CA_MAX_CTXMENU_ITEMS         16
@@ -244,6 +251,7 @@ typedef enum {
     CA_WIDGET_TABBAR     = 10,
     CA_WIDGET_TREENODE   = 11,
     CA_WIDGET_TABLE      = 12,
+    CA_WIDGET_SPLITTER   = 13,
 } Ca_WidgetType;
 
 /* ======================================================
@@ -316,6 +324,11 @@ struct Ca_Node {
     Ca_Transition transitions[CA_MAX_TRANSITIONS_PER_NODE];
     float         transition_duration;   /* default duration from CSS (sec) */
     uint64_t      transition_props;      /* bitmask of props that should animate */
+    /* Drag callbacks (user-level drag interaction) */
+    void         *drag_fn_start;    /* Ca_DragFn */
+    void         *drag_fn_move;     /* Ca_DragFn */
+    void         *drag_fn_end;      /* Ca_DragFn */
+    void         *drag_data;        /* user_data for drag callbacks */
 };
 
 /* ======================================================
@@ -461,6 +474,19 @@ struct Ca_Modal {
     bool          in_use;
 };
 
+struct Ca_Splitter {
+    Ca_Node      *node;       /* the splitter container node */
+    int           direction;  /* CA_HORIZONTAL or CA_VERTICAL */
+    float         ratio;      /* 0.0–1.0: fraction of space for first child */
+    float         min_ratio;  /* minimum ratio (default 0.1) */
+    float         max_ratio;  /* maximum ratio (default 0.9) */
+    float         bar_size;   /* divider thickness in px */
+    uint32_t      bar_color;
+    uint32_t      bar_hover_color;
+    bool          dragging;   /* true while user drags the divider */
+    bool          in_use;
+};
+
 /* ======================================================
    WINDOW
    ====================================================== */
@@ -497,12 +523,19 @@ struct Ca_Window {
     Ca_Tooltip   *tooltip_pool;
     Ca_CtxMenu   *ctxmenu_pool;
     Ca_Modal     *modal_pool;
+    Ca_Splitter  *splitter_pool;
 
     /* Hover / drag state for interactive widgets */
     Ca_Node      *hovered_node;
     Ca_Node      *drag_node;
     float         drag_start_x;
     float         drag_start_value;
+
+    /* Generic drag interaction state */
+    Ca_Node      *user_drag_node;      /* node being dragged by user drag callbacks */
+    float         user_drag_start_x;   /* mouse x when drag began */
+    float         user_drag_start_y;   /* mouse y when drag began */
+    bool          user_drag_active;    /* true after drag threshold exceeded */
 
     /* UI scale factor (1.0 = default, 2.0 = 200%, like browser zoom) */
     float         ui_scale;

@@ -126,6 +126,36 @@ static const char *g_css =
     "}"
     ".btn-compound-label { color: #cdd6f4; font-size: 14px; }"
     ".btn-compound-hint  { color: #6c7086; font-size: 11px; }"
+
+    /* ---- Splitter demo ---- */
+    ".split-pane {"
+    "  padding: 12px;"
+    "  gap: 4px;"
+    "}"
+    ".split-left  { background: #1e1e2e; }"
+    ".split-right { background: #181825; }"
+
+    /* ---- Drag demo ---- */
+    ".drag-box {"
+    "  width: 120px; height: 60px;"
+    "  background: #89b4fa;"
+    "  border-radius: 8px;"
+    "  color: #1e1e2e;"
+    "  padding: 8px;"
+    "}"
+
+    /* ---- Absolute demo ---- */
+    ".abs-container {"
+    "  height: 120px;"
+    "  background: #1e1e2e;"
+    "  border-radius: 8px;"
+    "}"
+    ".abs-badge {"
+    "  background: #f38ba8;"
+    "  border-radius: 6px;"
+    "  padding: 6px 14px;"
+    "  color: #1e1e2e;"
+    "}"
 ;
 
 /* ---- Application context ---- */
@@ -181,6 +211,23 @@ static Ca_Label *g_toggle_label = NULL;
 static Ca_Label *g_select_label = NULL;
 static Ca_Label *g_tab_label    = NULL;
 static float     g_progress_val = 0.35f;
+static Ca_Label *g_drag_label   = NULL;
+
+/* ---- Drag demo callback ---- */
+
+static void on_drag_move(const Ca_DragEvent *ev, void *user_data)
+{
+    (void)user_data;
+    char buf[128];
+    snprintf(buf, sizeof(buf), "Dragging: dx=%.0f  dy=%.0f", ev->dx, ev->dy);
+    ca_label_set_text(g_drag_label, buf);
+}
+
+static void on_drag_end(const Ca_DragEvent *ev, void *user_data)
+{
+    (void)ev; (void)user_data;
+    ca_label_set_text(g_drag_label, "Drag ended — grab the box again!");
+}
 
 /* ---- Button callbacks ---- */
 
@@ -448,6 +495,7 @@ int main(void)
                 "Vulkan", "C11", "GLFW", "CSS", "Flexbox",
                 "Transitions", "Focus", "Scroll", "HiDPI",
                 "Reactive", "Text Input", "Multi-Window",
+                "Splitter", "Drag", "Absolute Pos",
             };
             for (int i = 0; i < (int)(sizeof(tags)/sizeof(tags[0])); ++i)
                 ca_text(&(Ca_TextDesc){ .text = tags[i], .style = "tag" });
@@ -528,6 +576,15 @@ int main(void)
             ca_li_end();
             ca_li_begin(NULL);
                 ca_text(&(Ca_TextDesc){ .text = "Background threads",          .style = "body-text" });
+            ca_li_end();
+            ca_li_begin(NULL);
+                ca_text(&(Ca_TextDesc){ .text = "Resizable split containers",  .style = "body-text" });
+            ca_li_end();
+            ca_li_begin(NULL);
+                ca_text(&(Ca_TextDesc){ .text = "Drag interaction callbacks",   .style = "body-text" });
+            ca_li_end();
+            ca_li_begin(NULL);
+                ca_text(&(Ca_TextDesc){ .text = "Absolute / fixed positioning", .style = "body-text" });
             ca_li_end();
         ca_list_end();
 
@@ -702,6 +759,106 @@ int main(void)
             .text  = "Modals render an overlay - set visible=true to show.",
             .style = "muted",
         });
+
+        ca_hr(NULL);
+
+        /* ---- 18. Splitter (Resizable Split) ---- */
+        ca_h3(&(Ca_TextDesc){ .text = "Splitter", .style = "section" });
+        ca_text(&(Ca_TextDesc){
+            .text  = "Drag the divider bar to resize panes.",
+            .style = "muted",
+        });
+
+        ca_split_begin(&(Ca_SplitDesc){
+            .direction = CA_HORIZONTAL,
+            .ratio     = 0.4f,
+            .bar_size  = 6,
+        });
+            ca_div_begin(&(Ca_DivDesc){
+                .direction = CA_VERTICAL,
+                .style     = "split-pane split-left",
+            });
+                ca_text(&(Ca_TextDesc){
+                    .text  = "Left Pane (40%)",
+                    .color = ca_color(0.54f, 0.71f, 0.98f, 1),
+                });
+                ca_text(&(Ca_TextDesc){
+                    .text  = "Resize me!",
+                    .style = "body-text",
+                });
+            ca_div_end();
+            ca_div_begin(&(Ca_DivDesc){
+                .direction = CA_VERTICAL,
+                .style     = "split-pane split-right",
+            });
+                ca_text(&(Ca_TextDesc){
+                    .text  = "Right Pane (60%)",
+                    .color = ca_color(0.80f, 0.65f, 0.97f, 1),
+                });
+                ca_text(&(Ca_TextDesc){
+                    .text  = "Content fills remaining space.",
+                    .style = "body-text",
+                });
+            ca_div_end();
+        ca_split_end();
+
+        ca_hr(NULL);
+
+        /* ---- 19. Drag Interaction ---- */
+        ca_h3(&(Ca_TextDesc){ .text = "Drag Interaction", .style = "section" });
+        ca_text(&(Ca_TextDesc){
+            .text  = "Click and drag the blue box to see drag callbacks fire.",
+            .style = "muted",
+        });
+
+        ca_div_begin(&(Ca_DivDesc){
+            .direction    = CA_VERTICAL,
+            .style        = "drag-box",
+            .on_drag      = on_drag_move,
+            .on_drag_end  = on_drag_end,
+        });
+            ca_text(&(Ca_TextDesc){
+                .text  = "Drag me!",
+                .color = ca_color(0.12f, 0.12f, 0.18f, 1),
+            });
+        ca_div_end();
+        g_drag_label = ca_text(&(Ca_TextDesc){
+            .text  = "Drag the box above...",
+            .style = "body-text",
+        });
+
+        ca_hr(NULL);
+
+        /* ---- 20. Absolute / Fixed Positioning ---- */
+        ca_h3(&(Ca_TextDesc){ .text = "Absolute Positioning", .style = "section" });
+        ca_text(&(Ca_TextDesc){
+            .text  = "The badge below is placed at pos_x=300, pos_y=20 inside its container.",
+            .style = "muted",
+        });
+
+        ca_div_begin(&(Ca_DivDesc){
+            .direction  = CA_VERTICAL,
+            .style      = "abs-container",
+        });
+            ca_text(&(Ca_TextDesc){
+                .text  = "Container (relative)",
+                .color = ca_color(0.42f, 0.44f, 0.53f, 1),
+            });
+            /* This child is positioned absolutely inside the container */
+            ca_div_begin(&(Ca_DivDesc){
+                .position = CA_POSITION_ABSOLUTE,
+                .pos_x    = 300,
+                .pos_y    = 20,
+                .width    = 140,
+                .height   = 32,
+                .style    = "abs-badge",
+            });
+                ca_text(&(Ca_TextDesc){
+                    .text  = "Absolute badge",
+                    .color = ca_color(0.12f, 0.12f, 0.18f, 1),
+                });
+            ca_div_end();
+        ca_div_end();
 
     ca_ui_end();
 

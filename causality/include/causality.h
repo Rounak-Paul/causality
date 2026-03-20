@@ -37,6 +37,7 @@ typedef struct Ca_Table     Ca_Table;
 typedef struct Ca_Tooltip   Ca_Tooltip;
 typedef struct Ca_CtxMenu   Ca_CtxMenu;
 typedef struct Ca_Modal     Ca_Modal;
+typedef struct Ca_Splitter  Ca_Splitter;
 
 /* ============================================================
    INSTANCE
@@ -154,6 +155,17 @@ typedef void (*Ca_TabFn)(Ca_TabBar *tabs, void *user_data);
 typedef void (*Ca_TreeToggleFn)(Ca_TreeNode *tn, void *user_data);
 typedef void (*Ca_MenuFn)(int item_index, void *user_data);
 
+/* Drag interaction callback.
+   'dx' and 'dy' are the delta from the drag start point. */
+typedef struct Ca_DragEvent {
+    Ca_Window *window;
+    float      x, y;           /* current mouse position */
+    float      start_x, start_y; /* where mouse was when drag began */
+    float      dx, dy;         /* x - start_x, y - start_y */
+} Ca_DragEvent;
+
+typedef void (*Ca_DragFn)(const Ca_DragEvent *event, void *user_data);
+
 /* Layout direction constants */
 #define CA_HORIZONTAL 0
 #define CA_VERTICAL   1
@@ -195,6 +207,11 @@ typedef void (*Ca_MenuFn)(int item_index, void *user_data);
 
 /* ---- Descriptors ---- */
 
+/* Positioning mode constants */
+#define CA_POSITION_RELATIVE 0
+#define CA_POSITION_ABSOLUTE 1
+#define CA_POSITION_FIXED    2
+
 /* <div> — generic layout container. */
 typedef struct Ca_DivDesc {
     float    width, height;        /* 0 = fill available space              */
@@ -205,6 +222,14 @@ typedef struct Ca_DivDesc {
     float    corner_radius;
     const char *id;                /* CSS id  (without #)                   */
     const char *style;             /* space-separated CSS class names       */
+    /* Positioning — default 0 (relative, participates in flex flow). */
+    int      position;             /* CA_POSITION_RELATIVE / ABSOLUTE / FIXED */
+    float    pos_x, pos_y;         /* coordinates when position != RELATIVE  */
+    /* Drag interaction callbacks */
+    Ca_DragFn on_drag_start;       /* called when drag begins               */
+    Ca_DragFn on_drag;             /* called every frame during drag         */
+    Ca_DragFn on_drag_end;         /* called when mouse released             */
+    void     *drag_data;           /* user_data passed to drag callbacks     */
 } Ca_DivDesc;
 
 /* <p> / text — leaf text element. */
@@ -463,6 +488,60 @@ void ca_context_menu(const Ca_CtxMenuDesc *desc);
 /* Modal / dialog */
 void ca_modal_begin(const Ca_ModalDesc *desc);
 void ca_modal_end(void);
+
+/* ============================================================
+   UI — SPLITTER (resizable split container)
+   ============================================================
+
+   A splitter divides its area into two panes with a draggable divider.
+   Nest exactly two children inside ca_split_begin / ca_split_end.
+
+       ca_split_begin(&(Ca_SplitDesc){ .direction = CA_HORIZONTAL, .ratio = 0.3f });
+         ca_div_begin(NULL);  // left pane  (30%)
+           ...
+         ca_div_end();
+         ca_div_begin(NULL);  // right pane (70%)
+           ...
+         ca_div_end();
+       ca_split_end();
+
+   ============================================================ */
+
+typedef struct Ca_SplitDesc {
+    int      direction;        /* CA_HORIZONTAL or CA_VERTICAL          */
+    float    ratio;            /* 0.0–1.0: fraction for first pane (default 0.5) */
+    float    min_ratio;        /* minimum ratio (default 0.1)           */
+    float    max_ratio;        /* maximum ratio (default 0.9)           */
+    float    bar_size;         /* divider thickness in px (default 4)   */
+    uint32_t bar_color;        /* divider colour (default dark grey)    */
+    uint32_t bar_hover_color;  /* divider colour when hovered           */
+    const char *id, *style;
+} Ca_SplitDesc;
+
+Ca_Splitter *ca_split_begin(const Ca_SplitDesc *desc);
+void         ca_split_end(void);
+float        ca_split_get_ratio(const Ca_Splitter *s);
+void         ca_split_set_ratio(Ca_Splitter *s, float ratio);
+
+/* ============================================================
+   UI — ABSOLUTE / FIXED POSITIONING
+   ============================================================
+
+   Use the position, pos_x, and pos_y fields of Ca_DivDesc to
+   place a container outside the normal flex flow:
+
+     ca_div_begin(&(Ca_DivDesc){
+         .position = CA_POSITION_ABSOLUTE,
+         .pos_x = 100, .pos_y = 50,
+         .width = 200, .height = 300,
+         .background = ca_color(0.1, 0.1, 0.15, 1),
+     });
+       ...  // children inside the floating panel
+     ca_div_end();
+
+   - ABSOLUTE: positioned relative to nearest positioned ancestor
+   - FIXED: positioned relative to the window
+   ============================================================ */
 
 /* ============================================================
    CSS STYLESHEET

@@ -112,6 +112,7 @@ ALLOC_POOL_FN(table,     Ca_Table,     table_pool,     CA_MAX_TABLES_PER_WINDOW)
 ALLOC_POOL_FN(tooltip,   Ca_Tooltip,   tooltip_pool,   CA_MAX_TOOLTIPS_PER_WINDOW)
 ALLOC_POOL_FN(ctxmenu,   Ca_CtxMenu,   ctxmenu_pool,   CA_MAX_CTXMENUS_PER_WINDOW)
 ALLOC_POOL_FN(modal,     Ca_Modal,     modal_pool,     CA_MAX_MODALS_PER_WINDOW)
+ALLOC_POOL_FN(splitter,  Ca_Splitter,  splitter_pool,  CA_MAX_SPLITTERS_PER_WINDOW)
 
 /* ============================================================
    INTERNAL — node creation helpers
@@ -235,7 +236,7 @@ static void apply_css(Ca_Node *node, Ca_NodeDesc *nd,
     if (!ss) return;
 
     Ca_ResolvedStyle rs;
-    ca_style_resolve(ss, node, elem_type, classes, &rs);
+    ca_style_resolve(ss, node, elem_type, node->classes, &rs);
 
     /* Scale CSS-resolved pixel values before applying */
     rs.width        = s(rs.width);
@@ -281,6 +282,9 @@ static Ca_NodeDesc div_to_nd(const Ca_DivDesc *d)
     nd.direction      = dir_from_int(d->direction);
     nd.background     = d->background;
     nd.corner_radius  = s(d->corner_radius);
+    nd.position       = (uint8_t)d->position;
+    nd.pos_x          = s(d->pos_x);
+    nd.pos_y          = s(d->pos_y);
     return nd;
 }
 
@@ -340,6 +344,14 @@ void ca_div_begin(const Ca_DivDesc *desc)
     apply_css(node, &node->desc, CA_ELEM_DIV,
               desc ? desc->style : NULL,
               desc ? desc->id : NULL, &dummy);
+
+    /* Store drag callbacks on the node */
+    if (desc) {
+        node->drag_fn_start = (void *)desc->on_drag_start;
+        node->drag_fn_move  = (void *)desc->on_drag;
+        node->drag_fn_end   = (void *)desc->on_drag_end;
+        node->drag_data     = desc->drag_data;
+    }
 
     ctx_push(node);
 }
@@ -1330,6 +1342,67 @@ void ca_modal_end(void)
 }
 
 /* ============================================================
+   PUBLIC — Splitter (resizable split container)
+   ============================================================ */
+
+Ca_Splitter *ca_split_begin(const Ca_SplitDesc *desc)
+{
+    assert(g_ctx.active && desc);
+    Ca_Splitter *sp = alloc_splitter(g_ctx.window);
+    if (!sp) return NULL;
+
+    Ca_NodeDesc nd = {0};
+    nd.direction = dir_from_int(desc->direction);
+    /* The splitter itself fills available space by default (width/height = 0) */
+
+    Ca_Node *node = ca_node_add(ctx_top(), &nd);
+    if (!node) return NULL;
+
+    sp->node      = node;
+    sp->in_use    = true;
+    sp->direction = desc->direction;
+    sp->ratio     = (desc->ratio > 0.0f && desc->ratio < 1.0f) ? desc->ratio : 0.5f;
+    sp->min_ratio = (desc->min_ratio > 0.0f) ? desc->min_ratio : 0.1f;
+    sp->max_ratio = (desc->max_ratio > 0.0f) ? desc->max_ratio : 0.9f;
+    sp->bar_size  = (desc->bar_size > 0.0f)  ? s(desc->bar_size)  : s(4.0f);
+    sp->bar_color = desc->bar_color ? desc->bar_color : ca_color(0.25f, 0.25f, 0.3f, 1.0f);
+    sp->bar_hover_color = desc->bar_hover_color
+        ? desc->bar_hover_color : ca_color(0.35f, 0.55f, 0.9f, 1.0f);
+    sp->dragging  = false;
+
+    node->widget_type = CA_WIDGET_SPLITTER;
+    node->widget      = sp;
+
+    uint32_t dummy = 0;
+    apply_css(node, &node->desc, CA_ELEM_SPLITTER,
+              desc->style, desc->id, &dummy);
+
+    ctx_push(node);
+    return sp;
+}
+
+void ca_split_end(void)
+{
+    assert(g_ctx.active && g_ctx.depth > 0);
+    ctx_pop();
+}
+
+float ca_split_get_ratio(const Ca_Splitter *s)
+{
+    assert(s && s->in_use);
+    return s->ratio;
+}
+
+void ca_split_set_ratio(Ca_Splitter *s, float ratio)
+{
+    assert(s && s->in_use);
+    if (ratio < s->min_ratio) ratio = s->min_ratio;
+    if (ratio > s->max_ratio) ratio = s->max_ratio;
+    s->ratio = ratio;
+    s->node->dirty |= CA_DIRTY_LAYOUT | CA_DIRTY_CONTENT;
+}
+
+/* ============================================================
    INPUT PASS — hit-test, focus, keyboard
    ============================================================ */
 
@@ -1805,6 +1878,137 @@ void ca_widget_input_pass(Ca_Window *win)
         }
         if (!left_down && win->drag_node) {
             win->drag_node = NULL;
+        }
+    }
+
+    /* --- Splitter drag handling --- */
+    if (win->splitter_pool) {
+        bool left_down = win->mouse_buttons[0];
+
+        /* Start splitter drag */
+        if (left_down && win->mouse_click_this_frame) {
+            for (uint32_t i = 0; i < CA_MAX_SPLITTERS_PER_WINDOW; ++i) {
+                Ca_Splitter *sp = &win->splitter_pool[i];
+                if (!sp->in_use || !sp->node) continue;
+                Ca_Node *n = sp->node;
+                /* Compute the divider bar rect */
+                bool is_h = (sp->direction == CA_HORIZONTAL);
+                float bar_x, bar_y, bar_w, bar_h;
+                if (is_h) {
+                    bar_x = n->x + (n->w - sp->bar_size) * sp->ratio;
+                    bar_y = n->y;
+                    bar_w = sp->bar_size;
+                    bar_h = n->h;
+                } else {
+                    bar_x = n->x;
+                    bar_y = n->y + (n->h - sp->bar_size) * sp->ratio;
+                    bar_w = n->w;
+                    bar_h = sp->bar_size;
+                }
+                /* Expand hit zone slightly for easier grabbing */
+                float expand = 4.0f;
+                if (mx >= bar_x - expand && mx <= bar_x + bar_w + expand &&
+                    my >= bar_y - expand && my <= bar_y + bar_h + expand) {
+                    sp->dragging = true;
+                }
+            }
+        }
+
+        /* Update splitter ratio during drag */
+        for (uint32_t i = 0; i < CA_MAX_SPLITTERS_PER_WINDOW; ++i) {
+            Ca_Splitter *sp = &win->splitter_pool[i];
+            if (!sp->in_use || !sp->dragging) continue;
+            if (!left_down) {
+                sp->dragging = false;
+                continue;
+            }
+            Ca_Node *n = sp->node;
+            bool is_h = (sp->direction == CA_HORIZONTAL);
+            float total = is_h ? n->w : n->h;
+            if (total <= sp->bar_size) continue;
+            float local = is_h ? (mx - n->x) : (my - n->y);
+            float new_ratio = local / (total - sp->bar_size);
+            if (new_ratio < sp->min_ratio) new_ratio = sp->min_ratio;
+            if (new_ratio > sp->max_ratio) new_ratio = sp->max_ratio;
+            if (new_ratio != sp->ratio) {
+                sp->ratio = new_ratio;
+                n->dirty |= CA_DIRTY_LAYOUT | CA_DIRTY_CONTENT;
+            }
+        }
+    }
+
+    /* --- Generic drag interaction (user-defined drag callbacks on divs) --- */
+    {
+        bool left_down = win->mouse_buttons[0];
+
+        /* Start a new user drag */
+        if (left_down && win->mouse_click_this_frame && !win->user_drag_node) {
+            /* Find the smallest draggable node under cursor */
+            float best_area = 1e18f;
+            Ca_Node *best = NULL;
+            if (win->node_pool) {
+                for (uint32_t i = 0; i < CA_MAX_NODES_PER_WINDOW; ++i) {
+                    Ca_Node *n = &win->node_pool[i];
+                    if (!n->in_use || n->desc.hidden) continue;
+                    if (!n->drag_fn_start && !n->drag_fn_move && !n->drag_fn_end) continue;
+                    if (point_in_node(n, mx, my)) {
+                        float area = n->w * n->h;
+                        if (area < best_area) {
+                            best_area = area;
+                            best = n;
+                        }
+                    }
+                }
+            }
+            if (best) {
+                win->user_drag_node    = best;
+                win->user_drag_start_x = mx;
+                win->user_drag_start_y = my;
+                win->user_drag_active  = true;
+                if (best->drag_fn_start) {
+                    Ca_DragEvent ev = {
+                        .window  = win,
+                        .x = mx, .y = my,
+                        .start_x = mx, .start_y = my,
+                        .dx = 0, .dy = 0,
+                    };
+                    ((Ca_DragFn)best->drag_fn_start)(&ev, best->drag_data);
+                }
+            }
+        }
+
+        /* Continue drag */
+        if (win->user_drag_active && left_down && win->user_drag_node) {
+            Ca_Node *dn = win->user_drag_node;
+            if (dn->drag_fn_move) {
+                Ca_DragEvent ev = {
+                    .window  = win,
+                    .x = mx, .y = my,
+                    .start_x = win->user_drag_start_x,
+                    .start_y = win->user_drag_start_y,
+                    .dx = mx - win->user_drag_start_x,
+                    .dy = my - win->user_drag_start_y,
+                };
+                ((Ca_DragFn)dn->drag_fn_move)(&ev, dn->drag_data);
+            }
+        }
+
+        /* End drag */
+        if (win->user_drag_active && !left_down) {
+            Ca_Node *dn = win->user_drag_node;
+            if (dn && dn->drag_fn_end) {
+                Ca_DragEvent ev = {
+                    .window  = win,
+                    .x = mx, .y = my,
+                    .start_x = win->user_drag_start_x,
+                    .start_y = win->user_drag_start_y,
+                    .dx = mx - win->user_drag_start_x,
+                    .dy = my - win->user_drag_start_y,
+                };
+                ((Ca_DragFn)dn->drag_fn_end)(&ev, dn->drag_data);
+            }
+            win->user_drag_node   = NULL;
+            win->user_drag_active = false;
         }
     }
 

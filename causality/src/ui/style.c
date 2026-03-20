@@ -40,6 +40,7 @@ static const char *s_elem_names[CA_ELEM_COUNT] = {
     [CA_ELEM_TOOLTIP]   = "tooltip",
     [CA_ELEM_CTXMENU]   = "contextmenu",
     [CA_ELEM_MODAL]     = "modal",
+    [CA_ELEM_SPLITTER]  = "splitter",
 };
 
 const char *ca_elem_type_name(Ca_ElementType type)

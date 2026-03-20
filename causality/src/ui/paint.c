@@ -359,6 +359,43 @@ static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, Cli
         paint_text(win, font, &txt_n, tn->text, tn->text_color);
         break;
     }
+    case CA_WIDGET_SPLITTER: {
+        Ca_Splitter *sp = (Ca_Splitter *)node->widget;
+        if (!sp || !sp->in_use) break;
+        /* Draw the divider bar between the two panes */
+        bool is_h = (sp->direction == CA_HORIZONTAL);
+        float bar_x, bar_y, bar_w, bar_h;
+        if (is_h) {
+            float pane_space = node->w - sp->bar_size;
+            if (pane_space < 0) pane_space = 0;
+            bar_x = node->x + pane_space * sp->ratio;
+            bar_y = node->y;
+            bar_w = sp->bar_size;
+            bar_h = node->h;
+        } else {
+            float pane_space = node->h - sp->bar_size;
+            if (pane_space < 0) pane_space = 0;
+            bar_x = node->x;
+            bar_y = node->y + pane_space * sp->ratio;
+            bar_w = node->w;
+            bar_h = sp->bar_size;
+        }
+        bool hovered = (win->hovered_node == node);
+        uint32_t color = hovered ? sp->bar_hover_color : sp->bar_color;
+        if (win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
+            Ca_DrawCmd *cmd = &win->draw_cmds[win->draw_cmd_count++];
+            memset(cmd, 0, sizeof(*cmd));
+            cmd->type   = CA_DRAW_RECT;
+            cmd->x      = bar_x;
+            cmd->y      = bar_y;
+            cmd->w      = bar_w;
+            cmd->h      = bar_h;
+            unpack_color(color, &cmd->r, &cmd->g, &cmd->b, &cmd->a);
+            cmd->in_use = true;
+            set_clip(cmd, clip);
+        }
+        break;
+    }
     default: break;
     }
 }

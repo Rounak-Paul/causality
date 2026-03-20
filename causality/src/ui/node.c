@@ -24,6 +24,7 @@ void ca_node_system_init(Ca_Window *win)
     win->tooltip_pool   = (Ca_Tooltip *)calloc(CA_MAX_TOOLTIPS_PER_WINDOW, sizeof(Ca_Tooltip));
     win->ctxmenu_pool   = (Ca_CtxMenu *)calloc(CA_MAX_CTXMENUS_PER_WINDOW, sizeof(Ca_CtxMenu));
     win->modal_pool     = (Ca_Modal *)calloc(CA_MAX_MODALS_PER_WINDOW, sizeof(Ca_Modal));
+    win->splitter_pool   = (Ca_Splitter *)calloc(CA_MAX_SPLITTERS_PER_WINDOW, sizeof(Ca_Splitter));
     win->root           = NULL;
     win->draw_cmd_count = 0;
     win->paint_cache     = (Ca_DrawCmd *)calloc(CA_MAX_DRAW_CMDS_PER_WINDOW, sizeof(Ca_DrawCmd));
@@ -55,6 +56,7 @@ void ca_node_system_shutdown(Ca_Window *win)
     free(win->tooltip_pool);
     free(win->ctxmenu_pool);
     free(win->modal_pool);
+    free(win->splitter_pool);
     free(win->paint_cache);
     win->node_pool      = NULL;
     win->draw_cmds      = NULL;
@@ -74,6 +76,7 @@ void ca_node_system_shutdown(Ca_Window *win)
     win->tooltip_pool   = NULL;
     win->ctxmenu_pool   = NULL;
     win->modal_pool     = NULL;
+    win->splitter_pool   = NULL;
     win->root           = NULL;
     win->draw_cmd_count = 0;
 }
