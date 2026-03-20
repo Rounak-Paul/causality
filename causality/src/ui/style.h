@@ -75,6 +75,7 @@ typedef struct {
     int      align_items;
     int      justify_content;
     int      overflow_x, overflow_y;  /* Ca_Overflow */
+    int      text_align;              /* Ca_CssKeyword text-align */
 
     /* Transition */
     float    transition_duration;     /* seconds */

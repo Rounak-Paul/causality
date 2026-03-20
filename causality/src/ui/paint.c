@@ -495,16 +495,28 @@ static void paint_text(Ca_Window *win, Ca_Font *font,
             text_w += font->glyphs[c - CA_FONT_GLYPH_FIRST].xadvance / cs_eff;
     }
 
-    /* Compute baseline (vertically centred) and left edge (horizontally centred).
-       If text is wider than the node, left-align instead of centering. */
+    /* Compute baseline (vertically centred) and left edge based on text_align.
+       text_align: 0=center, 1=left, 2=right.
+       If text is wider than the node, left-align regardless. */
     float baseline_logical =
         node->y + node->h * 0.5f
         + (font->ascent * font_scale + font->descent * font_scale) * 0.5f;
     float left_logical;
-    if (text_w > node->w)
+    if (text_w > node->w) {
         left_logical = node->x + node->desc.padding_left;
-    else
-        left_logical = node->x + (node->w - text_w) * 0.5f;
+    } else {
+        switch (node->desc.text_align) {
+        case 1:  /* left */
+            left_logical = node->x + node->desc.padding_left;
+            break;
+        case 2:  /* right */
+            left_logical = node->x + node->w - text_w - node->desc.padding_right;
+            break;
+        default: /* center */
+            left_logical = node->x + (node->w - text_w) * 0.5f;
+            break;
+        }
+    }
 
     /* GetBakedQuad works in native (baked) pixel space */
     float xpos = left_logical * cs_eff;

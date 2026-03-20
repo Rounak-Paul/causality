@@ -67,6 +67,7 @@ typedef enum {
     CA_CSS_PROP_OPACITY,
     /* Typography */
     CA_CSS_PROP_FONT_SIZE,
+    CA_CSS_PROP_TEXT_ALIGN,
     /* Overflow */
     CA_CSS_PROP_OVERFLOW,
     CA_CSS_PROP_OVERFLOW_X,
@@ -103,6 +104,10 @@ typedef enum {
     CA_CSS_OVERFLOW_HIDDEN,
     CA_CSS_OVERFLOW_SCROLL,
     CA_CSS_OVERFLOW_AUTO,
+    /* text-align */
+    CA_CSS_TEXT_ALIGN_LEFT,
+    CA_CSS_TEXT_ALIGN_CENTER,
+    CA_CSS_TEXT_ALIGN_RIGHT,
 } Ca_CssKeyword;
 
 /* ============================================================

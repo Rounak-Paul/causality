@@ -435,6 +435,7 @@ static Ca_CssPropId lookup_property(const char *name)
         { "border-radius",    CA_CSS_PROP_BORDER_RADIUS },
         { "opacity",          CA_CSS_PROP_OPACITY },
         { "font-size",        CA_CSS_PROP_FONT_SIZE },
+        { "text-align",       CA_CSS_PROP_TEXT_ALIGN },
         { "overflow",         CA_CSS_PROP_OVERFLOW },
         { "overflow-x",       CA_CSS_PROP_OVERFLOW_X },
         { "overflow-y",       CA_CSS_PROP_OVERFLOW_Y },
@@ -503,6 +504,12 @@ static bool lookup_keyword(const char *name, Ca_CssPropId prop, int *out)
         { "scroll",  CA_CSS_OVERFLOW_SCROLL },
         { "auto",    CA_CSS_OVERFLOW_AUTO },
     };
+    /* text-align */
+    static Ca_KwEntry textalign_kw[] = {
+        { "left",   CA_CSS_TEXT_ALIGN_LEFT },
+        { "center", CA_CSS_TEXT_ALIGN_CENTER },
+        { "right",  CA_CSS_TEXT_ALIGN_RIGHT },
+    };
 
     switch (prop) {
         case CA_CSS_PROP_DISPLAY:
@@ -519,6 +526,8 @@ static bool lookup_keyword(const char *name, Ca_CssPropId prop, int *out)
         case CA_CSS_PROP_OVERFLOW_X:
         case CA_CSS_PROP_OVERFLOW_Y:
             tbl = overflow_kw; count = 4; break;
+        case CA_CSS_PROP_TEXT_ALIGN:
+            tbl = textalign_kw; count = 3; break;
         default: return false;
     }
 
