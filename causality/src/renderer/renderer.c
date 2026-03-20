@@ -315,8 +315,8 @@ bool ca_renderer_window_init(Ca_Instance *inst, Ca_Window *win)
         if (inst->font_path[0] != '\0') {
             /* User-specified font file */
             font_ok = ca_font_create(inst, win->glfw,
-                                     inst->font, inst->font_path,
-                                     inst->font_size_px);
+                                    inst->font, inst->font_path,
+                                    inst->font_size_px);
         }
         if (!font_ok) {
             /* Fall back to embedded Roboto Mono Nerd Font */
