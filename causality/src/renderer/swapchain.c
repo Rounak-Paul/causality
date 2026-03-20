@@ -6,9 +6,9 @@
 /* ---- Helpers ---- */
 
 /* Compare draw commands by z_index for stable sort (preserves original order
-   for commands with equal z_index by using pointer offset). */
+   for commands with equal z_index by using index offset). */
 static Ca_DrawCmd *s_sort_base; /* set before qsort */
-static int cmp_draw_cmd(const void *a, const void *b)
+static int cmp_z_cmd(const void *a, const void *b)
 {
     uint32_t ia = *(const uint32_t *)a;
     uint32_t ib = *(const uint32_t *)b;
@@ -302,17 +302,34 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
     };
     vkCmdBeginRendering(f->cmd, &render_info);
 
-    /* --- Z-index sort: build an index array sorted by z_index --- */
+    /* --- Z-index: partition into z<0 | z==0 | z>0, sort only z!=0 --- */
     uint32_t *sorted_idx = NULL;
-    bool need_sort = false;
-    for (uint32_t d = 1; d < win->draw_cmd_count && !need_sort; ++d) {
-        if (win->draw_cmds[d].z_index != 0) need_sort = true;
-    }
-    if (need_sort && win->draw_cmd_count > 1) {
-        sorted_idx = (uint32_t *)malloc(win->draw_cmd_count * sizeof(uint32_t));
-        for (uint32_t i = 0; i < win->draw_cmd_count; ++i) sorted_idx[i] = i;
-        s_sort_base = win->draw_cmds;
-        qsort(sorted_idx + 1, win->draw_cmd_count - 1, sizeof(uint32_t), cmp_draw_cmd);
+    {
+        uint32_t count = win->draw_cmd_count;
+        uint32_t n_neg = 0, n_pos = 0;
+        for (uint32_t d = 1; d < count; ++d) {
+            int z = win->draw_cmds[d].z_index;
+            if (z < 0) n_neg++;
+            else if (z > 0) n_pos++;
+        }
+        if ((n_neg | n_pos) && count > 1) {
+            sorted_idx = (uint32_t *)malloc(count * sizeof(uint32_t));
+            sorted_idx[0] = 0;
+            uint32_t n_zero  = count - 1 - n_neg - n_pos;
+            uint32_t ni = 1, zi = 1 + n_neg, pi = 1 + n_neg + n_zero;
+            for (uint32_t d = 1; d < count; ++d) {
+                int z = win->draw_cmds[d].z_index;
+                if (z < 0)       sorted_idx[ni++] = d;
+                else if (z == 0) sorted_idx[zi++] = d;
+                else             sorted_idx[pi++] = d;
+            }
+            s_sort_base = win->draw_cmds;
+            if (n_neg > 1)
+                qsort(sorted_idx + 1, n_neg, sizeof(uint32_t), cmp_z_cmd);
+            if (n_pos > 1)
+                qsort(sorted_idx + 1 + n_neg + n_zero, n_pos,
+                      sizeof(uint32_t), cmp_z_cmd);
+        }
     }
 
     /* Helper: convert logical clip rect to physical scissor rect */
