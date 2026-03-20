@@ -1,8 +1,22 @@
 #include "swapchain.h"
 #include "renderer.h"
 #include "pipeline.h"
+#include <stdlib.h>
 
 /* ---- Helpers ---- */
+
+/* Compare draw commands by z_index for stable sort (preserves original order
+   for commands with equal z_index by using pointer offset). */
+static Ca_DrawCmd *s_sort_base; /* set before qsort */
+static int cmp_draw_cmd(const void *a, const void *b)
+{
+    uint32_t ia = *(const uint32_t *)a;
+    uint32_t ib = *(const uint32_t *)b;
+    int za = s_sort_base[ia].z_index;
+    int zb = s_sort_base[ib].z_index;
+    if (za != zb) return (za < zb) ? -1 : 1;
+    return (ia < ib) ? -1 : (ia > ib) ? 1 : 0; /* stable: by original index */
+}
 
 static VkSurfaceFormatKHR choose_surface_format(VkPhysicalDevice gpu,
                                                  VkSurfaceKHR surface)
@@ -288,6 +302,19 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
     };
     vkCmdBeginRendering(f->cmd, &render_info);
 
+    /* --- Z-index sort: build an index array sorted by z_index --- */
+    uint32_t *sorted_idx = NULL;
+    bool need_sort = false;
+    for (uint32_t d = 1; d < win->draw_cmd_count && !need_sort; ++d) {
+        if (win->draw_cmds[d].z_index != 0) need_sort = true;
+    }
+    if (need_sort && win->draw_cmd_count > 1) {
+        sorted_idx = (uint32_t *)malloc(win->draw_cmd_count * sizeof(uint32_t));
+        for (uint32_t i = 0; i < win->draw_cmd_count; ++i) sorted_idx[i] = i;
+        s_sort_base = win->draw_cmds;
+        qsort(sorted_idx + 1, win->draw_cmd_count - 1, sizeof(uint32_t), cmp_draw_cmd);
+    }
+
     /* Helper: convert logical clip rect to physical scissor rect */
     int log_w, log_h;
     glfwGetWindowSize(win->glfw, &log_w, &log_h);
@@ -317,7 +344,8 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
             vkCmdSetScissor(f->cmd,  0, 1, &full_scissor);
 
             for (uint32_t d = 1; d < win->draw_cmd_count; ++d) {
-                const Ca_DrawCmd *cmd = &win->draw_cmds[d];
+                uint32_t idx = sorted_idx ? sorted_idx[d] : d;
+                const Ca_DrawCmd *cmd = &win->draw_cmds[idx];
                 if (!cmd->in_use || cmd->type != CA_DRAW_RECT || cmd->a < 0.004f)
                     continue;
                 if (cmd->overlay != want_overlay) continue;
@@ -345,9 +373,12 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
                     .color    = { cmd->r, cmd->g, cmd->b, cmd->a },
                     .viewport = { (float)log_w, (float)log_h },
                     .corner_radius = cmd->corner_radius,
+                    .border_width  = cmd->border_width,
+                    .border_color  = { cmd->border_r, cmd->border_g,
+                                       cmd->border_b, cmd->border_a },
                 };
                 vkCmdPushConstants(f->cmd, inst->rect_pipeline.layout,
-                                   VK_SHADER_STAGE_VERTEX_BIT,
+                                   VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
                                    0, sizeof(Ca_RectPushConst), &pc);
                 vkCmdDraw(f->cmd, 6, 1, 0, 0);
             }
@@ -386,7 +417,8 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
                                         0, NULL);
 
                 for (uint32_t d = 0; d < win->draw_cmd_count; ++d) {
-                    const Ca_DrawCmd *cmd = &win->draw_cmds[d];
+                    uint32_t idx = sorted_idx ? sorted_idx[d] : d;
+                    const Ca_DrawCmd *cmd = &win->draw_cmds[idx];
                     if (!cmd->in_use || cmd->type != CA_DRAW_GLYPH ||
                         cmd->a < 0.004f)
                         continue;
@@ -422,7 +454,81 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
                 }
             }
         }
+
+        /* ---- Images (RGBA textured quads) ---- */
+        if (inst->image_pipeline != VK_NULL_HANDLE) {
+            bool has_images = false;
+            for (uint32_t d = 0; d < win->draw_cmd_count; ++d) {
+                if (win->draw_cmds[d].in_use &&
+                    win->draw_cmds[d].type == CA_DRAW_IMAGE &&
+                    win->draw_cmds[d].overlay == want_overlay) {
+                    has_images = true;
+                    break;
+                }
+            }
+            if (has_images) {
+                vkCmdBindPipeline(f->cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                  inst->image_pipeline);
+
+                VkViewport vp = {
+                    .x = 0.0f, .y = 0.0f,
+                    .width  = (float)sc->extent.width,
+                    .height = (float)sc->extent.height,
+                    .minDepth = 0.0f, .maxDepth = 1.0f,
+                };
+                vkCmdSetViewport(f->cmd, 0, 1, &vp);
+                vkCmdSetScissor(f->cmd,  0, 1, &full_scissor);
+
+                for (uint32_t d = 0; d < win->draw_cmd_count; ++d) {
+                    uint32_t idx = sorted_idx ? sorted_idx[d] : d;
+                    const Ca_DrawCmd *cmd = &win->draw_cmds[idx];
+                    if (!cmd->in_use || cmd->type != CA_DRAW_IMAGE ||
+                        cmd->a < 0.004f)
+                        continue;
+                    if (cmd->overlay != want_overlay) continue;
+
+                    int16_t ii = cmd->image_index;
+                    if (ii < 0 || ii >= CA_MAX_IMAGES || !inst->images[ii].in_use)
+                        continue;
+
+                    if (cmd->has_clip) {
+                        int32_t cx = (int32_t)(cmd->clip_x * scale_x);
+                        int32_t cy = (int32_t)(cmd->clip_y * scale_y);
+                        int32_t cw = (int32_t)(cmd->clip_w * scale_x);
+                        int32_t ch = (int32_t)(cmd->clip_h * scale_y);
+                        if (cx < 0) { cw += cx; cx = 0; }
+                        if (cy < 0) { ch += cy; cy = 0; }
+                        if (cw < 0) cw = 0;
+                        if (ch < 0) ch = 0;
+                        VkRect2D clip = { .offset = {cx, cy},
+                                          .extent = {(uint32_t)cw, (uint32_t)ch} };
+                        vkCmdSetScissor(f->cmd, 0, 1, &clip);
+                    } else {
+                        vkCmdSetScissor(f->cmd, 0, 1, &full_scissor);
+                    }
+
+                    vkCmdBindDescriptorSets(f->cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                            inst->text_pipeline.layout,
+                                            0, 1, &inst->images[ii].desc_set,
+                                            0, NULL);
+
+                    Ca_TextPushConst pc = {
+                        .pos      = { cmd->x, cmd->y },
+                        .size     = { cmd->w, cmd->h },
+                        .uv       = { cmd->u0, cmd->v0, cmd->u1, cmd->v1 },
+                        .color    = { cmd->r, cmd->g, cmd->b, cmd->a },
+                        .viewport = { (float)log_w, (float)log_h },
+                    };
+                    vkCmdPushConstants(f->cmd, inst->text_pipeline.layout,
+                                       VK_SHADER_STAGE_VERTEX_BIT,
+                                       0, sizeof(Ca_TextPushConst), &pc);
+                    vkCmdDraw(f->cmd, 6, 1, 0, 0);
+                }
+            }
+        }
     } /* end phase loop */
+
+    free(sorted_idx);
 
     vkCmdEndRendering(f->cmd);
 

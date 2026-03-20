@@ -1,6 +1,66 @@
 /* layout.c — flexbox-inspired single-axis layout with full flex support */
 #include "layout.h"
 #include "css.h"
+#include "font.h"
+
+/* Measure the height a wrapped text label will occupy given its laid-out width.
+   Mirrors the first pass of paint_text_wrapped() in paint.c but returns early
+   with just the line count × line height.  Returns 0 if not applicable. */
+static float measure_wrapped_text_height(Ca_Node *node)
+{
+    if (node->widget_type != CA_WIDGET_LABEL || !node->widget)
+        return 0.0f;
+    if (!node->desc.text_wrap)
+        return 0.0f;
+    Ca_Label *lbl = (Ca_Label *)node->widget;
+    if (!lbl->in_use || lbl->text[0] == '\0')
+        return 0.0f;
+
+    Ca_Window *win = node->window;
+    if (!win || !win->instance || !win->instance->font)
+        return 0.0f;
+    Ca_Font *font = win->instance->font;
+
+    float ui_s = win->ui_scale > 0.0f ? win->ui_scale : 1.0f;
+    float cs   = font->content_scale / ui_s;
+    float baked_logical = font->baked_px / font->content_scale;
+    float desired_size  = node->desc.font_size > 0.0f ? node->desc.font_size : baked_logical;
+    float font_scale    = desired_size / baked_logical;
+    float cs_eff        = cs / font_scale;
+
+    float line_height = (font->ascent - font->descent + font->line_gap) * font_scale;
+    if (line_height < 1.0f) line_height = desired_size * 1.3f;
+
+    float max_w = node->w - node->desc.padding_left - node->desc.padding_right;
+    if (max_w < 1.0f) return 0.0f;
+
+    #define MADV(c) \
+        (((int)(c) >= CA_FONT_GLYPH_FIRST && (int)(c) < CA_FONT_GLYPH_FIRST + CA_FONT_GLYPH_COUNT) \
+         ? font->glyphs[(int)(c) - CA_FONT_GLYPH_FIRST].xadvance / cs_eff : 0.0f)
+
+    float cur_line_w = 0.0f;
+    int line_count = 1;
+    const char *p = lbl->text;
+    while (*p) {
+        float word_w = 0.0f;
+        while (*p && *p != ' ' && *p != '\n') {
+            word_w += MADV((unsigned char)*p);
+            p++;
+        }
+        float with_space = (cur_line_w > 0.0f) ? cur_line_w + MADV(' ') + word_w : word_w;
+        if (cur_line_w > 0.0f && with_space > max_w) {
+            line_count++;
+            cur_line_w = word_w;
+        } else {
+            cur_line_w = with_space;
+        }
+        if (*p == '\n') { line_count++; cur_line_w = 0; p++; }
+        else if (*p == ' ') { p++; }
+    }
+    #undef MADV
+
+    return node->desc.padding_top + line_height * line_count + node->desc.padding_bottom;
+}
 
 /* Estimate a node's natural size along a given axis (true=height, false=width).
    Used for auto-sizing children that have no explicit size and no flex-grow. */
@@ -165,6 +225,18 @@ static void layout_node(Ca_Node *node, float x, float y, float avail_w, float av
     node->w = w;
     node->h = h;
     node->dirty &= ~(CA_DIRTY_LAYOUT | CA_DIRTY_CHILDREN);
+
+    /* Pre-measure wrapped text labels so their height is known before
+       the parent container's auto-sizing pass.  Must happen after
+       node->w is set (needed for word-wrap line breaking). */
+    if (auto_h && node->child_count == 0) {
+        float mh = measure_wrapped_text_height(node);
+        if (mh > 0.0f) {
+            node->h = mh;
+            node->content_h = mh;
+            h = mh;
+        }
+    }
 
     /* --- Splitter custom layout: size two panes based on ratio --- */
     if (node->widget_type == CA_WIDGET_SPLITTER && node->widget) {

@@ -50,6 +50,9 @@ static void set_clip(Ca_DrawCmd *cmd, ClipRect clip)
 static void paint_text(Ca_Window *win, Ca_Font *font,
                        Ca_Node *node,
                        const char *text, uint32_t packed_color);
+static void paint_text_wrapped(Ca_Window *win, Ca_Font *font,
+                               Ca_Node *node,
+                               const char *text, uint32_t packed_color);
 static void paint_text_left(Ca_Window *win, Ca_Font *font,
                             Ca_Node *node,
                             const char *text, uint32_t packed_color);
@@ -79,6 +82,27 @@ static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, Cli
     if (!node->in_use) return;
     if (node->desc.hidden) return;
 
+    /* ---- Box shadow (drawn before background, behind everything) ---- */
+    if (node->desc.shadow_color != 0 &&
+        win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
+        float sr, sg, sb, sa;
+        unpack_color(node->desc.shadow_color, &sr, &sg, &sb, &sa);
+        float blur = node->desc.shadow_blur;
+        float expand = blur * 0.5f; /* expand rect to simulate blur spread */
+        Ca_DrawCmd *cmd = &win->draw_cmds[win->draw_cmd_count++];
+        memset(cmd, 0, sizeof(*cmd));
+        cmd->type          = CA_DRAW_RECT;
+        cmd->x             = node->x + node->desc.shadow_offset_x - expand;
+        cmd->y             = node->y + node->desc.shadow_offset_y - expand;
+        cmd->w             = node->w + expand * 2.0f;
+        cmd->h             = node->h + expand * 2.0f;
+        cmd->r = sr; cmd->g = sg; cmd->b = sb; cmd->a = sa;
+        cmd->corner_radius = node->desc.corner_radius + expand;
+        cmd->z_index       = node->desc.z_index;
+        cmd->in_use        = true;
+        set_clip(cmd, clip);
+    }
+
     /* ---- Background rect ---- */
     if (win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
         node->draw_cmd_idx = (int32_t)win->draw_cmd_count;
@@ -93,6 +117,14 @@ static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, Cli
         float op = (node->desc.opacity > 0.0f) ? node->desc.opacity : 1.0f;
         cmd->a *= op;
         cmd->corner_radius = node->desc.corner_radius;
+        cmd->z_index       = node->desc.z_index;
+        /* Border */
+        cmd->border_width  = node->desc.border_width;
+        if (node->desc.border_color != 0) {
+            unpack_color(node->desc.border_color,
+                         &cmd->border_r, &cmd->border_g,
+                         &cmd->border_b, &cmd->border_a);
+        }
         cmd->in_use        = true;
         set_clip(cmd, clip);
     }
@@ -103,8 +135,12 @@ static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, Cli
     switch (node->widget_type) {
     case CA_WIDGET_LABEL: {
         Ca_Label *lbl = (Ca_Label *)node->widget;
-        if (lbl && lbl->in_use && lbl->text[0])
-            paint_text(win, font, node, lbl->text, lbl->color);
+        if (lbl && lbl->in_use && lbl->text[0]) {
+            if (node->desc.text_wrap)
+                paint_text_wrapped(win, font, node, lbl->text, lbl->color);
+            else
+                paint_text(win, font, node, lbl->text, lbl->color);
+        }
         break;
     }
     case CA_WIDGET_BUTTON: {
@@ -396,6 +432,28 @@ static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, Cli
         }
         break;
     }
+    case CA_WIDGET_IMAGE: {
+        Ca_Image *img = (Ca_Image *)node->widget;
+        if (!img || !img->in_use) break;
+        if (win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
+            Ca_Instance *inst = win->instance;
+            int16_t img_idx = (int16_t)(img - inst->images);
+            Ca_DrawCmd *cmd = &win->draw_cmds[win->draw_cmd_count++];
+            memset(cmd, 0, sizeof(*cmd));
+            cmd->type        = CA_DRAW_IMAGE;
+            cmd->x           = node->x;
+            cmd->y           = node->y;
+            cmd->w           = node->w;
+            cmd->h           = node->h;
+            cmd->r = 1; cmd->g = 1; cmd->b = 1; cmd->a = 1;
+            cmd->u0 = 0; cmd->v0 = 0; cmd->u1 = 1; cmd->v1 = 1;
+            cmd->image_index = img_idx;
+            cmd->z_index     = node->desc.z_index;
+            cmd->in_use      = true;
+            set_clip(cmd, clip);
+        }
+        break;
+    }
     default: break;
     }
 }
@@ -493,6 +551,144 @@ static void paint_scrollbars(Ca_Window *win, Ca_Node *node, ClipRect clip)
     }
 }
 
+/* Emit glyph draw commands for a multi-line word-wrapped text string. */
+static void paint_text_wrapped(Ca_Window *win, Ca_Font *font,
+                               Ca_Node *node,
+                               const char *text, uint32_t packed_color)
+{
+    if (!text || text[0] == '\0') return;
+    if (!node || !node->in_use)   return;
+    if (node->desc.hidden)        return;
+
+    float r, g, b, a;
+    if (packed_color == 0) r = g = b = a = 1.0f;
+    else unpack_color(packed_color, &r, &g, &b, &a);
+
+    float ui_s = win->ui_scale > 0.0f ? win->ui_scale : 1.0f;
+    float cs   = font->content_scale / ui_s;
+    float baked_logical = font->baked_px / font->content_scale;
+    float desired_size  = node->desc.font_size > 0.0f ? node->desc.font_size : baked_logical;
+    float font_scale    = desired_size / baked_logical;
+    float cs_eff        = cs / font_scale;
+
+    float line_height = (font->ascent - font->descent + font->line_gap) * font_scale;
+    if (line_height < 1.0f) line_height = desired_size * 1.3f;
+
+    float max_w = node->w - node->desc.padding_left - node->desc.padding_right;
+    if (max_w < 1.0f) return;
+
+    /* Measure advance for a single character */
+    #define CHAR_ADV(c) \
+        (((int)(c) >= CA_FONT_GLYPH_FIRST && (int)(c) < CA_FONT_GLYPH_FIRST + CA_FONT_GLYPH_COUNT) \
+         ? font->glyphs[(int)(c) - CA_FONT_GLYPH_FIRST].xadvance / cs_eff : 0.0f)
+
+    /* First pass: determine line breaks (word wrap).
+       A simple greedy algorithm: accumulate word widths, break when exceeding max_w. */
+    float cur_line_w = 0.0f;
+    int line_count = 1;
+    const char *p = text;
+    while (*p) {
+        /* Measure next word */
+        const char *word_start = p;
+        float word_w = 0.0f;
+        while (*p && *p != ' ' && *p != '\n') {
+            word_w += CHAR_ADV((unsigned char)*p);
+            p++;
+        }
+        /* Check if word fits on current line */
+        float with_space = (cur_line_w > 0.0f) ? cur_line_w + CHAR_ADV(' ') + word_w : word_w;
+        if (cur_line_w > 0.0f && with_space > max_w) {
+            line_count++;
+            cur_line_w = word_w;
+        } else {
+            cur_line_w = with_space;
+        }
+        /* Handle newlines and spaces */
+        if (*p == '\n') { line_count++; cur_line_w = 0; p++; }
+        else if (*p == ' ') { p++; }
+    }
+
+    /* Second pass: emit glyphs line by line */
+    float start_y = node->y + node->desc.padding_top
+                    + (font->ascent * font_scale + font->descent * font_scale) * 0.5f
+                    + line_height * 0.5f;
+    float left_x  = node->x + node->desc.padding_left;
+    cur_line_w = 0.0f;
+    int cur_line = 0;
+
+    float xpos = left_x * cs_eff;
+    float ypos = start_y * cs_eff;
+
+    ClipRect clip = find_clip_for_node(node);
+    ClipRect node_clip = clip_intersect(clip, node->x, node->y, node->w, node->h);
+
+    p = text;
+    while (*p) {
+        const char *word_start = p;
+        float word_w = 0.0f;
+        const char *wp = p;
+        while (*wp && *wp != ' ' && *wp != '\n') {
+            word_w += CHAR_ADV((unsigned char)*wp);
+            wp++;
+        }
+        float with_space = (cur_line_w > 0.0f) ? cur_line_w + CHAR_ADV(' ') + word_w : word_w;
+        if (cur_line_w > 0.0f && with_space > max_w) {
+            cur_line++;
+            cur_line_w = word_w;
+            xpos = left_x * cs_eff;
+            ypos = (start_y + line_height * cur_line) * cs_eff;
+        } else {
+            if (cur_line_w > 0.0f) {
+                /* Add space before word */
+                float sp_adv = CHAR_ADV(' ');
+                xpos += sp_adv * cs_eff;
+                cur_line_w += sp_adv;
+            }
+            cur_line_w += word_w;
+        }
+
+        /* Emit glyphs for this word */
+        for (; p < wp; p++) {
+            int c = (unsigned char)*p;
+            if (c < CA_FONT_GLYPH_FIRST || c >= CA_FONT_GLYPH_FIRST + CA_FONT_GLYPH_COUNT)
+                continue;
+            if (win->draw_cmd_count >= CA_MAX_DRAW_CMDS_PER_WINDOW) goto done;
+
+            stbtt_aligned_quad q;
+            stbtt_GetBakedQuad(font->glyphs, font->atlas_w, font->atlas_h,
+                               c - CA_FONT_GLYPH_FIRST, &xpos, &ypos, &q, 1);
+            float gw = (q.x1 - q.x0) / cs_eff;
+            float gh = (q.y1 - q.y0) / cs_eff;
+            if (gw < 0.5f || gh < 0.5f) continue;
+
+            Ca_DrawCmd *cmd = &win->draw_cmds[win->draw_cmd_count++];
+            memset(cmd, 0, sizeof(*cmd));
+            cmd->type = CA_DRAW_GLYPH;
+            cmd->x = q.x0 / cs_eff; cmd->y = q.y0 / cs_eff;
+            cmd->w = gw; cmd->h = gh;
+            cmd->r = r; cmd->g = g; cmd->b = b; cmd->a = a;
+            cmd->u0 = q.s0; cmd->v0 = q.t0;
+            cmd->u1 = q.s1; cmd->v1 = q.t1;
+            cmd->z_index = node->desc.z_index;
+            cmd->in_use = true;
+            set_clip(cmd, node_clip);
+        }
+        if (*p == '\n') {
+            cur_line++;
+            cur_line_w = 0;
+            xpos = left_x * cs_eff;
+            ypos = (start_y + line_height * cur_line) * cs_eff;
+            p++;
+        } else if (*p == ' ') {
+            p++;
+        }
+    }
+done:
+    /* Store content height for layout auto-sizing */
+    node->content_h = node->desc.padding_top + line_height * (cur_line + 1) + node->desc.padding_bottom;
+    #undef CHAR_ADV
+}
+
 /* Emit glyph draw commands for a text string centred in the given node rect. */
 static void paint_text(Ca_Window *win, Ca_Font *font,
                        Ca_Node *node,
@@ -585,6 +781,7 @@ static void paint_text(Ca_Window *win, Ca_Font *font,
         cmd->r = r;  cmd->g = g;  cmd->b = b;  cmd->a = a;
         cmd->u0 = q.s0;  cmd->v0 = q.t0;
         cmd->u1 = q.s1;  cmd->v1 = q.t1;
+        cmd->z_index = node->desc.z_index;
         cmd->in_use = true;
 
         /* Clip to node bounds + ancestor overflow containers */

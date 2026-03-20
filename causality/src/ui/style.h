@@ -81,6 +81,18 @@ typedef struct {
     /* Transition */
     float    transition_duration;     /* seconds */
     uint64_t transition_props;        /* bitmask of Ca_CssPropId to animate */
+
+    /* Border */
+    float    border_width;
+    uint32_t border_color;
+    /* Box shadow */
+    float    shadow_offset_x, shadow_offset_y;
+    float    shadow_blur;
+    uint32_t shadow_color;
+    /* Z-index */
+    int      z_index;
+    /* Text wrapping */
+    int      text_wrap;               /* 0 = nowrap, 1 = wrap */
 } Ca_ResolvedStyle;
 
 /* ============================================================

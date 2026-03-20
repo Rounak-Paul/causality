@@ -2,6 +2,7 @@
 #include "swapchain.h"
 #include "pipeline.h"
 #include "font.h"
+#include "image.h"
 
 /* ---- Helpers ---- */
 
@@ -269,6 +270,8 @@ void ca_renderer_shutdown(Ca_Instance *inst)
     if (inst->vk_device == VK_NULL_HANDLE) return;
     vkDeviceWaitIdle(inst->vk_device);
 
+    ca_image_pool_shutdown(inst);
+    ca_image_pipeline_destroy(inst);
     ca_rect_pipeline_destroy(inst);
     ca_text_pipeline_destroy(inst);
     if (inst->font) {
@@ -335,6 +338,12 @@ bool ca_renderer_window_init(Ca_Instance *inst, Ca_Window *win)
             return false;
         if (inst->font)
             ca_text_pipeline_update_font(inst);
+
+        /* Image descriptor pool — shares text pipeline's descriptor set layout */
+        ca_image_pool_init(inst);
+
+        /* Image pipeline — RGBA textured quads (shares text pipeline layout) */
+        ca_image_pipeline_create(inst, win->sc.format);
     }
 
     return true;

@@ -131,8 +131,9 @@ static Ca_Label *add_label(Ca_Window *win, Ca_Node *parent, const Ca_TextDesc *d
     if (!slot) return NULL;
 
     Ca_NodeDesc nd = {0};
-    nd.width  = s(desc->width);
-    nd.height = s(desc->height);  /* 0 if not user-set; CSS or default fills later */
+    nd.width     = s(desc->width);
+    nd.height    = s(desc->height);  /* 0 if not user-set; CSS or default fills later */
+    nd.text_wrap = desc->wrap ? 1 : 0;
 
     Ca_Node *node = ca_node_add(parent, &nd);
     if (!node) return NULL;
@@ -285,6 +286,13 @@ static Ca_NodeDesc div_to_nd(const Ca_DivDesc *d)
     nd.position       = (uint8_t)d->position;
     nd.pos_x          = s(d->pos_x);
     nd.pos_y          = s(d->pos_y);
+    nd.border_width   = s(d->border_width);
+    nd.border_color   = d->border_color;
+    nd.shadow_offset_x = d->shadow_offset_x;
+    nd.shadow_offset_y = d->shadow_offset_y;
+    nd.shadow_blur    = d->shadow_blur;
+    nd.shadow_color   = d->shadow_color;
+    nd.z_index        = (int16_t)d->z_index;
     return nd;
 }
 
@@ -373,8 +381,10 @@ Ca_Label *ca_text(const Ca_TextDesc *desc)
     if (lbl && lbl->node) {
         apply_css(lbl->node, &lbl->node->desc, CA_ELEM_TEXT,
                   desc->style, desc->id, &lbl->color);
-        /* Default height if neither user nor CSS set it */
-        if (lbl->node->desc.height <= 0.0f) {
+        /* Default height if neither user nor CSS set it.
+           Skip for wrapped labels — their height is computed at layout time
+           from the actual wrapped line count. */
+        if (lbl->node->desc.height <= 0.0f && !lbl->node->desc.text_wrap) {
             float pad_v = lbl->node->desc.padding_top
                         + lbl->node->desc.padding_bottom;
             lbl->node->desc.height = s(16.0f) + pad_v;
@@ -1400,6 +1410,50 @@ void ca_split_set_ratio(Ca_Splitter *s, float ratio)
     if (ratio > s->max_ratio) ratio = s->max_ratio;
     s->ratio = ratio;
     s->node->dirty |= CA_DIRTY_LAYOUT | CA_DIRTY_CONTENT;
+}
+
+/* ============================================================
+   IMAGE — textured quad widget
+   ============================================================ */
+
+#include "image.h"
+
+Ca_Image *ca_image_create(Ca_Instance *instance,
+                          const uint8_t *pixels, int width, int height)
+{
+    return ca_image_create_impl(instance, pixels, width, height);
+}
+
+void ca_image_destroy(Ca_Instance *instance, Ca_Image *image)
+{
+    ca_image_destroy_impl(instance, image);
+}
+
+void ca_image(const Ca_ImageDesc *desc)
+{
+    assert(g_ctx.active);
+    if (!desc || !desc->image) return;
+
+    Ca_Node *parent = ctx_top();
+    if (!parent) return;
+
+    Ca_Image *img = desc->image;
+    float w = desc->width  > 0 ? s(desc->width)  : (float)img->width;
+    float h = desc->height > 0 ? s(desc->height) : (float)img->height;
+
+    Ca_NodeDesc nd = {0};
+    nd.width  = w;
+    nd.height = h;
+    nd.corner_radius = s(desc->corner_radius);
+
+    Ca_Node *node = ca_node_add(parent, &nd);
+    if (!node) return;
+
+    node->widget_type = CA_WIDGET_IMAGE;
+    node->widget      = (void *)img;
+
+    if (desc->id)    snprintf(node->id, CA_NODE_ID_MAX, "%s", desc->id);
+    if (desc->style) snprintf(node->classes, CA_NODE_CLASS_MAX, "%s", desc->style);
 }
 
 /* ============================================================

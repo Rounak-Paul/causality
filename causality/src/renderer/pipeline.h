@@ -25,3 +25,10 @@ void ca_text_pipeline_destroy(Ca_Instance *inst);
 /* Update the descriptor set to point at the current font atlas.
    Call this once after ca_font_create succeeds. */
 void ca_text_pipeline_update_font(Ca_Instance *inst);
+
+/* ---- Image pipeline ---- */
+
+/* Create the image pipeline (shares text pipeline layout, RGBA fragment shader).
+   Must be called AFTER ca_text_pipeline_create. */
+bool ca_image_pipeline_create(Ca_Instance *inst, VkFormat color_format);
+void ca_image_pipeline_destroy(Ca_Instance *inst);

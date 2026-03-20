@@ -212,6 +212,7 @@ static Ca_Label *g_select_label = NULL;
 static Ca_Label *g_tab_label    = NULL;
 static float     g_progress_val = 0.35f;
 static Ca_Label *g_drag_label   = NULL;
+static Ca_Image *g_checker_img  = NULL;
 
 /* ---- Drag demo callback ---- */
 
@@ -390,6 +391,24 @@ int main(void)
     /* Parse CSS (classes, IDs, transitions, flex-wrap) */
     Ca_Stylesheet *sheet = ca_css_parse(g_css);
     if (sheet) ca_instance_set_stylesheet(instance, sheet);
+
+    /* Generate a procedural checkerboard image for the image demo */
+    {
+        enum { SZ = 64 };
+        static uint8_t checker[SZ * SZ * 4];
+        for (int y = 0; y < SZ; y++) {
+            for (int x = 0; x < SZ; x++) {
+                int idx = (y * SZ + x) * 4;
+                int dark = ((x / 8) + (y / 8)) & 1;
+                uint8_t c = dark ? 60 : 200;
+                checker[idx + 0] = c;
+                checker[idx + 1] = dark ? 80 : 180;
+                checker[idx + 2] = dark ? 120 : 220;
+                checker[idx + 3] = 255;
+            }
+        }
+        g_checker_img = ca_image_create(instance, checker, SZ, SZ);
+    }
 
     /* ================================================================
        BUILD THE UI
@@ -772,7 +791,7 @@ int main(void)
         ca_split_begin(&(Ca_SplitDesc){
             .direction = CA_HORIZONTAL,
             .ratio     = 0.4f,
-            .bar_size  = 6,
+            .bar_size  = 2,
         });
             ca_div_begin(&(Ca_DivDesc){
                 .direction = CA_VERTICAL,
@@ -859,6 +878,157 @@ int main(void)
                 });
             ca_div_end();
         ca_div_end();
+
+        ca_hr(NULL);
+
+        /* ---- 21. Borders & Box Shadows ---- */
+        ca_h3(&(Ca_TextDesc){ .text = "Borders & Box Shadows", .style = "section" });
+        ca_text(&(Ca_TextDesc){
+            .text  = "Cards with borders and drop shadows.",
+            .style = "muted",
+        });
+
+        ca_div_begin(&(Ca_DivDesc){ .direction = CA_HORIZONTAL, .gap = 16 });
+
+            ca_div_begin(&(Ca_DivDesc){
+                .width         = 160, .height = 80,
+                .background    = ca_color(0.19f, 0.20f, 0.27f, 1),
+                .corner_radius = 8,
+                .border_width  = 3,
+                .border_color  = ca_color(0.54f, 0.71f, 0.98f, 1),
+                .padding       = { 10, 10, 10, 10 },
+                .direction     = CA_VERTICAL,
+                .gap           = 4,
+            });
+                ca_text(&(Ca_TextDesc){
+                    .text  = "Blue border",
+                    .color = ca_color(0.54f, 0.71f, 0.98f, 1),
+                });
+            ca_div_end();
+
+            ca_div_begin(&(Ca_DivDesc){
+                .width            = 160, .height = 80,
+                .background       = ca_color(0.19f, 0.20f, 0.27f, 1),
+                .corner_radius    = 8,
+                .shadow_offset_x  = 6,
+                .shadow_offset_y  = 6,
+                .shadow_blur      = 16,
+                .shadow_color     = ca_color(0.0f, 0.0f, 0.0f, 0.7f),
+                .padding          = { 10, 10, 10, 10 },
+                .direction        = CA_VERTICAL,
+                .gap              = 4,
+            });
+                ca_text(&(Ca_TextDesc){
+                    .text  = "Drop shadow",
+                    .color = ca_color(0.80f, 0.84f, 0.96f, 1),
+                });
+            ca_div_end();
+
+            ca_div_begin(&(Ca_DivDesc){
+                .width            = 160, .height = 80,
+                .background       = ca_color(0.19f, 0.20f, 0.27f, 1),
+                .corner_radius    = 8,
+                .border_width     = 3,
+                .border_color     = ca_color(0.80f, 0.65f, 0.97f, 1),
+                .shadow_offset_x  = 5,
+                .shadow_offset_y  = 5,
+                .shadow_blur      = 12,
+                .shadow_color     = ca_color(0.0f, 0.0f, 0.0f, 0.6f),
+                .padding          = { 10, 10, 10, 10 },
+                .direction        = CA_VERTICAL,
+                .gap              = 4,
+            });
+                ca_text(&(Ca_TextDesc){
+                    .text  = "Both!",
+                    .color = ca_color(0.80f, 0.65f, 0.97f, 1),
+                });
+            ca_div_end();
+
+        ca_div_end();
+
+        ca_hr(NULL);
+
+        /* ---- 22. Z-Index / Layering ---- */
+        ca_h3(&(Ca_TextDesc){ .text = "Z-Index Layering", .style = "section" });
+        ca_text(&(Ca_TextDesc){
+            .text  = "Overlapping boxes: green (z=2) on top, red (z=1) behind it.",
+            .style = "muted",
+        });
+
+        ca_div_begin(&(Ca_DivDesc){
+            .height     = 100,
+            .background = ca_color(0.12f, 0.12f, 0.18f, 1),
+            .corner_radius = 8,
+        });
+            ca_div_begin(&(Ca_DivDesc){
+                .position   = CA_POSITION_ABSOLUTE,
+                .pos_x      = 20, .pos_y = 10,
+                .width      = 120, .height = 60,
+                .background = ca_color(0.95f, 0.55f, 0.66f, 1),
+                .corner_radius = 6,
+                .z_index    = 1,
+                .padding    = { 6, 8, 6, 8 },
+            });
+                ca_text(&(Ca_TextDesc){
+                    .text  = "z=1 (red)",
+                    .color = ca_color(0.12f, 0.12f, 0.18f, 1),
+                });
+            ca_div_end();
+
+            ca_div_begin(&(Ca_DivDesc){
+                .position   = CA_POSITION_ABSOLUTE,
+                .pos_x      = 60, .pos_y = 30,
+                .width      = 120, .height = 60,
+                .background = ca_color(0.65f, 0.89f, 0.63f, 1),
+                .corner_radius = 6,
+                .z_index    = 2,
+                .padding    = { 6, 8, 6, 8 },
+            });
+                ca_text(&(Ca_TextDesc){
+                    .text  = "z=2 (green)",
+                    .color = ca_color(0.12f, 0.12f, 0.18f, 1),
+                });
+            ca_div_end();
+        ca_div_end();
+
+        ca_hr(NULL);
+
+        /* ---- 23. Multi-line Text Wrapping ---- */
+        ca_h3(&(Ca_TextDesc){ .text = "Multi-line Text Wrapping", .style = "section" });
+
+        ca_div_begin(&(Ca_DivDesc){
+            .width         = 300,
+            .background    = ca_color(0.19f, 0.20f, 0.27f, 1),
+            .corner_radius = 8,
+            .padding       = { 12, 12, 12, 12 },
+            .direction     = CA_VERTICAL,
+            .gap           = 6,
+        });
+            ca_text(&(Ca_TextDesc){
+                .text  = "This is a long paragraph that demonstrates multi-line "
+                         "text wrapping. When the wrap flag is set to true, the "
+                         "text will automatically break at word boundaries to fit "
+                         "within the container width. Pretty neat!",
+                .color = ca_color(0.80f, 0.84f, 0.96f, 1),
+                .wrap  = true,
+            });
+        ca_div_end();
+
+        ca_hr(NULL);
+
+        /* ---- 24. Image Rendering ---- */
+        ca_h3(&(Ca_TextDesc){ .text = "Image / Texture Rendering", .style = "section" });
+        ca_text(&(Ca_TextDesc){
+            .text  = "A procedurally generated 64x64 checkerboard texture.",
+            .style = "muted",
+        });
+
+        ca_image(&(Ca_ImageDesc){
+            .image  = g_checker_img,
+            .width  = 128,
+            .height = 128,
+            .corner_radius = 8,
+        });
 
     ca_ui_end();
 

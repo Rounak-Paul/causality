@@ -38,6 +38,7 @@ typedef struct Ca_Tooltip   Ca_Tooltip;
 typedef struct Ca_CtxMenu   Ca_CtxMenu;
 typedef struct Ca_Modal     Ca_Modal;
 typedef struct Ca_Splitter  Ca_Splitter;
+typedef struct Ca_Image     Ca_Image;
 
 /* ============================================================
    INSTANCE
@@ -230,6 +231,16 @@ typedef struct Ca_DivDesc {
     Ca_DragFn on_drag;             /* called every frame during drag         */
     Ca_DragFn on_drag_end;         /* called when mouse released             */
     void     *drag_data;           /* user_data passed to drag callbacks     */
+    /* Border */
+    float    border_width;         /* border thickness in px (0 = none)     */
+    uint32_t border_color;         /* ca_color(r,g,b,a)                     */
+    /* Box shadow */
+    float    shadow_offset_x;      /* shadow X offset in px                 */
+    float    shadow_offset_y;      /* shadow Y offset in px                 */
+    float    shadow_blur;          /* shadow blur radius in px              */
+    uint32_t shadow_color;         /* ca_color(r,g,b,a)                     */
+    /* Z-index */
+    int      z_index;              /* draw order (higher = on top)          */
 } Ca_DivDesc;
 
 /* <p> / text — leaf text element. */
@@ -237,6 +248,7 @@ typedef struct Ca_TextDesc {
     const char *text;
     float       width, height;     /* 0 = auto                              */
     uint32_t    color;             /* text foreground colour                */
+    bool        wrap;              /* true = multi-line text wrapping       */
     const char *id;                /* CSS id  (without #)                   */
     const char *style;             /* space-separated CSS class names       */
 } Ca_TextDesc;
@@ -542,6 +554,39 @@ void         ca_split_set_ratio(Ca_Splitter *s, float ratio);
    - ABSOLUTE: positioned relative to nearest positioned ancestor
    - FIXED: positioned relative to the window
    ============================================================ */
+
+/* ============================================================
+   IMAGE / TEXTURE RENDERING
+   ============================================================
+
+   Load an image from RGBA pixel data or a file path and display
+   it as a UI element with ca_image().
+
+   Example:
+     Ca_Image *img = ca_image_create(instance, pixels, 64, 64);
+     ca_image(&(Ca_ImageDesc){ .image = img, .width = 64, .height = 64 });
+
+   Images are displayed as textured quads using the text pipeline.
+   ============================================================ */
+
+typedef struct Ca_ImageDesc {
+    Ca_Image   *image;
+    float       width, height;     /* display size (0 = use image natural size) */
+    float       corner_radius;
+    const char *id, *style;
+} Ca_ImageDesc;
+
+/* Create an image from raw RGBA pixel data (4 bytes per pixel).
+   The pixel data is uploaded to the GPU immediately; the pointer
+   is not retained after this call returns. */
+Ca_Image *ca_image_create(Ca_Instance *instance,
+                          const uint8_t *pixels, int width, int height);
+
+/* Destroy an image and release its GPU resources. */
+void ca_image_destroy(Ca_Instance *instance, Ca_Image *image);
+
+/* Display an image as a UI element. */
+void ca_image(const Ca_ImageDesc *desc);
 
 /* ============================================================
    CSS STYLESHEET

@@ -439,6 +439,11 @@ static Ca_CssPropId lookup_property(const char *name)
         { "overflow",         CA_CSS_PROP_OVERFLOW },
         { "overflow-x",       CA_CSS_PROP_OVERFLOW_X },
         { "overflow-y",       CA_CSS_PROP_OVERFLOW_Y },
+        { "border-width",     CA_CSS_PROP_BORDER_WIDTH },
+        { "border-color",     CA_CSS_PROP_BORDER_COLOR },
+        { "box-shadow",       CA_CSS_PROP_BOX_SHADOW },
+        { "z-index",          CA_CSS_PROP_Z_INDEX },
+        { "text-wrap",        CA_CSS_PROP_TEXT_WRAP },
     };
     int count = (int)(sizeof(props) / sizeof(props[0]));
     for (int i = 0; i < count; ++i) {
@@ -528,6 +533,8 @@ static bool lookup_keyword(const char *name, Ca_CssPropId prop, int *out)
             tbl = overflow_kw; count = 4; break;
         case CA_CSS_PROP_TEXT_ALIGN:
             tbl = textalign_kw; count = 3; break;
+        case CA_CSS_PROP_TEXT_WRAP:
+            tbl = wrap_kw; count = 2; break;
         default: return false;
     }
 

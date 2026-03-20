@@ -344,6 +344,29 @@ void ca_style_resolve(Ca_Stylesheet *ss,
                         out->transition_props |= (1ULL << tprop);
                     break;
                 }
+                case CA_CSS_PROP_BORDER_WIDTH:
+                    out->border_width = css_val_to_px(val); break;
+                case CA_CSS_PROP_BORDER_COLOR:
+                    if (val->type == CA_CSS_VAL_COLOR)
+                        out->border_color = val->color;
+                    break;
+                case CA_CSS_PROP_BOX_SHADOW:
+                    /* box-shadow stored as: number=blur, color=shadow color.
+                       Offsets default to (2,2) if not parsed separately. */
+                    out->shadow_blur = val->number;
+                    if (val->type == CA_CSS_VAL_COLOR)
+                        out->shadow_color = val->color;
+                    else
+                        out->shadow_color = 0x00000080; /* default semi-transparent black */
+                    out->shadow_offset_x = 2.0f;
+                    out->shadow_offset_y = 2.0f;
+                    break;
+                case CA_CSS_PROP_Z_INDEX:
+                    out->z_index = (int)val->number; break;
+                case CA_CSS_PROP_TEXT_WRAP:
+                    if (val->type == CA_CSS_VAL_KEYWORD)
+                        out->text_wrap = (val->keyword == CA_CSS_WRAP_WRAP) ? 1 : 0;
+                    break;
                 default: break;
             }
         }
@@ -470,6 +493,28 @@ void ca_style_apply_to_node(const Ca_ResolvedStyle *style,
     /* Text/foreground color — output separately */
     if (out_color && *out_color == 0 && STYLE_SET(CA_CSS_PROP_COLOR))
         *out_color = style->color;
+
+    /* Border */
+    if (nd->border_width <= 0.0f && STYLE_SET(CA_CSS_PROP_BORDER_WIDTH))
+        nd->border_width = style->border_width;
+    if (nd->border_color == 0 && STYLE_SET(CA_CSS_PROP_BORDER_COLOR))
+        nd->border_color = style->border_color;
+
+    /* Box shadow */
+    if (nd->shadow_color == 0 && STYLE_SET(CA_CSS_PROP_BOX_SHADOW)) {
+        nd->shadow_offset_x = style->shadow_offset_x;
+        nd->shadow_offset_y = style->shadow_offset_y;
+        nd->shadow_blur     = style->shadow_blur;
+        nd->shadow_color    = style->shadow_color;
+    }
+
+    /* Z-index */
+    if (nd->z_index == 0 && STYLE_SET(CA_CSS_PROP_Z_INDEX))
+        nd->z_index = (int16_t)style->z_index;
+
+    /* Text wrap */
+    if (nd->text_wrap == 0 && STYLE_SET(CA_CSS_PROP_TEXT_WRAP))
+        nd->text_wrap = (uint8_t)style->text_wrap;
 
     /* Store transition config on the node via nd (will be copied later) */
     /* The caller (apply_css in widget.c) reads these via the Ca_Node pointer. */

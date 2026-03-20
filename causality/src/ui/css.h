@@ -74,6 +74,15 @@ typedef enum {
     CA_CSS_PROP_OVERFLOW_Y,
     /* Transitions */
     CA_CSS_PROP_TRANSITION,
+    /* Border */
+    CA_CSS_PROP_BORDER_WIDTH,
+    CA_CSS_PROP_BORDER_COLOR,
+    /* Box shadow (shorthand parsed into individual values) */
+    CA_CSS_PROP_BOX_SHADOW,
+    /* Z-index */
+    CA_CSS_PROP_Z_INDEX,
+    /* Text wrapping */
+    CA_CSS_PROP_TEXT_WRAP,
     CA_CSS_PROP_COUNT
 } Ca_CssPropId;
 

@@ -29,12 +29,16 @@ static const char *VERT_GLSL =
     "    vec4  color;\n"
     "    vec2  viewport;\n"
     "    float corner_radius;\n"
+    "    float border_width;\n"
+    "    vec4  border_color;\n"
     "} pc;\n"
     "\n"
     "layout(location = 0) out vec4  v_color;\n"
     "layout(location = 1) out vec2  v_local;\n"
     "layout(location = 2) out vec2  v_size;\n"
     "layout(location = 3) out float v_radius;\n"
+    "layout(location = 4) out float v_border_w;\n"
+    "layout(location = 5) out vec4  v_border_color;\n"
     "\n"
     "void main() {\n"
     "    const vec2 offsets[6] = vec2[6](\n"
@@ -49,6 +53,8 @@ static const char *VERT_GLSL =
     "    v_local  = off * pc.size;\n"
     "    v_size   = pc.size;\n"
     "    v_radius = pc.corner_radius;\n"
+    "    v_border_w     = pc.border_width;\n"
+    "    v_border_color = pc.border_color;\n"
     "}\n";
 
 /* Fragment shader: rounded-rectangle SDF with anti-aliased edges.
@@ -60,6 +66,8 @@ static const char *FRAG_GLSL =
     "layout(location = 1) in  vec2  v_local;\n"
     "layout(location = 2) in  vec2  v_size;\n"
     "layout(location = 3) in  float v_radius;\n"
+    "layout(location = 4) in  float v_border_w;\n"
+    "layout(location = 5) in  vec4  v_border_color;\n"
     "layout(location = 0) out vec4  out_color;\n"
     "\n"
     "float roundedBoxSDF(vec2 p, vec2 b, float r) {\n"
@@ -68,11 +76,20 @@ static const char *FRAG_GLSL =
     "}\n"
     "\n"
     "void main() {\n"
-    "    if (v_radius > 0.0) {\n"
-    "        vec2 p = v_local - v_size * 0.5;\n"
-    "        float d = roundedBoxSDF(p, v_size * 0.5, v_radius);\n"
-    "        float aa = 1.0 - smoothstep(-0.5, 0.5, d);\n"
-    "        out_color = vec4(v_color.rgb, v_color.a * aa);\n"
+    "    vec2 p = v_local - v_size * 0.5;\n"
+    "    float d_outer = roundedBoxSDF(p, v_size * 0.5, v_radius);\n"
+    "    float aa_outer = 1.0 - smoothstep(-0.5, 0.5, d_outer);\n"
+    "    if (v_border_w > 0.0) {\n"
+    "        float inner_r = max(v_radius - v_border_w, 0.0);\n"
+    "        vec2 inner_half = v_size * 0.5 - vec2(v_border_w);\n"
+    "        float d_inner = roundedBoxSDF(p, max(inner_half, vec2(0.0)), inner_r);\n"
+    "        float aa_inner = 1.0 - smoothstep(-0.5, 0.5, d_inner);\n"
+    "        float border_mask = aa_outer - aa_inner;\n"
+    "        vec4 fill = vec4(v_color.rgb, v_color.a * aa_inner);\n"
+    "        vec4 border = vec4(v_border_color.rgb, v_border_color.a * border_mask);\n"
+    "        out_color = fill + border * (1.0 - fill.a);\n"
+    "    } else if (v_radius > 0.0) {\n"
+    "        out_color = vec4(v_color.rgb, v_color.a * aa_outer);\n"
     "    } else {\n"
     "        out_color = v_color;\n"
     "    }\n"
@@ -95,9 +112,9 @@ bool ca_rect_pipeline_create(Ca_Instance *inst, VkFormat color_format)
         return false;
     }
 
-    /* Push constant range — vertex stage reads pos/size/color/viewport */
+    /* Push constant range — vertex+fragment stages read pos/size/color/viewport/border */
     VkPushConstantRange pc_range = {
-        .stageFlags = VK_SHADER_STAGE_VERTEX_BIT,
+        .stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
         .offset     = 0,
         .size       = sizeof(Ca_RectPushConst),
     };
@@ -511,5 +528,124 @@ void ca_text_pipeline_destroy(Ca_Instance *inst)
     if (tp->desc_layout != VK_NULL_HANDLE) {
         vkDestroyDescriptorSetLayout(inst->vk_device, tp->desc_layout, NULL);
         tp->desc_layout = VK_NULL_HANDLE;
+    }
+}
+
+/* ======================================================
+   Image pipeline — RGBA textured quads (same vertex shader as text,
+   different fragment shader that samples all 4 channels).
+   Shares the text pipeline's layout (descriptor set layout + push constants).
+   ====================================================== */
+
+static const char *IMAGE_FRAG_GLSL =
+    "#version 450\n"
+    "\n"
+    "layout(set = 0, binding = 0) uniform sampler2D tex;\n"
+    "\n"
+    "layout(location = 0) in  vec2 v_uv;\n"
+    "layout(location = 1) in  vec4 v_color;\n"
+    "layout(location = 0) out vec4 out_color;\n"
+    "\n"
+    "void main() {\n"
+    "    vec4 t = texture(tex, v_uv);\n"
+    "    out_color = vec4(t.rgb, t.a * v_color.a);\n"
+    "}\n";
+
+bool ca_image_pipeline_create(Ca_Instance *inst, VkFormat color_format)
+{
+    if (inst->text_pipeline.layout == VK_NULL_HANDLE) return false;
+
+    VkShaderModule vert = ca_shader_compile(inst->vk_device, TEXT_VERT_GLSL,
+                                            VK_SHADER_STAGE_VERTEX_BIT);
+    VkShaderModule frag = ca_shader_compile(inst->vk_device, IMAGE_FRAG_GLSL,
+                                            VK_SHADER_STAGE_FRAGMENT_BIT);
+    if (vert == VK_NULL_HANDLE || frag == VK_NULL_HANDLE) {
+        if (vert != VK_NULL_HANDLE) vkDestroyShaderModule(inst->vk_device, vert, NULL);
+        if (frag != VK_NULL_HANDLE) vkDestroyShaderModule(inst->vk_device, frag, NULL);
+        return false;
+    }
+
+    VkPipelineShaderStageCreateInfo stages[2] = {
+        { .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+          .stage = VK_SHADER_STAGE_VERTEX_BIT, .module = vert, .pName = "main" },
+        { .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+          .stage = VK_SHADER_STAGE_FRAGMENT_BIT, .module = frag, .pName = "main" },
+    };
+
+    VkPipelineVertexInputStateCreateInfo   vert_input  = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO };
+    VkPipelineInputAssemblyStateCreateInfo input_asm   = {
+        .sType    = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
+        .topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST };
+    VkPipelineViewportStateCreateInfo      viewport    = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
+        .viewportCount = 1, .scissorCount = 1 };
+    VkPipelineRasterizationStateCreateInfo raster      = {
+        .sType       = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
+        .polygonMode = VK_POLYGON_MODE_FILL,
+        .cullMode    = VK_CULL_MODE_NONE,
+        .frontFace   = VK_FRONT_FACE_CLOCKWISE,
+        .lineWidth   = 1.0f };
+    VkPipelineMultisampleStateCreateInfo   multisample = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
+        .rasterizationSamples = VK_SAMPLE_COUNT_1_BIT };
+    VkPipelineColorBlendAttachmentState blend_att = {
+        .blendEnable         = VK_TRUE,
+        .srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA,
+        .dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
+        .colorBlendOp        = VK_BLEND_OP_ADD,
+        .srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE,
+        .dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
+        .alphaBlendOp        = VK_BLEND_OP_ADD,
+        .colorWriteMask      = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+                               VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT,
+    };
+    VkPipelineColorBlendStateCreateInfo blend = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
+        .attachmentCount = 1, .pAttachments = &blend_att };
+    VkDynamicState dyn_states[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
+    VkPipelineDynamicStateCreateInfo dyn = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
+        .dynamicStateCount = 2, .pDynamicStates = dyn_states };
+    VkPipelineRenderingCreateInfo rendering = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO,
+        .colorAttachmentCount = 1, .pColorAttachmentFormats = &color_format };
+
+    VkGraphicsPipelineCreateInfo gp_ci = {
+        .sType               = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
+        .pNext               = &rendering,
+        .stageCount          = 2,
+        .pStages             = stages,
+        .pVertexInputState   = &vert_input,
+        .pInputAssemblyState = &input_asm,
+        .pViewportState      = &viewport,
+        .pRasterizationState = &raster,
+        .pMultisampleState   = &multisample,
+        .pColorBlendState    = &blend,
+        .pDynamicState       = &dyn,
+        .layout              = inst->text_pipeline.layout,
+        .renderPass          = VK_NULL_HANDLE,
+    };
+
+    VkResult res = vkCreateGraphicsPipelines(inst->vk_device, VK_NULL_HANDLE,
+                                              1, &gp_ci, NULL,
+                                              &inst->image_pipeline);
+    vkDestroyShaderModule(inst->vk_device, vert, NULL);
+    vkDestroyShaderModule(inst->vk_device, frag, NULL);
+
+    if (res != VK_SUCCESS) {
+        fprintf(stderr, "[pipeline] image pipeline creation failed: %d\n", res);
+        return false;
+    }
+
+    printf("[pipeline] image pipeline created (format %d)\n", color_format);
+    return true;
+}
+
+void ca_image_pipeline_destroy(Ca_Instance *inst)
+{
+    if (inst->image_pipeline != VK_NULL_HANDLE) {
+        vkDestroyPipeline(inst->vk_device, inst->image_pipeline, NULL);
+        inst->image_pipeline = VK_NULL_HANDLE;
     }
 }

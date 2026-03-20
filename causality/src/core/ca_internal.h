@@ -55,6 +55,22 @@ typedef struct {
     VkDescriptorSet       desc_set;
 } Ca_TextPipeline;
 
+/* ======================================================
+   RENDERER — image types
+   ====================================================== */
+
+#define CA_MAX_IMAGES 64
+
+struct Ca_Image {
+    VkImage          vk_image;
+    VkDeviceMemory   memory;
+    VkImageView      view;
+    VkSampler        sampler;
+    VkDescriptorSet  desc_set;     /* per-image descriptor set */
+    int              width, height;
+    bool             in_use;
+};
+
 /* Must exactly match the push_constant block in the text vertex shader:
      vec2 pos      (offset  0)
      vec2 size     (offset  8)
@@ -79,13 +95,17 @@ typedef struct Ca_Font Ca_Font;
      vec4 color         (offset 16)
      vec2 viewport      (offset 32)
      float corner_radius(offset 40)
-   Total: 44 bytes.                                               */
+     float border_width (offset 44)
+     vec4 border_color  (offset 48)
+   Total: 64 bytes.                                               */
 typedef struct {
     float pos[2];
     float size[2];
     float color[4];
     float viewport[2];
     float corner_radius;
+    float border_width;
+    float border_color[4];
 } Ca_RectPushConst;
 
 /* ======================================================
@@ -161,6 +181,17 @@ typedef struct {
     /* Positioning */
     uint8_t      position;     /* Ca_Position: 0=relative, 1=absolute, 2=fixed */
     float        pos_x, pos_y; /* used when position != relative */
+    /* Border */
+    float        border_width;
+    uint32_t     border_color;
+    /* Box shadow */
+    float        shadow_offset_x, shadow_offset_y;
+    float        shadow_blur;
+    uint32_t     shadow_color;
+    /* Z-index */
+    int16_t      z_index;
+    /* Text wrapping */
+    uint8_t      text_wrap;    /* 0=nowrap (default), 1=wrap */
 } Ca_NodeDesc;
 
 /* Internal state descriptor — used by ca_state_create inside the library. */
@@ -213,6 +244,7 @@ typedef struct {
 typedef enum {
     CA_DRAW_RECT  = 0,  /* solid colour rectangle               */
     CA_DRAW_GLYPH = 1,  /* font glyph textured quad             */
+    CA_DRAW_IMAGE = 2,  /* user-loaded image textured quad      */
 } Ca_DrawType;
 
 typedef struct {
@@ -227,6 +259,13 @@ typedef struct {
     /* Clip rect for overflow: hidden/scroll — in logical pixels */
     bool        has_clip;
     float       clip_x, clip_y, clip_w, clip_h;
+    /* Border */
+    float       border_width;
+    float       border_r, border_g, border_b, border_a;
+    /* Z-index for draw order sorting */
+    int16_t     z_index;
+    /* CA_DRAW_IMAGE: index into Ca_Instance.images[] */
+    int16_t     image_index;
 } Ca_DrawCmd;
 
 /* ======================================================
@@ -252,6 +291,7 @@ typedef enum {
     CA_WIDGET_TREENODE   = 11,
     CA_WIDGET_TABLE      = 12,
     CA_WIDGET_SPLITTER   = 13,
+    CA_WIDGET_IMAGE      = 14,
 } Ca_WidgetType;
 
 /* ======================================================
@@ -600,6 +640,13 @@ struct Ca_Instance {
     /* Text pipeline + font atlas — created on first window init */
     Ca_TextPipeline  text_pipeline;
     Ca_Font         *font;   /* NULL until successfully loaded */
+
+    /* Image pipeline — RGBA textured quad (shares text pipeline layout) */
+    VkPipeline       image_pipeline;
+
+    /* Image pool — user-loaded textures for ca_image() */
+    Ca_Image         images[CA_MAX_IMAGES];
+    VkDescriptorPool image_desc_pool; /* shared pool for image descriptor sets */
 };
 
 /* ======================================================
