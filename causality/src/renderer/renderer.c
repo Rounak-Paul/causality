@@ -320,7 +320,8 @@ bool ca_renderer_window_init(Ca_Instance *inst, Ca_Window *win)
         }
         if (!font_ok) {
             /* Fall back to embedded Roboto Mono Nerd Font */
-            #include "embedded_font.h"
+            extern const unsigned char ca_embedded_font_data[];
+            extern const unsigned int  ca_embedded_font_size;
             font_ok = ca_font_create_from_memory(
                         inst, win->glfw, inst->font,
                         ca_embedded_font_data, ca_embedded_font_size,

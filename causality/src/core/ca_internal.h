@@ -2,7 +2,11 @@
 #pragma once
 
 #include "causality.h"
-#include <pthread.h>
+#ifdef _WIN32
+  #include <windows.h>
+#else
+  #include <pthread.h>
+#endif
 #include <stdint.h>
 
 /* ======================================================
@@ -570,6 +574,10 @@ struct Ca_Instance {
    ====================================================== */
 
 struct Ca_Thread {
+#ifdef _WIN32
+    HANDLE handle;
+#else
     pthread_t handle;
+#endif
 };
 
