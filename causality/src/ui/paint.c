@@ -464,6 +464,27 @@ static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, Cli
         }
         break;
     }
+    case CA_WIDGET_VIEWPORT: {
+        Ca_Viewport *vp = (Ca_Viewport *)node->widget;
+        if (!vp || !vp->in_use) break;
+        if (win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
+            int16_t vp_idx = (int16_t)(vp - win->viewport_pool);
+            Ca_DrawCmd *cmd = &win->draw_cmds[win->draw_cmd_count++];
+            memset(cmd, 0, sizeof(*cmd));
+            cmd->type           = CA_DRAW_VIEWPORT;
+            cmd->x              = node->x;
+            cmd->y              = node->y;
+            cmd->w              = node->w;
+            cmd->h              = node->h;
+            cmd->r = 1; cmd->g = 1; cmd->b = 1; cmd->a = 1;
+            cmd->u0 = 0; cmd->v0 = 0; cmd->u1 = 1; cmd->v1 = 1;
+            cmd->viewport_index = vp_idx;
+            cmd->z_index        = node->desc.z_index;
+            cmd->in_use         = true;
+            set_clip(cmd, clip);
+        }
+        break;
+    }
     default: break;
     }
 }

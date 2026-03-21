@@ -1,6 +1,7 @@
 #include "swapchain.h"
 #include "renderer.h"
 #include "pipeline.h"
+#include "viewport.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -273,6 +274,11 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
     }
 
     vkResetFences(inst->vk_device, 1, &f->in_flight);
+
+    /* Render all active viewports before compositing into the swapchain.
+       This submits its own command buffers and waits synchronously. */
+    ca_viewport_render_all(inst, win);
+
     vkResetCommandBuffer(f->cmd, 0);
 
     /* Record */
@@ -609,6 +615,99 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
                                                 1, 1, &inst->images[ii].desc_set,
                                                 0, NULL);
                         cur_img = ii;
+                    }
+                    cur_sc = sc_new;
+                    first  = false;
+
+                    Ca_TextInstance *dst = &ti_base[ti_n++];
+                    dst->pos[0] = cmd->x;            dst->pos[1] = cmd->y;
+                    dst->size[0] = cmd->w;            dst->size[1] = cmd->h;
+                    dst->uv[0] = cmd->u0;             dst->uv[1] = cmd->v0;
+                    dst->uv[2] = cmd->u1;             dst->uv[3] = cmd->v1;
+                    dst->color[0] = cmd->r;            dst->color[1] = cmd->g;
+                    dst->color[2] = cmd->b;            dst->color[3] = cmd->a;
+                    dst->viewport[0] = (float)log_w;   dst->viewport[1] = (float)log_h;
+                    dst->_pad[0] = 0.0f;               dst->_pad[1] = 0.0f;
+                }
+                if (ti_n > batch_start) {
+                    vkCmdSetScissor(f->cmd, 0, 1, &cur_sc);
+                    vkCmdDraw(f->cmd, 6, ti_n - batch_start, 0, batch_start);
+                    batch_n++;
+                }
+            }
+        }
+
+        /* ---- Viewports (offscreen render targets composited as textured quads) ---- */
+        if (inst->image_pipeline != VK_NULL_HANDLE && win->viewport_pool) {
+
+            bool has_viewports = false;
+            for (uint32_t d = 0; d < win->draw_cmd_count; ++d) {
+                if (win->draw_cmds[d].in_use &&
+                    win->draw_cmds[d].type == CA_DRAW_VIEWPORT &&
+                    win->draw_cmds[d].overlay == want_overlay) {
+                    has_viewports = true;
+                    break;
+                }
+            }
+            if (has_viewports) {
+                vkCmdBindPipeline(f->cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                  inst->image_pipeline);
+                vkCmdSetViewport(f->cmd, 0, 1, &viewport);
+
+                /* Bind SSBO at set 0 with text/image region offset */
+                vkCmdBindDescriptorSets(f->cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                        inst->text_pipeline.layout,
+                                        0, 1, &f->ssbo_set, 1, &text_byte_off);
+
+                uint32_t batch_start = ti_n;
+                VkRect2D cur_sc      = full_scissor;
+                int16_t  cur_vp_idx  = -1;
+                bool     first       = true;
+
+                for (uint32_t d = 0; d < win->draw_cmd_count; ++d) {
+                    uint32_t idx = sorted_idx ? sorted_idx[d] : d;
+                    const Ca_DrawCmd *cmd = &win->draw_cmds[idx];
+                    if (!cmd->in_use || cmd->type != CA_DRAW_VIEWPORT || cmd->a < 0.004f)
+                        continue;
+                    if (cmd->overlay != want_overlay) continue;
+
+                    int16_t vi = cmd->viewport_index;
+                    if (vi < 0 || vi >= CA_MAX_VIEWPORTS_PER_WINDOW ||
+                        !win->viewport_pool[vi].in_use ||
+                        win->viewport_pool[vi].desc_set == VK_NULL_HANDLE)
+                        continue;
+
+                    VkRect2D sc_new = full_scissor;
+                    if (cmd->has_clip) {
+                        int32_t cx = (int32_t)(cmd->clip_x * scale_x);
+                        int32_t cy = (int32_t)(cmd->clip_y * scale_y);
+                        int32_t cw = (int32_t)(cmd->clip_w * scale_x);
+                        int32_t ch = (int32_t)(cmd->clip_h * scale_y);
+                        if (cx < 0) { cw += cx; cx = 0; }
+                        if (cy < 0) { ch += cy; cy = 0; }
+                        if (cw < 0) cw = 0;
+                        if (ch < 0) ch = 0;
+                        sc_new = (VkRect2D){ .offset = {cx, cy},
+                                             .extent = {(uint32_t)cw, (uint32_t)ch} };
+                    }
+
+                    bool sc_change = !first && memcmp(&sc_new, &cur_sc, sizeof(VkRect2D)) != 0;
+                    bool vp_change = (vi != cur_vp_idx);
+
+                    if (sc_change || vp_change) {
+                        if (ti_n > batch_start) {
+                            vkCmdSetScissor(f->cmd, 0, 1, &cur_sc);
+                            vkCmdDraw(f->cmd, 6, ti_n - batch_start, 0, batch_start);
+                            batch_n++;
+                        }
+                        batch_start = ti_n;
+                    }
+                    if (vp_change) {
+                        vkCmdBindDescriptorSets(f->cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                                inst->text_pipeline.layout,
+                                                1, 1, &win->viewport_pool[vi].desc_set,
+                                                0, NULL);
+                        cur_vp_idx = vi;
                     }
                     cur_sc = sc_new;
                     first  = false;

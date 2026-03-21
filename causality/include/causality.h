@@ -2,6 +2,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <vulkan/vulkan.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -641,6 +642,122 @@ void           ca_css_destroy(Ca_Stylesheet *ss);
 /* Attach a parsed stylesheet to the instance.  Ownership is NOT transferred;
    the caller must keep the stylesheet alive and destroy it after the instance. */
 void ca_instance_set_stylesheet(Ca_Instance *instance, Ca_Stylesheet *ss);
+
+/* ============================================================
+   GPU — Vulkan resource accessors
+   ============================================================
+
+   These expose the Vulkan objects owned by causality so that an
+   external renderer (e.g. a game engine) can share the same GPU
+   context.  The returned handles are owned by causality — do NOT
+   destroy them.
+   ============================================================ */
+
+/// Returns the VkInstance created by causality.
+VkInstance          ca_gpu_instance(Ca_Instance *instance);
+
+/// Returns the VkPhysicalDevice selected during init.
+VkPhysicalDevice    ca_gpu_physical_device(Ca_Instance *instance);
+
+/// Returns the VkDevice (logical device).
+VkDevice            ca_gpu_device(Ca_Instance *instance);
+
+/// Returns the graphics queue and its family index.
+VkQueue             ca_gpu_graphics_queue(Ca_Instance *instance, uint32_t *family_index);
+
+/// Returns the presentation queue and its family index.
+VkQueue             ca_gpu_present_queue(Ca_Instance *instance, uint32_t *family_index);
+
+/// Returns the shared command pool (graphics family, resettable buffers).
+VkCommandPool       ca_gpu_command_pool(Ca_Instance *instance);
+
+/// Finds a memory type index matching the given type bits and property flags.
+/// Returns UINT32_MAX on failure.
+uint32_t            ca_gpu_find_memory_type(Ca_Instance *instance,
+                                            uint32_t type_bits,
+                                            VkMemoryPropertyFlags properties);
+
+/// Allocates and begins a one-shot command buffer for immediate GPU work.
+VkCommandBuffer     ca_gpu_begin_transfer(Ca_Instance *instance);
+
+/// Ends, submits, waits, and frees a one-shot command buffer.
+void                ca_gpu_end_transfer(Ca_Instance *instance, VkCommandBuffer cmd);
+
+/* ============================================================
+   VIEWPORT — offscreen render target widget
+   ============================================================
+
+   A viewport is a widget that displays an offscreen-rendered image.
+   The engine renders into the viewport's VkImage each frame via a
+   callback, and causality composites the result into the UI layout.
+
+   Usage:
+
+     void my_render(Ca_Viewport *vp, void *user_data) {
+         VkCommandBuffer cmd = ca_viewport_cmd(vp);
+         uint32_t w = ca_viewport_width(vp);
+         uint32_t h = ca_viewport_height(vp);
+         // record rendering commands...
+     }
+
+     ca_viewport(&(Ca_ViewportDesc){
+         .width  = 800,
+         .height = 600,
+         .on_render = my_render,
+         .render_data = &my_engine,
+     });
+
+   The on_render callback is invoked once per frame before causality
+   composites the UI.  Inside the callback the viewport's VkImage is
+   already transitioned to COLOR_ATTACHMENT_OPTIMAL.  After the
+   callback returns, causality transitions it to SHADER_READ_ONLY
+   for compositing.
+   ============================================================ */
+
+typedef struct Ca_Viewport Ca_Viewport;
+
+/// Called each frame to let the engine render into the viewport.
+typedef void (*Ca_ViewportRenderFn)(Ca_Viewport *viewport, void *user_data);
+
+/// Called when the viewport widget is resized by the layout system.
+typedef void (*Ca_ViewportResizeFn)(Ca_Viewport *viewport,
+                                    uint32_t width, uint32_t height,
+                                    void *user_data);
+
+typedef struct Ca_ViewportDesc {
+    float                width, height;     /* display size (0 = fill parent)    */
+    Ca_ViewportRenderFn  on_render;         /* required — called each frame      */
+    void                *render_data;
+    Ca_ViewportResizeFn  on_resize;         /* optional — called on size change  */
+    void                *resize_data;
+    VkFormat             format;            /* 0 = VK_FORMAT_R8G8B8A8_UNORM      */
+    VkClearColorValue    clear_color;       /* background clear colour           */
+    const char          *id, *style;
+} Ca_ViewportDesc;
+
+/// Creates a viewport widget in the current UI tree.
+Ca_Viewport *ca_viewport(const Ca_ViewportDesc *desc);
+
+/// Returns the command buffer to record into during on_render.
+VkCommandBuffer ca_viewport_cmd(Ca_Viewport *viewport);
+
+/// Returns the current pixel width of the viewport image.
+uint32_t ca_viewport_width(const Ca_Viewport *viewport);
+
+/// Returns the current pixel height of the viewport image.
+uint32_t ca_viewport_height(const Ca_Viewport *viewport);
+
+/// Returns the VkImage backing the viewport (for barrier/transition use).
+VkImage ca_viewport_image(const Ca_Viewport *viewport);
+
+/// Returns the VkImageView for the viewport's colour attachment.
+VkImageView ca_viewport_image_view(const Ca_Viewport *viewport);
+
+/// Returns the VkFormat of the viewport's colour attachment.
+VkFormat ca_viewport_format(const Ca_Viewport *viewport);
+
+/// Returns the owning Ca_Instance.
+Ca_Instance *ca_viewport_instance(Ca_Viewport *viewport);
 
 #ifdef __cplusplus
 }

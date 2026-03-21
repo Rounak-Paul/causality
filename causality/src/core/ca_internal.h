@@ -247,6 +247,7 @@ typedef struct {
 #define CA_MAX_CTXMENUS_PER_WINDOW    8
 #define CA_MAX_MODALS_PER_WINDOW      4
 #define CA_MAX_SPLITTERS_PER_WINDOW   16
+#define CA_MAX_VIEWPORTS_PER_WINDOW   8
 #define CA_MAX_SELECT_OPTIONS        16
 #define CA_MAX_TAB_LABELS            16
 #define CA_MAX_CTXMENU_ITEMS         16
@@ -261,9 +262,10 @@ typedef struct {
    ====================================================== */
 
 typedef enum {
-    CA_DRAW_RECT  = 0,  /* solid colour rectangle               */
-    CA_DRAW_GLYPH = 1,  /* font glyph textured quad             */
-    CA_DRAW_IMAGE = 2,  /* user-loaded image textured quad      */
+    CA_DRAW_RECT     = 0,  /* solid colour rectangle               */
+    CA_DRAW_GLYPH    = 1,  /* font glyph textured quad             */
+    CA_DRAW_IMAGE    = 2,  /* user-loaded image textured quad      */
+    CA_DRAW_VIEWPORT = 3,  /* offscreen viewport textured quad     */
 } Ca_DrawType;
 
 typedef struct {
@@ -285,6 +287,8 @@ typedef struct {
     int16_t     z_index;
     /* CA_DRAW_IMAGE: index into Ca_Instance.images[] */
     int16_t     image_index;
+    /* CA_DRAW_VIEWPORT: index into Ca_Window.viewport_pool[] */
+    int16_t     viewport_index;
 } Ca_DrawCmd;
 
 /* ======================================================
@@ -311,6 +315,7 @@ typedef enum {
     CA_WIDGET_TABLE      = 12,
     CA_WIDGET_SPLITTER   = 13,
     CA_WIDGET_IMAGE      = 14,
+    CA_WIDGET_VIEWPORT   = 15,
 } Ca_WidgetType;
 
 /* ======================================================
@@ -548,6 +553,29 @@ struct Ca_Splitter {
     bool          in_use;
 };
 
+struct Ca_Viewport {
+    Ca_Node             *node;
+    Ca_Instance         *instance;
+    /* GPU resources — offscreen colour attachment */
+    VkImage              color_image;
+    VkDeviceMemory       color_memory;
+    VkImageView          color_view;
+    VkSampler            sampler;
+    VkDescriptorSet      desc_set;      /* per-viewport descriptor for compositing */
+    VkFormat             format;
+    uint32_t             width, height; /* current pixel dimensions */
+    /* Per-frame command buffer (allocated from inst->cmd_pool) */
+    VkCommandBuffer      cmd;
+    VkFence              render_fence;
+    /* Callbacks */
+    Ca_ViewportRenderFn  on_render;
+    void                *render_data;
+    Ca_ViewportResizeFn  on_resize;
+    void                *resize_data;
+    VkClearColorValue    clear_color;
+    bool                 in_use;
+};
+
 /* ======================================================
    WINDOW
    ====================================================== */
@@ -587,6 +615,7 @@ struct Ca_Window {
     Ca_CtxMenu   *ctxmenu_pool;
     Ca_Modal     *modal_pool;
     Ca_Splitter  *splitter_pool;
+    Ca_Viewport  *viewport_pool;
 
     /* Hover / drag state for interactive widgets */
     Ca_Node      *hovered_node;

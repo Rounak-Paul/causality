@@ -19,6 +19,7 @@
 #include "node.h"
 #include "style.h"
 #include "font.h"
+#include "viewport.h"
 
 #include <assert.h>
 #include <stdio.h>
@@ -1454,6 +1455,116 @@ void ca_image(const Ca_ImageDesc *desc)
 
     if (desc->id)    snprintf(node->id, CA_NODE_ID_MAX, "%s", desc->id);
     if (desc->style) snprintf(node->classes, CA_NODE_CLASS_MAX, "%s", desc->style);
+}
+
+/* ============================================================
+   VIEWPORT — offscreen render target widget
+   ============================================================ */
+
+static Ca_Viewport *alloc_viewport(Ca_Window *win)
+{
+    for (uint32_t i = 0; i < CA_MAX_VIEWPORTS_PER_WINDOW; ++i) {
+        if (!win->viewport_pool[i].in_use)
+            return &win->viewport_pool[i];
+    }
+    fprintf(stderr, "[causality] viewport pool exhausted (max %d)\n",
+            CA_MAX_VIEWPORTS_PER_WINDOW);
+    return NULL;
+}
+
+Ca_Viewport *ca_viewport(const Ca_ViewportDesc *desc)
+{
+    assert(g_ctx.active);
+    if (!desc || !desc->on_render) return NULL;
+
+    Ca_Node *parent = ctx_top();
+    if (!parent) return NULL;
+
+    Ca_Window *win = g_ctx.window;
+    Ca_Viewport *vp = alloc_viewport(win);
+    if (!vp) return NULL;
+    memset(vp, 0, sizeof(*vp));
+
+    float w = desc->width  > 0 ? s(desc->width)  : 0;
+    float h = desc->height > 0 ? s(desc->height) : 0;
+
+    Ca_NodeDesc nd = {0};
+    nd.width  = w;
+    nd.height = h;
+    /* Let viewport fill available space when no size is given */
+    if (w == 0) nd.flex_grow = 1.0f;
+    if (h == 0) nd.flex_grow = 1.0f;
+
+    Ca_Node *node = ca_node_add(parent, &nd);
+    if (!node) { vp->in_use = false; return NULL; }
+
+    VkFormat fmt = desc->format ? desc->format : VK_FORMAT_R8G8B8A8_UNORM;
+
+    /* Calculate initial pixel dimensions from content scale */
+    float content_scale = 1.0f;
+    if (win->glfw)
+        glfwGetWindowContentScale(win->glfw, &content_scale, NULL);
+    uint32_t px_w = (uint32_t)(w * content_scale);
+    uint32_t px_h = (uint32_t)(h * content_scale);
+    if (px_w < 1) px_w = 64;
+    if (px_h < 1) px_h = 64;
+
+    vp->instance    = win->instance;
+    vp->node        = node;
+    vp->on_render   = desc->on_render;
+    vp->render_data = desc->render_data;
+    vp->on_resize   = desc->on_resize;
+    vp->resize_data = desc->resize_data;
+    vp->clear_color = desc->clear_color;
+    vp->in_use      = true;
+
+    if (!ca_viewport_gpu_create(win->instance, vp, px_w, px_h, fmt)) {
+        vp->in_use = false;
+        return NULL;
+    }
+
+    node->widget_type = CA_WIDGET_VIEWPORT;
+    node->widget      = (void *)vp;
+
+    if (desc->id)    snprintf(node->id, CA_NODE_ID_MAX, "%s", desc->id);
+    if (desc->style) snprintf(node->classes, CA_NODE_CLASS_MAX, "%s", desc->style);
+
+    return vp;
+}
+
+VkCommandBuffer ca_viewport_cmd(Ca_Viewport *viewport)
+{
+    return viewport ? viewport->cmd : VK_NULL_HANDLE;
+}
+
+uint32_t ca_viewport_width(const Ca_Viewport *viewport)
+{
+    return viewport ? viewport->width : 0;
+}
+
+uint32_t ca_viewport_height(const Ca_Viewport *viewport)
+{
+    return viewport ? viewport->height : 0;
+}
+
+VkImage ca_viewport_image(const Ca_Viewport *viewport)
+{
+    return viewport ? viewport->color_image : VK_NULL_HANDLE;
+}
+
+VkImageView ca_viewport_image_view(const Ca_Viewport *viewport)
+{
+    return viewport ? viewport->color_view : VK_NULL_HANDLE;
+}
+
+VkFormat ca_viewport_format(const Ca_Viewport *viewport)
+{
+    return viewport ? viewport->format : VK_FORMAT_UNDEFINED;
+}
+
+Ca_Instance *ca_viewport_instance(Ca_Viewport *viewport)
+{
+    return viewport ? viewport->instance : NULL;
 }
 
 /* ============================================================

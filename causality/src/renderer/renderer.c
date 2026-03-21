@@ -3,6 +3,7 @@
 #include "pipeline.h"
 #include "font.h"
 #include "image.h"
+#include "viewport.h"
 
 /* ---- Helpers ---- */
 
@@ -386,6 +387,14 @@ bool ca_renderer_window_init(Ca_Instance *inst, Ca_Window *win)
 
 void ca_renderer_window_shutdown(Ca_Instance *inst, Ca_Window *win)
 {
+    /* Destroy viewport GPU resources before tearing down the swapchain */
+    if (win->viewport_pool) {
+        for (int i = 0; i < CA_MAX_VIEWPORTS_PER_WINDOW; ++i) {
+            if (win->viewport_pool[i].in_use)
+                ca_viewport_gpu_destroy(inst, &win->viewport_pool[i]);
+        }
+    }
+
     ca_swapchain_destroy(inst, win);
     if (win->surface != VK_NULL_HANDLE) {
         vkDestroySurfaceKHR(inst->vk_instance, win->surface, NULL);
