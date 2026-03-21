@@ -1,15 +1,19 @@
-/* pipeline.c — Vulkan graphics pipeline for drawing filled rectangles.
+/* pipeline.c — Vulkan graphics pipelines for instanced rendering.
 
    Design:
-     - No vertex buffers. Each rect is a 6-vertex procedural quad driven
-       entirely by push constants (pos, size, color, viewport size).
+     - No vertex buffers. Each rect/glyph/image is a 6-vertex procedural
+       quad driven by per-instance data in a storage buffer (SSBO).
+     - Instance data is indexed via gl_InstanceIndex in the vertex shader.
+     - Multiple quads with the same scissor state are batched into a
+       single vkCmdDraw(6, N, 0, firstInstance) call.
      - Viewport / scissor are dynamic states.
-     - Alpha blending enabled for future semi-transparent widgets.
+     - Alpha blending enabled for semi-transparent widgets.
      - Built for dynamic rendering (no VkRenderPass object required).      */
 
 #include "pipeline.h"
 #include "shader.h"
 #include "font.h"
+#include <string.h>
 
 /* ======================================================
    Embedded GLSL sources
@@ -17,13 +21,13 @@
 
 /* Vertex shader:
      Generates a 2-triangle quad from gl_VertexIndex (0-5).
-     Converts pixel-space coordinates to NDC using the viewport size
-     passed in push constants.  Outputs local position, size, and
-     corner radius to the fragment shader for SDF evaluation.          */
+     Per-instance data (pos, size, color, etc.) is read from an SSBO
+     indexed by gl_InstanceIndex.  Pixel-space coordinates are converted
+     to NDC using the viewport size stored in each instance.           */
 static const char *VERT_GLSL =
     "#version 450\n"
     "\n"
-    "layout(push_constant) uniform PC {\n"
+    "struct RectData {\n"
     "    vec2  pos;\n"
     "    vec2  size;\n"
     "    vec4  color;\n"
@@ -31,7 +35,11 @@ static const char *VERT_GLSL =
     "    float corner_radius;\n"
     "    float border_width;\n"
     "    vec4  border_color;\n"
-    "} pc;\n"
+    "};\n"
+    "\n"
+    "layout(std430, set = 0, binding = 0) readonly buffer SSB {\n"
+    "    RectData data[];\n"
+    "} ssb;\n"
     "\n"
     "layout(location = 0) out vec4  v_color;\n"
     "layout(location = 1) out vec2  v_local;\n"
@@ -41,20 +49,21 @@ static const char *VERT_GLSL =
     "layout(location = 5) out vec4  v_border_color;\n"
     "\n"
     "void main() {\n"
+    "    RectData d = ssb.data[gl_InstanceIndex];\n"
     "    const vec2 offsets[6] = vec2[6](\n"
     "        vec2(0.0, 0.0), vec2(1.0, 0.0), vec2(0.0, 1.0),\n"
     "        vec2(1.0, 0.0), vec2(1.0, 1.0), vec2(0.0, 1.0)\n"
     "    );\n"
     "    vec2 off   = offsets[gl_VertexIndex];\n"
-    "    vec2 pixel = pc.pos + off * pc.size;\n"
-    "    vec2 ndc   = (pixel / pc.viewport) * 2.0 - 1.0;\n"
+    "    vec2 pixel = d.pos + off * d.size;\n"
+    "    vec2 ndc   = (pixel / d.viewport) * 2.0 - 1.0;\n"
     "    gl_Position = vec4(ndc, 0.0, 1.0);\n"
-    "    v_color  = pc.color;\n"
-    "    v_local  = off * pc.size;\n"
-    "    v_size   = pc.size;\n"
-    "    v_radius = pc.corner_radius;\n"
-    "    v_border_w     = pc.border_width;\n"
-    "    v_border_color = pc.border_color;\n"
+    "    v_color  = d.color;\n"
+    "    v_local  = off * d.size;\n"
+    "    v_size   = d.size;\n"
+    "    v_radius = d.corner_radius;\n"
+    "    v_border_w     = d.border_width;\n"
+    "    v_border_color = d.border_color;\n"
     "}\n";
 
 /* Fragment shader: rounded-rectangle SDF with anti-aliased edges.
@@ -112,16 +121,11 @@ bool ca_rect_pipeline_create(Ca_Instance *inst, VkFormat color_format)
         return false;
     }
 
-    /* Push constant range — vertex+fragment stages read pos/size/color/viewport/border */
-    VkPushConstantRange pc_range = {
-        .stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-        .offset     = 0,
-        .size       = sizeof(Ca_RectPushConst),
-    };
+    /* Pipeline layout — set 0 = SSBO (no push constants) */
     VkPipelineLayoutCreateInfo layout_ci = {
         .sType                  = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
-        .pushConstantRangeCount = 1,
-        .pPushConstantRanges    = &pc_range,
+        .setLayoutCount         = 1,
+        .pSetLayouts            = &inst->ssbo_desc_layout,
     };
     if (vkCreatePipelineLayout(inst->vk_device, &layout_ci, NULL,
                                &inst->rect_pipeline.layout) != VK_SUCCESS) {
@@ -263,38 +267,45 @@ void ca_rect_pipeline_destroy(Ca_Instance *inst)
    ====================================================== */
 
 /* Vertex shader: same procedural-quad trick, but outputs UV coordinates
-   computed from the push-constant uv rect (s0,t0,s1,t1).               */
+   computed from the SSBO instance data (s0,t0,s1,t1).               */
 static const char *TEXT_VERT_GLSL =
     "#version 450\n"
     "\n"
-    "layout(push_constant) uniform PC {\n"
+    "struct TextData {\n"
     "    vec2 pos;\n"
     "    vec2 size;\n"
     "    vec4 uv;       // (s0, t0, s1, t1)\n"
     "    vec4 color;\n"
     "    vec2 viewport;\n"
-    "} pc;\n"
+    "    vec2 _pad;\n"
+    "};\n"
+    "\n"
+    "layout(std430, set = 0, binding = 0) readonly buffer SSB {\n"
+    "    TextData data[];\n"
+    "} ssb;\n"
     "\n"
     "layout(location = 0) out vec2 v_uv;\n"
     "layout(location = 1) out vec4 v_color;\n"
     "\n"
     "void main() {\n"
+    "    TextData d = ssb.data[gl_InstanceIndex];\n"
     "    const vec2 offsets[6] = vec2[6](\n"
     "        vec2(0.0, 0.0), vec2(1.0, 0.0), vec2(0.0, 1.0),\n"
     "        vec2(1.0, 0.0), vec2(1.0, 1.0), vec2(0.0, 1.0));\n"
     "    vec2 off   = offsets[gl_VertexIndex];\n"
-    "    vec2 pixel = pc.pos + off * pc.size;\n"
-    "    vec2 ndc   = (pixel / pc.viewport) * 2.0 - 1.0;\n"
+    "    vec2 pixel = d.pos + off * d.size;\n"
+    "    vec2 ndc   = (pixel / d.viewport) * 2.0 - 1.0;\n"
     "    gl_Position = vec4(ndc, 0.0, 1.0);\n"
-    "    v_uv    = pc.uv.xy + off * (pc.uv.zw - pc.uv.xy);\n"
-    "    v_color = pc.color;\n"
+    "    v_uv    = d.uv.xy + off * (d.uv.zw - d.uv.xy);\n"
+    "    v_color = d.color;\n"
     "}\n";
 
-/* Fragment shader: samples the R8 font atlas; alpha = atlas red channel. */
+/* Fragment shader: samples the R8 font atlas; alpha = atlas red channel.
+   Sampler is at set 1, binding 0 (set 0 is the instance SSBO).       */
 static const char *TEXT_FRAG_GLSL =
     "#version 450\n"
     "\n"
-    "layout(set = 0, binding = 0) uniform sampler2D font_atlas;\n"
+    "layout(set = 1, binding = 0) uniform sampler2D font_atlas;\n"
     "\n"
     "layout(location = 0) in  vec2 v_uv;\n"
     "layout(location = 1) in  vec4 v_color;\n"
@@ -357,20 +368,16 @@ bool ca_text_pipeline_create(Ca_Instance *inst, VkFormat color_format)
         return false;
     }
 
-    /* Push constant range: full Ca_TextPushConst (56 bytes) */
-    VkPushConstantRange pc_range = {
-        .stageFlags = VK_SHADER_STAGE_VERTEX_BIT,
-        .offset     = 0,
-        .size       = sizeof(Ca_TextPushConst),
-    };
+    /* Push constant range: none (instance data in SSBO) */
 
-    /* Pipeline layout */
+    /* Pipeline layout: set 0 = SSBO, set 1 = sampler */
+    VkDescriptorSetLayout set_layouts[2] = {
+        inst->ssbo_desc_layout, tp->desc_layout
+    };
     VkPipelineLayoutCreateInfo layout_ci = {
         .sType                  = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
-        .setLayoutCount         = 1,
-        .pSetLayouts            = &tp->desc_layout,
-        .pushConstantRangeCount = 1,
-        .pPushConstantRanges    = &pc_range,
+        .setLayoutCount         = 2,
+        .pSetLayouts            = set_layouts,
     };
     if (vkCreatePipelineLayout(inst->vk_device, &layout_ci, NULL,
                                &tp->layout) != VK_SUCCESS) {
@@ -540,7 +547,7 @@ void ca_text_pipeline_destroy(Ca_Instance *inst)
 static const char *IMAGE_FRAG_GLSL =
     "#version 450\n"
     "\n"
-    "layout(set = 0, binding = 0) uniform sampler2D tex;\n"
+    "layout(set = 1, binding = 0) uniform sampler2D tex;\n"
     "\n"
     "layout(location = 0) in  vec2 v_uv;\n"
     "layout(location = 1) in  vec4 v_color;\n"
@@ -647,5 +654,162 @@ void ca_image_pipeline_destroy(Ca_Instance *inst)
     if (inst->image_pipeline != VK_NULL_HANDLE) {
         vkDestroyPipeline(inst->vk_device, inst->image_pipeline, NULL);
         inst->image_pipeline = VK_NULL_HANDLE;
+    }
+}
+
+/* ======================================================
+   Shared SSBO descriptor set layout (instanced rendering)
+   ====================================================== */
+
+static uint32_t find_memory_type_pipe(VkPhysicalDevice gpu, uint32_t type_bits,
+                                      VkMemoryPropertyFlags props)
+{
+    VkPhysicalDeviceMemoryProperties mem;
+    vkGetPhysicalDeviceMemoryProperties(gpu, &mem);
+    for (uint32_t i = 0; i < mem.memoryTypeCount; i++) {
+        if ((type_bits & (1u << i)) &&
+            (mem.memoryTypes[i].propertyFlags & props) == props)
+            return i;
+    }
+    return 0;
+}
+
+bool ca_ssbo_layout_create(Ca_Instance *inst)
+{
+    /* Query min alignment for dynamic SSBO offsets */
+    VkPhysicalDeviceProperties props;
+    vkGetPhysicalDeviceProperties(inst->vk_gpu, &props);
+    inst->min_ssbo_align = (uint32_t)props.limits.minStorageBufferOffsetAlignment;
+    if (inst->min_ssbo_align == 0) inst->min_ssbo_align = 256;
+
+    /* Descriptor set layout: binding 0 = dynamic storage buffer */
+    VkDescriptorSetLayoutBinding binding = {
+        .binding         = 0,
+        .descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC,
+        .descriptorCount = 1,
+        .stageFlags      = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+    };
+    VkDescriptorSetLayoutCreateInfo ci = {
+        .sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+        .bindingCount = 1,
+        .pBindings    = &binding,
+    };
+    if (vkCreateDescriptorSetLayout(inst->vk_device, &ci, NULL,
+                                    &inst->ssbo_desc_layout) != VK_SUCCESS) {
+        fprintf(stderr, "[pipeline] SSBO descriptor set layout creation failed\n");
+        return false;
+    }
+
+    /* Descriptor pool: one SSBO set per frame-in-flight per window */
+    VkDescriptorPoolSize pool_sz = {
+        .type            = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC,
+        .descriptorCount = CA_MAX_WINDOWS * CA_FRAMES_IN_FLIGHT,
+    };
+    VkDescriptorPoolCreateInfo pool_ci = {
+        .sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+        .flags         = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT,
+        .maxSets       = CA_MAX_WINDOWS * CA_FRAMES_IN_FLIGHT,
+        .poolSizeCount = 1,
+        .pPoolSizes    = &pool_sz,
+    };
+    if (vkCreateDescriptorPool(inst->vk_device, &pool_ci, NULL,
+                               &inst->ssbo_desc_pool) != VK_SUCCESS) {
+        fprintf(stderr, "[pipeline] SSBO descriptor pool creation failed\n");
+        return false;
+    }
+
+    printf("[pipeline] SSBO layout created (min_align=%u)\n", inst->min_ssbo_align);
+    return true;
+}
+
+void ca_ssbo_layout_destroy(Ca_Instance *inst)
+{
+    if (inst->ssbo_desc_pool != VK_NULL_HANDLE) {
+        vkDestroyDescriptorPool(inst->vk_device, inst->ssbo_desc_pool, NULL);
+        inst->ssbo_desc_pool = VK_NULL_HANDLE;
+    }
+    if (inst->ssbo_desc_layout != VK_NULL_HANDLE) {
+        vkDestroyDescriptorSetLayout(inst->vk_device, inst->ssbo_desc_layout, NULL);
+        inst->ssbo_desc_layout = VK_NULL_HANDLE;
+    }
+}
+
+bool ca_instance_buf_create(Ca_Instance *inst, Ca_Frame *f)
+{
+    /* Create host-visible coherent buffer for instance data */
+    VkBufferCreateInfo buf_ci = {
+        .sType       = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+        .size        = CA_INSTANCE_BUF_SIZE,
+        .usage       = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+        .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+    };
+    if (vkCreateBuffer(inst->vk_device, &buf_ci, NULL, &f->instance_buf) != VK_SUCCESS) {
+        fprintf(stderr, "[pipeline] instance buffer creation failed\n");
+        return false;
+    }
+
+    VkMemoryRequirements req;
+    vkGetBufferMemoryRequirements(inst->vk_device, f->instance_buf, &req);
+    VkMemoryAllocateInfo mem_ai = {
+        .sType           = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+        .allocationSize  = req.size,
+        .memoryTypeIndex = find_memory_type_pipe(inst->vk_gpu, req.memoryTypeBits,
+                               VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                               VK_MEMORY_PROPERTY_HOST_COHERENT_BIT),
+    };
+    if (vkAllocateMemory(inst->vk_device, &mem_ai, NULL, &f->instance_mem) != VK_SUCCESS) {
+        fprintf(stderr, "[pipeline] instance buffer memory alloc failed\n");
+        return false;
+    }
+    vkBindBufferMemory(inst->vk_device, f->instance_buf, f->instance_mem, 0);
+    vkMapMemory(inst->vk_device, f->instance_mem, 0, CA_INSTANCE_BUF_SIZE, 0,
+                &f->instance_mapped);
+
+    /* Allocate and write descriptor set pointing to this buffer */
+    VkDescriptorSetAllocateInfo ds_ai = {
+        .sType              = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+        .descriptorPool     = inst->ssbo_desc_pool,
+        .descriptorSetCount = 1,
+        .pSetLayouts        = &inst->ssbo_desc_layout,
+    };
+    if (vkAllocateDescriptorSets(inst->vk_device, &ds_ai, &f->ssbo_set) != VK_SUCCESS) {
+        fprintf(stderr, "[pipeline] SSBO descriptor set alloc failed\n");
+        return false;
+    }
+    VkDescriptorBufferInfo buf_info = {
+        .buffer = f->instance_buf,
+        .offset = 0,
+        .range  = CA_INSTANCE_BUF_SIZE,
+    };
+    VkWriteDescriptorSet write = {
+        .sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+        .dstSet          = f->ssbo_set,
+        .dstBinding      = 0,
+        .descriptorCount = 1,
+        .descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC,
+        .pBufferInfo     = &buf_info,
+    };
+    vkUpdateDescriptorSets(inst->vk_device, 1, &write, 0, NULL);
+    return true;
+}
+
+void ca_instance_buf_destroy(Ca_Instance *inst, Ca_Frame *f)
+{
+    if (f->instance_mapped) {
+        vkUnmapMemory(inst->vk_device, f->instance_mem);
+        f->instance_mapped = NULL;
+    }
+    if (f->ssbo_set != VK_NULL_HANDLE) {
+        vkFreeDescriptorSets(inst->vk_device, inst->ssbo_desc_pool,
+                             1, &f->ssbo_set);
+        f->ssbo_set = VK_NULL_HANDLE;
+    }
+    if (f->instance_buf != VK_NULL_HANDLE) {
+        vkDestroyBuffer(inst->vk_device, f->instance_buf, NULL);
+        f->instance_buf = VK_NULL_HANDLE;
+    }
+    if (f->instance_mem != VK_NULL_HANDLE) {
+        vkFreeMemory(inst->vk_device, f->instance_mem, NULL);
+        f->instance_mem = VK_NULL_HANDLE;
     }
 }

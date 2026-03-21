@@ -3,6 +3,15 @@
 
 #include "ca_internal.h"
 
+/* ---- Shared SSBO descriptor layout (instanced rendering) ---- */
+
+bool ca_ssbo_layout_create(Ca_Instance *inst);
+void ca_ssbo_layout_destroy(Ca_Instance *inst);
+
+/* Create per-frame instance buffer + descriptor set for a swapchain frame */
+bool ca_instance_buf_create(Ca_Instance *inst, Ca_Frame *f);
+void ca_instance_buf_destroy(Ca_Instance *inst, Ca_Frame *f);
+
 /* ---- Rect pipeline ---- */
 
 /* Create the shared rect pipeline using the given swapchain colour format.

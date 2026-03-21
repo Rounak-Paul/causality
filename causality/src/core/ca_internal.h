@@ -21,6 +21,11 @@ typedef struct {
     VkSemaphore     image_available;
     VkSemaphore     render_finished;
     VkFence         in_flight;
+    /* Per-frame storage buffer for instanced rendering */
+    VkBuffer        instance_buf;
+    VkDeviceMemory  instance_mem;
+    void           *instance_mapped;  /* persistently mapped */
+    VkDescriptorSet ssbo_set;
 } Ca_Frame;
 
 typedef struct {
@@ -85,6 +90,20 @@ typedef struct {
     float color[4];
     float viewport[2];
 } Ca_TextPushConst;
+
+/* std430-padded text instance for SSBO (vec4 alignment → 64-byte stride) */
+typedef struct {
+    float pos[2];
+    float size[2];
+    float uv[4];
+    float color[4];
+    float viewport[2];
+    float _pad[2];
+} Ca_TextInstance;
+
+/* Instance buffer holds all draw commands for one frame.
+   Both rect (64B) and text (64B padded) instances fit in 64-byte slots. */
+#define CA_INSTANCE_BUF_SIZE (CA_MAX_DRAW_CMDS_PER_WINDOW * 64)
 
 /* Forward-declare Ca_Font (full definition lives in renderer/font.h) */
 typedef struct Ca_Font Ca_Font;
@@ -633,6 +652,11 @@ struct Ca_Instance {
 
     /* UI state pool */
     Ca_State        *state_pool;
+
+    /* Shared SSBO descriptor set layout + pool for instanced rendering */
+    VkDescriptorSetLayout ssbo_desc_layout;
+    VkDescriptorPool      ssbo_desc_pool;
+    uint32_t              min_ssbo_align;  /* minStorageBufferOffsetAlignment */
 
     /* Rect drawing pipeline — created on first window init */
     Ca_RectPipeline  rect_pipeline;

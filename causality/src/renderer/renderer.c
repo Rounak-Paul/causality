@@ -274,6 +274,7 @@ void ca_renderer_shutdown(Ca_Instance *inst)
     ca_image_pipeline_destroy(inst);
     ca_rect_pipeline_destroy(inst);
     ca_text_pipeline_destroy(inst);
+    ca_ssbo_layout_destroy(inst);
     if (inst->font) {
         ca_font_destroy(inst, inst->font);
         free(inst->font);
@@ -304,9 +305,12 @@ bool ca_renderer_window_init(Ca_Instance *inst, Ca_Window *win)
     if (!ca_swapchain_create(inst, win, (uint32_t)w, (uint32_t)h))
         return false;
 
-    /* Create the shared rect pipeline on the first window (format comes
-       from the swapchain just built; all windows use the same format). */
+    /* Create the shared SSBO layout + rect pipeline on the first window */
     if (inst->rect_pipeline.pipeline == VK_NULL_HANDLE) {
+        if (inst->ssbo_desc_layout == VK_NULL_HANDLE) {
+            if (!ca_ssbo_layout_create(inst))
+                return false;
+        }
         if (!ca_rect_pipeline_create(inst, win->sc.format))
             return false;
     }
@@ -344,6 +348,18 @@ bool ca_renderer_window_init(Ca_Instance *inst, Ca_Window *win)
 
         /* Image pipeline — RGBA textured quads (shares text pipeline layout) */
         ca_image_pipeline_create(inst, win->sc.format);
+    }
+
+    /* Create per-frame instance buffers if they don't exist yet.
+       On the first window, the SSBO layout is created after the swapchain,
+       so the swapchain_create path can't create them.  Fix up here. */
+    for (uint32_t i = 0; i < CA_FRAMES_IN_FLIGHT; ++i) {
+        Ca_Frame *frame = &win->sc.frames[i];
+        if (frame->instance_buf == VK_NULL_HANDLE &&
+            inst->ssbo_desc_layout != VK_NULL_HANDLE) {
+            if (!ca_instance_buf_create(inst, frame))
+                return false;
+        }
     }
 
     return true;
