@@ -53,5 +53,7 @@ add_subdirectory(vendors/glm)
 # Library
 add_subdirectory(causality)
 
-# Sandbox
-add_subdirectory(sandbox)
+# Sandbox (only when causality is the top-level project)
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+    add_subdirectory(sandbox)
+endif()

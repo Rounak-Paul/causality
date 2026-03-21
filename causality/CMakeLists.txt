@@ -43,7 +43,7 @@ target_include_directories(causality
         ${CMAKE_CURRENT_SOURCE_DIR}/src/renderer
         ${CMAKE_CURRENT_SOURCE_DIR}/src/ui
         ${SHADERC_INCLUDE}
-        ${CMAKE_SOURCE_DIR}/vendors/stb
+        ${CMAKE_CURRENT_SOURCE_DIR}/../vendors/stb
 )
 
 target_link_libraries(causality
