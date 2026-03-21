@@ -211,6 +211,9 @@ typedef struct {
     int16_t      z_index;
     /* Text wrapping */
     uint8_t      text_wrap;    /* 0=nowrap (default), 1=wrap */
+    /* Percentage sizing (resolved during layout) */
+    bool         width_pct;
+    bool         height_pct;
 } Ca_NodeDesc;
 
 /* Internal state descriptor — used by ca_state_create inside the library. */
@@ -248,6 +251,10 @@ typedef struct {
 #define CA_MAX_MODALS_PER_WINDOW      4
 #define CA_MAX_SPLITTERS_PER_WINDOW   16
 #define CA_MAX_VIEWPORTS_PER_WINDOW   8
+#define CA_MAX_MENUBARS_PER_WINDOW    2
+#define CA_MAX_MENUS_PER_BAR         16
+#define CA_MAX_ITEMS_PER_MENU        16
+#define CA_MENU_LABEL_MAX            64
 #define CA_MAX_SELECT_OPTIONS        16
 #define CA_MAX_TAB_LABELS            16
 #define CA_MAX_CTXMENU_ITEMS         16
@@ -576,6 +583,27 @@ struct Ca_Viewport {
     bool                 in_use;
 };
 
+typedef struct {
+    char             label[CA_MENU_LABEL_MAX];
+    Ca_MenuActionFn  action;
+    void            *action_data;
+} Ca_MenuBarItem;
+
+typedef struct {
+    char            label[CA_MENU_LABEL_MAX];
+    Ca_MenuBarItem  items[CA_MAX_ITEMS_PER_MENU];
+    int             item_count;
+    Ca_Node        *header_node;
+} Ca_MenuBarMenu;
+
+struct Ca_MenuBar {
+    Ca_Node          *node;
+    Ca_MenuBarMenu    menus[CA_MAX_MENUS_PER_BAR];
+    int               menu_count;
+    int               active_menu;   /* -1 = no dropdown open */
+    bool              in_use;
+};
+
 /* ======================================================
    WINDOW
    ====================================================== */
@@ -616,6 +644,7 @@ struct Ca_Window {
     Ca_Modal     *modal_pool;
     Ca_Splitter  *splitter_pool;
     Ca_Viewport  *viewport_pool;
+    Ca_MenuBar   *menubar_pool;
 
     /* Hover / drag state for interactive widgets */
     Ca_Node      *hovered_node;

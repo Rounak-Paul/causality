@@ -42,6 +42,7 @@ typedef struct Ca_CtxMenu   Ca_CtxMenu;
 typedef struct Ca_Modal     Ca_Modal;
 typedef struct Ca_Splitter  Ca_Splitter;
 typedef struct Ca_Image     Ca_Image;
+typedef struct Ca_MenuBar   Ca_MenuBar;
 
 /* ============================================================
    INSTANCE
@@ -170,6 +171,7 @@ typedef void (*Ca_SelectFn)(Ca_Select *sel, void *user_data);
 typedef void (*Ca_TabFn)(Ca_TabBar *tabs, void *user_data);
 typedef void (*Ca_TreeToggleFn)(Ca_TreeNode *tn, void *user_data);
 typedef void (*Ca_MenuFn)(int item_index, void *user_data);
+typedef void (*Ca_MenuActionFn)(void *user_data);
 
 /* Drag interaction callback.
    'dx' and 'dy' are the delta from the drag start point. */
@@ -456,6 +458,27 @@ typedef struct Ca_ModalDesc {
     const char *id, *style;
 } Ca_ModalDesc;
 
+/* Menu bar item — a single clickable entry inside a dropdown menu. */
+typedef struct Ca_MenuItemDesc {
+    const char      *label;
+    Ca_MenuActionFn  action;
+    void            *action_data;
+} Ca_MenuItemDesc;
+
+/* Menu — a labelled group of items that drops down from the bar. */
+typedef struct Ca_MenuDesc {
+    const char            *label;
+    const Ca_MenuItemDesc *items;
+    int                    item_count;
+} Ca_MenuDesc;
+
+/* Menu bar — horizontal strip of menus at the top of a container. */
+typedef struct Ca_MenuBarDesc {
+    const Ca_MenuDesc *menus;
+    int                menu_count;
+    const char        *id, *style;
+} Ca_MenuBarDesc;
+
 /* ============================================================
    UI — NEW WIDGET API
    ============================================================ */
@@ -511,6 +534,9 @@ void ca_tooltip(const Ca_TooltipDesc *desc);
 
 /* Context menu — attach to the previously created element */
 void ca_context_menu(const Ca_CtxMenuDesc *desc);
+
+/* Menu bar */
+Ca_MenuBar *ca_menu_bar(const Ca_MenuBarDesc *desc);
 
 /* Modal / dialog */
 void ca_modal_begin(const Ca_ModalDesc *desc);

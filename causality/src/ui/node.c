@@ -26,6 +26,7 @@ void ca_node_system_init(Ca_Window *win)
     win->modal_pool     = (Ca_Modal *)calloc(CA_MAX_MODALS_PER_WINDOW, sizeof(Ca_Modal));
     win->splitter_pool   = (Ca_Splitter *)calloc(CA_MAX_SPLITTERS_PER_WINDOW, sizeof(Ca_Splitter));
     win->viewport_pool   = (Ca_Viewport *)calloc(CA_MAX_VIEWPORTS_PER_WINDOW, sizeof(Ca_Viewport));
+    win->menubar_pool    = (Ca_MenuBar *)calloc(CA_MAX_MENUBARS_PER_WINDOW, sizeof(Ca_MenuBar));
     win->root           = NULL;
     win->draw_cmd_count = 0;
     win->sorted_idx      = (uint32_t *)calloc(CA_MAX_DRAW_CMDS_PER_WINDOW, sizeof(uint32_t));
@@ -61,6 +62,7 @@ void ca_node_system_shutdown(Ca_Window *win)
     free(win->modal_pool);
     free(win->splitter_pool);
     free(win->viewport_pool);
+    free(win->menubar_pool);
     free(win->paint_cache);
     win->node_pool      = NULL;
     win->draw_cmds      = NULL;
@@ -83,6 +85,7 @@ void ca_node_system_shutdown(Ca_Window *win)
     win->modal_pool     = NULL;
     win->splitter_pool   = NULL;
     win->viewport_pool   = NULL;
+    win->menubar_pool    = NULL;
     win->root           = NULL;
     win->draw_cmd_count = 0;
 }

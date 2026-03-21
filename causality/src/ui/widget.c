@@ -114,6 +114,7 @@ ALLOC_POOL_FN(tooltip,   Ca_Tooltip,   tooltip_pool,   CA_MAX_TOOLTIPS_PER_WINDO
 ALLOC_POOL_FN(ctxmenu,   Ca_CtxMenu,   ctxmenu_pool,   CA_MAX_CTXMENUS_PER_WINDOW)
 ALLOC_POOL_FN(modal,     Ca_Modal,     modal_pool,     CA_MAX_MODALS_PER_WINDOW)
 ALLOC_POOL_FN(splitter,  Ca_Splitter,  splitter_pool,  CA_MAX_SPLITTERS_PER_WINDOW)
+ALLOC_POOL_FN(menubar,   Ca_MenuBar,   menubar_pool,   CA_MAX_MENUBARS_PER_WINDOW)
 
 /* ============================================================
    INTERNAL — node creation helpers
@@ -240,9 +241,9 @@ static void apply_css(Ca_Node *node, Ca_NodeDesc *nd,
     Ca_ResolvedStyle rs;
     ca_style_resolve(ss, node, elem_type, node->classes, &rs);
 
-    /* Scale CSS-resolved pixel values before applying */
-    rs.width        = s(rs.width);
-    rs.height       = s(rs.height);
+    /* Scale CSS-resolved pixel values before applying (skip percentages) */
+    if (!rs.width_pct)  rs.width  = s(rs.width);
+    if (!rs.height_pct) rs.height = s(rs.height);
     rs.min_width    = s(rs.min_width);
     rs.max_width    = s(rs.max_width);
     rs.min_height   = s(rs.min_height);
@@ -1290,6 +1291,84 @@ void ca_tooltip(const Ca_TooltipDesc *desc)
 }
 
 /* ============================================================
+   PUBLIC — Menu bar
+   ============================================================ */
+
+Ca_MenuBar *ca_menu_bar(const Ca_MenuBarDesc *desc)
+{
+    assert(g_ctx.active && desc);
+    Ca_MenuBar *mb = alloc_menubar(g_ctx.window);
+    if (!mb) return NULL;
+
+    /* Bar container — dimensions and styling driven by CSS */
+    Ca_NodeDesc nd = {0};
+    nd.direction = CA_DIR_ROW;
+
+    Ca_Node *bar = ca_node_add(ctx_top(), &nd);
+    if (!bar) return NULL;
+
+    mb->node = bar;
+    mb->in_use = true;
+    mb->active_menu = -1;
+    mb->menu_count = desc->menu_count;
+    if (mb->menu_count > CA_MAX_MENUS_PER_BAR)
+        mb->menu_count = CA_MAX_MENUS_PER_BAR;
+
+    uint32_t dummy = 0;
+    apply_css(bar, &bar->desc, CA_ELEM_DIV, desc->style, desc->id, &dummy);
+
+    for (int mi = 0; mi < mb->menu_count; ++mi) {
+        const Ca_MenuDesc *mdesc = &desc->menus[mi];
+        Ca_MenuBarMenu *menu = &mb->menus[mi];
+
+        if (mdesc->label)
+            snprintf(menu->label, CA_MENU_LABEL_MAX, "%s", mdesc->label);
+        menu->item_count = mdesc->item_count;
+        if (menu->item_count > CA_MAX_ITEMS_PER_MENU)
+            menu->item_count = CA_MAX_ITEMS_PER_MENU;
+        for (int ii = 0; ii < menu->item_count; ++ii) {
+            if (mdesc->items[ii].label)
+                snprintf(menu->items[ii].label, CA_MENU_LABEL_MAX, "%s",
+                         mdesc->items[ii].label);
+            menu->items[ii].action = mdesc->items[ii].action;
+            menu->items[ii].action_data = mdesc->items[ii].action_data;
+        }
+
+        float tw = measure_text_px(g_ctx.window, menu->label);
+
+        /* Header node — padding & alignment via CSS (.menu-bar-item) */
+        Ca_NodeDesc hnd = {0};
+        hnd.align_items = CA_ALIGN_CENTER;
+
+        Ca_Node *hdr = ca_node_add(bar, &hnd);
+        if (!hdr) continue;
+
+        apply_css(hdr, &hdr->desc, CA_ELEM_DIV, "menu-bar-item", NULL, &dummy);
+        hdr->desc.width = tw + hdr->desc.padding_left + hdr->desc.padding_right;
+
+        menu->header_node = hdr;
+
+        /* Label inside header */
+        Ca_Label *lbl = alloc_label(g_ctx.window);
+        if (lbl) {
+            Ca_NodeDesc lnd = {0};
+            lnd.width = tw;
+            Ca_Node *ln = ca_node_add(hdr, &lnd);
+            if (ln) {
+                ln->widget_type = CA_WIDGET_LABEL;
+                ln->widget = lbl;
+                lbl->node = ln;
+                lbl->in_use = true;
+                lbl->color = ca_color(0.8f, 0.8f, 0.82f, 1.0f);
+                snprintf(lbl->text, CA_LABEL_TEXT_MAX, "%s", menu->label);
+            }
+        }
+    }
+
+    return mb;
+}
+
+/* ============================================================
    PUBLIC — Context menu (attach to previously created element)
    ============================================================ */
 
@@ -1934,6 +2013,69 @@ void ca_widget_input_pass(Ca_Window *win)
                     sel->open = true;
                     sel->node->dirty |= CA_DIRTY_CONTENT;
                     select_handled = true;
+                }
+            }
+        }
+
+        /* Menu bar — toggle dropdown or pick item */
+        if (win->menubar_pool) {
+            for (uint32_t i = 0; i < CA_MAX_MENUBARS_PER_WINDOW; ++i) {
+                Ca_MenuBar *mb = &win->menubar_pool[i];
+                if (!mb->in_use || !mb->node) continue;
+
+                if (mb->active_menu >= 0) {
+                    /* A dropdown is open — check if click hit a dropdown item */
+                    Ca_MenuBarMenu *am = &mb->menus[mb->active_menu];
+                    Ca_Node *hdr = am->header_node;
+                    if (hdr) {
+                        float item_h = 24.0f;
+                        float menu_w = 140.0f;
+                        float drop_x = hdr->x;
+                        float drop_y = hdr->y + hdr->h;
+                        bool item_hit = false;
+
+                        for (int ii = 0; ii < am->item_count; ++ii) {
+                            float iy = drop_y + item_h * (float)ii;
+                            if (mx >= drop_x && mx <= drop_x + menu_w &&
+                                my >= iy && my <= iy + item_h) {
+                                mb->active_menu = -1;
+                                mb->node->dirty |= CA_DIRTY_CONTENT;
+                                if (am->items[ii].action)
+                                    am->items[ii].action(am->items[ii].action_data);
+                                item_hit = true;
+                                break;
+                            }
+                        }
+                        if (!item_hit) {
+                            /* Check if clicked another menu header */
+                            bool switched = false;
+                            for (int mi = 0; mi < mb->menu_count; ++mi) {
+                                if (mi == mb->active_menu) continue;
+                                if (mb->menus[mi].header_node &&
+                                    point_in_node(mb->menus[mi].header_node, mx, my)) {
+                                    mb->active_menu = mi;
+                                    mb->node->dirty |= CA_DIRTY_CONTENT;
+                                    switched = true;
+                                    break;
+                                }
+                            }
+                            if (!switched) {
+                                /* Click anywhere else closes dropdown */
+                                mb->active_menu = -1;
+                                mb->node->dirty |= CA_DIRTY_CONTENT;
+                            }
+                        }
+                    }
+                } else {
+                    /* No dropdown open — check if a menu header was clicked */
+                    for (int mi = 0; mi < mb->menu_count; ++mi) {
+                        if (mb->menus[mi].header_node &&
+                            point_in_node(mb->menus[mi].header_node, mx, my)) {
+                            mb->active_menu = mi;
+                            mb->node->dirty |= CA_DIRTY_CONTENT;
+                            break;
+                        }
+                    }
                 }
             }
         }

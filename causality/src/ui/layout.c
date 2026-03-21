@@ -211,11 +211,23 @@ static void layout_node(Ca_Node *node, float x, float y, float avail_w, float av
         return;
     }
 
-    /* Determine this node's own size */
-    float w = (node->desc.width  > 0.0f) ? node->desc.width  : avail_w;
-    float h = (node->desc.height > 0.0f) ? node->desc.height : avail_h;
-    bool auto_h = (node->desc.height <= 0.0f);
-    bool auto_w = (node->desc.width  <= 0.0f);
+    /* Determine this node's own size — resolve percentages against available space */
+    float w, h;
+    bool auto_w, auto_h;
+    if (node->desc.width_pct && node->desc.width > 0.0f) {
+        w = avail_w * node->desc.width / 100.0f;
+        auto_w = false;
+    } else {
+        w = (node->desc.width > 0.0f) ? node->desc.width : avail_w;
+        auto_w = (node->desc.width <= 0.0f);
+    }
+    if (node->desc.height_pct && node->desc.height > 0.0f) {
+        h = avail_h * node->desc.height / 100.0f;
+        auto_h = false;
+    } else {
+        h = (node->desc.height > 0.0f) ? node->desc.height : avail_h;
+        auto_h = (node->desc.height <= 0.0f);
+    }
 
     if (node->desc.min_w > 0.0f && w < node->desc.min_w) w = node->desc.min_w;
     if (node->desc.max_w > 0.0f && w > node->desc.max_w) w = node->desc.max_w;
@@ -329,6 +341,11 @@ static void layout_node(Ca_Node *node, float x, float y, float avail_w, float av
             child_margin_cross1[i] = child->desc.margin_right;
         }
         float ms = is_row ? child->desc.width : child->desc.height;
+        /* Resolve percentage main-axis values against parent space */
+        if (is_row && child->desc.width_pct && child->desc.width > 0.0f)
+            ms = avail_main * child->desc.width / 100.0f;
+        else if (!is_row && child->desc.height_pct && child->desc.height > 0.0f)
+            ms = avail_main * child->desc.height / 100.0f;
         if (ms > 0.0f) {
             child_hypo_main[i] = ms;
         } else {
@@ -449,6 +466,11 @@ static void layout_node(Ca_Node *node, float x, float y, float avail_w, float av
 
             float cm = child_hypo_main[i];
             float cc = is_row ? child->desc.height : child->desc.width;
+            /* Resolve percentage cross-axis values */
+            if (is_row && child->desc.height_pct && child->desc.height > 0.0f)
+                cc = avail_cross * child->desc.height / 100.0f;
+            else if (!is_row && child->desc.width_pct && child->desc.width > 0.0f)
+                cc = avail_cross * child->desc.width / 100.0f;
 
             if (cm <= 0.0f) {
                 if (child->desc.flex_grow > 0.0f)

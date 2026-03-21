@@ -274,8 +274,14 @@ void ca_style_resolve(Ca_Stylesheet *ss,
             out->set_mask |= (1ULL << prop);
 
             switch (prop) {
-                case CA_CSS_PROP_WIDTH:            out->width           = css_val_to_px(val); break;
-                case CA_CSS_PROP_HEIGHT:           out->height          = css_val_to_px(val); break;
+                case CA_CSS_PROP_WIDTH:
+                    out->width = css_val_to_px(val);
+                    out->width_pct = (val->type == CA_CSS_VAL_PERCENT);
+                    break;
+                case CA_CSS_PROP_HEIGHT:
+                    out->height = css_val_to_px(val);
+                    out->height_pct = (val->type == CA_CSS_VAL_PERCENT);
+                    break;
                 case CA_CSS_PROP_MIN_WIDTH:        out->min_width       = css_val_to_px(val); break;
                 case CA_CSS_PROP_MAX_WIDTH:        out->max_width       = css_val_to_px(val); break;
                 case CA_CSS_PROP_MIN_HEIGHT:       out->min_height      = css_val_to_px(val); break;
@@ -386,8 +392,8 @@ void ca_style_apply_to_node(const Ca_ResolvedStyle *style,
     if (!style || style->set_mask == 0) return;
 
     /* Sizing — CSS fills if NodeDesc is 0 (auto) */
-    if (nd->width  <= 0.0f && STYLE_SET(CA_CSS_PROP_WIDTH))  nd->width  = style->width;
-    if (nd->height <= 0.0f && STYLE_SET(CA_CSS_PROP_HEIGHT)) nd->height = style->height;
+    if (nd->width  <= 0.0f && STYLE_SET(CA_CSS_PROP_WIDTH))  { nd->width  = style->width;  nd->width_pct  = style->width_pct;  }
+    if (nd->height <= 0.0f && STYLE_SET(CA_CSS_PROP_HEIGHT)) { nd->height = style->height; nd->height_pct = style->height_pct; }
     if (nd->min_w  <= 0.0f && STYLE_SET(CA_CSS_PROP_MIN_WIDTH))  nd->min_w = style->min_width;
     if (nd->max_w  <= 0.0f && STYLE_SET(CA_CSS_PROP_MAX_WIDTH))  nd->max_w = style->max_width;
     if (nd->min_h  <= 0.0f && STYLE_SET(CA_CSS_PROP_MIN_HEIGHT)) nd->min_h = style->min_height;

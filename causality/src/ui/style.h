@@ -58,6 +58,7 @@ typedef struct {
     uint64_t set_mask;   /* bitmask of which CA_CSS_PROP_* were set by CSS */
 
     float    width, height;
+    bool     width_pct, height_pct;   /* true when value is a percentage */
     float    min_width, max_width, min_height, max_height;
     float    padding[4];     /* top, right, bottom, left */
     float    margin[4];

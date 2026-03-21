@@ -1201,6 +1201,87 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
         }
     }
 
+    /* ---- Menu bar dropdowns ---- */
+    if (win->menubar_pool && font) {
+        for (uint32_t i = 0; i < CA_MAX_MENUBARS_PER_WINDOW; ++i) {
+            Ca_MenuBar *mb = &win->menubar_pool[i];
+            if (!mb->in_use || !mb->node || mb->active_menu < 0) continue;
+
+            /* Highlight the active header */
+            Ca_MenuBarMenu *am = &mb->menus[mb->active_menu];
+            Ca_Node *hdr = am->header_node;
+            if (!hdr) continue;
+
+            if (win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
+                Ca_DrawCmd *c = &win->draw_cmds[win->draw_cmd_count++];
+                memset(c, 0, sizeof(*c));
+                c->type = CA_DRAW_RECT;
+                c->x = hdr->x; c->y = hdr->y;
+                c->w = hdr->w; c->h = hdr->h;
+                c->r = 0.12f; c->g = 0.12f; c->b = 0.14f; c->a = 1.0f;
+                c->in_use = true;
+                c->overlay = true;
+            }
+
+            float item_h = 24.0f;
+            float menu_w = 140.0f;
+            float drop_x = hdr->x;
+            float drop_y = hdr->y + hdr->h;
+            float menu_h = item_h * (float)am->item_count;
+
+            /* Dropdown background */
+            if (win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
+                Ca_DrawCmd *c = &win->draw_cmds[win->draw_cmd_count++];
+                memset(c, 0, sizeof(*c));
+                c->type = CA_DRAW_RECT;
+                c->x = drop_x; c->y = drop_y;
+                c->w = menu_w; c->h = menu_h;
+                c->corner_radius = 4.0f;
+                c->r = 0.06f; c->g = 0.06f; c->b = 0.06f; c->a = 0.98f;
+                c->in_use = true;
+                c->overlay = true;
+                /* Subtle border */
+                c->border_width = 1.0f;
+                c->border_r = 0.18f; c->border_g = 0.18f;
+                c->border_b = 0.18f; c->border_a = 1.0f;
+            }
+
+            /* Dropdown items */
+            for (int ii = 0; ii < am->item_count; ++ii) {
+                float iy = drop_y + item_h * (float)ii;
+
+                /* Hover highlight */
+                if (win->mouse_x >= drop_x && win->mouse_x <= drop_x + menu_w &&
+                    win->mouse_y >= iy && win->mouse_y <= iy + item_h) {
+                    if (win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
+                        Ca_DrawCmd *c = &win->draw_cmds[win->draw_cmd_count++];
+                        memset(c, 0, sizeof(*c));
+                        c->type = CA_DRAW_RECT;
+                        c->x = drop_x; c->y = iy;
+                        c->w = menu_w; c->h = item_h;
+                        c->r = 0.14f; c->g = 0.14f; c->b = 0.16f; c->a = 1.0f;
+                        c->in_use = true;
+                        c->overlay = true;
+                    }
+                }
+
+                uint32_t glyph_start = win->draw_cmd_count;
+                Ca_Node tmp;
+                memset(&tmp, 0, sizeof(tmp));
+                tmp.in_use = true;
+                tmp.x = drop_x + 12.0f;
+                tmp.y = iy;
+                tmp.w = menu_w - 24.0f;
+                tmp.h = item_h;
+                tmp.window = win;
+                paint_text(win, font, &tmp, am->items[ii].label,
+                           ca_color(0.85f, 0.85f, 0.85f, 1));
+                for (uint32_t gi = glyph_start; gi < win->draw_cmd_count; ++gi)
+                    win->draw_cmds[gi].overlay = true;
+            }
+        }
+    }
+
     /* ---- Modals ---- */
     if (win->modal_pool) {
         for (uint32_t i = 0; i < CA_MAX_MODALS_PER_WINDOW; ++i) {
