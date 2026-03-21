@@ -163,6 +163,7 @@ void ca_ui_update(Ca_Instance *inst)
         /* 3. Check what kind of work this window needs */
         bool any_layout  = false;
         bool any_content = false;
+        win->dbg_layout_count = 0;
 
         for (uint32_t j = 0; j < CA_MAX_NODES_PER_WINDOW; ++j) {
             Ca_Node *n = &win->node_pool[j];
@@ -173,7 +174,7 @@ void ca_ui_update(Ca_Instance *inst)
 
         /* 4. Layout pass — propagate upward then recompute rects */
         if (any_layout) {
-            win->dbg_layout_count++;
+            win->dbg_layout_count = 1;
             ca_node_propagate_layout(win);
             ca_layout_pass(win);
 
@@ -242,6 +243,8 @@ void ca_ui_update(Ca_Instance *inst)
             ca_paint_pass(inst, win);
             win->dbg_force_repaint = false;
             win->needs_render = true;
+        } else {
+            win->dbg_dirty_count = 0;
         }
 
         /* 7. Request another tick for active transitions so we don't stall

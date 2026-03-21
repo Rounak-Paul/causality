@@ -325,7 +325,7 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
             else if (z > 0) n_pos++;
         }
         if ((n_neg | n_pos) && count > 1) {
-            sorted_idx = (uint32_t *)malloc(count * sizeof(uint32_t));
+            sorted_idx = win->sorted_idx;
             sorted_idx[0] = 0;
             uint32_t n_zero  = count - 1 - n_neg - n_pos;
             uint32_t ni = 1, zi = 1 + n_neg, pi = 1 + n_neg + n_zero;
@@ -655,8 +655,6 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
             win->dbg_frame_time_ms = (now - prev_time) * 1000.0;
         prev_time = now;
     }
-
-    free(sorted_idx);
 
     vkCmdEndRendering(f->cmd);
 

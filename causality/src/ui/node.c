@@ -27,6 +27,7 @@ void ca_node_system_init(Ca_Window *win)
     win->splitter_pool   = (Ca_Splitter *)calloc(CA_MAX_SPLITTERS_PER_WINDOW, sizeof(Ca_Splitter));
     win->root           = NULL;
     win->draw_cmd_count = 0;
+    win->sorted_idx      = (uint32_t *)calloc(CA_MAX_DRAW_CMDS_PER_WINDOW, sizeof(uint32_t));
     win->paint_cache     = (Ca_DrawCmd *)calloc(CA_MAX_DRAW_CMDS_PER_WINDOW, sizeof(Ca_DrawCmd));
     win->paint_cache_used = 0;
     win->hovered_node   = NULL;
@@ -41,6 +42,7 @@ void ca_node_system_shutdown(Ca_Window *win)
 {
     free(win->node_pool);
     free(win->draw_cmds);
+    free(win->sorted_idx);
     free(win->label_pool);
     free(win->button_pool);
     free(win->input_pool);
@@ -60,6 +62,7 @@ void ca_node_system_shutdown(Ca_Window *win)
     free(win->paint_cache);
     win->node_pool      = NULL;
     win->draw_cmds      = NULL;
+    win->sorted_idx     = NULL;
     win->paint_cache    = NULL;
     win->label_pool     = NULL;
     win->button_pool    = NULL;

@@ -564,6 +564,8 @@ struct Ca_Window {
     Ca_Node      *root;
     Ca_DrawCmd   *draw_cmds;
     uint32_t      draw_cmd_count;
+    /* Pre-allocated z-sort index (avoids per-frame malloc) */
+    uint32_t     *sorted_idx;
     /* Incremental paint cache — mirrors draw_cmds for per-node caching */
     Ca_DrawCmd   *paint_cache;
     uint32_t      paint_cache_used;

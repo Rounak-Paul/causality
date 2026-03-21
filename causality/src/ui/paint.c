@@ -978,7 +978,17 @@ static void cache_commands(Ca_Window *win, Ca_Node *node,
 static void paint_tree_cached(Ca_Instance *inst, Ca_Window *win,
                               Ca_Node *node, ClipRect clip)
 {
-    if (!node || !node->in_use || node->desc.hidden) return;
+    if (!node || !node->in_use) return;
+
+    /* Hidden nodes produce no draw commands, but we must still clear their
+       dirty flags (and their children's) so they don't perpetually trigger
+       paint passes. */
+    if (node->desc.hidden) {
+        node->dirty &= ~CA_DIRTY_CONTENT;
+        for (uint32_t i = 0; i < node->child_count; ++i)
+            paint_tree_cached(inst, win, node->children[i], clip);
+        return;
+    }
 
     bool was_dirty = (node->dirty & CA_DIRTY_CONTENT) != 0;
 
