@@ -19,6 +19,7 @@ extern "C" {
 typedef struct Ca_Instance Ca_Instance;
 typedef struct Ca_Window   Ca_Window;
 typedef struct Ca_Thread   Ca_Thread;
+typedef struct Ca_Mutex    Ca_Mutex;
 
 /* ---- Widget handles ---- */
 
@@ -130,6 +131,12 @@ typedef void *(*Ca_ThreadFn)(void *user_data);
 Ca_Thread *ca_thread_create(Ca_ThreadFn fn, void *user_data);
 void       ca_thread_join(Ca_Thread *thread);   /* blocks, then frees handle */
 void       ca_thread_detach(Ca_Thread *thread); /* fire-and-forget, frees handle */
+
+Ca_Mutex  *ca_mutex_create(void);
+void       ca_mutex_destroy(Ca_Mutex *mutex);
+void       ca_mutex_lock(Ca_Mutex *mutex);
+void       ca_mutex_unlock(Ca_Mutex *mutex);
+bool       ca_mutex_trylock(Ca_Mutex *mutex);   /* returns true if lock acquired */
 
 /* ============================================================
    UI — COLOUR HELPER

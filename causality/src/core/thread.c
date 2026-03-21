@@ -46,6 +46,39 @@ void ca_thread_detach(Ca_Thread *thread)
     free(thread);
 }
 
+Ca_Mutex *ca_mutex_create(void)
+{
+    Ca_Mutex *m = (Ca_Mutex *)malloc(sizeof(Ca_Mutex));
+    if (!m) return NULL;
+    InitializeCriticalSection(&m->cs);
+    return m;
+}
+
+void ca_mutex_destroy(Ca_Mutex *mutex)
+{
+    if (!mutex) return;
+    DeleteCriticalSection(&mutex->cs);
+    free(mutex);
+}
+
+void ca_mutex_lock(Ca_Mutex *mutex)
+{
+    if (!mutex) return;
+    EnterCriticalSection(&mutex->cs);
+}
+
+void ca_mutex_unlock(Ca_Mutex *mutex)
+{
+    if (!mutex) return;
+    LeaveCriticalSection(&mutex->cs);
+}
+
+bool ca_mutex_trylock(Ca_Mutex *mutex)
+{
+    if (!mutex) return false;
+    return TryEnterCriticalSection(&mutex->cs) != 0;
+}
+
 #else /* POSIX */
 
 Ca_Thread *ca_thread_create(Ca_ThreadFn fn, void *user_data)
@@ -71,6 +104,42 @@ void ca_thread_detach(Ca_Thread *thread)
     if (!thread) return;
     pthread_detach(thread->handle);
     free(thread);
+}
+
+Ca_Mutex *ca_mutex_create(void)
+{
+    Ca_Mutex *m = (Ca_Mutex *)malloc(sizeof(Ca_Mutex));
+    if (!m) return NULL;
+    if (pthread_mutex_init(&m->handle, NULL) != 0) {
+        free(m);
+        return NULL;
+    }
+    return m;
+}
+
+void ca_mutex_destroy(Ca_Mutex *mutex)
+{
+    if (!mutex) return;
+    pthread_mutex_destroy(&mutex->handle);
+    free(mutex);
+}
+
+void ca_mutex_lock(Ca_Mutex *mutex)
+{
+    if (!mutex) return;
+    pthread_mutex_lock(&mutex->handle);
+}
+
+void ca_mutex_unlock(Ca_Mutex *mutex)
+{
+    if (!mutex) return;
+    pthread_mutex_unlock(&mutex->handle);
+}
+
+bool ca_mutex_trylock(Ca_Mutex *mutex)
+{
+    if (!mutex) return false;
+    return pthread_mutex_trylock(&mutex->handle) == 0;
 }
 
 #endif

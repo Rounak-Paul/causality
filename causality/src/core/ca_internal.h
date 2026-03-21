@@ -674,11 +674,7 @@ struct Ca_Instance {
     Ca_Event         event_queue[CA_EVENT_QUEUE_CAPACITY];
     uint32_t         event_head;
     uint32_t         event_tail;
-#ifdef _WIN32
-    CRITICAL_SECTION event_mutex;
-#else
-    pthread_mutex_t  event_mutex;
-#endif
+    Ca_Mutex        *event_mutex;
     Ca_EventHandler  handlers[CA_EVENT_TYPE_COUNT];
 
     /* Font config (copied from Ca_InstanceDesc, used on first window init) */
@@ -722,6 +718,14 @@ struct Ca_Thread {
     HANDLE handle;
 #else
     pthread_t handle;
+#endif
+};
+
+struct Ca_Mutex {
+#ifdef _WIN32
+    CRITICAL_SECTION cs;
+#else
+    pthread_mutex_t  handle;
 #endif
 };
 
