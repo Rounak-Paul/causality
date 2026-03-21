@@ -8,6 +8,10 @@
 #include "css.h"
 
 #include <GLFW/glfw3.h>
+#include <string.h>
+
+/* Saved geometry for incremental layout invalidation. */
+typedef struct { float x, y, w, h, cw, ch; } NodeRect;
 
 /* Linear interpolation */
 static float lerpf(float a, float b, float t)
@@ -136,6 +140,44 @@ void ca_ui_window_shutdown(Ca_Window *win)
     ca_node_system_shutdown(win);
 }
 
+/* Snapshot geometry before layout, run layout, then invalidate only
+   nodes whose position, size, or content size actually changed.
+   Returns true if any node was invalidated (paint pass needed). */
+static bool layout_and_invalidate(Ca_Window *win)
+{
+    static NodeRect prev[CA_MAX_NODES_PER_WINDOW];
+
+    for (uint32_t j = 0; j < CA_MAX_NODES_PER_WINDOW; ++j) {
+        Ca_Node *n = &win->node_pool[j];
+        if (n->in_use)
+            prev[j] = (NodeRect){ n->x, n->y, n->w, n->h,
+                                  n->content_w, n->content_h };
+    }
+
+    ca_node_propagate_layout(win);
+    ca_layout_pass(win);
+
+    bool any_dirty = false;
+    for (uint32_t j = 0; j < CA_MAX_NODES_PER_WINDOW; ++j) {
+        Ca_Node *n = &win->node_pool[j];
+        if (!n->in_use) continue;
+        n->dirty &= ~(CA_DIRTY_LAYOUT | CA_DIRTY_CHILDREN);
+
+        if (n->x != prev[j].x  || n->y  != prev[j].y  ||
+            n->w != prev[j].w  || n->h  != prev[j].h  ||
+            n->content_w != prev[j].cw ||
+            n->content_h != prev[j].ch)
+        {
+            n->dirty |= CA_DIRTY_CONTENT;
+            n->cache_count      = 0;
+            n->cache_post_count = 0;
+            any_dirty = true;
+        }
+    }
+
+    return any_dirty;
+}
+
 void ca_ui_update(Ca_Instance *inst)
 {
     /* 1. Propagate state dirty flags to subscriber nodes */
@@ -172,24 +214,11 @@ void ca_ui_update(Ca_Instance *inst)
             if (n->dirty & CA_DIRTY_CONTENT)                       any_content = true;
         }
 
-        /* 4. Layout pass — propagate upward then recompute rects */
+        /* 4. Layout pass — recompute rects, only dirty moved nodes */
         if (any_layout) {
             win->dbg_layout_count = 1;
-            ca_node_propagate_layout(win);
-            ca_layout_pass(win);
-
-            /* After re-layout all positions changed — reset paint cache and
-               mark every node dirty so the cache is rebuilt from scratch. */
-            win->paint_cache_used = 0;
-            for (uint32_t j = 0; j < CA_MAX_NODES_PER_WINDOW; ++j) {
-                Ca_Node *n = &win->node_pool[j];
-                if (n->in_use) {
-                    n->dirty |= CA_DIRTY_CONTENT;
-                    n->cache_count      = 0;
-                    n->cache_post_count = 0;
-                }
-            }
-            any_content = true;
+            if (layout_and_invalidate(win))
+                any_content = true;
         }
 
         /* 5. Input pass — hit-test buttons and fire click callbacks.
@@ -232,28 +261,20 @@ void ca_ui_update(Ca_Instance *inst)
         if (win->on_frame_fn) {
             win->on_frame_fn(win->on_frame_data);
 
-            /* The callback may have dirtied nodes (label text, margin, etc.)
+            /* The callback may have dirtied nodes (label text, hidden, etc.)
                or triggered a layout change.  Re-scan so the paint pass below
                picks them up in the same frame. */
+            bool needs_layout = false;
             for (uint32_t j = 0; j < CA_MAX_NODES_PER_WINDOW; ++j) {
                 Ca_Node *n = &win->node_pool[j];
                 if (!n->in_use) continue;
-                if (n->dirty & (CA_DIRTY_LAYOUT | CA_DIRTY_CHILDREN)) {
-                    ca_node_propagate_layout(win);
-                    ca_layout_pass(win);
-                    win->paint_cache_used = 0;
-                    for (uint32_t k = 0; k < CA_MAX_NODES_PER_WINDOW; ++k) {
-                        Ca_Node *m = &win->node_pool[k];
-                        if (m->in_use) {
-                            m->dirty |= CA_DIRTY_CONTENT;
-                            m->cache_count      = 0;
-                            m->cache_post_count = 0;
-                        }
-                    }
-                    any_content = true;
-                    break;
-                }
+                if (n->dirty & (CA_DIRTY_LAYOUT | CA_DIRTY_CHILDREN))
+                    needs_layout = true;
                 if (n->dirty & CA_DIRTY_CONTENT)
+                    any_content = true;
+            }
+            if (needs_layout) {
+                if (layout_and_invalidate(win))
                     any_content = true;
             }
         }
@@ -262,6 +283,22 @@ void ca_ui_update(Ca_Instance *inst)
               clean nodes reuse cached draw commands.
               The one-shot dbg_force_repaint flag forces a single paint pass
               when the debug overlay is toggled (so the panel appears/disappears). */
+
+        /* Guard: if the cache pool is more than 75 % full, do a full reset
+           so that cache_commands() doesn't silently drop entries (which would
+           make clean nodes invisible on subsequent frames). */
+        if (win->paint_cache_used > CA_MAX_DRAW_CMDS_PER_WINDOW * 3 / 4) {
+            win->paint_cache_used = 0;
+            for (uint32_t j = 0; j < CA_MAX_NODES_PER_WINDOW; ++j) {
+                Ca_Node *n = &win->node_pool[j];
+                if (!n->in_use) continue;
+                n->dirty |= CA_DIRTY_CONTENT;
+                n->cache_count      = 0;
+                n->cache_post_count = 0;
+            }
+            any_content = true;
+        }
+
         if (any_content || win->dbg_force_repaint) {
             /* Count dirty nodes for debug display */
             if (win->debug_overlay) {

@@ -695,7 +695,9 @@ void ca_label_set_text(Ca_Label *label, const char *text)
             label->dyn_text = buf;
         }
     }
-    label->node->dirty |= CA_DIRTY_CONTENT | CA_DIRTY_LAYOUT;
+    label->node->dirty |= CA_DIRTY_CONTENT;
+    if (label->node->desc.text_wrap)
+        label->node->dirty |= CA_DIRTY_LAYOUT;
 }
 
 void ca_label_set_color(Ca_Label *label, uint32_t color)
