@@ -21,6 +21,7 @@ typedef struct Ca_Instance Ca_Instance;
 typedef struct Ca_Window   Ca_Window;
 typedef struct Ca_Thread   Ca_Thread;
 typedef struct Ca_Mutex    Ca_Mutex;
+typedef struct Ca_CondVar  Ca_CondVar;
 
 /* ---- Widget handles ---- */
 
@@ -138,6 +139,12 @@ void       ca_mutex_destroy(Ca_Mutex *mutex);
 void       ca_mutex_lock(Ca_Mutex *mutex);
 void       ca_mutex_unlock(Ca_Mutex *mutex);
 bool       ca_mutex_trylock(Ca_Mutex *mutex);   /* returns true if lock acquired */
+
+Ca_CondVar *ca_condvar_create(void);
+void        ca_condvar_destroy(Ca_CondVar *cv);
+void        ca_condvar_wait(Ca_CondVar *cv, Ca_Mutex *mutex);
+void        ca_condvar_signal(Ca_CondVar *cv);
+void        ca_condvar_broadcast(Ca_CondVar *cv);
 
 /* ============================================================
    UI — COLOUR HELPER

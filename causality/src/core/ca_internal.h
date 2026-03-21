@@ -758,3 +758,11 @@ struct Ca_Mutex {
 #endif
 };
 
+struct Ca_CondVar {
+#ifdef _WIN32
+    CONDITION_VARIABLE cv;
+#else
+    pthread_cond_t     handle;
+#endif
+};
+

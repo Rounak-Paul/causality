@@ -79,6 +79,38 @@ bool ca_mutex_trylock(Ca_Mutex *mutex)
     return TryEnterCriticalSection(&mutex->cs) != 0;
 }
 
+Ca_CondVar *ca_condvar_create(void)
+{
+    Ca_CondVar *cv = (Ca_CondVar *)malloc(sizeof(Ca_CondVar));
+    if (!cv) return NULL;
+    InitializeConditionVariable(&cv->cv);
+    return cv;
+}
+
+void ca_condvar_destroy(Ca_CondVar *cv)
+{
+    if (!cv) return;
+    free(cv);
+}
+
+void ca_condvar_wait(Ca_CondVar *cv, Ca_Mutex *mutex)
+{
+    if (!cv || !mutex) return;
+    SleepConditionVariableCS(&cv->cv, &mutex->cs, INFINITE);
+}
+
+void ca_condvar_signal(Ca_CondVar *cv)
+{
+    if (!cv) return;
+    WakeConditionVariable(&cv->cv);
+}
+
+void ca_condvar_broadcast(Ca_CondVar *cv)
+{
+    if (!cv) return;
+    WakeAllConditionVariable(&cv->cv);
+}
+
 #else /* POSIX */
 
 Ca_Thread *ca_thread_create(Ca_ThreadFn fn, void *user_data)
@@ -140,6 +172,42 @@ bool ca_mutex_trylock(Ca_Mutex *mutex)
 {
     if (!mutex) return false;
     return pthread_mutex_trylock(&mutex->handle) == 0;
+}
+
+Ca_CondVar *ca_condvar_create(void)
+{
+    Ca_CondVar *cv = (Ca_CondVar *)malloc(sizeof(Ca_CondVar));
+    if (!cv) return NULL;
+    if (pthread_cond_init(&cv->handle, NULL) != 0) {
+        free(cv);
+        return NULL;
+    }
+    return cv;
+}
+
+void ca_condvar_destroy(Ca_CondVar *cv)
+{
+    if (!cv) return;
+    pthread_cond_destroy(&cv->handle);
+    free(cv);
+}
+
+void ca_condvar_wait(Ca_CondVar *cv, Ca_Mutex *mutex)
+{
+    if (!cv || !mutex) return;
+    pthread_cond_wait(&cv->handle, &mutex->handle);
+}
+
+void ca_condvar_signal(Ca_CondVar *cv)
+{
+    if (!cv) return;
+    pthread_cond_signal(&cv->handle);
+}
+
+void ca_condvar_broadcast(Ca_CondVar *cv)
+{
+    if (!cv) return;
+    pthread_cond_broadcast(&cv->handle);
 }
 
 #endif
