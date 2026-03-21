@@ -802,6 +802,11 @@ VkFormat ca_viewport_format(const Ca_Viewport *viewport);
 /// Returns the owning Ca_Instance.
 Ca_Instance *ca_viewport_instance(Ca_Viewport *viewport);
 
+/// Replaces the render and resize callbacks on an existing viewport.
+void ca_viewport_set_callbacks(Ca_Viewport *viewport,
+                               Ca_ViewportRenderFn on_render, void *render_data,
+                               Ca_ViewportResizeFn on_resize, void *resize_data);
+
 #ifdef __cplusplus
 }
 #endif

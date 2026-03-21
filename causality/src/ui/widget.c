@@ -1566,7 +1566,7 @@ static Ca_Viewport *alloc_viewport(Ca_Window *win)
 Ca_Viewport *ca_viewport(const Ca_ViewportDesc *desc)
 {
     assert(g_ctx.active);
-    if (!desc || !desc->on_render) return NULL;
+    if (!desc) return NULL;
 
     Ca_Node *parent = ctx_top();
     if (!parent) return NULL;
@@ -1656,6 +1656,17 @@ VkFormat ca_viewport_format(const Ca_Viewport *viewport)
 Ca_Instance *ca_viewport_instance(Ca_Viewport *viewport)
 {
     return viewport ? viewport->instance : NULL;
+}
+
+void ca_viewport_set_callbacks(Ca_Viewport *viewport,
+                               Ca_ViewportRenderFn on_render, void *render_data,
+                               Ca_ViewportResizeFn on_resize, void *resize_data)
+{
+    if (!viewport) return;
+    viewport->on_render   = on_render;
+    viewport->render_data = render_data;
+    viewport->on_resize   = on_resize;
+    viewport->resize_data = resize_data;
 }
 
 /* ============================================================
