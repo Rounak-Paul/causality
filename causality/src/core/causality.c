@@ -53,12 +53,17 @@ void ca_instance_destroy(Ca_Instance *instance)
 
 int ca_instance_exec(Ca_Instance *instance)
 {
-    while (ca_window_system_tick(instance)) {
-        ca_ui_update(instance);
-        ca_renderer_frame(instance);
-    }
+    while (ca_instance_tick(instance)) { }
     ca_instance_destroy(instance);
     return 0;
+}
+
+bool ca_instance_tick(Ca_Instance *instance)
+{
+    if (!ca_window_system_tick(instance)) return false;
+    ca_ui_update(instance);
+    ca_renderer_frame(instance);
+    return true;
 }
 
 void ca_instance_wake(void)

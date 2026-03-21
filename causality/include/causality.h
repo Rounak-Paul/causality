@@ -63,6 +63,16 @@ void         ca_instance_destroy(Ca_Instance *instance);
 /* Block until all windows are closed, then destroy the instance. */
 int          ca_instance_exec(Ca_Instance *instance);
 
+/* Low-level loop primitives — use instead of ca_instance_exec when you need
+   to control the shutdown order (e.g. destroy GPU resources before the
+   instance is torn down).
+   Typical pattern:
+       while (ca_instance_tick(inst)) { }   // run the event loop
+       // ... clean up your own Vulkan resources here ...
+       ca_instance_destroy(inst);           // tears down the GPU context
+*/
+bool         ca_instance_tick(Ca_Instance *instance);
+
 /* Wake the event loop from another thread (e.g. after posting async data). */
 void         ca_instance_wake(void);
 
@@ -741,6 +751,12 @@ VkCommandBuffer     ca_gpu_begin_transfer(Ca_Instance *instance);
 
 /// Ends, submits, waits, and frees a one-shot command buffer.
 void                ca_gpu_end_transfer(Ca_Instance *instance, VkCommandBuffer cmd);
+
+/// Compiles a GLSL source string to a VkShaderModule via shaderc.
+/// Returns VK_NULL_HANDLE on failure.
+VkShaderModule      ca_shader_compile(VkDevice device,
+                                      const char *glsl_source,
+                                      VkShaderStageFlagBits stage);
 
 /* ============================================================
    VIEWPORT — offscreen render target widget
