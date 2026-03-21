@@ -317,6 +317,7 @@ static void layout_node(Ca_Node *node, float x, float y, float avail_w, float av
 
     /* Pre-compute each child's hypothetical main-axis size (including margins) */
     float child_hypo_main[CA_MAX_NODE_CHILDREN];
+    bool  child_explicit_main[CA_MAX_NODE_CHILDREN];
     float child_margin_before[CA_MAX_NODE_CHILDREN];  /* main-axis leading margin */
     float child_margin_after[CA_MAX_NODE_CHILDREN];   /* main-axis trailing margin */
     float child_margin_cross0[CA_MAX_NODE_CHILDREN];  /* cross-axis start margin */
@@ -325,6 +326,7 @@ static void layout_node(Ca_Node *node, float x, float y, float avail_w, float av
         Ca_Node *child = node->children[i];
         if (child->desc.hidden || child->desc.position != CA_POSITION_RELATIVE) {
             child_hypo_main[i] = 0;
+            child_explicit_main[i] = false;
             child_margin_before[i] = child_margin_after[i] = 0;
             child_margin_cross0[i] = child_margin_cross1[i] = 0;
             continue;
@@ -346,6 +348,7 @@ static void layout_node(Ca_Node *node, float x, float y, float avail_w, float av
             ms = avail_main * child->desc.width / 100.0f;
         else if (!is_row && child->desc.height_pct && child->desc.height > 0.0f)
             ms = avail_main * child->desc.height / 100.0f;
+        child_explicit_main[i] = (ms > 0.0f);
         if (ms > 0.0f) {
             child_hypo_main[i] = ms;
         } else {
@@ -374,13 +377,11 @@ static void layout_node(Ca_Node *node, float x, float y, float avail_w, float av
             Ca_Node *child = node->children[i];
             if (child->desc.hidden || child->desc.position != CA_POSITION_RELATIVE) continue;
             vis++;
-            float ms = child_hypo_main[i];
-            if (ms > 0.0f)
-                ln->total_fixed += ms;
-            else if (child->desc.flex_grow > 0.0f)
+            ln->total_fixed += child_hypo_main[i];
+            if (child->desc.flex_grow > 0.0f)
                 ln->total_grow += child->desc.flex_grow;
-            else
-                ln->total_grow += 1.0f; /* implicit grow */
+            else if (!child_explicit_main[i])
+                ln->total_grow += 1.0f;
         }
         ln->count = vis;
         ln->total_fixed += (vis > 1) ? gap * (float)(vis - 1) : 0;
@@ -421,11 +422,10 @@ static void layout_node(Ca_Node *node, float x, float y, float avail_w, float av
             if (cs_val > ln->cross_size) ln->cross_size = cs_val;
 
             float hmain = child_hypo_main[i];
-            if (hmain > 0.0f)
-                ln->total_fixed += hmain;
-            else if (child->desc.flex_grow > 0.0f)
+            ln->total_fixed += hmain;
+            if (child->desc.flex_grow > 0.0f)
                 ln->total_grow += child->desc.flex_grow;
-            else
+            else if (!child_explicit_main[i])
                 ln->total_grow += 1.0f;
         }
         /* Finish last line */
@@ -472,12 +472,10 @@ static void layout_node(Ca_Node *node, float x, float y, float avail_w, float av
             else if (!is_row && child->desc.width_pct && child->desc.width > 0.0f)
                 cc = avail_cross * child->desc.width / 100.0f;
 
-            if (cm <= 0.0f) {
-                if (child->desc.flex_grow > 0.0f)
-                    cm = (ln->total_grow > 0) ? remaining * child->desc.flex_grow / ln->total_grow : 0;
-                else
-                    cm = (ln->total_grow > 0) ? remaining * 1.0f / ln->total_grow : 0;
-            }
+            float grow = child->desc.flex_grow;
+            if (grow <= 0.0f && !child_explicit_main[i]) grow = 1.0f;
+            if (grow > 0.0f && ln->total_grow > 0.0f && remaining > 0.0f)
+                cm += remaining * grow / ln->total_grow;
             if (cc <= 0.0f) cc = line_avail_cross;
 
             cm_arr[i] = cm;
@@ -597,11 +595,11 @@ static void layout_node(Ca_Node *node, float x, float y, float avail_w, float av
        when no explicit size was set.  Scroll containers keep their size
        so overflow can scroll.  This is the key to making flex-wrap and
        other content-driven containers report correct sizes to their parent. */
-    if (auto_h && node->child_count > 0 && node->desc.overflow_y < 2) {
+    if (auto_h && node->child_count > 0 && node->desc.overflow_y == 0) {
         if (node->content_h > 0.0f)
             node->h = node->content_h;
     }
-    if (auto_w && node->child_count > 0 && node->desc.overflow_x < 2) {
+    if (auto_w && node->child_count > 0 && node->desc.overflow_x == 0) {
         if (node->content_w > 0.0f)
             node->w = node->content_w;
     }

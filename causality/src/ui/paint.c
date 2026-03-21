@@ -381,8 +381,7 @@ static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, Cli
         if (!tb || !tb->in_use) break;
         for (int ti = 0; ti < tb->count; ++ti) {
             if (tb->tab_nodes[ti] == node) {
-                uint32_t tc = (ti == tb->active)
-                    ? ca_color(1,1,1,1) : ca_color(0.6f,0.6f,0.6f,1);
+                uint32_t tc = (ti == tb->active) ? tb->active_text : tb->inactive_text;
                 paint_text(win, font, node, tb->labels[ti], tc);
                 break;
             }
@@ -1218,13 +1217,13 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
                 c->type = CA_DRAW_RECT;
                 c->x = hdr->x; c->y = hdr->y;
                 c->w = hdr->w; c->h = hdr->h;
-                c->r = 0.12f; c->g = 0.12f; c->b = 0.14f; c->a = 1.0f;
+                unpack_color(mb->header_highlight, &c->r, &c->g, &c->b, &c->a);
                 c->in_use = true;
                 c->overlay = true;
             }
 
             float item_h = 24.0f;
-            float menu_w = 140.0f;
+            float menu_w = 160.0f;
             float drop_x = hdr->x;
             float drop_y = hdr->y + hdr->h;
             float menu_h = item_h * (float)am->item_count;
@@ -1236,14 +1235,14 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
                 c->type = CA_DRAW_RECT;
                 c->x = drop_x; c->y = drop_y;
                 c->w = menu_w; c->h = menu_h;
-                c->corner_radius = 4.0f;
-                c->r = 0.06f; c->g = 0.06f; c->b = 0.06f; c->a = 0.98f;
+                c->corner_radius = 3.0f;
+                unpack_color(mb->dropdown_bg, &c->r, &c->g, &c->b, &c->a);
                 c->in_use = true;
                 c->overlay = true;
-                /* Subtle border */
                 c->border_width = 1.0f;
-                c->border_r = 0.18f; c->border_g = 0.18f;
-                c->border_b = 0.18f; c->border_a = 1.0f;
+                unpack_color(mb->dropdown_border,
+                             &c->border_r, &c->border_g,
+                             &c->border_b, &c->border_a);
             }
 
             /* Dropdown items */
@@ -1259,7 +1258,7 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
                         c->type = CA_DRAW_RECT;
                         c->x = drop_x; c->y = iy;
                         c->w = menu_w; c->h = item_h;
-                        c->r = 0.14f; c->g = 0.14f; c->b = 0.16f; c->a = 1.0f;
+                        unpack_color(mb->dropdown_hover, &c->r, &c->g, &c->b, &c->a);
                         c->in_use = true;
                         c->overlay = true;
                     }
@@ -1275,7 +1274,7 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
                 tmp.h = item_h;
                 tmp.window = win;
                 paint_text(win, font, &tmp, am->items[ii].label,
-                           ca_color(0.85f, 0.85f, 0.85f, 1));
+                           mb->dropdown_text);
                 for (uint32_t gi = glyph_start; gi < win->draw_cmd_count; ++gi)
                     win->draw_cmds[gi].overlay = true;
             }

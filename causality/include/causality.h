@@ -423,6 +423,10 @@ typedef struct Ca_TabBarDesc {
     Ca_TabFn     on_change;
     void        *change_data;
     const char  *id, *style;
+    uint32_t     active_bg;        /* active tab background   (0 = default) */
+    uint32_t     inactive_bg;      /* inactive tab background (0 = default) */
+    uint32_t     active_text;      /* active tab text color   (0 = default) */
+    uint32_t     inactive_text;    /* inactive tab text color (0 = default) */
 } Ca_TabBarDesc;
 
 typedef struct Ca_TreeNodeDesc {
@@ -477,6 +481,12 @@ typedef struct Ca_MenuBarDesc {
     const Ca_MenuDesc *menus;
     int                menu_count;
     const char        *id, *style;
+    uint32_t header_highlight;   /* active-header bg     (0 = default) */
+    uint32_t dropdown_bg;        /* dropdown background  (0 = default) */
+    uint32_t dropdown_border;    /* dropdown border      (0 = default) */
+    uint32_t dropdown_hover;     /* item hover bg        (0 = default) */
+    uint32_t dropdown_text;      /* dropdown item text   (0 = default) */
+    uint32_t text_color;         /* header label text    (0 = default) */
 } Ca_MenuBarDesc;
 
 /* ============================================================

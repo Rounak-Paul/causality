@@ -1025,8 +1025,6 @@ Ca_TabBar *ca_tabs(const Ca_TabBarDesc *desc)
 
     Ca_NodeDesc nd = {0};
     nd.direction = CA_DIR_ROW;
-    nd.height = s(32.0f);
-    nd.gap = s(2.0f);
 
     Ca_Node *node = ca_node_add(ctx_top(), &nd);
     if (!node) return NULL;
@@ -1043,6 +1041,10 @@ Ca_TabBar *ca_tabs(const Ca_TabBarDesc *desc)
     }
     tb->on_change = desc->on_change;
     tb->change_data = desc->change_data;
+    tb->active_bg     = desc->active_bg     ? desc->active_bg     : ca_color(0.3f, 0.3f, 0.4f, 1.0f);
+    tb->inactive_bg   = desc->inactive_bg   ? desc->inactive_bg   : ca_color(0.15f, 0.15f, 0.2f, 1.0f);
+    tb->active_text   = desc->active_text   ? desc->active_text   : ca_color(1.0f, 1.0f, 1.0f, 1.0f);
+    tb->inactive_text = desc->inactive_text ? desc->inactive_text : ca_color(0.6f, 0.6f, 0.6f, 1.0f);
 
     uint32_t dummy = 0;
     apply_css(node, &node->desc, CA_ELEM_TABBAR, desc->style, desc->id, &dummy);
@@ -1052,11 +1054,7 @@ Ca_TabBar *ca_tabs(const Ca_TabBarDesc *desc)
         Ca_NodeDesc tnd = {0};
         float tw = measure_text_px(g_ctx.window, tb->labels[i]);
         tnd.width = (tw > 0 ? tw : s(40.0f)) + s(16.0f);
-        tnd.height = s(28.0f);
-        tnd.corner_radius = s(4.0f);
-        tnd.background = (i == tb->active)
-            ? ca_color(0.3f, 0.3f, 0.4f, 1.0f)
-            : ca_color(0.15f, 0.15f, 0.2f, 1.0f);
+        tnd.background = (i == tb->active) ? tb->active_bg : tb->inactive_bg;
         Ca_Node *tab_node = ca_node_add(node, &tnd);
         if (tab_node) {
             tab_node->elem_type = CA_ELEM_TAB;
@@ -1314,6 +1312,20 @@ Ca_MenuBar *ca_menu_bar(const Ca_MenuBarDesc *desc)
     if (mb->menu_count > CA_MAX_MENUS_PER_BAR)
         mb->menu_count = CA_MAX_MENUS_PER_BAR;
 
+    /* Theme colors — use caller-provided or sensible defaults */
+    mb->header_highlight = desc->header_highlight ? desc->header_highlight
+                         : ca_color(0.25f, 0.25f, 0.28f, 1.0f);
+    mb->dropdown_bg      = desc->dropdown_bg ? desc->dropdown_bg
+                         : ca_color(0.15f, 0.15f, 0.17f, 0.98f);
+    mb->dropdown_border  = desc->dropdown_border ? desc->dropdown_border
+                         : ca_color(0.25f, 0.25f, 0.28f, 1.0f);
+    mb->dropdown_hover   = desc->dropdown_hover ? desc->dropdown_hover
+                         : ca_color(0.25f, 0.25f, 0.30f, 1.0f);
+    mb->dropdown_text    = desc->dropdown_text ? desc->dropdown_text
+                         : ca_color(0.85f, 0.85f, 0.85f, 1.0f);
+    mb->text_color       = desc->text_color ? desc->text_color
+                         : ca_color(0.80f, 0.80f, 0.82f, 1.0f);
+
     uint32_t dummy = 0;
     apply_css(bar, &bar->desc, CA_ELEM_DIV, desc->style, desc->id, &dummy);
 
@@ -1359,7 +1371,7 @@ Ca_MenuBar *ca_menu_bar(const Ca_MenuBarDesc *desc)
                 ln->widget = lbl;
                 lbl->node = ln;
                 lbl->in_use = true;
-                lbl->color = ca_color(0.8f, 0.8f, 0.82f, 1.0f);
+                lbl->color = mb->text_color;
                 snprintf(lbl->text, CA_LABEL_TEXT_MAX, "%s", menu->label);
             }
         }
@@ -2090,10 +2102,12 @@ void ca_widget_input_pass(Ca_Window *win)
                     if (point_in_node(tb->tab_nodes[ti], mx, my)) {
                         if (tb->active != ti) {
                             /* Update backgrounds */
-                            if (tb->active >= 0 && tb->active < tb->count && tb->tab_nodes[tb->active])
-                                tb->tab_nodes[tb->active]->desc.background = ca_color(0.15f, 0.15f, 0.2f, 1.0f);
+                            if (tb->active >= 0 && tb->active < tb->count && tb->tab_nodes[tb->active]) {
+                                tb->tab_nodes[tb->active]->desc.background = tb->inactive_bg;
+                                tb->tab_nodes[tb->active]->dirty |= CA_DIRTY_CONTENT;
+                            }
                             tb->active = ti;
-                            tb->tab_nodes[ti]->desc.background = ca_color(0.3f, 0.3f, 0.4f, 1.0f);
+                            tb->tab_nodes[ti]->desc.background = tb->active_bg;
                             tb->tab_nodes[ti]->dirty |= CA_DIRTY_CONTENT;
                             if (tb->on_change) tb->on_change(tb, tb->change_data);
                         }

@@ -503,6 +503,10 @@ struct Ca_TabBar {
     Ca_TabFn      on_change;
     void         *change_data;
     bool          in_use;
+    uint32_t      active_bg;
+    uint32_t      inactive_bg;
+    uint32_t      active_text;
+    uint32_t      inactive_text;
 };
 
 struct Ca_TreeNode {
@@ -602,6 +606,12 @@ struct Ca_MenuBar {
     int               menu_count;
     int               active_menu;   /* -1 = no dropdown open */
     bool              in_use;
+    uint32_t          header_highlight;
+    uint32_t          dropdown_bg;
+    uint32_t          dropdown_border;
+    uint32_t          dropdown_hover;
+    uint32_t          dropdown_text;
+    uint32_t          text_color;
 };
 
 /* ======================================================
