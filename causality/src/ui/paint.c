@@ -3,6 +3,13 @@
 #include "font.h"
 #include <GLFW/glfw3.h>
 
+/* Process memory (RSS) for debug overlay */
+#ifdef __APPLE__
+  #include <mach/mach.h>
+#elif defined(__linux__)
+  #include <stdio.h>
+#endif
+
 static void unpack_color(uint32_t packed, float *r, float *g, float *b, float *a)
 {
     *r = (float)((packed >> 24) & 0xFF) / 255.0f;
@@ -982,6 +989,8 @@ static void paint_tree_cached(Ca_Instance *inst, Ca_Window *win,
         uint32_t count = win->draw_cmd_count - start;
         cache_commands(win, node, start, count, false);
         node->dirty &= ~CA_DIRTY_CONTENT;
+        if (win->debug_overlay && !win->dbg_force_repaint)
+            node->dbg_repainted = true;
     } else if (node->cache_count > 0 &&
                win->draw_cmd_count + node->cache_count <= CA_MAX_DRAW_CMDS_PER_WINDOW)
     {
@@ -1181,6 +1190,235 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
 }
 
 /* ================================================================
+   DEBUG OVERLAY — toggled by F9, shows rendering stats
+   ================================================================ */
+
+static void paint_debug_overlay(Ca_Instance *inst, Ca_Window *win)
+{
+    Ca_Font *font = inst->font;
+    if (!font) return;
+
+    /* --- Paint-flash: green tinted rect over nodes repainted THIS frame --- */
+    uint32_t repainted_count = 0;
+    if (win->node_pool) {
+        for (uint32_t i = 0; i < CA_MAX_NODES_PER_WINDOW; ++i) {
+            Ca_Node *n = &win->node_pool[i];
+            if (!n->in_use || !n->dbg_repainted) continue;
+            if (n->w < 1.0f || n->h < 1.0f) continue;
+            if (win->draw_cmd_count >= CA_MAX_DRAW_CMDS_PER_WINDOW) break;
+
+            /* Green tint overlay on repainted node */
+            Ca_DrawCmd *c = &win->draw_cmds[win->draw_cmd_count++];
+            memset(c, 0, sizeof(*c));
+            c->type = CA_DRAW_RECT;
+            c->x = n->x;  c->y = n->y;
+            c->w = n->w;  c->h = n->h;
+            c->r = 0.0f;  c->g = 1.0f;  c->b = 0.0f;  c->a = 0.18f;
+            c->corner_radius = n->desc.corner_radius;
+            c->in_use  = true;
+            c->overlay = true;
+
+            /* Green border to make it clearly visible */
+            if (win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
+                Ca_DrawCmd *b = &win->draw_cmds[win->draw_cmd_count++];
+                memset(b, 0, sizeof(*b));
+                b->type = CA_DRAW_RECT;
+                b->x = n->x;  b->y = n->y;
+                b->w = n->w;  b->h = n->h;
+                b->r = 0.0f;  b->g = 0.0f;  b->b = 0.0f;  b->a = 0.0f;
+                b->corner_radius = n->desc.corner_radius;
+                b->border_width  = 1.5f;
+                b->border_r = 0.0f; b->border_g = 1.0f;
+                b->border_b = 0.0f; b->border_a = 0.9f;
+                b->in_use  = true;
+                b->overlay = true;
+            }
+            repainted_count++;
+            n->dbg_repainted = false;
+        }
+    }
+
+    /* If we drew green rects, schedule a follow-up paint pass to clear them.
+       Frame N: green shown.  Frame N+1: green gone (flags already cleared). */
+    if (repainted_count > 0) {
+        win->dbg_force_repaint = true;
+        glfwPostEmptyEvent();
+    }
+
+    /* --- Stats panel --- */
+
+    /* Count active nodes */
+    uint32_t node_count = 0;
+    if (win->node_pool) {
+        for (uint32_t i = 0; i < CA_MAX_NODES_PER_WINDOW; ++i)
+            if (win->node_pool[i].in_use) node_count++;
+    }
+    win->dbg_node_count = node_count;
+
+    /* Process RSS in MB */
+    double rss_mb = 0;
+#ifdef __APPLE__
+    {
+        struct mach_task_basic_info info;
+        mach_msg_type_number_t count = MACH_TASK_BASIC_INFO_COUNT;
+        if (task_info(mach_task_self(), MACH_TASK_BASIC_INFO,
+                      (task_info_t)&info, &count) == KERN_SUCCESS)
+            rss_mb = (double)info.resident_size / (1024.0 * 1024.0);
+    }
+#elif defined(__linux__)
+    {
+        FILE *f = fopen("/proc/self/status", "r");
+        if (f) {
+            char line[128];
+            while (fgets(line, sizeof(line), f)) {
+                long kb;
+                if (sscanf(line, "VmRSS: %ld kB", &kb) == 1) {
+                    rss_mb = (double)kb / 1024.0;
+                    break;
+                }
+            }
+            fclose(f);
+        }
+    }
+#endif
+
+    /* GPU type string */
+    const char *gpu_type_str = "Unknown";
+    switch (inst->gpu_type) {
+        case VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU: gpu_type_str = "Integrated"; break;
+        case VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU:   gpu_type_str = "Discrete";   break;
+        case VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU:    gpu_type_str = "Virtual";    break;
+        case VK_PHYSICAL_DEVICE_TYPE_CPU:            gpu_type_str = "CPU";        break;
+        default: break;
+    }
+
+    /* Present mode string */
+    const char *pm_str = "FIFO";
+    switch (inst->present_mode) {
+        case VK_PRESENT_MODE_IMMEDIATE_KHR:    pm_str = "Immediate";    break;
+        case VK_PRESENT_MODE_MAILBOX_KHR:      pm_str = "Mailbox";      break;
+        case VK_PRESENT_MODE_FIFO_KHR:         pm_str = "FIFO (VSync)"; break;
+        case VK_PRESENT_MODE_FIFO_RELAXED_KHR: pm_str = "FIFO Relaxed"; break;
+        default: break;
+    }
+
+    /* Panel position & sizing */
+    float pad   = 8.0f;
+    float line_h = 16.0f;
+    int   n_lines = 26;
+    float panel_w = 290.0f;
+    float panel_h = pad + line_h * (float)n_lines + pad;
+    float panel_x = pad;
+    float panel_y = pad;
+
+    /* Background rect */
+    if (win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
+        Ca_DrawCmd *c = &win->draw_cmds[win->draw_cmd_count++];
+        memset(c, 0, sizeof(*c));
+        c->type = CA_DRAW_RECT;
+        c->x = panel_x; c->y = panel_y;
+        c->w = panel_w;  c->h = panel_h;
+        c->corner_radius = 6.0f;
+        c->r = 0.05f; c->g = 0.05f; c->b = 0.07f; c->a = 0.88f;
+        c->in_use  = true;
+        c->overlay = true;
+    }
+
+    /* Helper macros for overlay text lines */
+    char buf[96];
+    float y = panel_y + pad;
+    Ca_Node tmp;
+    uint32_t dbg_green  = ca_color(0.0f,  1.0f,  0.0f,  1.0f);
+    uint32_t dbg_yellow = ca_color(1.0f,  0.85f, 0.0f,  1.0f);
+    uint32_t dbg_white  = ca_color(0.85f, 0.85f, 0.85f, 1.0f);
+    uint32_t dbg_cyan   = ca_color(0.3f,  0.9f,  1.0f,  1.0f);
+    uint32_t dbg_dim    = ca_color(0.5f,  0.5f,  0.5f,  1.0f);
+
+#define DBG_LINE_C(color, fmt, ...)                                    \
+    do {                                                               \
+        snprintf(buf, sizeof(buf), fmt, ##__VA_ARGS__);                \
+        memset(&tmp, 0, sizeof(tmp));                                  \
+        tmp.in_use = true;                                             \
+        tmp.window = win;                                              \
+        tmp.x = panel_x + pad; tmp.y = y;                             \
+        tmp.w = panel_w - pad * 2; tmp.h = line_h;                    \
+        tmp.desc.text_align = 1; /* left */                            \
+        tmp.desc.font_size  = 11.0f;                                  \
+        {                                                              \
+            uint32_t _gs = win->draw_cmd_count;                        \
+            paint_text(win, font, &tmp, buf, color);                   \
+            for (uint32_t _gi = _gs; _gi < win->draw_cmd_count; ++_gi)\
+                win->draw_cmds[_gi].overlay = true;                    \
+        }                                                              \
+        y += line_h;                                                   \
+    } while (0)
+
+#define DBG_LINE(fmt, ...)   DBG_LINE_C(dbg_white, fmt, ##__VA_ARGS__)
+#define DBG_HDR(fmt, ...)    DBG_LINE_C(dbg_yellow, fmt, ##__VA_ARGS__)
+#define DBG_DIM(fmt, ...)    DBG_LINE_C(dbg_dim, fmt, ##__VA_ARGS__)
+
+    /* ---- Header ---- */
+    DBG_LINE_C(dbg_green, "Debug Overlay (F9)");
+
+    /* ---- GPU / Device ---- */
+    DBG_HDR("GPU");
+    DBG_LINE("  %s", inst->gpu_name);
+    DBG_DIM("  %s  |  Vulkan %u.%u.%u",
+            gpu_type_str,
+            VK_API_VERSION_MAJOR(inst->vk_api_version),
+            VK_API_VERSION_MINOR(inst->vk_api_version),
+            VK_API_VERSION_PATCH(inst->vk_api_version));
+    DBG_LINE("  VRAM: %.0f MB  |  Heaps: %u",
+             (double)inst->gpu_heap_total / (1024.0 * 1024.0),
+             inst->gpu_heap_count);
+    DBG_LINE("  Queue: gfx=%u  present=%u%s",
+             inst->gfx_family, inst->present_family,
+             inst->gfx_family == inst->present_family ? " (shared)" : "");
+
+    /* ---- Presentation ---- */
+    DBG_HDR("Presentation");
+    int fb_w, fb_h;
+    glfwGetFramebufferSize(win->glfw, &fb_w, &fb_h);
+    int win_w, win_h;
+    glfwGetWindowSize(win->glfw, &win_w, &win_h);
+    float xscale, yscale;
+    glfwGetWindowContentScale(win->glfw, &xscale, &yscale);
+    DBG_LINE("  Window: %dx%d  FB: %dx%d", win_w, win_h, fb_w, fb_h);
+    DBG_LINE("  DPI Scale: %.1fx  |  Images: %u  |  %s",
+             xscale, win->sc.image_count, pm_str);
+
+    /* ---- Performance ---- */
+    DBG_HDR("Performance");
+    DBG_LINE_C(dbg_cyan, "  %.1f FPS  |  %.2f ms/frame",
+               win->dbg_fps, win->dbg_frame_time_ms);
+    DBG_LINE("  Frames: %u", win->dbg_frames_rendered);
+
+    /* ---- Memory ---- */
+    DBG_HDR("Memory");
+    DBG_LINE("  Process RSS: %.1f MB", rss_mb);
+
+    /* ---- Renderer ---- */
+    DBG_HDR("Renderer");
+    DBG_LINE("  Draw cmds: %u  |  Batches: %u",
+             win->dbg_draw_cmds, win->dbg_batches);
+    DBG_LINE("  Rect inst: %u  |  Txt/Img inst: %u",
+             win->dbg_rect_instances, win->dbg_ti_instances);
+
+    /* ---- UI Tree ---- */
+    DBG_HDR("UI Tree");
+    DBG_LINE("  Nodes: %u / %u  |  Repainted: %u",
+             node_count, (uint32_t)CA_MAX_NODES_PER_WINDOW, repainted_count);
+    DBG_LINE("  Layouts: %u  Dirty: %u  Transitions: %u",
+             win->dbg_layout_count, win->dbg_dirty_count,
+             win->dbg_transition_count);
+
+#undef DBG_LINE
+#undef DBG_LINE_C
+#undef DBG_HDR
+#undef DBG_DIM
+}
+
+/* ================================================================
    PUBLIC — paint pass entry point
    ================================================================ */
 
@@ -1216,4 +1454,8 @@ void ca_paint_pass(Ca_Instance *inst, Ca_Window *win)
 
     /* 4. Overlays — always fresh (dropdowns, tooltips, context menus, modals) */
     paint_overlays(inst, win);
+
+    /* 5. Debug overlay — when enabled, always fresh */
+    if (win->debug_overlay)
+        paint_debug_overlay(inst, win);
 }

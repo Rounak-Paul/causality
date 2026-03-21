@@ -126,6 +126,25 @@ static bool select_physical_device(Ca_Instance *inst, bool prefer_dedicated)
     VkPhysicalDeviceProperties props;
     vkGetPhysicalDeviceProperties(best, &props);
     printf("[vk] selected GPU: %s\n", props.deviceName);
+
+    /* Store GPU info for debug overlay */
+    strncpy(inst->gpu_name, props.deviceName, sizeof(inst->gpu_name) - 1);
+    inst->gpu_name[sizeof(inst->gpu_name) - 1] = '\0';
+    inst->gpu_type       = (uint32_t)props.deviceType;
+    inst->vk_api_version = props.apiVersion;
+    inst->driver_version = props.driverVersion;
+    inst->vendor_id      = props.vendorID;
+
+    /* Sum device-local heap sizes */
+    VkPhysicalDeviceMemoryProperties mem_props;
+    vkGetPhysicalDeviceMemoryProperties(best, &mem_props);
+    inst->gpu_heap_count = mem_props.memoryHeapCount;
+    inst->gpu_heap_total = 0;
+    for (uint32_t i = 0; i < mem_props.memoryHeapCount; ++i) {
+        if (mem_props.memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT)
+            inst->gpu_heap_total += mem_props.memoryHeaps[i].size;
+    }
+
     return true;
 }
 

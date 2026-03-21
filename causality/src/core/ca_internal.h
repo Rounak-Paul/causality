@@ -388,6 +388,8 @@ struct Ca_Node {
     void         *drag_fn_move;     /* Ca_DragFn */
     void         *drag_fn_end;      /* Ca_DragFn */
     void         *drag_data;        /* user_data for drag callbacks */
+    /* Debug overlay — set true during paint when node was dirty (paint-flash) */
+    bool          dbg_repainted;
 };
 
 /* ======================================================
@@ -617,6 +619,26 @@ struct Ca_Window {
 
     /* Render gating: set by ui.c when draw list changes, cleared after submit */
     bool          needs_render;
+
+    /* Debug overlay (toggled by F9) */
+    bool          debug_overlay;
+    bool          dbg_force_repaint; /* one-shot: force paint pass on F9 toggle */
+    uint32_t      dbg_frames_rendered;
+    uint32_t      dbg_draw_cmds;
+    uint32_t      dbg_rect_instances;
+    uint32_t      dbg_ti_instances;
+    uint32_t      dbg_batches;
+    uint32_t      dbg_node_count;
+    uint32_t      dbg_layout_count;    /* cumulative layout passes */
+    uint32_t      dbg_dirty_count;     /* nodes dirty this paint pass */
+    uint32_t      dbg_transition_count; /* active transitions this tick */
+
+    /* Frame timing (updated in swapchain_frame) */
+    double        dbg_frame_time_ms;   /* last frame GPU+present time in ms */
+    double        dbg_fps;             /* smoothed frames per second */
+    double        dbg_fps_accum;       /* accumulator for FPS calculation */
+    uint32_t      dbg_fps_frames;      /* frames counted in current second */
+    double        dbg_fps_last_time;   /* last second boundary */
 };
 
 /* ======================================================
@@ -635,6 +657,16 @@ struct Ca_Instance {
     uint32_t                 gfx_family;
     uint32_t                 present_family;
     VkCommandPool            cmd_pool;
+
+    /* GPU info (populated at init for debug overlay) */
+    char                     gpu_name[256];
+    uint32_t                 gpu_type;          /* VkPhysicalDeviceType */
+    uint32_t                 vk_api_version;    /* packed Vulkan version */
+    uint32_t                 driver_version;
+    uint32_t                 vendor_id;
+    uint64_t                 gpu_heap_total;    /* total device-local heap bytes */
+    uint32_t                 gpu_heap_count;
+    VkPresentModeKHR         present_mode;      /* current present mode */
 
     /* Event ring-buffer */
     Ca_Event         event_queue[CA_EVENT_QUEUE_CAPACITY];

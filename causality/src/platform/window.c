@@ -8,6 +8,12 @@
 static void glfw_key_cb(GLFWwindow *glfw, int key, int scancode, int action, int mods)
 {
     Ca_Window *win = (Ca_Window *)glfwGetWindowUserPointer(glfw);
+    /* F9 toggles debug overlay */
+    if (key == GLFW_KEY_F9 && action == GLFW_PRESS) {
+        win->debug_overlay = !win->debug_overlay;
+        win->dbg_force_repaint = true;
+        return;
+    }
     /* Buffer key presses for focus/input handling */
     if ((action == GLFW_PRESS || action == GLFW_REPEAT) &&
         win->key_count < CA_CHAR_BUF_MAX) {

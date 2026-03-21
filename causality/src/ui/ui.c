@@ -148,14 +148,17 @@ void ca_ui_update(Ca_Instance *inst)
         /* 2. Transition tick — update animated properties, mark dirty */
         double now = glfwGetTime();
         bool any_transitions = false;
+        uint32_t trans_count = 0;
         for (uint32_t j = 0; j < CA_MAX_NODES_PER_WINDOW; ++j) {
             Ca_Node *n = &win->node_pool[j];
             if (!n->in_use) continue;
             if (transition_tick(n, now)) {
                 any_transitions = true;
                 n->dirty |= CA_DIRTY_CONTENT;
+                trans_count++;
             }
         }
+        win->dbg_transition_count = trans_count;
 
         /* 3. Check what kind of work this window needs */
         bool any_layout  = false;
@@ -170,6 +173,7 @@ void ca_ui_update(Ca_Instance *inst)
 
         /* 4. Layout pass — propagate upward then recompute rects */
         if (any_layout) {
+            win->dbg_layout_count++;
             ca_node_propagate_layout(win);
             ca_layout_pass(win);
 
@@ -194,10 +198,15 @@ void ca_ui_update(Ca_Instance *inst)
         Ca_Node *prev_focused = win->focused_node;
         ca_widget_input_pass(win);
 
-        /* Mark hover and focus changes so repaint catches them */
+        /* Mark hover and focus changes so repaint catches them.
+           Browser-style: only dirty nodes with hover-dependent visuals
+           (currently only splitter bars).  Plain containers / labels have
+           no visual change on hover, so repainting them is wasted work. */
         if (win->hovered_node != prev_hovered) {
-            if (prev_hovered)       prev_hovered->dirty       |= CA_DIRTY_CONTENT;
-            if (win->hovered_node)  win->hovered_node->dirty  |= CA_DIRTY_CONTENT;
+            if (prev_hovered && prev_hovered->widget_type == CA_WIDGET_SPLITTER)
+                prev_hovered->dirty |= CA_DIRTY_CONTENT;
+            if (win->hovered_node && win->hovered_node->widget_type == CA_WIDGET_SPLITTER)
+                win->hovered_node->dirty |= CA_DIRTY_CONTENT;
         }
         if (win->focused_node != prev_focused) {
             if (prev_focused)       prev_focused->dirty       |= CA_DIRTY_CONTENT;
@@ -217,9 +226,21 @@ void ca_ui_update(Ca_Instance *inst)
         }
 
         /* 6. Incremental paint pass — only dirty nodes are repainted;
-              clean nodes reuse cached draw commands.  */
-        if (any_content) {
+              clean nodes reuse cached draw commands.
+              The one-shot dbg_force_repaint flag forces a single paint pass
+              when the debug overlay is toggled (so the panel appears/disappears). */
+        if (any_content || win->dbg_force_repaint) {
+            /* Count dirty nodes for debug display */
+            if (win->debug_overlay) {
+                uint32_t dc = 0;
+                for (uint32_t j = 0; j < CA_MAX_NODES_PER_WINDOW; ++j)
+                    if (win->node_pool[j].in_use &&
+                        (win->node_pool[j].dirty & CA_DIRTY_CONTENT))
+                        dc++;
+                win->dbg_dirty_count = dc;
+            }
             ca_paint_pass(inst, win);
+            win->dbg_force_repaint = false;
             win->needs_render = true;
         }
 

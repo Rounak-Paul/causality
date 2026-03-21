@@ -114,6 +114,8 @@ bool ca_swapchain_create(Ca_Instance *inst, Ca_Window *win,
         .clipped               = VK_TRUE,
     };
 
+    inst->present_mode = mode;
+
     if (vkCreateSwapchainKHR(inst->vk_device, &ci, NULL, &sc->swapchain) != VK_SUCCESS) {
         fprintf(stderr, "[vk] vkCreateSwapchainKHR failed\n");
         return false;
@@ -370,6 +372,7 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
         (Ca_TextInstance *)((char *)f->instance_mapped + text_byte_off);
     uint32_t          rect_n   = 0;   /* total rect instances written */
     uint32_t          ti_n     = 0;   /* total text+image instances written */
+    uint32_t          batch_n  = 0;   /* total vkCmdDraw calls (batches) */
 
     VkViewport viewport = {
         .x = 0.0f, .y = 0.0f,
@@ -423,6 +426,7 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
                     if (rect_n > batch_start) {
                         vkCmdSetScissor(f->cmd, 0, 1, &cur_sc);
                         vkCmdDraw(f->cmd, 6, rect_n - batch_start, 0, batch_start);
+                        batch_n++;
                     }
                     batch_start = rect_n;
                 }
@@ -447,6 +451,7 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
             if (rect_n > batch_start) {
                 vkCmdSetScissor(f->cmd, 0, 1, &cur_sc);
                 vkCmdDraw(f->cmd, 6, rect_n - batch_start, 0, batch_start);
+                batch_n++;
             }
         }
 
@@ -507,6 +512,7 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
                         if (ti_n > batch_start) {
                             vkCmdSetScissor(f->cmd, 0, 1, &cur_sc);
                             vkCmdDraw(f->cmd, 6, ti_n - batch_start, 0, batch_start);
+                            batch_n++;
                         }
                         batch_start = ti_n;
                     }
@@ -526,6 +532,7 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
                 if (ti_n > batch_start) {
                     vkCmdSetScissor(f->cmd, 0, 1, &cur_sc);
                     vkCmdDraw(f->cmd, 6, ti_n - batch_start, 0, batch_start);
+                    batch_n++;
                 }
             }
         }
@@ -589,6 +596,7 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
                         if (ti_n > batch_start) {
                             vkCmdSetScissor(f->cmd, 0, 1, &cur_sc);
                             vkCmdDraw(f->cmd, 6, ti_n - batch_start, 0, batch_start);
+                            batch_n++;
                         }
                         batch_start = ti_n;
                     }
@@ -616,12 +624,37 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
                 if (ti_n > batch_start) {
                     vkCmdSetScissor(f->cmd, 0, 1, &cur_sc);
                     vkCmdDraw(f->cmd, 6, ti_n - batch_start, 0, batch_start);
+                    batch_n++;
                 }
             }
         }
     } /* end phase loop */
 
 #undef ALIGN_UP
+
+    /* Store debug stats for the overlay */
+    win->dbg_frames_rendered++;
+    win->dbg_draw_cmds       = win->draw_cmd_count;
+    win->dbg_rect_instances  = rect_n;
+    win->dbg_ti_instances    = ti_n;
+    win->dbg_batches         = batch_n;
+
+    /* Frame timing for FPS / frame-time display */
+    {
+        double now = glfwGetTime();
+        win->dbg_fps_frames++;
+        double elapsed = now - win->dbg_fps_last_time;
+        if (elapsed >= 1.0) {
+            win->dbg_fps = (double)win->dbg_fps_frames / elapsed;
+            win->dbg_fps_frames = 0;
+            win->dbg_fps_last_time = now;
+        }
+        /* Per-frame time: measure from previous frame end */
+        static double prev_time = 0;
+        if (prev_time > 0)
+            win->dbg_frame_time_ms = (now - prev_time) * 1000.0;
+        prev_time = now;
+    }
 
     free(sorted_idx);
 

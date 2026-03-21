@@ -201,11 +201,13 @@ typedef struct {
 
 static void layout_node(Ca_Node *node, float x, float y, float avail_w, float avail_h)
 {
-    /* display: none — zero size, skip children */
+    /* display: none — zero size, recurse to clear children's dirty flags */
     if (node->desc.hidden) {
         node->x = x; node->y = y;
         node->w = 0; node->h = 0;
         node->dirty &= ~(CA_DIRTY_LAYOUT | CA_DIRTY_CHILDREN);
+        for (uint32_t i = 0; i < node->child_count; ++i)
+            layout_node(node->children[i], 0, 0, 0, 0);
         return;
     }
 
