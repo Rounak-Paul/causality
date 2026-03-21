@@ -690,6 +690,8 @@ struct Ca_Instance {
 
     /* UI state pool */
     Ca_State        *state_pool;
+    uint16_t         dirty_states[CA_MAX_STATES]; /* ring buffer of dirty indices */
+    uint32_t         dirty_state_count;
 
     /* Shared SSBO descriptor set layout + pool for instanced rendering */
     VkDescriptorSetLayout ssbo_desc_layout;

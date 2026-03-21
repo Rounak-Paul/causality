@@ -8,6 +8,9 @@
   #include <mach/mach.h>
 #elif defined(__linux__)
   #include <stdio.h>
+#elif defined(_WIN32)
+  #include <windows.h>
+  #include <psapi.h>
 #endif
 
 static void unpack_color(uint32_t packed, float *r, float *g, float *b, float *a)
@@ -1289,6 +1292,12 @@ static void paint_debug_overlay(Ca_Instance *inst, Ca_Window *win)
             }
             fclose(f);
         }
+    }
+#elif defined(_WIN32)
+    {
+        PROCESS_MEMORY_COUNTERS pmc;
+        if (GetProcessMemoryInfo(GetCurrentProcess(), &pmc, sizeof(pmc)))
+            rss_mb = (double)pmc.WorkingSetSize / (1024.0 * 1024.0);
     }
 #endif
 

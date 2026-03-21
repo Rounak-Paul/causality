@@ -26,8 +26,9 @@ void ca_state_flush_dirty(Ca_Instance *inst)
 {
     if (!inst->state_pool) return;
 
-    for (uint32_t i = 0; i < CA_MAX_STATES; ++i) {
-        Ca_State *s = &inst->state_pool[i];
+    uint32_t count = inst->dirty_state_count;
+    for (uint32_t i = 0; i < count; ++i) {
+        Ca_State *s = &inst->state_pool[inst->dirty_states[i]];
         if (!s->in_use || !s->dirty) continue;
 
         for (uint32_t j = 0; j < s->sub_count; ++j) {
@@ -38,6 +39,7 @@ void ca_state_flush_dirty(Ca_Instance *inst)
 
         s->dirty = false;
     }
+    inst->dirty_state_count = 0;
 }
 
 /* ---- Public API ---- */
@@ -78,9 +80,17 @@ void ca_state_destroy(Ca_State *state)
 void ca_state_set(Ca_State *state, const void *value)
 {
     assert(state && state->in_use && value);
+    if (memcmp(state->data, value, state->data_size) == 0)
+        return; /* value unchanged — skip */
     memcpy(state->data, value, state->data_size);
-    state->dirty = true;
     state->generation++;
+    if (!state->dirty) {
+        state->dirty = true;
+        Ca_Instance *inst = state->instance;
+        uint32_t idx = (uint32_t)(state - inst->state_pool);
+        if (inst->dirty_state_count < CA_MAX_STATES)
+            inst->dirty_states[inst->dirty_state_count++] = (uint16_t)idx;
+    }
 }
 
 void ca_state_get(const Ca_State *state, void *out_value)
