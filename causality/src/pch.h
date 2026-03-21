@@ -10,6 +10,11 @@
 #include <assert.h>
 #include <math.h>
 
+/* POSIX compat for MSVC */
+#ifdef _MSC_VER
+  #define strcasecmp _stricmp
+#endif
+
 /* Vulkan */
 #include <vulkan/vulkan.h>
 

@@ -198,6 +198,8 @@ void ca_swapchain_destroy(Ca_Instance *inst, Ca_Window *win)
         f->image_available = VK_NULL_HANDLE;
         f->render_finished = VK_NULL_HANDLE;
         f->in_flight       = VK_NULL_HANDLE;
+        if (f->cmd != VK_NULL_HANDLE)
+            vkFreeCommandBuffers(inst->vk_device, inst->cmd_pool, 1, &f->cmd);
         f->cmd             = VK_NULL_HANDLE;
     }
 
