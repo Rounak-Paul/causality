@@ -23,20 +23,17 @@ static float measure_wrapped_text_height(Ca_Node *node)
 
     float ui_s = win->ui_scale > 0.0f ? win->ui_scale : 1.0f;
     float cs   = font->content_scale / ui_s;
-    float baked_logical = font->baked_px / font->content_scale;
-    float desired_size  = node->desc.font_size > 0.0f ? node->desc.font_size : baked_logical;
-    float font_scale    = desired_size / baked_logical;
-    float cs_eff        = cs / font_scale;
+    float desired_size = node->desc.font_size > 0.0f ? node->desc.font_size : font->default_size;
+    Ca_FontTier *tier  = ca_font_tier(font, desired_size);
+    if (!tier) return 0.0f;
+    float font_scale   = desired_size / tier->logical_px;
+    float cs_eff       = cs / font_scale;
 
-    float line_height = (font->ascent - font->descent + font->line_gap) * font_scale;
+    float line_height = (tier->ascent - tier->descent + tier->line_gap) * font_scale;
     if (line_height < 1.0f) line_height = desired_size * 1.3f;
 
     float max_w = node->w - node->desc.padding_left - node->desc.padding_right;
     if (max_w < 1.0f) return 0.0f;
-
-    #define MADV(c) \
-        (((int)(c) >= CA_FONT_GLYPH_FIRST && (int)(c) < CA_FONT_GLYPH_FIRST + CA_FONT_GLYPH_COUNT) \
-         ? font->glyphs[(int)(c) - CA_FONT_GLYPH_FIRST].xadvance / cs_eff : 0.0f)
 
     float cur_line_w = 0.0f;
     int line_count = 1;
@@ -44,10 +41,13 @@ static float measure_wrapped_text_height(Ca_Node *node)
     while (*p) {
         float word_w = 0.0f;
         while (*p && *p != ' ' && *p != '\n') {
-            word_w += MADV((unsigned char)*p);
-            p++;
+            uint32_t cp = ca_utf8_decode(&p);
+            stbtt_packedchar *pc = ca_font_glyph(tier, cp);
+            if (pc) word_w += pc->xadvance / cs_eff;
         }
-        float with_space = (cur_line_w > 0.0f) ? cur_line_w + MADV(' ') + word_w : word_w;
+        stbtt_packedchar *sp = ca_font_glyph(tier, ' ');
+        float space_adv = sp ? sp->xadvance / cs_eff : 0.0f;
+        float with_space = (cur_line_w > 0.0f) ? cur_line_w + space_adv + word_w : word_w;
         if (cur_line_w > 0.0f && with_space > max_w) {
             line_count++;
             cur_line_w = word_w;
@@ -57,7 +57,6 @@ static float measure_wrapped_text_height(Ca_Node *node)
         if (*p == '\n') { line_count++; cur_line_w = 0; p++; }
         else if (*p == ' ') { p++; }
     }
-    #undef MADV
 
     return node->desc.padding_top + line_height * line_count + node->desc.padding_bottom;
 }

@@ -581,6 +581,13 @@ static void paint_scrollbars(Ca_Window *win, Ca_Node *node, ClipRect clip)
     }
 }
 
+/* Helper: glyph advance for a codepoint */
+static inline float glyph_adv(Ca_FontTier *tier, uint32_t cp, float cs_eff)
+{
+    stbtt_packedchar *g = ca_font_glyph(tier, cp);
+    return g ? g->xadvance / cs_eff : 0.0f;
+}
+
 /* Emit glyph draw commands for a multi-line word-wrapped text string. */
 static void paint_text_wrapped(Ca_Window *win, Ca_Font *font,
                                Ca_Node *node,
@@ -596,51 +603,44 @@ static void paint_text_wrapped(Ca_Window *win, Ca_Font *font,
 
     float ui_s = win->ui_scale > 0.0f ? win->ui_scale : 1.0f;
     float cs   = font->content_scale / ui_s;
-    float baked_logical = font->baked_px / font->content_scale;
-    float desired_size  = node->desc.font_size > 0.0f ? node->desc.font_size : baked_logical;
-    float font_scale    = desired_size / baked_logical;
-    float cs_eff        = cs / font_scale;
+    float desired_size = node->desc.font_size > 0.0f ? node->desc.font_size : font->default_size;
+    Ca_FontTier *tier  = ca_font_tier(font, desired_size);
+    float font_scale   = desired_size / tier->logical_px;
+    float cs_eff       = cs / font_scale;
 
-    float line_height = (font->ascent - font->descent + font->line_gap) * font_scale;
+    float line_height = (tier->ascent - tier->descent + tier->line_gap) * font_scale;
     if (line_height < 1.0f) line_height = desired_size * 1.3f;
 
     float max_w = node->w - node->desc.padding_left - node->desc.padding_right;
     if (max_w < 1.0f) return;
 
-    /* Measure advance for a single character */
-    #define CHAR_ADV(c) \
-        (((int)(c) >= CA_FONT_GLYPH_FIRST && (int)(c) < CA_FONT_GLYPH_FIRST + CA_FONT_GLYPH_COUNT) \
-         ? font->glyphs[(int)(c) - CA_FONT_GLYPH_FIRST].xadvance / cs_eff : 0.0f)
+    float space_adv = glyph_adv(tier, ' ', cs_eff);
 
-    /* First pass: determine line breaks (word wrap).
-       A simple greedy algorithm: accumulate word widths, break when exceeding max_w. */
+    /* First pass: determine line breaks (word wrap). */
     float cur_line_w = 0.0f;
     int line_count = 1;
     const char *p = text;
     while (*p) {
-        /* Measure next word */
         const char *word_start = p;
         float word_w = 0.0f;
         while (*p && *p != ' ' && *p != '\n') {
-            word_w += CHAR_ADV((unsigned char)*p);
-            p++;
+            uint32_t cp = ca_utf8_decode(&p);
+            word_w += glyph_adv(tier, cp, cs_eff);
         }
-        /* Check if word fits on current line */
-        float with_space = (cur_line_w > 0.0f) ? cur_line_w + CHAR_ADV(' ') + word_w : word_w;
+        float with_space = (cur_line_w > 0.0f) ? cur_line_w + space_adv + word_w : word_w;
         if (cur_line_w > 0.0f && with_space > max_w) {
             line_count++;
             cur_line_w = word_w;
         } else {
             cur_line_w = with_space;
         }
-        /* Handle newlines and spaces */
         if (*p == '\n') { line_count++; cur_line_w = 0; p++; }
         else if (*p == ' ') { p++; }
     }
 
     /* Second pass: emit glyphs line by line */
     float start_y = node->y + node->desc.padding_top
-                    + (font->ascent * font_scale + font->descent * font_scale) * 0.5f
+                    + (tier->ascent * font_scale + tier->descent * font_scale) * 0.5f
                     + line_height * 0.5f;
     float left_x  = node->x + node->desc.padding_left;
     cur_line_w = 0.0f;
@@ -654,14 +654,15 @@ static void paint_text_wrapped(Ca_Window *win, Ca_Font *font,
 
     p = text;
     while (*p) {
-        const char *word_start = p;
-        float word_w = 0.0f;
+        /* Measure next word */
         const char *wp = p;
+        float word_w = 0.0f;
         while (*wp && *wp != ' ' && *wp != '\n') {
-            word_w += CHAR_ADV((unsigned char)*wp);
-            wp++;
+            const char *prev = wp;
+            uint32_t cp = ca_utf8_decode(&wp);
+            word_w += glyph_adv(tier, cp, cs_eff);
         }
-        float with_space = (cur_line_w > 0.0f) ? cur_line_w + CHAR_ADV(' ') + word_w : word_w;
+        float with_space = (cur_line_w > 0.0f) ? cur_line_w + space_adv + word_w : word_w;
         if (cur_line_w > 0.0f && with_space > max_w) {
             cur_line++;
             cur_line_w = word_w;
@@ -669,24 +670,21 @@ static void paint_text_wrapped(Ca_Window *win, Ca_Font *font,
             ypos = (start_y + line_height * cur_line) * cs_eff;
         } else {
             if (cur_line_w > 0.0f) {
-                /* Add space before word */
-                float sp_adv = CHAR_ADV(' ');
-                xpos += sp_adv * cs_eff;
-                cur_line_w += sp_adv;
+                xpos += space_adv * cs_eff;
+                cur_line_w += space_adv;
             }
             cur_line_w += word_w;
         }
 
         /* Emit glyphs for this word */
-        for (; p < wp; p++) {
-            int c = (unsigned char)*p;
-            if (c < CA_FONT_GLYPH_FIRST || c >= CA_FONT_GLYPH_FIRST + CA_FONT_GLYPH_COUNT)
-                continue;
+        while (p < wp) {
+            uint32_t cp = ca_utf8_decode(&p);
+            stbtt_packedchar *pc = ca_font_glyph(tier, cp);
+            if (!pc) continue;
             if (win->draw_cmd_count >= CA_MAX_DRAW_CMDS_PER_WINDOW) goto done;
 
             stbtt_aligned_quad q;
-            stbtt_GetBakedQuad(font->glyphs, font->atlas_w, font->atlas_h,
-                               c - CA_FONT_GLYPH_FIRST, &xpos, &ypos, &q, 1);
+            ca_font_get_quad(pc, font->atlas_w, font->atlas_h, &xpos, &ypos, &q);
             float gw = (q.x1 - q.x0) / cs_eff;
             float gh = (q.y1 - q.y0) / cs_eff;
             if (gw < 0.5f || gh < 0.5f) continue;
@@ -714,9 +712,7 @@ static void paint_text_wrapped(Ca_Window *win, Ca_Font *font,
         }
     }
 done:
-    /* Store content height for layout auto-sizing */
     node->content_h = node->desc.padding_top + line_height * (cur_line + 1) + node->desc.padding_bottom;
-    #undef CHAR_ADV
 }
 
 /* Emit glyph draw commands for a text string centred in the given node rect. */
@@ -730,7 +726,6 @@ static void paint_text(Ca_Window *win, Ca_Font *font,
 
     float r, g, b, a;
     if (packed_color == 0) {
-        /* Default to opaque white when no colour was specified */
         r = g = b = a = 1.0f;
     } else {
         r = (float)((packed_color >> 24) & 0xFF) / 255.0f;
@@ -739,69 +734,54 @@ static void paint_text(Ca_Window *win, Ca_Font *font,
         a = (float)((packed_color)       & 0xFF) / 255.0f;
     }
 
-    /* Effective content scale: divide by ui_scale so glyphs grow with zoom */
     float ui_s = win->ui_scale > 0.0f ? win->ui_scale : 1.0f;
     float cs   = font->content_scale / ui_s;
-
-    /* Per-node font size scaling */
-    float baked_logical = font->baked_px / font->content_scale;
-    float desired_size  = node->desc.font_size > 0.0f ? node->desc.font_size : baked_logical;
-    float font_scale    = desired_size / baked_logical;
-    float cs_eff        = cs / font_scale;
+    float desired_size = node->desc.font_size > 0.0f ? node->desc.font_size : font->default_size;
+    Ca_FontTier *tier  = ca_font_tier(font, desired_size);
+    float font_scale   = desired_size / tier->logical_px;
+    float cs_eff       = cs / font_scale;
 
     /* Measure total advance width in logical pixels */
     float text_w = 0.0f;
-    for (const char *p = text; *p; p++) {
-        int c = (unsigned char)(*p);
-        if (c >= CA_FONT_GLYPH_FIRST &&
-            c <  CA_FONT_GLYPH_FIRST + CA_FONT_GLYPH_COUNT)
-            text_w += font->glyphs[c - CA_FONT_GLYPH_FIRST].xadvance / cs_eff;
+    {
+        const char *p = text;
+        while (*p) {
+            uint32_t cp = ca_utf8_decode(&p);
+            stbtt_packedchar *pc = ca_font_glyph(tier, cp);
+            if (pc) text_w += pc->xadvance / cs_eff;
+        }
     }
 
-    /* Compute baseline (vertically centred) and left edge based on text_align.
-       text_align: 0=center, 1=left, 2=right.
-       If text is wider than the node, left-align regardless. */
     float baseline_logical =
         node->y + node->h * 0.5f
-        + (font->ascent * font_scale + font->descent * font_scale) * 0.5f;
+        + (tier->ascent * font_scale + tier->descent * font_scale) * 0.5f;
     float left_logical;
     if (text_w > node->w) {
         left_logical = node->x + node->desc.padding_left;
     } else {
         switch (node->desc.text_align) {
-        case 1:  /* left */
-            left_logical = node->x + node->desc.padding_left;
-            break;
-        case 2:  /* right */
-            left_logical = node->x + node->w - text_w - node->desc.padding_right;
-            break;
-        default: /* center */
-            left_logical = node->x + (node->w - text_w) * 0.5f;
-            break;
+        case 1:  left_logical = node->x + node->desc.padding_left; break;
+        case 2:  left_logical = node->x + node->w - text_w - node->desc.padding_right; break;
+        default: left_logical = node->x + (node->w - text_w) * 0.5f; break;
         }
     }
 
-    /* GetBakedQuad works in native (baked) pixel space */
     float xpos = left_logical * cs_eff;
     float ypos = baseline_logical * cs_eff;
 
-    for (const char *p = text; *p; p++) {
-        int c = (unsigned char)(*p);
-        if (c < CA_FONT_GLYPH_FIRST ||
-            c >= CA_FONT_GLYPH_FIRST + CA_FONT_GLYPH_COUNT)
-            continue;
+    const char *p = text;
+    while (*p) {
+        uint32_t cp = ca_utf8_decode(&p);
+        stbtt_packedchar *pc = ca_font_glyph(tier, cp);
+        if (!pc) continue;
         if (win->draw_cmd_count >= CA_MAX_DRAW_CMDS_PER_WINDOW) break;
 
         stbtt_aligned_quad q;
-        /* opengl_fillrule=1: y increases downward (screen space = Vulkan) */
-        stbtt_GetBakedQuad(font->glyphs,
-                           font->atlas_w, font->atlas_h,
-                           c - CA_FONT_GLYPH_FIRST,
-                           &xpos, &ypos, &q, 1);
+        ca_font_get_quad(pc, font->atlas_w, font->atlas_h, &xpos, &ypos, &q);
 
         float gw = (q.x1 - q.x0) / cs_eff;
         float gh = (q.y1 - q.y0) / cs_eff;
-        if (gw < 0.5f || gh < 0.5f) continue; /* skip whitespace */
+        if (gw < 0.5f || gh < 0.5f) continue;
 
         Ca_DrawCmd *cmd = &win->draw_cmds[win->draw_cmd_count++];
         memset(cmd, 0, sizeof(*cmd));
@@ -814,7 +794,6 @@ static void paint_text(Ca_Window *win, Ca_Font *font,
         cmd->z_index = node->desc.z_index;
         cmd->in_use = true;
 
-        /* Clip to node bounds + ancestor overflow containers */
         ClipRect clip = find_clip_for_node(node);
         ClipRect node_clip = clip_intersect(clip, node->x, node->y, node->w, node->h);
         set_clip(cmd, node_clip);
@@ -839,33 +818,28 @@ static void paint_text_left(Ca_Window *win, Ca_Font *font,
 
     float ui_s = win->ui_scale > 0.0f ? win->ui_scale : 1.0f;
     float cs   = font->content_scale / ui_s;
-
-    /* Per-node font size scaling */
-    float baked_logical = font->baked_px / font->content_scale;
-    float desired_size  = node->desc.font_size > 0.0f ? node->desc.font_size : baked_logical;
-    float font_scale    = desired_size / baked_logical;
-    float cs_eff        = cs / font_scale;
+    float desired_size = node->desc.font_size > 0.0f ? node->desc.font_size : font->default_size;
+    Ca_FontTier *tier  = ca_font_tier(font, desired_size);
+    float font_scale   = desired_size / tier->logical_px;
+    float cs_eff       = cs / font_scale;
 
     float baseline_logical =
         node->y + node->h * 0.5f
-        + (font->ascent * font_scale + font->descent * font_scale) * 0.5f;
+        + (tier->ascent * font_scale + tier->descent * font_scale) * 0.5f;
     float left_logical = node->x + node->desc.padding_left;
 
     float xpos = left_logical * cs_eff;
     float ypos = baseline_logical * cs_eff;
 
-    for (const char *p = text; *p; p++) {
-        int c = (unsigned char)(*p);
-        if (c < CA_FONT_GLYPH_FIRST ||
-            c >= CA_FONT_GLYPH_FIRST + CA_FONT_GLYPH_COUNT)
-            continue;
+    const char *p = text;
+    while (*p) {
+        uint32_t cp = ca_utf8_decode(&p);
+        stbtt_packedchar *pc = ca_font_glyph(tier, cp);
+        if (!pc) continue;
         if (win->draw_cmd_count >= CA_MAX_DRAW_CMDS_PER_WINDOW) break;
 
         stbtt_aligned_quad q;
-        stbtt_GetBakedQuad(font->glyphs,
-                           font->atlas_w, font->atlas_h,
-                           c - CA_FONT_GLYPH_FIRST,
-                           &xpos, &ypos, &q, 1);
+        ca_font_get_quad(pc, font->atlas_w, font->atlas_h, &xpos, &ypos, &q);
 
         float gw = (q.x1 - q.x0) / cs_eff;
         float gh = (q.y1 - q.y0) / cs_eff;
@@ -882,24 +856,29 @@ static void paint_text_left(Ca_Window *win, Ca_Font *font,
         cmd->in_use = true;
 
         ClipRect clip = find_clip_for_node(node);
-        /* Also clip to the input's own bounds */
         ClipRect input_clip = clip_intersect(clip, node->x, node->y, node->w, node->h);
         set_clip(cmd, input_clip);
     }
 }
 
-/* Measure x-advance for a substring of text */
+/* Measure x-advance for a substring of text (byte_count bytes) */
 static float measure_text_advance(Ca_Font *font, const char *text, int byte_count,
-                                  float content_scale, float ui_scale)
+                                  float content_scale, float ui_scale,
+                                  float font_size)
 {
-    float cs = content_scale / (ui_scale > 0.0f ? ui_scale : 1.0f);
+    float ui_s = ui_scale > 0.0f ? ui_scale : 1.0f;
+    float cs   = content_scale / ui_s;
+    float desired = font_size > 0.0f ? font_size : font->default_size;
+    Ca_FontTier *tier = ca_font_tier(font, desired);
+    float fs     = desired / tier->logical_px;
+    float cs_eff = cs / fs;
     float w = 0.0f;
-    int i = 0;
-    for (const char *p = text; *p && i < byte_count; p++, i++) {
-        int c = (unsigned char)(*p);
-        if (c >= CA_FONT_GLYPH_FIRST &&
-            c <  CA_FONT_GLYPH_FIRST + CA_FONT_GLYPH_COUNT)
-            w += font->glyphs[c - CA_FONT_GLYPH_FIRST].xadvance / cs;
+    const char *p   = text;
+    const char *end = text + byte_count;
+    while (*p && p < end) {
+        uint32_t cp = ca_utf8_decode(&p);
+        stbtt_packedchar *pc = ca_font_glyph(tier, cp);
+        if (pc) w += pc->xadvance / cs_eff;
     }
     return w;
 }
@@ -911,7 +890,8 @@ static void paint_cursor(Ca_Window *win, Ca_Font *font,
     if (win->draw_cmd_count >= CA_MAX_DRAW_CMDS_PER_WINDOW) return;
 
     float advance = measure_text_advance(font, text, cursor_pos,
-                                         font->content_scale, win->ui_scale);
+                                         font->content_scale, win->ui_scale,
+                                         node->desc.font_size);
     float cursor_x = node->x + node->desc.padding_left + advance;
     float cursor_h = node->h * 0.7f;
     float cursor_y = node->y + (node->h - cursor_h) * 0.5f;
@@ -1125,11 +1105,16 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
             if (!match) continue;
 
             float tw = 0;
-            for (const char *p = tt->text; *p; p++) {
-                int ch = (unsigned char)*p;
-                if (ch >= CA_FONT_GLYPH_FIRST && ch < CA_FONT_GLYPH_FIRST + CA_FONT_GLYPH_COUNT) {
-                    float cs = font->content_scale / (win->ui_scale > 0 ? win->ui_scale : 1.0f);
-                    tw += font->glyphs[ch - CA_FONT_GLYPH_FIRST].xadvance / cs;
+            {
+                float cs = font->content_scale / (win->ui_scale > 0 ? win->ui_scale : 1.0f);
+                Ca_FontTier *tier = ca_font_tier(font, font->default_size);
+                float fs = font->default_size / tier->logical_px;
+                float cs_eff = cs / fs;
+                const char *tp = tt->text;
+                while (*tp) {
+                    uint32_t cp = ca_utf8_decode(&tp);
+                    stbtt_packedchar *pc = ca_font_glyph(tier, cp);
+                    if (pc) tw += pc->xadvance / cs_eff;
                 }
             }
 

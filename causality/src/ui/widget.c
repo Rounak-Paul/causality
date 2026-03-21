@@ -36,12 +36,15 @@ static float measure_text_px(Ca_Window *win, const char *text)
     if (!font) return 0.0f;
     float ui_s = win->ui_scale > 0.0f ? win->ui_scale : 1.0f;
     float cs   = font->content_scale / ui_s;
+    Ca_FontTier *tier = ca_font_tier(font, font->default_size);
+    float fs     = font->default_size / tier->logical_px;
+    float cs_eff = cs / fs;
     float w = 0.0f;
-    for (const char *p = text; *p; p++) {
-        int c = (unsigned char)(*p);
-        if (c >= CA_FONT_GLYPH_FIRST &&
-            c <  CA_FONT_GLYPH_FIRST + CA_FONT_GLYPH_COUNT)
-            w += font->glyphs[c - CA_FONT_GLYPH_FIRST].xadvance / cs;
+    const char *p = text;
+    while (*p) {
+        uint32_t cp = ca_utf8_decode(&p);
+        stbtt_packedchar *pc = ca_font_glyph(tier, cp);
+        if (pc) w += pc->xadvance / cs_eff;
     }
     return w;
 }

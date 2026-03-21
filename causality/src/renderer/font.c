@@ -1,4 +1,4 @@
-/* font.c — font atlas creation and GPU upload */
+/* font.c — multi-size font atlas creation and GPU upload */
 
 #define STB_TRUETYPE_IMPLEMENTATION
 #include "font.h"
@@ -7,7 +7,30 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* ---- Helpers ---- */
+/* Tier logical pixel sizes */
+static const float g_tier_sizes[CA_FONT_TIER_COUNT] = {
+    10, 11, 12, 13, 14, 16, 18, 24, 32
+};
+
+/* Codepoint range definitions */
+static const struct { int first; int count; } g_range_defs[CA_FONT_RANGE_COUNT] = {
+    { 32,     224 },   /* ASCII + Latin-1 Supplement  (32–255)     */
+    { 0xE0A0,  56 },   /* Powerline + extras          (E0A0–E0D7) */
+    { 0xE5FA, 188 },   /* Seti-UI + Custom            (E5FA–E6B5) */
+    { 0xE700, 198 },   /* Devicons                    (E700–E7C5) */
+    { 0xEA60, 447 },   /* Codicons                    (EA60–EC1E) */
+    { 0xF000, 737 },   /* Font Awesome                (F000–F2E0) */
+};
+
+static int chars_per_tier(void)
+{
+    int n = 0;
+    for (int i = 0; i < CA_FONT_RANGE_COUNT; i++)
+        n += g_range_defs[i].count;
+    return n;
+}
+
+/* ---- GPU helpers ---- */
 
 static uint32_t find_memory_type(VkPhysicalDevice gpu, uint32_t type_bits,
                                   VkMemoryPropertyFlags required)
@@ -54,61 +77,17 @@ static void end_once(Ca_Instance *inst, VkCommandBuffer cmd)
     vkFreeCommandBuffers(inst->vk_device, inst->cmd_pool, 1, &cmd);
 }
 
-/* ---- Public API ---- */
-
-/* Internal: create font from raw TTF/OTF bytes in memory */
-static bool font_create_internal(Ca_Instance *inst, GLFWwindow *glfw_win,
-                                 Ca_Font *out_font,
-                                 const unsigned char *ttf_data,
-                                 size_t ttf_size, float font_px)
+static bool upload_atlas(Ca_Instance *inst, Ca_Font *font,
+                          const unsigned char *bitmap)
 {
-    memset(out_font, 0, sizeof(*out_font));
+    VkDeviceSize atlas_sz = (VkDeviceSize)font->atlas_w * font->atlas_h;
 
-    /* Query DPI scale */
-    float cx = 1.0f;
-    glfwGetWindowContentScale(glfw_win, &cx, NULL);
-    out_font->content_scale = cx;
-    out_font->baked_px      = (float)(int)(font_px * cx + 0.5f);
-
-    /* Extract metrics */
-    stbtt_fontinfo info = {0};
-    stbtt_InitFont(&info, ttf_data, stbtt_GetFontOffsetForIndex(ttf_data, 0));
-    float scale = stbtt_ScaleForPixelHeight(&info, out_font->baked_px);
-    {
-        int a, d, lg;
-        stbtt_GetFontVMetrics(&info, &a, &d, &lg);
-        out_font->ascent   = (float)a  * scale / cx;
-        out_font->descent  = (float)d  * scale / cx;
-        out_font->line_gap = (float)lg * scale / cx;
-    }
-
-    /* Bake a greyscale atlas */
-    out_font->atlas_w = 1024;
-    out_font->atlas_h = 1024;
-    unsigned char *bitmap =
-        (unsigned char *)calloc(1, (size_t)(out_font->atlas_w * out_font->atlas_h));
-
-    int rows = stbtt_BakeFontBitmap(ttf_data, 0, out_font->baked_px,
-                                    bitmap,
-                                    out_font->atlas_w, out_font->atlas_h,
-                                    CA_FONT_GLYPH_FIRST, CA_FONT_GLYPH_COUNT,
-                                    out_font->glyphs);
-
-    if (rows <= 0) {
-        fprintf(stderr, "[font] stbtt_BakeFontBitmap failed (rows=%d), "
-                "try increasing atlas size.\n", rows);
-        free(bitmap);
-        return false;
-    }
-
-    /* ---- Create VkImage (R8_UNORM, device-local) ---- */
-    VkDeviceSize atlas_sz = (VkDeviceSize)(out_font->atlas_w * out_font->atlas_h);
-
+    /* VkImage (R8_UNORM, device-local) */
     VkImageCreateInfo img_ci = {
         .sType         = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
         .imageType     = VK_IMAGE_TYPE_2D,
         .format        = VK_FORMAT_R8_UNORM,
-        .extent        = { (uint32_t)out_font->atlas_w, (uint32_t)out_font->atlas_h, 1 },
+        .extent        = { (uint32_t)font->atlas_w, (uint32_t)font->atlas_h, 1 },
         .mipLevels     = 1,
         .arrayLayers   = 1,
         .samples       = VK_SAMPLE_COUNT_1_BIT,
@@ -117,20 +96,20 @@ static bool font_create_internal(Ca_Instance *inst, GLFWwindow *glfw_win,
         .sharingMode   = VK_SHARING_MODE_EXCLUSIVE,
         .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
     };
-    vkCreateImage(inst->vk_device, &img_ci, NULL, &out_font->image);
+    vkCreateImage(inst->vk_device, &img_ci, NULL, &font->image);
 
     VkMemoryRequirements img_req;
-    vkGetImageMemoryRequirements(inst->vk_device, out_font->image, &img_req);
+    vkGetImageMemoryRequirements(inst->vk_device, font->image, &img_req);
     VkMemoryAllocateInfo img_mem_ai = {
         .sType           = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
         .allocationSize  = img_req.size,
         .memoryTypeIndex = find_memory_type(inst->vk_gpu, img_req.memoryTypeBits,
                                             VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT),
     };
-    vkAllocateMemory(inst->vk_device, &img_mem_ai, NULL, &out_font->memory);
-    vkBindImageMemory(inst->vk_device, out_font->image, out_font->memory, 0);
+    vkAllocateMemory(inst->vk_device, &img_mem_ai, NULL, &font->memory);
+    vkBindImageMemory(inst->vk_device, font->image, font->memory, 0);
 
-    /* ---- Staging buffer (host-visible) ---- */
+    /* Staging buffer */
     VkBufferCreateInfo buf_ci = {
         .sType       = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
         .size        = atlas_sz,
@@ -158,12 +137,10 @@ static bool font_create_internal(Ca_Instance *inst, GLFWwindow *glfw_win,
     vkMapMemory(inst->vk_device, staging_mem, 0, atlas_sz, 0, &mapped);
     memcpy(mapped, bitmap, (size_t)atlas_sz);
     vkUnmapMemory(inst->vk_device, staging_mem);
-    free(bitmap);
 
-    /* ---- Upload via one-shot command buffer ---- */
+    /* Upload */
     VkCommandBuffer cmd = begin_once(inst);
 
-    /* UNDEFINED → TRANSFER_DST */
     VkImageMemoryBarrier bar = {
         .sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
         .srcAccessMask       = 0,
@@ -172,7 +149,7 @@ static bool font_create_internal(Ca_Instance *inst, GLFWwindow *glfw_win,
         .newLayout           = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
         .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
         .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-        .image               = out_font->image,
+        .image               = font->image,
         .subresourceRange    = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 },
     };
     vkCmdPipelineBarrier(cmd,
@@ -180,18 +157,13 @@ static bool font_create_internal(Ca_Instance *inst, GLFWwindow *glfw_win,
         0, 0, NULL, 0, NULL, 1, &bar);
 
     VkBufferImageCopy region = {
-        .bufferOffset      = 0,
-        .bufferRowLength   = 0,
-        .bufferImageHeight = 0,
-        .imageSubresource  = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 },
-        .imageOffset       = { 0, 0, 0 },
-        .imageExtent       = { (uint32_t)out_font->atlas_w,
-                                (uint32_t)out_font->atlas_h, 1 },
+        .imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 },
+        .imageExtent      = { (uint32_t)font->atlas_w,
+                              (uint32_t)font->atlas_h, 1 },
     };
-    vkCmdCopyBufferToImage(cmd, staging_buf, out_font->image,
+    vkCmdCopyBufferToImage(cmd, staging_buf, font->image,
                            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
 
-    /* TRANSFER_DST → SHADER_READ_ONLY */
     bar.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
     bar.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
     bar.oldLayout     = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
@@ -202,21 +174,20 @@ static bool font_create_internal(Ca_Instance *inst, GLFWwindow *glfw_win,
 
     end_once(inst, cmd);
 
-    /* Free staging */
     vkDestroyBuffer(inst->vk_device, staging_buf, NULL);
     vkFreeMemory(inst->vk_device, staging_mem, NULL);
 
-    /* ---- Image view (R8, colour) ---- */
+    /* Image view */
     VkImageViewCreateInfo view_ci = {
         .sType            = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
-        .image            = out_font->image,
+        .image            = font->image,
         .viewType         = VK_IMAGE_VIEW_TYPE_2D,
         .format           = VK_FORMAT_R8_UNORM,
         .subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 },
     };
-    vkCreateImageView(inst->vk_device, &view_ci, NULL, &out_font->view);
+    vkCreateImageView(inst->vk_device, &view_ci, NULL, &font->view);
 
-    /* ---- Sampler (linear, clamp-to-edge) ---- */
+    /* Sampler */
     VkSamplerCreateInfo samp_ci = {
         .sType        = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
         .magFilter    = VK_FILTER_LINEAR,
@@ -227,14 +198,117 @@ static bool font_create_internal(Ca_Instance *inst, GLFWwindow *glfw_win,
         .addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
         .maxLod       = VK_LOD_CLAMP_NONE,
     };
-    vkCreateSampler(inst->vk_device, &samp_ci, NULL, &out_font->sampler);
-
-    printf("[font] atlas %dx%d, baked %.0fpx (scale=%.1f), "
-           "ascent=%.1f descent=%.1f\n",
-           out_font->atlas_w, out_font->atlas_h,
-           out_font->baked_px, cx,
-           out_font->ascent, out_font->descent);
+    vkCreateSampler(inst->vk_device, &samp_ci, NULL, &font->sampler);
     return true;
+}
+
+/* ---- Core creation ---- */
+
+static bool font_create_internal(Ca_Instance *inst, GLFWwindow *glfw_win,
+                                 Ca_Font *out_font,
+                                 const unsigned char *ttf_data,
+                                 size_t ttf_size, float font_px)
+{
+    (void)ttf_size;
+    memset(out_font, 0, sizeof(*out_font));
+
+    float cx = 1.0f;
+    glfwGetWindowContentScale(glfw_win, &cx, NULL);
+    out_font->content_scale = cx;
+    out_font->default_size  = font_px;
+
+    stbtt_fontinfo info;
+    memset(&info, 0, sizeof(info));
+    if (!stbtt_InitFont(&info, ttf_data,
+                        stbtt_GetFontOffsetForIndex(ttf_data, 0)))
+        return false;
+
+    int cpt = chars_per_tier();
+
+    /* Allocate chardata for each tier */
+    for (int t = 0; t < CA_FONT_TIER_COUNT; t++) {
+        Ca_FontTier *tier = &out_font->tiers[t];
+        tier->logical_px = g_tier_sizes[t];
+        tier->baked_px   = (float)(int)(tier->logical_px * cx + 0.5f);
+        if (tier->baked_px < 8) tier->baked_px = 8;
+
+        float scale = stbtt_ScaleForPixelHeight(&info, tier->baked_px);
+        int a, d, lg;
+        stbtt_GetFontVMetrics(&info, &a, &d, &lg);
+        tier->ascent   = (float)a  * scale / cx;
+        tier->descent  = (float)d  * scale / cx;
+        tier->line_gap = (float)lg * scale / cx;
+
+        tier->chardata_block = (stbtt_packedchar *)calloc(
+            (size_t)cpt, sizeof(stbtt_packedchar));
+        if (!tier->chardata_block) goto fail;
+
+        int offset = 0;
+        for (int r = 0; r < CA_FONT_RANGE_COUNT; r++) {
+            tier->ranges[r].first_codepoint = g_range_defs[r].first;
+            tier->ranges[r].num_chars       = g_range_defs[r].count;
+            tier->ranges[r].chardata        = tier->chardata_block + offset;
+            offset += g_range_defs[r].count;
+        }
+    }
+
+    /* Pack all tiers into one atlas (4096x4096) */
+    out_font->atlas_w = 4096;
+    out_font->atlas_h = 4096;
+    size_t bmp_sz = (size_t)out_font->atlas_w * out_font->atlas_h;
+    unsigned char *bitmap = (unsigned char *)calloc(1, bmp_sz);
+    if (!bitmap) goto fail;
+
+    stbtt_pack_context ctx;
+    stbtt_PackBegin(&ctx, bitmap, out_font->atlas_w, out_font->atlas_h,
+                    0, 1, NULL);
+
+    int h_over = (cx < 1.5f) ? 2 : 1;
+    stbtt_PackSetOversampling(&ctx, h_over, 1);
+
+    for (int t = 0; t < CA_FONT_TIER_COUNT; t++) {
+        Ca_FontTier *tier = &out_font->tiers[t];
+
+        stbtt_pack_range ranges[CA_FONT_RANGE_COUNT];
+        for (int r = 0; r < CA_FONT_RANGE_COUNT; r++) {
+            ranges[r].font_size                       = tier->baked_px;
+            ranges[r].first_unicode_codepoint_in_range = tier->ranges[r].first_codepoint;
+            ranges[r].num_chars                        = tier->ranges[r].num_chars;
+            ranges[r].chardata_for_range               = tier->ranges[r].chardata;
+            ranges[r].array_of_unicode_codepoints      = NULL;
+        }
+
+        int ok = stbtt_PackFontRanges(&ctx, ttf_data, 0,
+                                      ranges, CA_FONT_RANGE_COUNT);
+
+        /* Check if ASCII 'A' got packed — if so the tier is usable */
+        stbtt_packedchar *test = &tier->ranges[0].chardata['A' - 32];
+        tier->packed = (test->x1 > test->x0);
+        (void)ok;
+    }
+
+    stbtt_PackEnd(&ctx);
+
+    if (!upload_atlas(inst, out_font, bitmap)) {
+        free(bitmap);
+        goto fail;
+    }
+    free(bitmap);
+
+    int packed_count = 0;
+    for (int t = 0; t < CA_FONT_TIER_COUNT; t++)
+        if (out_font->tiers[t].packed) packed_count++;
+
+    printf("[font] atlas %dx%d, %d/%d tiers packed (scale=%.1f, oversample=%dx1)\n",
+           out_font->atlas_w, out_font->atlas_h,
+           packed_count, CA_FONT_TIER_COUNT, cx, h_over);
+    return true;
+
+fail:
+    for (int t = 0; t < CA_FONT_TIER_COUNT; t++)
+        free(out_font->tiers[t].chardata_block);
+    memset(out_font, 0, sizeof(*out_font));
+    return false;
 }
 
 bool ca_font_create(Ca_Instance *inst, GLFWwindow *glfw_win,
@@ -280,5 +354,7 @@ void ca_font_destroy(Ca_Instance *inst, Ca_Font *font)
         vkDestroyImage(inst->vk_device, font->image, NULL);
     if (font->memory != VK_NULL_HANDLE)
         vkFreeMemory(inst->vk_device, font->memory, NULL);
+    for (int t = 0; t < CA_FONT_TIER_COUNT; t++)
+        free(font->tiers[t].chardata_block);
     memset(font, 0, sizeof(*font));
 }
