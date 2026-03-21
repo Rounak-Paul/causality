@@ -682,8 +682,68 @@ static void maybe_transition(Ca_Node *node, Ca_CssPropId prop,
 void ca_label_set_text(Ca_Label *label, const char *text)
 {
     assert(label && label->in_use);
-    snprintf(label->text, CA_LABEL_TEXT_MAX, "%s", text ? text : "");
-    label->node->dirty |= CA_DIRTY_CONTENT;
+    if (!text) text = "";
+    size_t len = strlen(text);
+    if (len < CA_LABEL_TEXT_MAX) {
+        memcpy(label->text, text, len + 1);
+        free(label->dyn_text);
+        label->dyn_text = NULL;
+    } else {
+        char *buf = (char *)realloc(label->dyn_text, len + 1);
+        if (buf) {
+            memcpy(buf, text, len + 1);
+            label->dyn_text = buf;
+        }
+    }
+    label->node->dirty |= CA_DIRTY_CONTENT | CA_DIRTY_LAYOUT;
+}
+
+void ca_label_set_color(Ca_Label *label, uint32_t color)
+{
+    assert(label && label->in_use);
+    if (label->color != color) {
+        label->color = color;
+        label->node->dirty |= CA_DIRTY_CONTENT;
+    }
+}
+
+void ca_label_set_hidden(Ca_Label *label, bool hidden)
+{
+    assert(label && label->in_use);
+    if (label->node->desc.hidden != hidden) {
+        label->node->desc.hidden = hidden;
+        label->node->dirty |= CA_DIRTY_LAYOUT | CA_DIRTY_CONTENT;
+    }
+}
+
+/* ---- Scroll container helpers (look up node by CSS id) ---- */
+
+static Ca_Node *find_node_by_id(Ca_Window *window, const char *id)
+{
+    if (!window || !id || !window->node_pool) return NULL;
+    for (uint32_t i = 0; i < CA_MAX_NODES_PER_WINDOW; ++i) {
+        Ca_Node *n = &window->node_pool[i];
+        if (n->in_use && n->id[0] && strcmp(n->id, id) == 0)
+            return n;
+    }
+    return NULL;
+}
+
+void ca_scroll_to_bottom(Ca_Window *window, const char *id)
+{
+    Ca_Node *n = find_node_by_id(window, id);
+    if (!n) return;
+    float max_scroll = n->content_h - n->h;
+    if (max_scroll < 0.0f) max_scroll = 0.0f;
+    n->scroll_y = max_scroll;
+    n->dirty |= CA_DIRTY_LAYOUT;
+}
+
+void ca_window_set_on_frame(Ca_Window *window, void (*fn)(void *), void *user_data)
+{
+    if (!window) return;
+    window->on_frame_fn   = fn;
+    window->on_frame_data = user_data;
 }
 
 void ca_button_set_text(Ca_Button *button, const char *text)

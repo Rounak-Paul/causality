@@ -63,6 +63,9 @@ void         ca_instance_destroy(Ca_Instance *instance);
 /* Block until all windows are closed, then destroy the instance. */
 int          ca_instance_exec(Ca_Instance *instance);
 
+/* Wake the event loop from another thread (e.g. after posting async data). */
+void         ca_instance_wake(void);
+
 /* ============================================================
    WINDOW
    ============================================================ */
@@ -358,6 +361,19 @@ Ca_Label *ca_h6(const Ca_TextDesc *desc);        /* 12px */
 /* ---- Runtime setters ---- */
 
 void ca_label_set_text(Ca_Label *label, const char *text);
+void ca_label_set_color(Ca_Label *label, uint32_t color);
+void ca_label_set_hidden(Ca_Label *label, bool hidden);
+
+/* ---- Scroll container queries (by CSS id) ---- */
+
+/// Scrolls a scroll container to the bottom of its content.
+void ca_scroll_to_bottom(Ca_Window *window, const char *id);
+
+/* ---- Window callbacks ---- */
+
+/// Registers a per-frame callback invoked after input processing, before paint.
+void ca_window_set_on_frame(Ca_Window *window, void (*fn)(void *), void *user_data);
+
 void ca_button_set_text(Ca_Button *button, const char *text);
 void ca_button_set_background(Ca_Button *button, uint32_t color);
 void ca_input_set_text(Ca_TextInput *input, const char *text);

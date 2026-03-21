@@ -61,6 +61,11 @@ int ca_instance_exec(Ca_Instance *instance)
     return 0;
 }
 
+void ca_instance_wake(void)
+{
+    glfwPostEmptyEvent();
+}
+
 void ca_instance_set_stylesheet(Ca_Instance *instance, Ca_Stylesheet *ss)
 {
     if (!instance) return;

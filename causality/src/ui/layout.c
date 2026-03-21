@@ -13,7 +13,8 @@ static float measure_wrapped_text_height(Ca_Node *node)
     if (!node->desc.text_wrap)
         return 0.0f;
     Ca_Label *lbl = (Ca_Label *)node->widget;
-    if (!lbl->in_use || lbl->text[0] == '\0')
+    const char *txt = ca_label_get_text(lbl);
+    if (!lbl->in_use || txt[0] == '\0')
         return 0.0f;
 
     Ca_Window *win = node->window;
@@ -37,7 +38,7 @@ static float measure_wrapped_text_height(Ca_Node *node)
 
     float cur_line_w = 0.0f;
     int line_count = 1;
-    const char *p = lbl->text;
+    const char *p = txt;
     while (*p) {
         float word_w = 0.0f;
         while (*p && *p != ' ' && *p != '\n') {
@@ -69,6 +70,13 @@ static float content_size(Ca_Node *node, bool want_height)
 
     float sz = want_height ? node->desc.height : node->desc.width;
     if (sz > 0.0f) return sz;
+
+    /* Overflow containers (hidden / scroll / auto) have bounded content;
+       return their explicit size or 0 so the parent flex distribution
+       can assign remaining space via flex-grow instead of inflating
+       to the full scrollable content height. */
+    int ov = want_height ? node->desc.overflow_y : node->desc.overflow_x;
+    if (ov > 0) return 0.0f;
 
     /* Leaf: height ≈ line-height, width = 0 (unknown, distribute remaining) */
     if (node->child_count == 0)

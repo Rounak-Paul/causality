@@ -145,11 +145,14 @@ static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, Cli
     switch (node->widget_type) {
     case CA_WIDGET_LABEL: {
         Ca_Label *lbl = (Ca_Label *)node->widget;
-        if (lbl && lbl->in_use && lbl->text[0]) {
-            if (node->desc.text_wrap)
-                paint_text_wrapped(win, font, node, lbl->text, lbl->color);
-            else
-                paint_text(win, font, node, lbl->text, lbl->color);
+        if (lbl && lbl->in_use) {
+            const char *txt = ca_label_get_text(lbl);
+            if (txt[0]) {
+                if (node->desc.text_wrap)
+                    paint_text_wrapped(win, font, node, txt, lbl->color);
+                else
+                    paint_text(win, font, node, txt, lbl->color);
+            }
         }
         break;
     }

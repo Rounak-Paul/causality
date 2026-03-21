@@ -234,7 +234,7 @@ typedef struct {
 #define CA_MAX_DRAW_CMDS_PER_WINDOW 8192
 #define CA_MAX_TRANSITIONS_PER_NODE  4
 
-#define CA_MAX_LABELS_PER_WINDOW    256
+#define CA_MAX_LABELS_PER_WINDOW    512
 #define CA_MAX_BUTTONS_PER_WINDOW   128
 #define CA_MAX_INPUTS_PER_WINDOW     64
 #define CA_MAX_CHECKBOXES_PER_WINDOW 64
@@ -411,9 +411,13 @@ struct Ca_Node {
 struct Ca_Label {
     Ca_Node  *node;
     char      text[CA_LABEL_TEXT_MAX];
-    uint32_t  color;   /* packed RGBA foreground colour */
+    char     *dyn_text;  /* heap-allocated when text > CA_LABEL_TEXT_MAX */
+    uint32_t  color;     /* packed RGBA foreground colour */
     bool      in_use;
 };
+
+static inline const char *ca_label_get_text(const Ca_Label *lbl)
+{ return lbl->dyn_text ? lbl->dyn_text : lbl->text; }
 
 struct Ca_Button {
     Ca_Node    *node;
@@ -709,6 +713,10 @@ struct Ca_Window {
     double        dbg_fps_accum;       /* accumulator for FPS calculation */
     uint32_t      dbg_fps_frames;      /* frames counted in current second */
     double        dbg_fps_last_time;   /* last second boundary */
+
+    /* Per-frame user callback (fires after input pass, before paint) */
+    void        (*on_frame_fn)(void *user_data);
+    void         *on_frame_data;
 };
 
 /* ======================================================

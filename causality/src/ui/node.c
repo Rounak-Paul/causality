@@ -42,6 +42,10 @@ void ca_node_system_init(Ca_Window *win)
 
 void ca_node_system_shutdown(Ca_Window *win)
 {
+    /* Free dynamic text buffers before releasing the label pool */
+    for (uint32_t i = 0; i < CA_MAX_LABELS_PER_WINDOW; ++i)
+        free(win->label_pool[i].dyn_text);
+
     free(win->node_pool);
     free(win->draw_cmds);
     free(win->sorted_idx);

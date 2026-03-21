@@ -226,6 +226,38 @@ void ca_ui_update(Ca_Instance *inst)
             }
         }
 
+        /* Per-frame user callback — runs after input pass (scroll_y is
+           updated) and before paint so any label changes are painted
+           in the same frame. */
+        if (win->on_frame_fn) {
+            win->on_frame_fn(win->on_frame_data);
+
+            /* The callback may have dirtied nodes (label text, margin, etc.)
+               or triggered a layout change.  Re-scan so the paint pass below
+               picks them up in the same frame. */
+            for (uint32_t j = 0; j < CA_MAX_NODES_PER_WINDOW; ++j) {
+                Ca_Node *n = &win->node_pool[j];
+                if (!n->in_use) continue;
+                if (n->dirty & (CA_DIRTY_LAYOUT | CA_DIRTY_CHILDREN)) {
+                    ca_node_propagate_layout(win);
+                    ca_layout_pass(win);
+                    win->paint_cache_used = 0;
+                    for (uint32_t k = 0; k < CA_MAX_NODES_PER_WINDOW; ++k) {
+                        Ca_Node *m = &win->node_pool[k];
+                        if (m->in_use) {
+                            m->dirty |= CA_DIRTY_CONTENT;
+                            m->cache_count      = 0;
+                            m->cache_post_count = 0;
+                        }
+                    }
+                    any_content = true;
+                    break;
+                }
+                if (n->dirty & CA_DIRTY_CONTENT)
+                    any_content = true;
+            }
+        }
+
         /* 6. Incremental paint pass — only dirty nodes are repainted;
               clean nodes reuse cached draw commands.
               The one-shot dbg_force_repaint flag forces a single paint pass
