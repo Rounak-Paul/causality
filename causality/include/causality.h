@@ -86,6 +86,9 @@ void       ca_window_destroy(Ca_Window *window);
    The window is fully destroyed by the event loop on the next frame. */
 void       ca_window_close(Ca_Window *window);
 
+/* Returns true if the window handle is valid and still open. */
+bool       ca_window_is_open(const Ca_Window *window);
+
 /* UI scale factor — like browser zoom.
    1.0 = 100% (default), 1.5 = 150%, 2.0 = 200%, etc.
    Affects all widget sizes, paddings, gaps, and text rendering. */
@@ -619,8 +622,9 @@ void ca_context_menu(const Ca_CtxMenuDesc *desc);
 Ca_MenuBar *ca_menu_bar(const Ca_MenuBarDesc *desc);
 
 /* Modal / dialog */
-void ca_modal_begin(const Ca_ModalDesc *desc);
-void ca_modal_end(void);
+Ca_Modal *ca_modal_begin(const Ca_ModalDesc *desc);
+void      ca_modal_end(void);
+void      ca_modal_set_visible(Ca_Modal *modal, bool visible);
 
 /* ============================================================
    UI — SPLITTER (resizable split container)

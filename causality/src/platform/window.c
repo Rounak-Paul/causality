@@ -270,6 +270,11 @@ void ca_window_close(Ca_Window *window)
     glfwSetWindowShouldClose(window->glfw, GLFW_TRUE);
 }
 
+bool ca_window_is_open(const Ca_Window *window)
+{
+    return window && window->in_use;
+}
+
 void ca_window_set_scale(Ca_Window *window, float scale)
 {
     if (!window || !window->in_use) return;

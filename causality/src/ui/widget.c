@@ -1698,18 +1698,18 @@ void ca_context_menu(const Ca_CtxMenuDesc *desc)
    PUBLIC — Modal / Dialog
    ============================================================ */
 
-void ca_modal_begin(const Ca_ModalDesc *desc)
+Ca_Modal *ca_modal_begin(const Ca_ModalDesc *desc)
 {
     assert(g_ctx.active && desc);
     Ca_Modal *m = alloc_modal(g_ctx.window);
-    if (!m) return;
+    if (!m) return NULL;
 
     Ca_NodeDesc nd = {0};
     /* The modal takes full parent size, overlay renders in paint */
     nd.hidden = !desc->visible;
 
     Ca_Node *node = ca_node_add(ctx_top(), &nd);
-    if (!node) return;
+    if (!node) return NULL;
 
     m->node = node;
     m->in_use = true;
@@ -1721,12 +1721,21 @@ void ca_modal_begin(const Ca_ModalDesc *desc)
     uint32_t dummy = 0;
     apply_css(node, &node->desc, CA_ELEM_MODAL, desc->style, desc->id, &dummy);
     ctx_push(node);
+    return m;
 }
 
 void ca_modal_end(void)
 {
     assert(g_ctx.active && g_ctx.depth > 0);
     ctx_pop();
+}
+
+void ca_modal_set_visible(Ca_Modal *modal, bool visible)
+{
+    if (!modal || !modal->in_use) return;
+    modal->visible = visible;
+    if (modal->node)
+        node_set_hidden(modal->node, !visible);
 }
 
 /* ============================================================
@@ -2159,7 +2168,7 @@ void ca_widget_input_pass(Ca_Window *win)
             if (max_scroll < 0) max_scroll = 0;
             if (scroll_target->scroll_y < 0) scroll_target->scroll_y = 0;
             if (scroll_target->scroll_y > max_scroll) scroll_target->scroll_y = max_scroll;
-            scroll_target->dirty |= CA_DIRTY_LAYOUT;
+            scroll_target->dirty |= CA_DIRTY_LAYOUT | CA_DIRTY_CONTENT;
         }
     }
 

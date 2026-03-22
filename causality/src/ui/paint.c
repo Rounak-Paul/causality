@@ -937,6 +937,9 @@ static void paint_focus_ring(Ca_Window *win, Ca_Node *node)
 {
     if (!node || !node->in_use || node->desc.hidden) return;
 
+    /* Respect the clip region of any overflow: scroll/hidden ancestor */
+    ClipRect clip = find_clip_for_node(node);
+
     float thickness = 2.0f;
     float inset     = -2.0f; /* negative = outside */
 
@@ -959,6 +962,7 @@ static void paint_focus_ring(Ca_Window *win, Ca_Node *node)
         cmd->h      = sides[i].h;
         cmd->r = 0.4f; cmd->g = 0.6f; cmd->b = 1.0f; cmd->a = 0.85f;
         cmd->in_use = true;
+        set_clip(cmd, clip);
     }
 }
 
@@ -1279,6 +1283,7 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
                 tmp.w = menu_w - 24.0f;
                 tmp.h = item_h;
                 tmp.window = win;
+                tmp.desc.text_align = 1; /* left-align */
                 paint_text(win, font, &tmp, am->items[ii].label,
                            mb->dropdown_text);
                 for (uint32_t gi = glyph_start; gi < win->draw_cmd_count; ++gi)

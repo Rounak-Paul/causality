@@ -228,15 +228,15 @@ typedef struct {
    ====================================================== */
 
 #define CA_MAX_STATES               512
-#define CA_MAX_NODES_PER_WINDOW    1024
-#define CA_MAX_NODE_CHILDREN        128
+#define CA_MAX_NODES_PER_WINDOW    2048
+#define CA_MAX_NODE_CHILDREN        256
 #define CA_MAX_NODE_SUBS              8
 #define CA_MAX_STATE_SUBSCRIBERS     64
 #define CA_MAX_DRAW_CMDS_PER_WINDOW 8192
 #define CA_MAX_TRANSITIONS_PER_NODE  4
 
 #define CA_MAX_LABELS_PER_WINDOW    512
-#define CA_MAX_BUTTONS_PER_WINDOW   128
+#define CA_MAX_BUTTONS_PER_WINDOW   384
 #define CA_MAX_INPUTS_PER_WINDOW     64
 #define CA_MAX_CHECKBOXES_PER_WINDOW 64
 #define CA_MAX_RADIOS_PER_WINDOW     64
