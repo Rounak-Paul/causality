@@ -293,19 +293,13 @@ void ca_ui_update(Ca_Instance *inst)
               The one-shot dbg_force_repaint flag forces a single paint pass
               when the debug overlay is toggled (so the panel appears/disappears). */
 
-        /* Guard: if the cache pool is more than 75 % full, do a full reset
-           so that cache_commands() doesn't silently drop entries (which would
-           make clean nodes invisible on subsequent frames). */
+        /* Guard: if the cache pool is more than 75 % full, compact it
+           so that cache_commands() doesn't silently drop entries (which
+           would make clean nodes invisible on subsequent frames).
+           Compaction reclaims dead/orphaned slots WITHOUT marking any
+           node dirty — only nodes that genuinely changed will repaint. */
         if (win->paint_cache_used > CA_MAX_DRAW_CMDS_PER_WINDOW * 3 / 4) {
-            win->paint_cache_used = 0;
-            for (uint32_t j = 0; j < CA_MAX_NODES_PER_WINDOW; ++j) {
-                Ca_Node *n = &win->node_pool[j];
-                if (!n->in_use) continue;
-                n->dirty |= CA_DIRTY_CONTENT;
-                n->cache_count      = 0;
-                n->cache_post_count = 0;
-            }
-            any_content = true;
+            ca_paint_cache_compact(win);
         }
 
         if (any_content || win->dbg_force_repaint) {

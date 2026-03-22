@@ -8,3 +8,8 @@
    The draw_cmd_count is reset by the caller (ui_update) before this runs,
    so this always does a full rebuild of the draw list. */
 void ca_paint_pass(Ca_Instance *inst, Ca_Window *win);
+
+/* Defragment the per-node paint cache by compacting live entries to the
+   front of the pool.  No nodes are marked dirty — only dead (orphaned)
+   slots are reclaimed.  Call when paint_cache_used crosses a threshold. */
+void ca_paint_cache_compact(Ca_Window *win);

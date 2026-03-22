@@ -369,11 +369,21 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
 
 #define ALIGN_UP(val, align) (((val) + (align) - 1) & ~((uint32_t)(align) - 1))
 
-    /* Text/image region starts after the maximum possible rect region.
-       Use draw_cmd_count as upper bound (all cmds could be rects). */
+    /* Count actual rect commands to compute tight text region offset.
+       Avoids over-reserving rect space when most commands are glyphs. */
+    uint32_t rect_cmd_count = 0;
+    for (uint32_t d = 0; d < win->draw_cmd_count; ++d) {
+        if (win->draw_cmds[d].in_use &&
+            win->draw_cmds[d].type == CA_DRAW_RECT)
+            rect_cmd_count++;
+    }
+    /* Factor 2 for two overlay phases (normal + overlay rects). */
+    uint32_t max_rects = rect_cmd_count;
     uint32_t text_byte_off = ALIGN_UP(
-        win->draw_cmd_count * (uint32_t)sizeof(Ca_RectPushConst),
+        max_rects * (uint32_t)sizeof(Ca_RectPushConst),
         inst->min_ssbo_align);
+    uint32_t max_ti = (CA_INSTANCE_BUF_SIZE - text_byte_off)
+                    / (uint32_t)sizeof(Ca_TextInstance);
 
     Ca_RectPushConst *rect_base = (Ca_RectPushConst *)f->instance_mapped;
     Ca_TextInstance  *ti_base   =
@@ -501,6 +511,7 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
                     if (!cmd->in_use || cmd->type != CA_DRAW_GLYPH || cmd->a < 0.004f)
                         continue;
                     if (cmd->overlay != want_overlay) continue;
+                    if (ti_n >= max_ti) break;
 
                     VkRect2D sc_new = full_scissor;
                     if (cmd->has_clip) {
@@ -619,6 +630,7 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
                     cur_sc = sc_new;
                     first  = false;
 
+                    if (ti_n >= max_ti) break;
                     Ca_TextInstance *dst = &ti_base[ti_n++];
                     dst->pos[0] = cmd->x;            dst->pos[1] = cmd->y;
                     dst->size[0] = cmd->w;            dst->size[1] = cmd->h;
@@ -712,6 +724,7 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
                     cur_sc = sc_new;
                     first  = false;
 
+                    if (ti_n >= max_ti) break;
                     Ca_TextInstance *dst = &ti_base[ti_n++];
                     dst->pos[0] = cmd->x;            dst->pos[1] = cmd->y;
                     dst->size[0] = cmd->w;            dst->size[1] = cmd->h;

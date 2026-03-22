@@ -1052,6 +1052,66 @@ static void cache_commands(Ca_Window *win, Ca_Node *node,
     *cc = count;
 }
 
+/* ================================================================
+   PAINT CACHE COMPACTION
+   ================================================================
+   Defragments the append-only cache pool by collecting all live spans
+   (pre-children + post-children) from in-use nodes, sorting them by
+   position, and copying them forward.  Dead/orphaned slots are
+   reclaimed without marking any node dirty — only genuinely modified
+   nodes will be repainted on the next frame.
+   ================================================================ */
+
+void ca_paint_cache_compact(Ca_Window *win)
+{
+    /* Span descriptor — points back into the node so we can update offsets */
+    typedef struct { uint32_t start; uint32_t count; uint32_t *p_start; } CacheSpan;
+
+    /* Worst case: every in-use node has both pre and post entries */
+    CacheSpan spans[CA_MAX_NODES_PER_WINDOW * 2];
+    uint32_t span_count = 0;
+
+    for (uint32_t i = 0; i < CA_MAX_NODES_PER_WINDOW; ++i) {
+        Ca_Node *n = &win->node_pool[i];
+        if (!n->in_use) continue;
+        if (n->cache_count > 0 && span_count < CA_MAX_NODES_PER_WINDOW * 2)
+            spans[span_count++] = (CacheSpan){ n->cache_start, n->cache_count, &n->cache_start };
+        if (n->cache_post_count > 0 && span_count < CA_MAX_NODES_PER_WINDOW * 2)
+            spans[span_count++] = (CacheSpan){ n->cache_post_start, n->cache_post_count, &n->cache_post_start };
+    }
+
+    if (span_count == 0) {
+        win->paint_cache_used = 0;
+        return;
+    }
+
+    /* Insertion sort by start position (runs only during infrequent compaction) */
+    for (uint32_t i = 1; i < span_count; ++i) {
+        CacheSpan tmp = spans[i];
+        uint32_t j = i;
+        while (j > 0 && spans[j - 1].start > tmp.start) {
+            spans[j] = spans[j - 1];
+            j--;
+        }
+        spans[j] = tmp;
+    }
+
+    /* Compact forward — dest <= source always holds because we
+       process spans in ascending start order. */
+    uint32_t dest = 0;
+    for (uint32_t i = 0; i < span_count; ++i) {
+        if (spans[i].start != dest) {
+            memmove(&win->paint_cache[dest],
+                    &win->paint_cache[spans[i].start],
+                    spans[i].count * sizeof(Ca_DrawCmd));
+        }
+        *spans[i].p_start = dest;
+        dest += spans[i].count;
+    }
+
+    win->paint_cache_used = dest;
+}
+
 /* DFS tree walk with per-node paint caching.
    - Dirty nodes: paint fresh → cache → commands already in draw_cmds
    - Clean nodes: copy from cache → draw_cmds */
