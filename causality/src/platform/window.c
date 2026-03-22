@@ -128,10 +128,13 @@ void ca_window_system_shutdown(Ca_Instance *inst)
         if (inst->windows[i].in_use)
             ca_window_destroy(&inst->windows[i]);
     }
-    if (--g_glfw_refcount <= 0) {
-        glfwTerminate();
-        g_glfw_refcount = 0;
-    }
+    if (g_glfw_refcount > 0)
+        --g_glfw_refcount;
+    /* glfwTerminate() is intentionally omitted.  Calling
+       glfwTerminate → glfwInit in rapid succession races with
+       MoltenVK / Vulkan-loader background threads on macOS,
+       producing "mutex lock failed: Invalid argument" crashes.
+       The OS reclaims all GLFW resources at process exit. */
 }
 
 bool ca_window_system_tick(Ca_Instance *inst)

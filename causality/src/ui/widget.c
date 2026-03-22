@@ -1427,8 +1427,7 @@ Ca_TreeNode *ca_tree_node_begin(const Ca_TreeNodeDesc *desc)
     hdr.padding_left = s(4.0f) * (float)tn->depth;
     hdr.text_align = 1; /* left-aligned */
     /* Sensible defaults — CSS can override via the tree node style */
-    hdr.background = ca_color(1.0f, 1.0f, 1.0f, 0.04f); /* subtle hover */
-    hdr.corner_radius = s(3.0f);
+    hdr.corner_radius = 0.0f;
     Ca_Node *hdr_node = ca_node_add(node, &hdr);
     (void)hdr_node;
 
