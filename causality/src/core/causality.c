@@ -51,13 +51,6 @@ void ca_instance_destroy(Ca_Instance *instance)
     printf("[causality] instance destroyed\n");
 }
 
-int ca_instance_exec(Ca_Instance *instance)
-{
-    while (ca_instance_tick(instance)) { }
-    ca_instance_destroy(instance);
-    return 0;
-}
-
 bool ca_instance_tick(Ca_Instance *instance)
 {
     if (!ca_window_system_tick(instance)) return false;

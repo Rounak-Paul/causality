@@ -1036,5 +1036,7 @@ int main(void)
     Ca_Thread *worker = ca_thread_create(worker_fn, NULL);
     if (worker) ca_thread_join(worker);
 
-    return ca_instance_exec(instance);
+    while (ca_instance_tick(instance)) { }
+    ca_instance_destroy(instance);
+    return 0;
 }

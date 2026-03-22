@@ -60,17 +60,8 @@ typedef struct Ca_InstanceDesc {
 Ca_Instance *ca_instance_create(const Ca_InstanceDesc *desc);
 void         ca_instance_destroy(Ca_Instance *instance);
 
-/* Block until all windows are closed, then destroy the instance. */
-int          ca_instance_exec(Ca_Instance *instance);
-
-/* Low-level loop primitives — use instead of ca_instance_exec when you need
-   to control the shutdown order (e.g. destroy GPU resources before the
-   instance is torn down).
-   Typical pattern:
-       while (ca_instance_tick(inst)) { }   // run the event loop
-       // ... clean up your own Vulkan resources here ...
-       ca_instance_destroy(inst);           // tears down the GPU context
-*/
+/* Pumps the event loop: processes window events, updates UI, renders one frame.
+   Returns false when all windows have been closed. */
 bool         ca_instance_tick(Ca_Instance *instance);
 
 /* Wake the event loop from another thread (e.g. after posting async data). */
