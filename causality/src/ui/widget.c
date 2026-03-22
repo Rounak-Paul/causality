@@ -298,6 +298,8 @@ static Ca_NodeDesc div_to_nd(const Ca_DivDesc *d)
     nd.shadow_blur    = d->shadow_blur;
     nd.shadow_color   = d->shadow_color;
     nd.z_index        = (int16_t)d->z_index;
+    nd.hidden         = d->hidden;
+    nd.disabled       = d->disabled;
     return nd;
 }
 
@@ -346,7 +348,7 @@ void ca_ui_end(void)
    PUBLIC — <div>
    ============================================================ */
 
-void ca_div_begin(const Ca_DivDesc *desc)
+Ca_Div *ca_div_begin(const Ca_DivDesc *desc)
 {
     assert(g_ctx.active);
     Ca_NodeDesc nd = div_to_nd(desc);
@@ -367,6 +369,7 @@ void ca_div_begin(const Ca_DivDesc *desc)
     }
 
     ctx_push(node);
+    return (Ca_Div *)node;
 }
 
 void ca_div_end(void)
@@ -384,6 +387,7 @@ Ca_Label *ca_text(const Ca_TextDesc *desc)
     assert(g_ctx.active && desc);
     Ca_Label *lbl = add_label(g_ctx.window, ctx_top(), desc);
     if (lbl && lbl->node) {
+        if (desc->hidden) lbl->node->desc.hidden = true;
         apply_css(lbl->node, &lbl->node->desc, CA_ELEM_TEXT,
                   desc->style, desc->id, &lbl->color);
         /* Default height if neither user nor CSS set it.
@@ -420,6 +424,8 @@ Ca_Button *ca_btn(const Ca_BtnDesc *desc)
     assert(g_ctx.active && desc);
     Ca_Button *btn = add_button(g_ctx.window, ctx_top(), desc);
     if (btn && btn->node) {
+        if (desc->hidden)   btn->node->desc.hidden   = true;
+        if (desc->disabled) btn->node->desc.disabled = true;
         apply_css(btn->node, &btn->node->desc, CA_ELEM_BUTTON,
                   desc->style, desc->id, &btn->text_color);
         /* Auto-width from text if neither user nor CSS set it */
@@ -439,6 +445,8 @@ Ca_Button *ca_btn_begin(const Ca_BtnDesc *desc)
     assert(g_ctx.active && desc);
     Ca_Button *btn = add_button(g_ctx.window, ctx_top(), desc);
     assert(btn);
+    if (desc->hidden)   btn->node->desc.hidden   = true;
+    if (desc->disabled) btn->node->desc.disabled = true;
     apply_css(btn->node, &btn->node->desc, CA_ELEM_BUTTON,
               desc->style, desc->id, &btn->text_color);
     /* Nestable buttons auto-size from children; only apply fallback
@@ -601,6 +609,9 @@ Ca_TextInput *ca_input(const Ca_InputDesc *desc)
         inp->change_data = desc->change_data;
     }
 
+    if (desc->hidden)   node->desc.hidden   = true;
+    if (desc->disabled) node->desc.disabled = true;
+
     apply_css(node, &node->desc, CA_ELEM_INPUT,
               desc->style, desc->id, &inp->text_color);
 
@@ -718,6 +729,194 @@ void ca_label_set_hidden(Ca_Label *label, bool hidden)
     }
 }
 
+/* ============================================================
+   RUNTIME SETTERS — hidden / disabled (all widget types)
+   ============================================================ */
+
+/* Internal helpers to avoid repetition */
+static void node_set_hidden(Ca_Node *node, bool hidden)
+{
+    if (node->desc.hidden != hidden) {
+        node->desc.hidden = hidden;
+        node->dirty |= CA_DIRTY_LAYOUT | CA_DIRTY_CONTENT;
+    }
+}
+
+static void node_set_disabled(Ca_Node *node, bool disabled)
+{
+    if (node->desc.disabled != disabled) {
+        node->desc.disabled = disabled;
+        node->dirty |= CA_DIRTY_CONTENT;
+    }
+}
+
+/* Div */
+void ca_div_set_hidden(Ca_Div *div, bool hidden)
+{
+    assert(div);
+    node_set_hidden((Ca_Node *)div, hidden);
+}
+
+void ca_div_set_disabled(Ca_Div *div, bool disabled)
+{
+    assert(div);
+    node_set_disabled((Ca_Node *)div, disabled);
+}
+
+bool ca_div_is_hidden(const Ca_Div *div)
+{
+    assert(div);
+    return ((const Ca_Node *)div)->desc.hidden;
+}
+
+bool ca_div_is_disabled(const Ca_Div *div)
+{
+    assert(div);
+    return ((const Ca_Node *)div)->desc.disabled;
+}
+
+/* Button */
+void ca_button_set_hidden(Ca_Button *button, bool hidden)
+{
+    assert(button && button->in_use);
+    node_set_hidden(button->node, hidden);
+}
+
+void ca_button_set_disabled(Ca_Button *button, bool disabled)
+{
+    assert(button && button->in_use);
+    node_set_disabled(button->node, disabled);
+}
+
+bool ca_button_is_hidden(const Ca_Button *button)
+{
+    assert(button && button->in_use);
+    return button->node->desc.hidden;
+}
+
+bool ca_button_is_disabled(const Ca_Button *button)
+{
+    assert(button && button->in_use);
+    return button->node->desc.disabled;
+}
+
+/* TextInput */
+void ca_input_set_hidden(Ca_TextInput *input, bool hidden)
+{
+    assert(input && input->in_use);
+    node_set_hidden(input->node, hidden);
+}
+
+void ca_input_set_disabled(Ca_TextInput *input, bool disabled)
+{
+    assert(input && input->in_use);
+    node_set_disabled(input->node, disabled);
+}
+
+bool ca_input_is_hidden(const Ca_TextInput *input)
+{
+    assert(input && input->in_use);
+    return input->node->desc.hidden;
+}
+
+bool ca_input_is_disabled(const Ca_TextInput *input)
+{
+    assert(input && input->in_use);
+    return input->node->desc.disabled;
+}
+
+/* Checkbox */
+void ca_checkbox_set_hidden(Ca_Checkbox *cb, bool hidden)
+{
+    assert(cb && cb->in_use);
+    node_set_hidden(cb->node, hidden);
+}
+
+void ca_checkbox_set_disabled(Ca_Checkbox *cb, bool disabled)
+{
+    assert(cb && cb->in_use);
+    node_set_disabled(cb->node, disabled);
+}
+
+/* Radio */
+void ca_radio_set_hidden(Ca_Radio *r, bool hidden)
+{
+    assert(r && r->in_use);
+    node_set_hidden(r->node, hidden);
+}
+
+void ca_radio_set_disabled(Ca_Radio *r, bool disabled)
+{
+    assert(r && r->in_use);
+    node_set_disabled(r->node, disabled);
+}
+
+/* Slider */
+void ca_slider_set_hidden(Ca_Slider *s, bool hidden)
+{
+    assert(s && s->in_use);
+    node_set_hidden(s->node, hidden);
+}
+
+void ca_slider_set_disabled(Ca_Slider *s, bool disabled)
+{
+    assert(s && s->in_use);
+    node_set_disabled(s->node, disabled);
+}
+
+/* Toggle */
+void ca_toggle_set_hidden(Ca_Toggle *t, bool hidden)
+{
+    assert(t && t->in_use);
+    node_set_hidden(t->node, hidden);
+}
+
+void ca_toggle_set_disabled(Ca_Toggle *t, bool disabled)
+{
+    assert(t && t->in_use);
+    node_set_disabled(t->node, disabled);
+}
+
+/* Progress */
+void ca_progress_set_hidden(Ca_Progress *p, bool hidden)
+{
+    assert(p && p->in_use);
+    node_set_hidden(p->node, hidden);
+}
+
+/* Select */
+void ca_select_set_hidden(Ca_Select *s, bool hidden)
+{
+    assert(s && s->in_use);
+    node_set_hidden(s->node, hidden);
+}
+
+void ca_select_set_disabled(Ca_Select *s, bool disabled)
+{
+    assert(s && s->in_use);
+    node_set_disabled(s->node, disabled);
+}
+
+/* TabBar */
+void ca_tabs_set_hidden(Ca_TabBar *t, bool hidden)
+{
+    assert(t && t->in_use);
+    node_set_hidden(t->node, hidden);
+}
+
+void ca_tabs_set_disabled(Ca_TabBar *t, bool disabled)
+{
+    assert(t && t->in_use);
+    node_set_disabled(t->node, disabled);
+}
+
+/* TreeNode */
+void ca_tree_node_set_hidden(Ca_TreeNode *n, bool hidden)
+{
+    assert(n && n->in_use);
+    node_set_hidden(n->node, hidden);
+}
+
 /* ---- Scroll container helpers (look up node by CSS id) ---- */
 
 static Ca_Node *find_node_by_id(Ca_Window *window, const char *id)
@@ -810,6 +1009,9 @@ Ca_Checkbox *ca_checkbox(const Ca_CheckboxDesc *desc)
     cb->on_change = desc->on_change;
     cb->change_data = desc->change_data;
 
+    if (desc->hidden)   node->desc.hidden   = true;
+    if (desc->disabled) node->desc.disabled = true;
+
     uint32_t dummy = 0;
     apply_css(node, &node->desc, CA_ELEM_CHECKBOX, desc->style, desc->id, &cb->text_color);
 
@@ -862,6 +1064,9 @@ Ca_Radio *ca_radio(const Ca_RadioDesc *desc)
     else r->text[0] = '\0';
     r->on_change = desc->on_change;
     r->change_data = desc->change_data;
+
+    if (desc->hidden)   node->desc.hidden   = true;
+    if (desc->disabled) node->desc.disabled = true;
 
     uint32_t dummy = 0;
     apply_css(node, &node->desc, CA_ELEM_RADIO, desc->style, desc->id, &r->text_color);
@@ -922,6 +1127,9 @@ Ca_Slider *ca_slider(const Ca_SliderDesc *desc)
     sl->on_change = desc->on_change;
     sl->change_data = desc->change_data;
 
+    if (desc->hidden)   node->desc.hidden   = true;
+    if (desc->disabled) node->desc.disabled = true;
+
     uint32_t dummy = 0;
     apply_css(node, &node->desc, CA_ELEM_SLIDER, desc->style, desc->id, &dummy);
     return sl;
@@ -967,6 +1175,9 @@ Ca_Toggle *ca_toggle(const Ca_ToggleDesc *desc)
     t->on_change = desc->on_change;
     t->change_data = desc->change_data;
 
+    if (desc->hidden)   node->desc.hidden   = true;
+    if (desc->disabled) node->desc.disabled = true;
+
     uint32_t dummy = 0;
     apply_css(node, &node->desc, CA_ELEM_TOGGLE, desc->style, desc->id, &dummy);
     return t;
@@ -1008,6 +1219,8 @@ Ca_Progress *ca_progress(const Ca_ProgressDesc *desc)
     node->widget_type = CA_WIDGET_PROGRESS;
     node->widget      = p;
     p->bar_color = desc->bar_color ? desc->bar_color : ca_color(0.2f, 0.6f, 1.0f, 1.0f);
+
+    if (desc->hidden) node->desc.hidden = true;
 
     uint32_t dummy = 0;
     apply_css(node, &node->desc, CA_ELEM_PROGRESS, desc->style, desc->id, &dummy);
@@ -1057,6 +1270,9 @@ Ca_Select *ca_select(const Ca_SelectDesc *desc)
     }
     sel->on_change = desc->on_change;
     sel->change_data = desc->change_data;
+
+    if (desc->hidden)   node->desc.hidden   = true;
+    if (desc->disabled) node->desc.disabled = true;
 
     uint32_t dummy = 0;
     apply_css(node, &node->desc, CA_ELEM_SELECT, desc->style, desc->id, &dummy);
@@ -1110,6 +1326,9 @@ Ca_TabBar *ca_tabs(const Ca_TabBarDesc *desc)
     tb->inactive_bg   = desc->inactive_bg   ? desc->inactive_bg   : ca_color(0.15f, 0.15f, 0.2f, 1.0f);
     tb->active_text   = desc->active_text   ? desc->active_text   : ca_color(1.0f, 1.0f, 1.0f, 1.0f);
     tb->inactive_text = desc->inactive_text ? desc->inactive_text : ca_color(0.6f, 0.6f, 0.6f, 1.0f);
+
+    if (desc->hidden)   node->desc.hidden   = true;
+    if (desc->disabled) node->desc.disabled = true;
 
     uint32_t dummy = 0;
     apply_css(node, &node->desc, CA_ELEM_TABBAR, desc->style, desc->id, &dummy);
@@ -1183,6 +1402,8 @@ Ca_TreeNode *ca_tree_node_begin(const Ca_TreeNodeDesc *desc)
     else tn->text[0] = '\0';
     tn->on_toggle = desc->on_toggle;
     tn->toggle_data = desc->toggle_data;
+
+    if (desc->hidden) node->desc.hidden = true;
 
     /* Compute depth from parent chain (count tree node ancestors) */
     tn->depth = 0;
@@ -1750,9 +1971,20 @@ static bool point_in_node(Ca_Node *n, float px, float py)
            py >= n->y && py <= n->y + n->h;
 }
 
-/* Check if a node is focusable (button or text input) */
+/* Check if a node or any ancestor is disabled (cascading disabled state) */
+static bool is_effectively_disabled(Ca_Node *n)
+{
+    while (n) {
+        if (n->desc.disabled) return true;
+        n = n->parent;
+    }
+    return false;
+}
+
+/* Check if a node is focusable (button or text input, and not disabled) */
 static bool is_focusable_node(Ca_Window *win, Ca_Node *n)
 {
+    if (is_effectively_disabled(n)) return false;
     for (uint32_t i = 0; i < CA_MAX_BUTTONS_PER_WINDOW; ++i)
         if (win->button_pool[i].in_use && win->button_pool[i].node == n)
             return true;
@@ -1786,7 +2018,7 @@ static Ca_Button *button_for_node(Ca_Window *win, Ca_Node *n)
 static void collect_focusable(Ca_Node *node, Ca_Node **out, int *count, int max,
                               Ca_Window *win)
 {
-    if (!node || !node->in_use || node->desc.hidden) return;
+    if (!node || !node->in_use || node->desc.hidden || node->desc.disabled) return;
     if (is_focusable_node(win, node) && *count < max)
         out[(*count)++] = node;
     for (uint32_t i = 0; i < node->child_count; ++i)
@@ -1964,7 +2196,7 @@ void ca_widget_input_pass(Ca_Window *win)
     }
 
     /* --- Enter/Space to activate focused button --- */
-    if (win->focused_node) {
+    if (win->focused_node && !is_effectively_disabled(win->focused_node)) {
         Ca_Button *fbtn = button_for_node(win, win->focused_node);
         if (fbtn && fbtn->on_click) {
             for (uint32_t ki = 0; ki < win->key_count; ++ki) {
@@ -1992,6 +2224,7 @@ void ca_widget_input_pass(Ca_Window *win)
             for (uint32_t i = 0; i < CA_MAX_INPUTS_PER_WINDOW; ++i) {
                 Ca_TextInput *inp = &win->input_pool[i];
                 if (!inp->in_use || !inp->node) continue;
+                if (is_effectively_disabled(inp->node)) continue;
                 if (point_in_node(inp->node, mx, my)) {
                     clicked_focus = inp->node;
                     break;
@@ -2003,6 +2236,7 @@ void ca_widget_input_pass(Ca_Window *win)
             for (uint32_t i = 0; i < CA_MAX_BUTTONS_PER_WINDOW; ++i) {
                 Ca_Button *btn = &win->button_pool[i];
                 if (!btn->in_use || !btn->node) continue;
+                if (is_effectively_disabled(btn->node)) continue;
                 if (point_in_node(btn->node, mx, my)) {
                     clicked_focus = btn->node;
                     break;
@@ -2023,6 +2257,7 @@ void ca_widget_input_pass(Ca_Window *win)
             for (uint32_t i = 0; i < CA_MAX_BUTTONS_PER_WINDOW; ++i) {
                 Ca_Button *btn = &win->button_pool[i];
                 if (!btn->in_use || !btn->on_click || !btn->node) continue;
+                if (is_effectively_disabled(btn->node)) continue;
                 if (point_in_node(btn->node, mx, my))
                     btn->on_click(btn, btn->click_data);
             }
@@ -2033,6 +2268,7 @@ void ca_widget_input_pass(Ca_Window *win)
             for (uint32_t i = 0; i < CA_MAX_CHECKBOXES_PER_WINDOW; ++i) {
                 Ca_Checkbox *cb = &win->checkbox_pool[i];
                 if (!cb->in_use || !cb->node) continue;
+                if (is_effectively_disabled(cb->node)) continue;
                 if (point_in_node(cb->node, mx, my)) {
                     cb->checked = !cb->checked;
                     cb->node->dirty |= CA_DIRTY_CONTENT;
@@ -2046,6 +2282,7 @@ void ca_widget_input_pass(Ca_Window *win)
             for (uint32_t i = 0; i < CA_MAX_RADIOS_PER_WINDOW; ++i) {
                 Ca_Radio *r = &win->radio_pool[i];
                 if (!r->in_use || !r->node) continue;
+                if (is_effectively_disabled(r->node)) continue;
                 if (point_in_node(r->node, mx, my)) {
                     /* Deselect all radios in the same group */
                     for (uint32_t j = 0; j < CA_MAX_RADIOS_PER_WINDOW; ++j) {
@@ -2067,6 +2304,7 @@ void ca_widget_input_pass(Ca_Window *win)
             for (uint32_t i = 0; i < CA_MAX_TOGGLES_PER_WINDOW; ++i) {
                 Ca_Toggle *t = &win->toggle_pool[i];
                 if (!t->in_use || !t->node) continue;
+                if (is_effectively_disabled(t->node)) continue;
                 if (point_in_node(t->node, mx, my)) {
                     t->on = !t->on;
                     t->node->dirty |= CA_DIRTY_CONTENT;
@@ -2081,6 +2319,7 @@ void ca_widget_input_pass(Ca_Window *win)
             for (uint32_t i = 0; i < CA_MAX_SELECTS_PER_WINDOW; ++i) {
                 Ca_Select *sel = &win->select_pool[i];
                 if (!sel->in_use || !sel->node) continue;
+                if (is_effectively_disabled(sel->node)) continue;
                 if (sel->open) {
                     /* Check if clicked on a dropdown option */
                     float opt_y = sel->node->y + sel->node->h;
@@ -2179,6 +2418,7 @@ void ca_widget_input_pass(Ca_Window *win)
             for (uint32_t i = 0; i < CA_MAX_TABBARS_PER_WINDOW; ++i) {
                 Ca_TabBar *tb = &win->tabbar_pool[i];
                 if (!tb->in_use || !tb->node) continue;
+                if (is_effectively_disabled(tb->node)) continue;
                 for (int ti = 0; ti < tb->count; ++ti) {
                     if (!tb->tab_nodes[ti]) continue;
                     if (point_in_node(tb->tab_nodes[ti], mx, my)) {
@@ -2253,6 +2493,7 @@ void ca_widget_input_pass(Ca_Window *win)
             for (uint32_t i = 0; i < CA_MAX_SLIDERS_PER_WINDOW; ++i) {
                 Ca_Slider *sl = &win->slider_pool[i];
                 if (!sl->in_use || !sl->node) continue;
+                if (is_effectively_disabled(sl->node)) continue;
                 if (point_in_node(sl->node, mx, my)) {
                     win->drag_node = sl->node;
                     win->drag_start_x = mx;

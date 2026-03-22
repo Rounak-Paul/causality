@@ -85,12 +85,23 @@ static ClipRect find_clip_for_node(Ca_Node *node)
     return clip;
 }
 
+/* Walk ancestors to check if any node in the chain is disabled. */
+static bool is_node_effectively_disabled(Ca_Node *n)
+{
+    for (Ca_Node *cur = n; cur; cur = cur->parent)
+        if (cur->desc.disabled) return true;
+    return false;
+}
+
 /* Paint a single node's OWN visual content (background rect + widget-specific).
    Does NOT recurse into children.  Does NOT paint scrollbars (post-children). */
 static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, ClipRect clip)
 {
     if (!node->in_use) return;
     if (node->desc.hidden) return;
+
+    /* Record starting draw cmd index so we can apply disabled dim after. */
+    uint32_t cmd_start = win->draw_cmd_count;
 
     /* ---- Box shadow (drawn before background, behind everything) ---- */
     if (node->desc.shadow_color != 0 &&
@@ -488,6 +499,13 @@ static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, Cli
         break;
     }
     default: break;
+    }
+
+    /* Apply disabled visual dimming to all draw commands emitted for this node. */
+    if (is_node_effectively_disabled(node)) {
+        const float dim = 0.4f;
+        for (uint32_t i = cmd_start; i < win->draw_cmd_count; ++i)
+            win->draw_cmds[i].a *= dim;
     }
 }
 

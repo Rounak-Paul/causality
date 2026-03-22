@@ -197,6 +197,7 @@ typedef struct {
     uint8_t      overflow_x;   /* 0=visible, 1=hidden, 2=scroll, 3=auto */
     uint8_t      overflow_y;
     bool         hidden;       /* display: none */
+    bool         disabled;     /* non-interactive, visually dimmed */
     /* Positioning */
     uint8_t      position;     /* Ca_Position: 0=relative, 1=absolute, 2=fixed */
     float        pos_x, pos_y; /* used when position != relative */

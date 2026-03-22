@@ -43,6 +43,7 @@ typedef struct Ca_Modal     Ca_Modal;
 typedef struct Ca_Splitter  Ca_Splitter;
 typedef struct Ca_Image     Ca_Image;
 typedef struct Ca_MenuBar   Ca_MenuBar;
+typedef struct Ca_Node      Ca_Div;
 
 /* ============================================================
    INSTANCE
@@ -262,6 +263,9 @@ typedef struct Ca_DivDesc {
     uint32_t shadow_color;         /* ca_color(r,g,b,a)                     */
     /* Z-index */
     int      z_index;              /* draw order (higher = on top)          */
+    /* Visibility / interactivity */
+    bool     hidden;               /* display: none — removed from layout   */
+    bool     disabled;             /* non-interactive, visually dimmed       */
 } Ca_DivDesc;
 
 /* <p> / text — leaf text element. */
@@ -272,6 +276,7 @@ typedef struct Ca_TextDesc {
     bool        wrap;              /* true = multi-line text wrapping       */
     const char *id;                /* CSS id  (without #)                   */
     const char *style;             /* space-separated CSS class names       */
+    bool        hidden;            /* display: none — removed from layout   */
 } Ca_TextDesc;
 
 /* <button> — clickable element, can also nest children.
@@ -290,6 +295,8 @@ typedef struct Ca_BtnDesc {
     void       *click_data;
     const char *id;                /* CSS id  (without #)                   */
     const char *style;             /* space-separated CSS class names       */
+    bool        hidden;            /* display: none — removed from layout   */
+    bool        disabled;          /* non-interactive, visually dimmed       */
 } Ca_BtnDesc;
 
 /* <hr> — horizontal rule / separator. */
@@ -320,6 +327,8 @@ typedef struct Ca_InputDesc {
     void       *change_data;
     const char *id;                /* CSS id  (without #)                    */
     const char *style;             /* space-separated CSS class names        */
+    bool        hidden;            /* display: none — removed from layout    */
+    bool        disabled;          /* non-interactive, visually dimmed        */
 } Ca_InputDesc;
 
 /* ---- Tree root ---- */
@@ -329,8 +338,8 @@ void ca_ui_end(void);
 
 /* ---- Container elements (push / pop the parent stack) ---- */
 
-void ca_div_begin(const Ca_DivDesc *desc);
-void ca_div_end(void);
+Ca_Div *ca_div_begin(const Ca_DivDesc *desc);
+void    ca_div_end(void);
 
 Ca_Button *ca_btn_begin(const Ca_BtnDesc *desc); /* nestable button      */
 void       ca_btn_end(void);
@@ -365,6 +374,13 @@ void ca_label_set_text(Ca_Label *label, const char *text);
 void ca_label_set_color(Ca_Label *label, uint32_t color);
 void ca_label_set_hidden(Ca_Label *label, bool hidden);
 
+/* ---- Div runtime setters ---- */
+
+void ca_div_set_hidden(Ca_Div *div, bool hidden);
+void ca_div_set_disabled(Ca_Div *div, bool disabled);
+bool ca_div_is_hidden(const Ca_Div *div);
+bool ca_div_is_disabled(const Ca_Div *div);
+
 /* ---- Scroll container queries (by CSS id) ---- */
 
 /// Scrolls a scroll container to the bottom of its content.
@@ -377,8 +393,17 @@ void ca_window_set_on_frame(Ca_Window *window, void (*fn)(void *), void *user_da
 
 void ca_button_set_text(Ca_Button *button, const char *text);
 void ca_button_set_background(Ca_Button *button, uint32_t color);
+void ca_button_set_hidden(Ca_Button *button, bool hidden);
+void ca_button_set_disabled(Ca_Button *button, bool disabled);
+bool ca_button_is_hidden(const Ca_Button *button);
+bool ca_button_is_disabled(const Ca_Button *button);
+
 void ca_input_set_text(Ca_TextInput *input, const char *text);
 const char *ca_input_get_text(const Ca_TextInput *input);
+void ca_input_set_hidden(Ca_TextInput *input, bool hidden);
+void ca_input_set_disabled(Ca_TextInput *input, bool disabled);
+bool ca_input_is_hidden(const Ca_TextInput *input);
+bool ca_input_is_disabled(const Ca_TextInput *input);
 
 /* ============================================================
    UI — NEW WIDGET DESCRIPTORS
@@ -390,6 +415,8 @@ typedef struct Ca_CheckboxDesc {
     Ca_CheckFn  on_change;
     void       *change_data;
     const char *id, *style;
+    bool        hidden;
+    bool        disabled;
 } Ca_CheckboxDesc;
 
 typedef struct Ca_RadioDesc {
@@ -399,6 +426,8 @@ typedef struct Ca_RadioDesc {
     Ca_CheckFn  on_change;     /* reuses check callback signature */
     void       *change_data;
     const char *id, *style;
+    bool        hidden;
+    bool        disabled;
 } Ca_RadioDesc;
 
 typedef struct Ca_SliderDesc {
@@ -407,6 +436,8 @@ typedef struct Ca_SliderDesc {
     Ca_SliderFn on_change;
     void       *change_data;
     const char *id, *style;
+    bool        hidden;
+    bool        disabled;
 } Ca_SliderDesc;
 
 typedef struct Ca_ToggleDesc {
@@ -414,6 +445,8 @@ typedef struct Ca_ToggleDesc {
     Ca_ToggleFn on_change;
     void       *change_data;
     const char *id, *style;
+    bool        hidden;
+    bool        disabled;
 } Ca_ToggleDesc;
 
 typedef struct Ca_ProgressDesc {
@@ -421,6 +454,7 @@ typedef struct Ca_ProgressDesc {
     float       width, height;
     uint32_t    bar_color;
     const char *id, *style;
+    bool        hidden;
 } Ca_ProgressDesc;
 
 typedef struct Ca_SelectDesc {
@@ -431,6 +465,8 @@ typedef struct Ca_SelectDesc {
     Ca_SelectFn  on_change;
     void        *change_data;
     const char  *id, *style;
+    bool         hidden;
+    bool         disabled;
 } Ca_SelectDesc;
 
 typedef struct Ca_TabBarDesc {
@@ -444,6 +480,8 @@ typedef struct Ca_TabBarDesc {
     uint32_t     inactive_bg;      /* inactive tab background (0 = default) */
     uint32_t     active_text;      /* active tab text color   (0 = default) */
     uint32_t     inactive_text;    /* inactive tab text color (0 = default) */
+    bool         hidden;
+    bool         disabled;
 } Ca_TabBarDesc;
 
 typedef struct Ca_TreeNodeDesc {
@@ -452,6 +490,7 @@ typedef struct Ca_TreeNodeDesc {
     Ca_TreeToggleFn  on_toggle;
     void            *toggle_data;
     const char      *id, *style;
+    bool             hidden;
 } Ca_TreeNodeDesc;
 
 typedef struct Ca_TableDesc {
@@ -514,33 +553,46 @@ typedef struct Ca_MenuBarDesc {
 Ca_Checkbox *ca_checkbox(const Ca_CheckboxDesc *desc);
 void         ca_checkbox_set(Ca_Checkbox *cb, bool checked);
 bool         ca_checkbox_get(const Ca_Checkbox *cb);
+void         ca_checkbox_set_hidden(Ca_Checkbox *cb, bool hidden);
+void         ca_checkbox_set_disabled(Ca_Checkbox *cb, bool disabled);
 
 /* Radio button */
 Ca_Radio    *ca_radio(const Ca_RadioDesc *desc);
 int          ca_radio_group_get(Ca_Window *win, int group);
+void         ca_radio_set_hidden(Ca_Radio *r, bool hidden);
+void         ca_radio_set_disabled(Ca_Radio *r, bool disabled);
 
 /* Slider */
 Ca_Slider   *ca_slider(const Ca_SliderDesc *desc);
 void         ca_slider_set(Ca_Slider *s, float value);
 float        ca_slider_get(const Ca_Slider *s);
+void         ca_slider_set_hidden(Ca_Slider *s, bool hidden);
+void         ca_slider_set_disabled(Ca_Slider *s, bool disabled);
 
 /* Toggle switch */
 Ca_Toggle   *ca_toggle(const Ca_ToggleDesc *desc);
 void         ca_toggle_set(Ca_Toggle *t, bool on);
 bool         ca_toggle_get(const Ca_Toggle *t);
+void         ca_toggle_set_hidden(Ca_Toggle *t, bool hidden);
+void         ca_toggle_set_disabled(Ca_Toggle *t, bool disabled);
 
 /* Progress bar */
 Ca_Progress *ca_progress(const Ca_ProgressDesc *desc);
 void         ca_progress_set(Ca_Progress *p, float value);
+void         ca_progress_set_hidden(Ca_Progress *p, bool hidden);
 
 /* Select / dropdown */
 Ca_Select   *ca_select(const Ca_SelectDesc *desc);
 void         ca_select_set(Ca_Select *s, int index);
 int          ca_select_get(const Ca_Select *s);
+void         ca_select_set_hidden(Ca_Select *s, bool hidden);
+void         ca_select_set_disabled(Ca_Select *s, bool disabled);
 
 /* Tab bar */
 Ca_TabBar   *ca_tabs(const Ca_TabBarDesc *desc);
 int          ca_tabs_active(const Ca_TabBar *t);
+void         ca_tabs_set_hidden(Ca_TabBar *t, bool hidden);
+void         ca_tabs_set_disabled(Ca_TabBar *t, bool disabled);
 
 /* Tree view */
 void         ca_tree_begin(const Ca_DivDesc *desc);
@@ -548,6 +600,7 @@ void         ca_tree_end(void);
 Ca_TreeNode *ca_tree_node_begin(const Ca_TreeNodeDesc *desc);
 void         ca_tree_node_end(void);
 bool         ca_tree_node_expanded(const Ca_TreeNode *n);
+void         ca_tree_node_set_hidden(Ca_TreeNode *n, bool hidden);
 
 /* Table */
 void ca_table_begin(const Ca_TableDesc *desc);
