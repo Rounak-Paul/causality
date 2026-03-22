@@ -105,13 +105,20 @@ static void glfw_window_size_cb(GLFWwindow *glfw, int width, int height)
 
 /* ---- System ---- */
 
+static int g_glfw_refcount = 0;
+
 bool ca_window_system_init(void)
 {
+    if (g_glfw_refcount > 0) {
+        g_glfw_refcount++;
+        return true;
+    }
     if (!glfwInit()) {
         fprintf(stderr, "[causality] glfwInit failed\n");
         return false;
     }
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
+    g_glfw_refcount = 1;
     return true;
 }
 
@@ -121,7 +128,10 @@ void ca_window_system_shutdown(Ca_Instance *inst)
         if (inst->windows[i].in_use)
             ca_window_destroy(&inst->windows[i]);
     }
-    glfwTerminate();
+    if (--g_glfw_refcount <= 0) {
+        glfwTerminate();
+        g_glfw_refcount = 0;
+    }
 }
 
 bool ca_window_system_tick(Ca_Instance *inst)

@@ -408,13 +408,65 @@ static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, Cli
         if (node->child_count == 0) break;
         Ca_Node *hdr = node->children[0];
         if (!hdr || hdr->desc.hidden) break;
-        const char *indicator = tn->expanded ? "-" : "+";
-        Ca_Node ind_n = *hdr;
-        ind_n.w = 16.0f;
-        paint_text(win, font, &ind_n, indicator, ca_color(0.6f,0.6f,0.6f,1));
+
+        float fs = hdr->desc.font_size > 0 ? hdr->desc.font_size : 12.0f;
+        float glyph_w = fs;  /* column width for chevron / icon */
+
+        /* Hover highlight on header row */
+        if (win->mouse_x >= hdr->x && win->mouse_x <= hdr->x + hdr->w &&
+            win->mouse_y >= hdr->y && win->mouse_y <= hdr->y + hdr->h) {
+            if (win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
+                Ca_DrawCmd *c = &win->draw_cmds[win->draw_cmd_count++];
+                memset(c, 0, sizeof(*c));
+                c->type = CA_DRAW_RECT;
+                c->x = hdr->x; c->y = hdr->y;
+                c->w = hdr->w; c->h = hdr->h;
+                unpack_color(hdr->desc.background, &c->r, &c->g, &c->b, &c->a);
+                c->corner_radius = hdr->desc.corner_radius;
+            }
+        }
+
+        /* Dim the text color for the chevron indicator */
+        uint32_t chevron_color = tn->text_color;
+        { /* halve the alpha */
+            uint8_t a = chevron_color & 0xFF;
+            a = (uint8_t)(a >> 1);
+            chevron_color = (chevron_color & 0xFFFFFF00u) | a;
+        }
+
+        float x_off = hdr->desc.padding_left;
+
+        /* Disclosure triangle — suppress for leaf nodes */
+        if (!tn->is_leaf) {
+            const char *indicator = tn->expanded
+                ? "\xEF\x83\x97"   /* U+F0D7 caret-down  */
+                : "\xEF\x83\x9A"; /* U+F0DA caret-right */
+            Ca_Node ind_n = *hdr;
+            ind_n.x = hdr->x + x_off;
+            ind_n.desc.padding_left = 0;
+            ind_n.w = glyph_w;
+            paint_text(win, font, &ind_n, indicator, chevron_color);
+            x_off += glyph_w;
+        } else {
+            x_off += glyph_w;
+        }
+
+        /* Icon glyph */
+        if (tn->icon[0]) {
+            Ca_Node ico_n = *hdr;
+            ico_n.x = hdr->x + x_off;
+            ico_n.desc.padding_left = 0;
+            ico_n.w = glyph_w;
+            uint32_t ic = tn->icon_color ? tn->icon_color : tn->text_color;
+            paint_text(win, font, &ico_n, tn->icon, ic);
+            x_off += glyph_w;
+        }
+
+        /* Text label */
         Ca_Node txt_n = *hdr;
-        txt_n.x = hdr->x + 16.0f;
-        txt_n.w = hdr->w - 16.0f;
+        txt_n.x = hdr->x + x_off;
+        txt_n.desc.padding_left = 0;
+        txt_n.w = hdr->w - x_off;
         paint_text(win, font, &txt_n, tn->text, tn->text_color);
         break;
     }

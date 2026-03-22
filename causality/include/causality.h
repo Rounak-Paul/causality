@@ -494,6 +494,9 @@ typedef struct Ca_TreeNodeDesc {
     void            *toggle_data;
     const char      *id, *style;
     bool             hidden;
+    bool             is_leaf;        /* suppress disclosure triangle */
+    const char      *icon;           /* UTF-8 icon string (single glyph) */
+    uint32_t         icon_color;     /* packed RGBA for icon (0 = text_color) */
 } Ca_TreeNodeDesc;
 
 typedef struct Ca_TableDesc {

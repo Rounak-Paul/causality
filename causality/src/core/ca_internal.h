@@ -523,6 +523,9 @@ struct Ca_TreeNode {
     Ca_TreeToggleFn on_toggle;
     void         *toggle_data;
     bool          in_use;
+    bool          is_leaf;
+    char          icon[8];
+    uint32_t      icon_color;
 };
 
 struct Ca_Table {

@@ -1402,6 +1402,10 @@ Ca_TreeNode *ca_tree_node_begin(const Ca_TreeNodeDesc *desc)
     else tn->text[0] = '\0';
     tn->on_toggle = desc->on_toggle;
     tn->toggle_data = desc->toggle_data;
+    tn->is_leaf = desc->is_leaf;
+    tn->icon[0] = '\0';
+    if (desc->icon) snprintf(tn->icon, sizeof(tn->icon), "%s", desc->icon);
+    tn->icon_color = desc->icon_color;
 
     if (desc->hidden) node->desc.hidden = true;
 
@@ -1419,8 +1423,12 @@ Ca_TreeNode *ca_tree_node_begin(const Ca_TreeNodeDesc *desc)
     /* Create a header row node for the clickable label */
     Ca_NodeDesc hdr = {0};
     hdr.direction = CA_DIR_ROW;
-    hdr.height = s(22.0f);
-    hdr.padding_left = s(16.0f) * (float)tn->depth;
+    hdr.height = s(20.0f);
+    hdr.padding_left = s(4.0f) * (float)tn->depth;
+    hdr.text_align = 1; /* left-aligned */
+    /* Sensible defaults — CSS can override via the tree node style */
+    hdr.background = ca_color(1.0f, 1.0f, 1.0f, 0.04f); /* subtle hover */
+    hdr.corner_radius = s(3.0f);
     Ca_Node *hdr_node = ca_node_add(node, &hdr);
     (void)hdr_node;
 
@@ -2453,6 +2461,7 @@ void ca_widget_input_pass(Ca_Window *win)
             for (uint32_t i = 0; i < CA_MAX_TREENODES_PER_WINDOW; ++i) {
                 Ca_TreeNode *tn = &win->treenode_pool[i];
                 if (!tn->in_use || !tn->node) continue;
+                if (tn->is_leaf) continue;  /* leaf nodes don't toggle */
                 /* Click on the first child (header row) toggles */
                 if (tn->node->child_count > 0) {
                     Ca_Node *hdr = tn->node->children[0];
