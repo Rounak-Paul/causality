@@ -589,6 +589,7 @@ struct Ca_Viewport {
     void                *resize_data;
     VkClearColorValue    clear_color;
     bool                 in_use;
+    bool                 needs_redraw;
 };
 
 typedef struct {

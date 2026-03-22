@@ -1673,6 +1673,7 @@ Ca_Viewport *ca_viewport(const Ca_ViewportDesc *desc)
     vp->resize_data = desc->resize_data;
     vp->clear_color = desc->clear_color;
     vp->in_use      = true;
+    vp->needs_redraw = true;
 
     if (!ca_viewport_gpu_create(win->instance, vp, px_w, px_h, fmt)) {
         vp->in_use = false;
@@ -1732,6 +1733,11 @@ void ca_viewport_set_callbacks(Ca_Viewport *viewport,
     viewport->render_data = render_data;
     viewport->on_resize   = on_resize;
     viewport->resize_data = resize_data;
+}
+
+void ca_viewport_request_redraw(Ca_Viewport *viewport)
+{
+    if (viewport) viewport->needs_redraw = true;
 }
 
 /* ============================================================

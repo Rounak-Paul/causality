@@ -233,6 +233,7 @@ void ca_viewport_render_all(Ca_Instance *inst, Ca_Window *win)
         Ca_Viewport *vp = &win->viewport_pool[i];
         if (!vp->in_use || !vp->on_render) continue;
         if (vp->color_image == VK_NULL_HANDLE) continue;
+        if (!vp->needs_redraw) continue;
 
         /* Check if layout changed the node size — resize if needed */
         if (vp->node) {
@@ -247,6 +248,7 @@ void ca_viewport_render_all(Ca_Instance *inst, Ca_Window *win)
 
             if (new_w != vp->width || new_h != vp->height) {
                 ca_viewport_gpu_resize(inst, vp, new_w, new_h);
+                vp->needs_redraw = true;
                 if (vp->on_resize)
                     vp->on_resize(vp, new_w, new_h, vp->resize_data);
             }
@@ -275,6 +277,10 @@ void ca_viewport_render_all(Ca_Instance *inst, Ca_Window *win)
 
         /* Let the engine render */
         vp->on_render(vp, vp->render_data);
+
+        vp->needs_redraw = false;
+        if (vp->node)
+            vp->node->dirty |= CA_DIRTY_CONTENT;
 
         /* Transition to SHADER_READ_ONLY for compositing */
         transition_viewport_image(vp->cmd, vp->color_image,
