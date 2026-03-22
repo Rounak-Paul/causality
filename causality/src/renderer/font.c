@@ -7,9 +7,17 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* Tier logical pixel sizes */
+#ifdef _WIN32
+  #ifndef WIN32_LEAN_AND_MEAN
+    #define WIN32_LEAN_AND_MEAN
+  #endif
+  #include <windows.h>
+#endif
+
+/* Tier logical pixel sizes — chosen for common UI text sizes.
+   9 tiers fit reliably in a 4096² atlas with 2×2 oversampling. */
 static const float g_tier_sizes[CA_FONT_TIER_COUNT] = {
-    10, 11, 12, 13, 14, 16, 18, 24, 32
+    10, 12, 13, 14, 16, 18, 20, 24, 32
 };
 
 /* Codepoint range definitions */
@@ -206,10 +214,14 @@ static bool upload_atlas(Ca_Instance *inst, Ca_Font *font,
 
 static bool font_create_internal(Ca_Instance *inst, GLFWwindow *glfw_win,
                                  Ca_Font *out_font,
-                                 const unsigned char *ttf_data,
-                                 size_t ttf_size, float font_px)
+                                 const unsigned char *text_data,
+                                 size_t text_size,
+                                 const unsigned char *icon_data,
+                                 size_t icon_size,
+                                 float font_px)
 {
-    (void)ttf_size;
+    (void)text_size;
+    (void)icon_size;
     memset(out_font, 0, sizeof(*out_font));
 
     float cx = 1.0f;
@@ -217,10 +229,13 @@ static bool font_create_internal(Ca_Instance *inst, GLFWwindow *glfw_win,
     out_font->content_scale = cx;
     out_font->default_size  = font_px;
 
+    /* Use text font for metrics; icon_data defaults to text_data if NULL */
+    const unsigned char *icon_font = icon_data ? icon_data : text_data;
+
     stbtt_fontinfo info;
     memset(&info, 0, sizeof(info));
-    if (!stbtt_InitFont(&info, ttf_data,
-                        stbtt_GetFontOffsetForIndex(ttf_data, 0)))
+    if (!stbtt_InitFont(&info, text_data,
+                        stbtt_GetFontOffsetForIndex(text_data, 0)))
         return false;
 
     int cpt = chars_per_tier();
@@ -252,7 +267,7 @@ static bool font_create_internal(Ca_Instance *inst, GLFWwindow *glfw_win,
         }
     }
 
-    /* Pack all tiers into one atlas (4096x4096) */
+    /* Pack all tiers into one atlas */
     out_font->atlas_w = 4096;
     out_font->atlas_h = 4096;
     size_t bmp_sz = (size_t)out_font->atlas_w * out_font->atlas_h;
@@ -261,30 +276,50 @@ static bool font_create_internal(Ca_Instance *inst, GLFWwindow *glfw_win,
 
     stbtt_pack_context ctx;
     stbtt_PackBegin(&ctx, bitmap, out_font->atlas_w, out_font->atlas_h,
-                    0, 1, NULL);
-
-    int h_over = (cx < 1.5f) ? 2 : 1;
-    stbtt_PackSetOversampling(&ctx, h_over, 1);
+                    0, 2, NULL);
+    stbtt_PackSetSkipMissingCodepoints(&ctx, 1);
 
     for (int t = 0; t < CA_FONT_TIER_COUNT; t++) {
         Ca_FontTier *tier = &out_font->tiers[t];
 
-        stbtt_pack_range ranges[CA_FONT_RANGE_COUNT];
-        for (int r = 0; r < CA_FONT_RANGE_COUNT; r++) {
-            ranges[r].font_size                       = tier->baked_px;
-            ranges[r].first_unicode_codepoint_in_range = tier->ranges[r].first_codepoint;
-            ranges[r].num_chars                        = tier->ranges[r].num_chars;
-            ranges[r].chardata_for_range               = tier->ranges[r].chardata;
-            ranges[r].array_of_unicode_codepoints      = NULL;
+        /* Text ranges: 2x2 oversampling for smooth anti-aliased glyph edges */
+        stbtt_PackSetOversampling(&ctx, 2, 2);
+        stbtt_pack_range text_ranges[CA_FONT_TEXT_RANGES];
+        for (int r = 0; r < CA_FONT_TEXT_RANGES; r++) {
+            text_ranges[r].font_size                        = tier->baked_px;
+            text_ranges[r].first_unicode_codepoint_in_range = tier->ranges[r].first_codepoint;
+            text_ranges[r].num_chars                        = tier->ranges[r].num_chars;
+            text_ranges[r].chardata_for_range               = tier->ranges[r].chardata;
+            text_ranges[r].array_of_unicode_codepoints      = NULL;
         }
+        stbtt_PackFontRanges(&ctx, text_data, 0,
+                             text_ranges, CA_FONT_TEXT_RANGES);
 
-        int ok = stbtt_PackFontRanges(&ctx, ttf_data, 0,
-                                      ranges, CA_FONT_RANGE_COUNT);
+        /* Icon ranges: 1x1 oversampling — icons are simple shapes,
+           no subpixel precision needed, saves major atlas space. */
+        stbtt_PackSetOversampling(&ctx, 1, 1);
+        stbtt_pack_range icon_ranges[CA_FONT_ICON_RANGES];
+        for (int r = 0; r < CA_FONT_ICON_RANGES; r++) {
+            int ri = CA_FONT_TEXT_RANGES + r;
+            icon_ranges[r].font_size                        = tier->baked_px;
+            icon_ranges[r].first_unicode_codepoint_in_range = tier->ranges[ri].first_codepoint;
+            icon_ranges[r].num_chars                        = tier->ranges[ri].num_chars;
+            icon_ranges[r].chardata_for_range               = tier->ranges[ri].chardata;
+            icon_ranges[r].array_of_unicode_codepoints      = NULL;
+        }
+        stbtt_PackFontRanges(&ctx, icon_font, 0,
+                             icon_ranges, CA_FONT_ICON_RANGES);
 
-        /* Check if ASCII 'A' got packed — if so the tier is usable */
-        stbtt_packedchar *test = &tier->ranges[0].chardata['A' - 32];
-        tier->packed = (test->x1 > test->x0);
-        (void)ok;
+        /* A tier is usable only if multiple representative glyphs packed.
+           If the atlas overflowed mid-tier, some glyphs have zero-size rects
+           and would render as missing/cut shapes. */
+        bool ok = true;
+        const char test_chars[] = "AaMmWw.,:;";
+        for (int i = 0; test_chars[i]; i++) {
+            stbtt_packedchar *pc = &tier->ranges[0].chardata[test_chars[i] - 32];
+            if (pc->x1 <= pc->x0) { ok = false; break; }
+        }
+        tier->packed = ok;
     }
 
     stbtt_PackEnd(&ctx);
@@ -299,9 +334,10 @@ static bool font_create_internal(Ca_Instance *inst, GLFWwindow *glfw_win,
     for (int t = 0; t < CA_FONT_TIER_COUNT; t++)
         if (out_font->tiers[t].packed) packed_count++;
 
-    printf("[font] atlas %dx%d, %d/%d tiers packed (scale=%.1f, oversample=%dx1)\n",
+    printf("[font] atlas %dx%d, %d/%d tiers packed (scale=%.1f, text=2x2, icons=1x1%s)\n",
            out_font->atlas_w, out_font->atlas_h,
-           packed_count, CA_FONT_TIER_COUNT, cx, h_over);
+           packed_count, CA_FONT_TIER_COUNT, cx,
+           icon_data ? ", dual-font" : "");
     return true;
 
 fail:
@@ -328,7 +364,8 @@ bool ca_font_create(Ca_Instance *inst, GLFWwindow *glfw_win,
     fclose(f);
 
     bool ok = font_create_internal(inst, glfw_win, out_font,
-                                   ttf, (size_t)file_sz, font_px);
+                                   ttf, (size_t)file_sz,
+                                   NULL, 0, font_px);
     free(ttf);
     return ok;
 }
@@ -339,7 +376,74 @@ bool ca_font_create_from_memory(Ca_Instance *inst, GLFWwindow *glfw_win,
                                 float font_px)
 {
     return font_create_internal(inst, glfw_win, out_font,
-                                data, (size_t)data_size, font_px);
+                                data, (size_t)data_size,
+                                NULL, 0, font_px);
+}
+
+bool ca_font_create_dual_from_memory(Ca_Instance *inst, GLFWwindow *glfw_win,
+                                     Ca_Font *out_font,
+                                     const unsigned char *text_data, unsigned int text_size,
+                                     const unsigned char *icon_data, unsigned int icon_size,
+                                     float font_px)
+{
+    return font_create_internal(inst, glfw_win, out_font,
+                                text_data, (size_t)text_size,
+                                icon_data, (size_t)icon_size,
+                                font_px);
+}
+
+/* ---- System font detection ---- */
+
+bool ca_font_detect_system(char *out_path, size_t max_len)
+{
+    if (!out_path || max_len < 2) return false;
+
+#ifdef _WIN32
+    char windir[MAX_PATH];
+    if (!GetWindowsDirectoryA(windir, MAX_PATH)) return false;
+
+    const char *candidates[] = { "segoeui.ttf", "arial.ttf" };
+    for (int i = 0; i < (int)(sizeof(candidates) / sizeof(candidates[0])); i++) {
+        char path[MAX_PATH];
+        snprintf(path, sizeof(path), "%s\\Fonts\\%s", windir, candidates[i]);
+        FILE *f = fopen(path, "rb");
+        if (f) {
+            fclose(f);
+            snprintf(out_path, max_len, "%s", path);
+            return true;
+        }
+    }
+#elif defined(__APPLE__)
+    const char *candidates[] = {
+        "/System/Library/Fonts/SFNS.ttf",
+        "/System/Library/Fonts/Helvetica.ttc",
+        "/Library/Fonts/Arial.ttf",
+    };
+    for (int i = 0; i < (int)(sizeof(candidates) / sizeof(candidates[0])); i++) {
+        FILE *f = fopen(candidates[i], "rb");
+        if (f) {
+            fclose(f);
+            snprintf(out_path, max_len, "%s", candidates[i]);
+            return true;
+        }
+    }
+#else
+    const char *candidates[] = {
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+    };
+    for (int i = 0; i < (int)(sizeof(candidates) / sizeof(candidates[0])); i++) {
+        FILE *f = fopen(candidates[i], "rb");
+        if (f) {
+            fclose(f);
+            snprintf(out_path, max_len, "%s", candidates[i]);
+            return true;
+        }
+    }
+#endif
+
+    return false;
 }
 
 void ca_font_destroy(Ca_Instance *inst, Ca_Font *font)

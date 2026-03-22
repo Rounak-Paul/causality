@@ -344,16 +344,35 @@ bool ca_renderer_window_init(Ca_Instance *inst, Ca_Window *win)
     if (inst->text_pipeline.pipeline == VK_NULL_HANDLE) {
         inst->font = (Ca_Font *)calloc(1, sizeof(Ca_Font));
         bool font_ok = false;
+
+        extern const unsigned char ca_embedded_font_data[];
+        extern const unsigned int  ca_embedded_font_size;
+
         if (inst->font_path[0] != '\0') {
-            /* User-specified font file */
-            font_ok = ca_font_create(inst, win->glfw,
-                                    inst->font, inst->font_path,
-                                    inst->font_size_px);
+            /* User-specified text font — read file, use embedded for icons */
+            FILE *fp = fopen(inst->font_path, "rb");
+            if (fp) {
+                fseek(fp, 0, SEEK_END);
+                long sz = ftell(fp);
+                rewind(fp);
+                unsigned char *buf = (unsigned char *)malloc((size_t)sz);
+                if (buf) {
+                    fread(buf, 1, (size_t)sz, fp);
+                    fclose(fp);
+                    font_ok = ca_font_create_dual_from_memory(
+                                inst, win->glfw, inst->font,
+                                buf, (unsigned int)sz,
+                                ca_embedded_font_data, ca_embedded_font_size,
+                                inst->font_size_px);
+                    free(buf);
+                } else {
+                    fclose(fp);
+                }
+            }
         }
+
         if (!font_ok) {
-            /* Fall back to embedded Roboto Mono Nerd Font */
-            extern const unsigned char ca_embedded_font_data[];
-            extern const unsigned int  ca_embedded_font_size;
+            /* Default: embedded Roboto Mono Nerd Font for text + icons */
             font_ok = ca_font_create_from_memory(
                         inst, win->glfw, inst->font,
                         ca_embedded_font_data, ca_embedded_font_size,

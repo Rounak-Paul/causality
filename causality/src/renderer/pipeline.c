@@ -301,7 +301,8 @@ static const char *TEXT_VERT_GLSL =
     "}\n";
 
 /* Fragment shader: samples the R8 font atlas; alpha = atlas red channel.
-   Sampler is at set 1, binding 0 (set 0 is the instance SSBO).       */
+   Apple-style rendering: gamma-correct alpha for fuller, smoother glyphs
+   without hinting, preserving all glyph shape detail.                   */
 static const char *TEXT_FRAG_GLSL =
     "#version 450\n"
     "\n"
@@ -312,8 +313,9 @@ static const char *TEXT_FRAG_GLSL =
     "layout(location = 0) out vec4 out_color;\n"
     "\n"
     "void main() {\n"
-    "    float a    = texture(font_atlas, v_uv).r;\n"
-    "    out_color  = vec4(v_color.rgb, v_color.a * a);\n"
+    "    float a = texture(font_atlas, v_uv).r;\n"
+    "    a = pow(a, 0.45);\n"
+    "    out_color = vec4(v_color.rgb, v_color.a * a);\n"
     "}\n";
 
 bool ca_text_pipeline_create(Ca_Instance *inst, VkFormat color_format)

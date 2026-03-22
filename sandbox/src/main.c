@@ -30,7 +30,7 @@ static const char *g_css =
     "#hero-title { color: #89b4fa; }"
 
     ".muted   { color: #6c7086; font-size: 12px; }"
-    ".section { color: #f5c2e7; font-size: 15px; }"
+    ".section { color: #f5c2e7; font-size: 17px; }"
     ".body-text { color: #a6adc8; }"
 
     ".btn-row { gap: 8px; }"
@@ -112,7 +112,7 @@ static const char *g_css =
     "  padding: 12px;"
     "  gap: 6px;"
     "}"
-    ".card-title { color: #89dceb; font-size: 14px; }"
+    ".card-title { color: #89dceb; font-size: 16px; }"
     ".card-body  { color: #a6adc8; }"
 
     /* ---- Nested button (compound widget) ---- */
@@ -124,7 +124,7 @@ static const char *g_css =
     "  flex-direction: column;"
     "  transition: background-color 0.3s;"
     "}"
-    ".btn-compound-label { color: #cdd6f4; font-size: 14px; }"
+    ".btn-compound-label { color: #cdd6f4; font-size: 16px; }"
     ".btn-compound-hint  { color: #6c7086; font-size: 11px; }"
 
     /* ---- Splitter demo ---- */

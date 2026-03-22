@@ -8,7 +8,9 @@
 #include <math.h>
 
 #define CA_FONT_RANGE_COUNT    6
-#define CA_FONT_TIER_COUNT     9
+#define CA_FONT_TEXT_RANGES   1    /* ASCII + Latin-1 (range 0) */
+#define CA_FONT_ICON_RANGES   5    /* icon codepoint ranges (1–5) */
+#define CA_FONT_TIER_COUNT    9
 
 typedef struct Ca_GlyphRange {
     int               first_codepoint;
@@ -65,7 +67,9 @@ static inline stbtt_packedchar *ca_font_glyph(Ca_FontTier *tier, uint32_t cp)
     return NULL;
 }
 
-/* Compute glyph quad from a packedchar (align_to_integer behaviour). */
+/* Compute glyph quad from a packedchar.
+   Preserves subpixel positioning for oversampled glyphs;
+   only the vertical baseline is snapped for pixel-aligned rows. */
 static inline void ca_font_get_quad(const stbtt_packedchar *pc,
                                      int atlas_w, int atlas_h,
                                      float *xpos, float *ypos,
@@ -73,7 +77,7 @@ static inline void ca_font_get_quad(const stbtt_packedchar *pc,
 {
     float ipw = 1.0f / (float)atlas_w;
     float iph = 1.0f / (float)atlas_h;
-    float x = (float)(int)(*xpos + pc->xoff + 0.5f);
+    float x = *xpos + pc->xoff;
     float y = (float)(int)(*ypos + pc->yoff + 0.5f);
     q->x0 = x;
     q->y0 = y;
@@ -120,5 +124,18 @@ bool ca_font_create_from_memory(Ca_Instance *inst, GLFWwindow *glfw_win,
                                 Ca_Font *out_font,
                                 const unsigned char *data, unsigned int data_size,
                                 float font_px);
+
+/** Create a font atlas using a proportional text font and a separate icon font.
+    Text codepoint ranges (ASCII/Latin) are packed from text_data.
+    Icon codepoint ranges (Nerd Font glyphs) are packed from icon_data. */
+bool ca_font_create_dual_from_memory(Ca_Instance *inst, GLFWwindow *glfw_win,
+                                     Ca_Font *out_font,
+                                     const unsigned char *text_data, unsigned int text_size,
+                                     const unsigned char *icon_data, unsigned int icon_size,
+                                     float font_px);
+
+/** Detect the platform's default proportional UI font.
+    Returns true and writes the path into out_path on success. */
+bool ca_font_detect_system(char *out_path, size_t max_len);
 
 void ca_font_destroy(Ca_Instance *inst, Ca_Font *font);
