@@ -1003,18 +1003,24 @@ static void cache_commands(Ca_Window *win, Ca_Node *node,
 /* DFS tree walk with per-node paint caching.
    - Dirty nodes: paint fresh → cache → commands already in draw_cmds
    - Clean nodes: copy from cache → draw_cmds */
+
+static void clear_dirty_recursive(Ca_Node *node)
+{
+    if (!node || !node->in_use) return;
+    node->dirty &= ~CA_DIRTY_CONTENT;
+    for (uint32_t i = 0; i < node->child_count; ++i)
+        clear_dirty_recursive(node->children[i]);
+}
+
 static void paint_tree_cached(Ca_Instance *inst, Ca_Window *win,
                               Ca_Node *node, ClipRect clip)
 {
     if (!node || !node->in_use) return;
 
-    /* Hidden nodes produce no draw commands, but we must still clear their
-       dirty flags (and their children's) so they don't perpetually trigger
-       paint passes. */
+    /* Hidden nodes produce no draw commands.  Clear dirty flags on the
+       entire subtree so they don't perpetually trigger paint passes. */
     if (node->desc.hidden) {
-        node->dirty &= ~CA_DIRTY_CONTENT;
-        for (uint32_t i = 0; i < node->child_count; ++i)
-            paint_tree_cached(inst, win, node->children[i], clip);
+        clear_dirty_recursive(node);
         return;
     }
 

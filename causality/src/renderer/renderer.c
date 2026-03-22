@@ -303,10 +303,15 @@ void ca_renderer_shutdown(Ca_Instance *inst)
 
     if (inst->cmd_pool   != VK_NULL_HANDLE)
         vkDestroyCommandPool(inst->vk_device, inst->cmd_pool, NULL);
+    inst->cmd_pool = VK_NULL_HANDLE;
+
     if (inst->vk_device  != VK_NULL_HANDLE)
         vkDestroyDevice(inst->vk_device, NULL);
+    inst->vk_device = VK_NULL_HANDLE;
+
     if (inst->vk_instance != VK_NULL_HANDLE)
         vkDestroyInstance(inst->vk_instance, NULL);
+    inst->vk_instance = VK_NULL_HANDLE;
 }
 
 /* ---- Per-window surface ---- */
