@@ -244,14 +244,23 @@ void ca_ui_update(Ca_Instance *inst)
         }
 
         /* Re-scan for content dirty after input (widget state changes may
-           have dirtied nodes that weren't dirty before). */
-        if (!any_content) {
+           have dirtied nodes that weren't dirty before).
+           Also check for new layout dirty — click callbacks can change
+           widget visibility (hidden), which requires a layout reflow
+           before the paint pass runs. */
+        {
+            bool needs_layout_post_input = false;
             for (uint32_t j = 0; j < CA_MAX_NODES_PER_WINDOW; ++j) {
                 Ca_Node *n = &win->node_pool[j];
-                if (n->in_use && (n->dirty & CA_DIRTY_CONTENT)) {
+                if (!n->in_use) continue;
+                if (n->dirty & (CA_DIRTY_LAYOUT | CA_DIRTY_CHILDREN))
+                    needs_layout_post_input = true;
+                if (n->dirty & CA_DIRTY_CONTENT)
                     any_content = true;
-                    break;
-                }
+            }
+            if (needs_layout_post_input) {
+                if (layout_and_invalidate(win))
+                    any_content = true;
             }
         }
 

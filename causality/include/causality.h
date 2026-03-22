@@ -380,6 +380,9 @@ bool ca_div_is_disabled(const Ca_Div *div);
 
 /* ---- Scroll container queries (by CSS id) ---- */
 
+/// Scrolls a scroll container to the top of its content.
+void ca_scroll_to_top(Ca_Window *window, const char *id);
+
 /// Scrolls a scroll container to the bottom of its content.
 void ca_scroll_to_bottom(Ca_Window *window, const char *id);
 

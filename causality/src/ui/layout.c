@@ -598,6 +598,20 @@ static void layout_node(Ca_Node *node, float x, float y, float avail_w, float av
         node->content_h = max_main_extent + pad_main;
     }
 
+    /* Auto-clamp scroll offsets: if content shrank (e.g. children hidden)
+       the old scroll_y may now exceed the scrollable range, leaving
+       content positioned above the visible clip area. */
+    if (node->desc.overflow_y >= 1) {
+        float max_sy = node->content_h - node->h;
+        if (max_sy < 0.0f) max_sy = 0.0f;
+        if (node->scroll_y > max_sy) node->scroll_y = max_sy;
+    }
+    if (node->desc.overflow_x >= 1) {
+        float max_sx = node->content_w - node->w;
+        if (max_sx < 0.0f) max_sx = 0.0f;
+        if (node->scroll_x > max_sx) node->scroll_x = max_sx;
+    }
+
     /* Post-layout auto-sizing: shrink the node to fit its actual content
        when no explicit size was set.  Scroll containers keep their size
        so overflow can scroll.  This is the key to making flex-wrap and

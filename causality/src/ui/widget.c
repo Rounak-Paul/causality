@@ -739,6 +739,8 @@ static void node_set_hidden(Ca_Node *node, bool hidden)
     if (node->desc.hidden != hidden) {
         node->desc.hidden = hidden;
         node->dirty |= CA_DIRTY_LAYOUT | CA_DIRTY_CONTENT;
+        if (node->parent)
+            node->parent->dirty |= CA_DIRTY_LAYOUT | CA_DIRTY_CONTENT;
     }
 }
 
@@ -928,6 +930,14 @@ static Ca_Node *find_node_by_id(Ca_Window *window, const char *id)
             return n;
     }
     return NULL;
+}
+
+void ca_scroll_to_top(Ca_Window *window, const char *id)
+{
+    Ca_Node *n = find_node_by_id(window, id);
+    if (!n) return;
+    n->scroll_y = 0.0f;
+    n->dirty |= CA_DIRTY_LAYOUT;
 }
 
 void ca_scroll_to_bottom(Ca_Window *window, const char *id)
@@ -2460,18 +2470,19 @@ void ca_widget_input_pass(Ca_Window *win)
             for (uint32_t i = 0; i < CA_MAX_TREENODES_PER_WINDOW; ++i) {
                 Ca_TreeNode *tn = &win->treenode_pool[i];
                 if (!tn->in_use || !tn->node) continue;
-                if (tn->is_leaf) continue;  /* leaf nodes don't toggle */
-                /* Click on the first child (header row) toggles */
+                /* Click on the first child (header row) */
                 if (tn->node->child_count > 0) {
                     Ca_Node *hdr = tn->node->children[0];
                     if (point_in_node(hdr, mx, my)) {
-                        tn->expanded = !tn->expanded;
-                        /* Hide/show children after the header */
-                        for (uint32_t ci = 1; ci < tn->node->child_count; ++ci) {
-                            tn->node->children[ci]->desc.hidden = !tn->expanded;
-                            tn->node->children[ci]->dirty |= CA_DIRTY_LAYOUT | CA_DIRTY_CONTENT;
+                        if (!tn->is_leaf) {
+                            tn->expanded = !tn->expanded;
+                            /* Hide/show children after the header */
+                            for (uint32_t ci = 1; ci < tn->node->child_count; ++ci) {
+                                tn->node->children[ci]->desc.hidden = !tn->expanded;
+                                tn->node->children[ci]->dirty |= CA_DIRTY_LAYOUT | CA_DIRTY_CONTENT;
+                            }
+                            tn->node->dirty |= CA_DIRTY_LAYOUT | CA_DIRTY_CONTENT;
                         }
-                        tn->node->dirty |= CA_DIRTY_LAYOUT | CA_DIRTY_CONTENT;
                         if (tn->on_toggle) tn->on_toggle(tn, tn->toggle_data);
                     }
                 }
