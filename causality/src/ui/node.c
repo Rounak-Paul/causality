@@ -110,11 +110,40 @@ static Ca_Node *alloc_node(Ca_Window *win)
     return NULL;
 }
 
+static void release_widget(Ca_Node *node)
+{
+    if (!node->widget) return;
+    switch (node->widget_type) {
+    case CA_WIDGET_LABEL: {
+        Ca_Label *lbl = (Ca_Label *)node->widget;
+        free(lbl->dyn_text);
+        lbl->dyn_text = NULL;
+        lbl->in_use = false;
+        break;
+    }
+    case CA_WIDGET_BUTTON:    ((Ca_Button *)node->widget)->in_use = false; break;
+    case CA_WIDGET_TEXT_INPUT: ((Ca_TextInput *)node->widget)->in_use = false; break;
+    case CA_WIDGET_CHECKBOX:  ((Ca_Checkbox *)node->widget)->in_use = false; break;
+    case CA_WIDGET_RADIO:     ((Ca_Radio *)node->widget)->in_use = false; break;
+    case CA_WIDGET_SLIDER:    ((Ca_Slider *)node->widget)->in_use = false; break;
+    case CA_WIDGET_TOGGLE:    ((Ca_Toggle *)node->widget)->in_use = false; break;
+    case CA_WIDGET_PROGRESS:  ((Ca_Progress *)node->widget)->in_use = false; break;
+    case CA_WIDGET_SELECT:    ((Ca_Select *)node->widget)->in_use = false; break;
+    case CA_WIDGET_TABBAR:    ((Ca_TabBar *)node->widget)->in_use = false; break;
+    case CA_WIDGET_TREENODE:  ((Ca_TreeNode *)node->widget)->in_use = false; break;
+    case CA_WIDGET_TABLE:     ((Ca_Table *)node->widget)->in_use = false; break;
+    case CA_WIDGET_SPLITTER:  ((Ca_Splitter *)node->widget)->in_use = false; break;
+    case CA_WIDGET_VIEWPORT:  ((Ca_Viewport *)node->widget)->in_use = false; break;
+    default: break;
+    }
+}
+
 static void free_subtree(Ca_Node *node)
 {
     if (!node) return;
     for (uint32_t i = 0; i < node->child_count; ++i)
         free_subtree(node->children[i]);
+    release_widget(node);
     memset(node, 0, sizeof(*node));
     node->draw_cmd_idx = -1;
 }
@@ -216,6 +245,15 @@ void ca_node_remove(Ca_Node *node)
     }
 
     free_subtree(node);
+}
+
+void ca_node_clear(Ca_Node *node)
+{
+    if (!node || !node->in_use) return;
+    for (uint32_t i = 0; i < node->child_count; ++i)
+        free_subtree(node->children[i]);
+    node->child_count = 0;
+    node->dirty |= CA_DIRTY_CHILDREN | CA_DIRTY_LAYOUT;
 }
 
 void ca_node_set_desc(Ca_Node *node, const Ca_NodeDesc *desc)

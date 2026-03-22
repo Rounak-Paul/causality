@@ -345,6 +345,25 @@ void ca_ui_end(void)
 }
 
 /* ============================================================
+   INTERNAL — build context enter / leave (called by ui.c)
+   ============================================================ */
+
+void ca_widget_ctx_enter(Ca_Window *win)
+{
+    assert(win);
+    g_ctx.window = win;
+    g_ctx.depth  = -1;
+    g_ctx.active = true;
+}
+
+void ca_widget_ctx_leave(void)
+{
+    assert(g_ctx.active);
+    assert(g_ctx.depth == -1 && "unclosed ca_div_begin / ca_div_clear");
+    g_ctx.active = false;
+}
+
+/* ============================================================
    PUBLIC — <div>
    ============================================================ */
 
@@ -374,7 +393,7 @@ Ca_Div *ca_div_begin(const Ca_DivDesc *desc)
 
 void ca_div_end(void)
 {
-    assert(g_ctx.active && g_ctx.depth > 0);
+    assert(g_ctx.active && g_ctx.depth >= 0);
     ctx_pop();
 }
 
@@ -775,6 +794,13 @@ bool ca_div_is_disabled(const Ca_Div *div)
 {
     assert(div);
     return ((const Ca_Node *)div)->desc.disabled;
+}
+
+void ca_div_clear(Ca_Div *div)
+{
+    assert(g_ctx.active);
+    ca_node_clear((Ca_Node *)div);
+    ctx_push((Ca_Node *)div);
 }
 
 /* Button */

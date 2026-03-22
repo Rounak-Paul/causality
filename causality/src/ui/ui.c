@@ -266,9 +266,12 @@ void ca_ui_update(Ca_Instance *inst)
 
         /* Per-frame user callback — runs after input pass (scroll_y is
            updated) and before paint so any label changes are painted
-           in the same frame. */
+           in the same frame.  Build context is activated so that
+           widget creation (ca_div_clear + rebuild) works. */
         if (win->on_frame_fn) {
+            ca_widget_ctx_enter(win);
             win->on_frame_fn(win->on_frame_data);
+            ca_widget_ctx_leave();
 
             /* The callback may have dirtied nodes (label text, hidden, etc.)
                or triggered a layout change.  Re-scan so the paint pass below

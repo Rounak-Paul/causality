@@ -333,6 +333,11 @@ typedef struct Ca_InputDesc {
 void ca_ui_begin(Ca_Window *window, const Ca_DivDesc *root_desc);
 void ca_ui_end(void);
 
+/// Removes all children from a div and enters it as the current parent.
+/// New widgets created after this call become children of the cleared div.
+/// Must be paired with ca_div_end().
+void ca_div_clear(Ca_Div *div);
+
 /* ---- Container elements (push / pop the parent stack) ---- */
 
 Ca_Div *ca_div_begin(const Ca_DivDesc *desc);
