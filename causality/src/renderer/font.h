@@ -68,8 +68,8 @@ static inline stbtt_packedchar *ca_font_glyph(Ca_FontTier *tier, uint32_t cp)
 }
 
 /* Compute glyph quad from a packedchar.
-   Preserves subpixel positioning for oversampled glyphs;
-   only the vertical baseline is snapped for pixel-aligned rows. */
+   Baseline is snapped once for the whole line; per-glyph offsets
+   are applied without re-rounding so all characters stay aligned. */
 static inline void ca_font_get_quad(const stbtt_packedchar *pc,
                                      int atlas_w, int atlas_h,
                                      float *xpos, float *ypos,
@@ -78,11 +78,11 @@ static inline void ca_font_get_quad(const stbtt_packedchar *pc,
     float ipw = 1.0f / (float)atlas_w;
     float iph = 1.0f / (float)atlas_h;
     float x = *xpos + pc->xoff;
-    float y = (float)(int)(*ypos + pc->yoff + 0.5f);
+    float y_base = (float)(int)(*ypos + 0.5f);
     q->x0 = x;
-    q->y0 = y;
+    q->y0 = y_base + pc->yoff;
     q->x1 = x + pc->xoff2 - pc->xoff;
-    q->y1 = y + pc->yoff2 - pc->yoff;
+    q->y1 = y_base + pc->yoff2;
     q->s0 = (float)pc->x0 * ipw;
     q->t0 = (float)pc->y0 * iph;
     q->s1 = (float)pc->x1 * ipw;

@@ -282,8 +282,11 @@ static bool font_create_internal(Ca_Instance *inst, GLFWwindow *glfw_win,
     for (int t = 0; t < CA_FONT_TIER_COUNT; t++) {
         Ca_FontTier *tier = &out_font->tiers[t];
 
-        /* Text ranges: 2x2 oversampling for smooth anti-aliased glyph edges */
-        stbtt_PackSetOversampling(&ctx, 2, 2);
+        /* Adaptive oversampling: small glyphs benefit from 2x2 subpixel
+           precision; large glyphs already have enough pixels and
+           oversampling just adds blur / haze on edges. */
+        int text_os = (tier->baked_px <= 28.0f) ? 2 : 1;
+        stbtt_PackSetOversampling(&ctx, text_os, text_os);
         stbtt_pack_range text_ranges[CA_FONT_TEXT_RANGES];
         for (int r = 0; r < CA_FONT_TEXT_RANGES; r++) {
             text_ranges[r].font_size                        = tier->baked_px;
@@ -334,7 +337,7 @@ static bool font_create_internal(Ca_Instance *inst, GLFWwindow *glfw_win,
     for (int t = 0; t < CA_FONT_TIER_COUNT; t++)
         if (out_font->tiers[t].packed) packed_count++;
 
-    printf("[font] atlas %dx%d, %d/%d tiers packed (scale=%.1f, text=2x2, icons=1x1%s)\n",
+    printf("[font] atlas %dx%d, %d/%d tiers packed (scale=%.1f, text=adaptive-os, icons=1x1%s)\n",
            out_font->atlas_w, out_font->atlas_h,
            packed_count, CA_FONT_TIER_COUNT, cx,
            icon_data ? ", dual-font" : "");
