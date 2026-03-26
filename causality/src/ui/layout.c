@@ -370,6 +370,20 @@ static void layout_node(Ca_Node *node, float x, float y, float avail_w, float av
     FlexLine lines[MAX_FLEX_LINES];
     uint32_t line_count = 0;
 
+    /* If any child has explicit flex-grow, only those children grow;
+       children without flex-grow use their natural content size.
+       If NO child has explicit flex-grow, all auto-sized children
+       share remaining space equally (backward-compatible behaviour). */
+    bool any_explicit_flex_grow = false;
+    for (uint32_t i = 0; i < node->child_count; ++i) {
+        Ca_Node *child = node->children[i];
+        if (!child->desc.hidden && child->desc.position == CA_POSITION_RELATIVE
+            && child->desc.flex_grow > 0.0f) {
+            any_explicit_flex_grow = true;
+            break;
+        }
+    }
+
     if (!do_wrap) {
         /* Single line — all children */
         FlexLine *ln = &lines[0];
@@ -387,7 +401,7 @@ static void layout_node(Ca_Node *node, float x, float y, float avail_w, float av
             ln->total_fixed += child_hypo_main[i];
             if (child->desc.flex_grow > 0.0f)
                 ln->total_grow += child->desc.flex_grow;
-            else if (!child_explicit_main[i])
+            else if (!child_explicit_main[i] && !any_explicit_flex_grow)
                 ln->total_grow += 1.0f;
         }
         ln->count = vis;
@@ -432,7 +446,7 @@ static void layout_node(Ca_Node *node, float x, float y, float avail_w, float av
             ln->total_fixed += hmain;
             if (child->desc.flex_grow > 0.0f)
                 ln->total_grow += child->desc.flex_grow;
-            else if (!child_explicit_main[i])
+            else if (!child_explicit_main[i] && !any_explicit_flex_grow)
                 ln->total_grow += 1.0f;
         }
         /* Finish last line */
@@ -480,7 +494,7 @@ static void layout_node(Ca_Node *node, float x, float y, float avail_w, float av
                 cc = avail_cross * child->desc.width / 100.0f;
 
             float grow = child->desc.flex_grow;
-            if (grow <= 0.0f && !child_explicit_main[i]) grow = 1.0f;
+            if (grow <= 0.0f && !child_explicit_main[i] && !any_explicit_flex_grow) grow = 1.0f;
             if (grow > 0.0f && ln->total_grow > 0.0f && remaining > 0.0f)
                 cm += remaining * grow / ln->total_grow;
             if (cc <= 0.0f) cc = line_avail_cross;
