@@ -719,8 +719,8 @@ static void paint_text_wrapped(Ca_Window *win, Ca_Font *font,
     cur_line_w = 0.0f;
     int cur_line = 0;
 
-    float xpos = left_x * cs_eff;
-    float ypos = start_y * cs_eff;
+    float xpos = floorf(left_x * cs_eff + 0.5f);
+    float ypos = floorf(start_y * cs_eff + 0.5f);
 
     ClipRect clip = find_clip_for_node(node);
     ClipRect node_clip = clip_intersect(clip, node->x, node->y, node->w, node->h);
@@ -739,8 +739,8 @@ static void paint_text_wrapped(Ca_Window *win, Ca_Font *font,
         if (cur_line_w > 0.0f && with_space > max_w) {
             cur_line++;
             cur_line_w = word_w;
-            xpos = left_x * cs_eff;
-            ypos = (start_y + line_height * cur_line) * cs_eff;
+            xpos = floorf(left_x * cs_eff + 0.5f);
+            ypos = floorf((start_y + line_height * cur_line) * cs_eff + 0.5f);
         } else {
             if (cur_line_w > 0.0f) {
                 xpos += space_adv * cs_eff;
@@ -777,8 +777,8 @@ static void paint_text_wrapped(Ca_Window *win, Ca_Font *font,
         if (*p == '\n') {
             cur_line++;
             cur_line_w = 0;
-            xpos = left_x * cs_eff;
-            ypos = (start_y + line_height * cur_line) * cs_eff;
+            xpos = floorf(left_x * cs_eff + 0.5f);
+            ypos = floorf((start_y + line_height * cur_line) * cs_eff + 0.5f);
             p++;
         } else if (*p == ' ') {
             p++;
@@ -839,8 +839,14 @@ static void paint_text(Ca_Window *win, Ca_Font *font,
         }
     }
 
-    float xpos = left_logical * cs_eff;
-    float ypos = baseline_logical * cs_eff;
+    /* Snap run origin to the nearest physical pixel (macOS-style: crisp
+       baseline; individual advances still accumulate fractionally for
+       accurate kerning with 1x1 atlas glyph coverage AA). */
+    float xpos = floorf(left_logical * cs_eff + 0.5f);
+    float ypos = floorf(baseline_logical * cs_eff + 0.5f);
+
+    ClipRect clip      = find_clip_for_node(node);
+    ClipRect node_clip = clip_intersect(clip, node->x, node->y, node->w, node->h);
 
     const char *p = text;
     while (*p) {
@@ -866,9 +872,6 @@ static void paint_text(Ca_Window *win, Ca_Font *font,
         cmd->u1 = q.s1;  cmd->v1 = q.t1;
         cmd->z_index = node->desc.z_index;
         cmd->in_use = true;
-
-        ClipRect clip = find_clip_for_node(node);
-        ClipRect node_clip = clip_intersect(clip, node->x, node->y, node->w, node->h);
         set_clip(cmd, node_clip);
     }
 }
@@ -901,8 +904,11 @@ static void paint_text_left(Ca_Window *win, Ca_Font *font,
         + (tier->ascent * font_scale + tier->descent * font_scale) * 0.5f;
     float left_logical = node->x + node->desc.padding_left;
 
-    float xpos = left_logical * cs_eff;
-    float ypos = baseline_logical * cs_eff;
+    float xpos = floorf(left_logical * cs_eff + 0.5f);
+    float ypos = floorf(baseline_logical * cs_eff + 0.5f);
+
+    ClipRect clip       = find_clip_for_node(node);
+    ClipRect input_clip = clip_intersect(clip, node->x, node->y, node->w, node->h);
 
     const char *p = text;
     while (*p) {
@@ -927,9 +933,6 @@ static void paint_text_left(Ca_Window *win, Ca_Font *font,
         cmd->u0 = q.s0;  cmd->v0 = q.t0;
         cmd->u1 = q.s1;  cmd->v1 = q.t1;
         cmd->in_use = true;
-
-        ClipRect clip = find_clip_for_node(node);
-        ClipRect input_clip = clip_intersect(clip, node->x, node->y, node->w, node->h);
         set_clip(cmd, input_clip);
     }
 }

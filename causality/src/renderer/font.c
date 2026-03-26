@@ -15,9 +15,9 @@
 #endif
 
 /* Tier logical pixel sizes — chosen for common UI text sizes.
-   9 tiers fit reliably in a 4096² atlas with 2×2 oversampling. */
+   10 tiers fit reliably in a 4096² atlas with 1×1 oversampling. */
 static const float g_tier_sizes[CA_FONT_TIER_COUNT] = {
-    10, 12, 13, 14, 16, 18, 20, 24, 32
+    10, 12, 13, 14, 15, 16, 18, 20, 24, 32
 };
 
 /* Codepoint range definitions */
@@ -282,11 +282,11 @@ static bool font_create_internal(Ca_Instance *inst, GLFWwindow *glfw_win,
     for (int t = 0; t < CA_FONT_TIER_COUNT; t++) {
         Ca_FontTier *tier = &out_font->tiers[t];
 
-        /* Adaptive oversampling: small glyphs benefit from 2x2 subpixel
-           precision; large glyphs already have enough pixels and
-           oversampling just adds blur / haze on edges. */
-        int text_os = (tier->baked_px <= 28.0f) ? 2 : 1;
-        stbtt_PackSetOversampling(&ctx, text_os, text_os);
+        /* 1x1 oversampling: glyph origins are snapped to physical pixels at
+           render time (see paint.c), so each atlas texel maps to exactly one
+           screen pixel. Sub-pixel phase is encoded in the coverage values by
+           the grayscale rasterizer — no multi-column decode needed. */
+        stbtt_PackSetOversampling(&ctx, 1, 1);
         stbtt_pack_range text_ranges[CA_FONT_TEXT_RANGES];
         for (int r = 0; r < CA_FONT_TEXT_RANGES; r++) {
             text_ranges[r].font_size                        = tier->baked_px;
@@ -337,7 +337,7 @@ static bool font_create_internal(Ca_Instance *inst, GLFWwindow *glfw_win,
     for (int t = 0; t < CA_FONT_TIER_COUNT; t++)
         if (out_font->tiers[t].packed) packed_count++;
 
-    printf("[font] atlas %dx%d, %d/%d tiers packed (scale=%.1f, text=adaptive-os, icons=1x1%s)\n",
+    printf("[font] atlas %dx%d, %d/%d tiers packed (scale=%.1f, text=1x1-snap, icons=1x1%s)\n",
            out_font->atlas_w, out_font->atlas_h,
            packed_count, CA_FONT_TIER_COUNT, cx,
            icon_data ? ", dual-font" : "");

@@ -10,7 +10,7 @@
 #define CA_FONT_RANGE_COUNT    6
 #define CA_FONT_TEXT_RANGES   1    /* ASCII + Latin-1 (range 0) */
 #define CA_FONT_ICON_RANGES   5    /* icon codepoint ranges (1–5) */
-#define CA_FONT_TIER_COUNT    9
+#define CA_FONT_TIER_COUNT    10
 
 typedef struct Ca_GlyphRange {
     int               first_codepoint;
