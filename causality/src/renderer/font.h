@@ -1,5 +1,6 @@
-/* font.h — GPU font atlas with multi-size tiers and Unicode support.
-   Uses stb_truetype pack API for crisp text at every CSS font-size.
+/* font.h — GPU font atlas with regular and bold styles.
+   Uses stb_truetype pack API for crisp text at the configured font size.
+   Both regular and bold Ubuntu Nerd Font are baked into a single atlas.
    Nerd Font icon codepoint ranges are baked alongside ASCII. */
 #pragma once
 
@@ -8,9 +9,11 @@
 #include <math.h>
 
 #define CA_FONT_RANGE_COUNT    6
-#define CA_FONT_TEXT_RANGES   1    /* ASCII + Latin-1 (range 0) */
-#define CA_FONT_ICON_RANGES   5    /* icon codepoint ranges (1–5) */
-#define CA_FONT_TIER_COUNT    10
+#define CA_FONT_TEXT_RANGES    1    /* ASCII + Latin-1 (range 0) */
+#define CA_FONT_ICON_RANGES    5    /* icon codepoint ranges (1-5) */
+#define CA_FONT_STYLE_COUNT    2    /* regular=0, bold=1 */
+#define CA_FONT_STYLE_REGULAR  0
+#define CA_FONT_STYLE_BOLD     1
 
 typedef struct Ca_GlyphRange {
     int               first_codepoint;
@@ -30,7 +33,7 @@ typedef struct Ca_FontTier {
 } Ca_FontTier;
 
 typedef struct Ca_Font {
-    Ca_FontTier tiers[CA_FONT_TIER_COUNT];
+    Ca_FontTier tiers[CA_FONT_STYLE_COUNT];  /* [0]=regular, [1]=bold */
 
     VkImage        image;
     VkDeviceMemory memory;
@@ -42,17 +45,20 @@ typedef struct Ca_Font {
     float default_size;
 } Ca_Font;
 
-/* Find the best packed tier for a desired logical pixel size. */
+/* Return the regular font tier. */
 static inline Ca_FontTier *ca_font_tier(Ca_Font *font, float desired_px)
 {
-    Ca_FontTier *best = NULL;
-    float best_diff = 1e20f;
-    for (int i = 0; i < CA_FONT_TIER_COUNT; i++) {
-        if (!font->tiers[i].packed) continue;
-        float diff = fabsf(font->tiers[i].logical_px - desired_px);
-        if (diff < best_diff) { best = &font->tiers[i]; best_diff = diff; }
-    }
-    return best ? best : &font->tiers[0];
+    (void)desired_px;
+    return &font->tiers[CA_FONT_STYLE_REGULAR];
+}
+
+/* Select regular or bold tier based on a boolean flag. Falls back to regular
+   if bold was not baked (bold_data was NULL at creation time). */
+static inline Ca_FontTier *ca_font_select_tier(Ca_Font *font, bool bold)
+{
+    if (bold && font->tiers[CA_FONT_STYLE_BOLD].packed)
+        return &font->tiers[CA_FONT_STYLE_BOLD];
+    return &font->tiers[CA_FONT_STYLE_REGULAR];
 }
 
 /* Look up glyph data for a Unicode codepoint within a tier. */
@@ -118,21 +124,18 @@ static inline uint32_t ca_utf8_decode(const char **pp)
 }
 
 bool ca_font_create(Ca_Instance *inst, GLFWwindow *glfw_win,
-                    Ca_Font *out_font, const char *path, float font_px);
+                    Ca_Font *out_font,
+                    const char *regular_path, const char *bold_path,
+                    float font_px);
 
+/** Create a font atlas from in-memory font data.
+    regular_data/regular_size: required — Ubuntu Nerd Font Regular (text + icons).
+    bold_data/bold_size: optional (pass NULL/0 to skip bold tier). */
 bool ca_font_create_from_memory(Ca_Instance *inst, GLFWwindow *glfw_win,
                                 Ca_Font *out_font,
-                                const unsigned char *data, unsigned int data_size,
+                                const unsigned char *regular_data, unsigned int regular_size,
+                                const unsigned char *bold_data,    unsigned int bold_size,
                                 float font_px);
-
-/** Create a font atlas using a proportional text font and a separate icon font.
-    Text codepoint ranges (ASCII/Latin) are packed from text_data.
-    Icon codepoint ranges (Nerd Font glyphs) are packed from icon_data. */
-bool ca_font_create_dual_from_memory(Ca_Instance *inst, GLFWwindow *glfw_win,
-                                     Ca_Font *out_font,
-                                     const unsigned char *text_data, unsigned int text_size,
-                                     const unsigned char *icon_data, unsigned int icon_size,
-                                     float font_px);
 
 /** Detect the platform's default proportional UI font.
     Returns true and writes the path into out_path on success. */

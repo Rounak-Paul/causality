@@ -347,37 +347,59 @@ bool ca_renderer_window_init(Ca_Instance *inst, Ca_Window *win)
 
         extern const unsigned char ca_embedded_font_data[];
         extern const unsigned int  ca_embedded_font_size;
+        extern const unsigned char ca_embedded_font_bold_data[];
+        extern const unsigned int  ca_embedded_font_bold_size;
+
+        /* Resolve regular font data — file override or embedded */
+        const unsigned char *regular_data = ca_embedded_font_data;
+        unsigned int         regular_size = ca_embedded_font_size;
+        unsigned char       *regular_buf  = NULL;
 
         if (inst->font_path[0] != '\0') {
-            /* User-specified text font — read file, use embedded for icons */
             FILE *fp = fopen(inst->font_path, "rb");
             if (fp) {
                 fseek(fp, 0, SEEK_END);
                 long sz = ftell(fp);
                 rewind(fp);
-                unsigned char *buf = (unsigned char *)malloc((size_t)sz);
-                if (buf) {
-                    fread(buf, 1, (size_t)sz, fp);
-                    fclose(fp);
-                    font_ok = ca_font_create_dual_from_memory(
-                                inst, win->glfw, inst->font,
-                                buf, (unsigned int)sz,
-                                ca_embedded_font_data, ca_embedded_font_size,
-                                inst->font_size_px);
-                    free(buf);
-                } else {
-                    fclose(fp);
+                regular_buf = (unsigned char *)malloc((size_t)sz);
+                if (regular_buf) {
+                    fread(regular_buf, 1, (size_t)sz, fp);
+                    regular_data = regular_buf;
+                    regular_size = (unsigned int)sz;
                 }
+                fclose(fp);
             }
         }
 
-        if (!font_ok) {
-            /* Default: embedded Roboto Mono Nerd Font for text + icons */
-            font_ok = ca_font_create_from_memory(
-                        inst, win->glfw, inst->font,
-                        ca_embedded_font_data, ca_embedded_font_size,
-                        inst->font_size_px);
+        /* Resolve bold font data — file override or embedded */
+        const unsigned char *bold_data = ca_embedded_font_bold_data;
+        unsigned int         bold_size = ca_embedded_font_bold_size;
+        unsigned char       *bold_buf  = NULL;
+
+        if (inst->bold_font_path[0] != '\0') {
+            FILE *fp = fopen(inst->bold_font_path, "rb");
+            if (fp) {
+                fseek(fp, 0, SEEK_END);
+                long sz = ftell(fp);
+                rewind(fp);
+                bold_buf = (unsigned char *)malloc((size_t)sz);
+                if (bold_buf) {
+                    fread(bold_buf, 1, (size_t)sz, fp);
+                    bold_data = bold_buf;
+                    bold_size = (unsigned int)sz;
+                }
+                fclose(fp);
+            }
         }
+
+        font_ok = ca_font_create_from_memory(
+                    inst, win->glfw, inst->font,
+                    regular_data, regular_size,
+                    bold_data,    bold_size,
+                    inst->font_size_px);
+
+        free(regular_buf);
+        free(bold_buf);
         if (!font_ok) {
             free(inst->font);
             inst->font = NULL;

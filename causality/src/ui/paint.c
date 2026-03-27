@@ -1,6 +1,7 @@
 /* paint.c — CPU-side draw command generation */
 #include "paint.h"
 #include "font.h"
+#include "ca_theme.h"
 #include <GLFW/glfw3.h>
 
 /* Process memory (RSS) for debug overlay */
@@ -198,8 +199,8 @@ static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, Cli
             c->type = CA_DRAW_RECT;
             c->x = bx; c->y = by; c->w = bs; c->h = bs;
             c->corner_radius = 3.0f;
-            if (cb->checked) { c->r = 0.25f; c->g = 0.55f; c->b = 1.0f; c->a = 1.0f; }
-            else             { c->r = 0.3f;  c->g = 0.3f;  c->b = 0.35f; c->a = 1.0f; }
+            if (cb->checked) { float _r, _g, _b, _a; unpack_color(CA_THEME_ACCENT,     &_r, &_g, &_b, &_a); c->r = _r; c->g = _g; c->b = _b; c->a = _a; }
+            else             { float _r, _g, _b, _a; unpack_color(CA_THEME_BG_OVERLAY, &_r, &_g, &_b, &_a); c->r = _r; c->g = _g; c->b = _b; c->a = _a; }
             c->in_use = true;
         }
         /* Checkmark */
@@ -241,7 +242,7 @@ static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, Cli
             c->type = CA_DRAW_RECT;
             c->x = bx; c->y = by; c->w = bs; c->h = bs;
             c->corner_radius = bs * 0.5f;
-            c->r = 0.3f; c->g = 0.3f; c->b = 0.35f; c->a = 1.0f;
+            { float _r, _g, _b, _a; unpack_color(CA_THEME_BG_OVERLAY, &_r, &_g, &_b, &_a); c->r = _r; c->g = _g; c->b = _b; c->a = _a; }
             c->in_use = true;
         }
         /* Inner dot when selected */
@@ -254,7 +255,7 @@ static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, Cli
             c->y = by + (bs - ds) * 0.5f;
             c->w = ds; c->h = ds;
             c->corner_radius = ds * 0.5f;
-            c->r = 0.25f; c->g = 0.55f; c->b = 1.0f; c->a = 1.0f;
+            { float _r, _g, _b, _a; unpack_color(CA_THEME_ACCENT, &_r, &_g, &_b, &_a); c->r = _r; c->g = _g; c->b = _b; c->a = _a; }
             c->in_use = true;
         }
         /* Label text */
@@ -280,7 +281,7 @@ static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, Cli
             c->type = CA_DRAW_RECT;
             c->x = node->x; c->y = track_y; c->w = node->w; c->h = track_h;
             c->corner_radius = 2.0f;
-            c->r = 0.25f; c->g = 0.25f; c->b = 0.3f; c->a = 1.0f;
+            { float _r, _g, _b, _a; unpack_color(CA_THEME_BG_SURFACE, &_r, &_g, &_b, &_a); c->r = _r; c->g = _g; c->b = _b; c->a = _a; }
             c->in_use = true;
         }
         /* Fill */
@@ -291,7 +292,7 @@ static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, Cli
             c->type = CA_DRAW_RECT;
             c->x = node->x; c->y = track_y; c->w = fill_w; c->h = track_h;
             c->corner_radius = 2.0f;
-            c->r = 0.25f; c->g = 0.55f; c->b = 1.0f; c->a = 1.0f;
+            { float _r, _g, _b, _a; unpack_color(CA_THEME_ACCENT, &_r, &_g, &_b, &_a); c->r = _r; c->g = _g; c->b = _b; c->a = _a; }
             c->in_use = true;
         }
         /* Thumb */
@@ -319,8 +320,8 @@ static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, Cli
             c->type = CA_DRAW_RECT;
             c->x = node->x; c->y = node->y; c->w = node->w; c->h = node->h;
             c->corner_radius = node->h * 0.5f;
-            if (t->on) { c->r = 0.2f; c->g = 0.6f; c->b = 0.3f; c->a = 1.0f; }
-            else       { c->r = 0.3f; c->g = 0.3f; c->b = 0.35f; c->a = 1.0f; }
+            if (t->on) { float _r, _g, _b, _a; unpack_color(CA_THEME_SUCCESS,    &_r, &_g, &_b, &_a); c->r = _r; c->g = _g; c->b = _b; c->a = _a; }
+            else       { float _r, _g, _b, _a; unpack_color(CA_THEME_BG_OVERLAY, &_r, &_g, &_b, &_a); c->r = _r; c->g = _g; c->b = _b; c->a = _a; }
             c->in_use = true;
         }
         /* Thumb */
@@ -350,7 +351,7 @@ static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, Cli
             c->type = CA_DRAW_RECT;
             c->x = node->x; c->y = node->y; c->w = node->w; c->h = node->h;
             c->corner_radius = rad;
-            c->r = 0.2f; c->g = 0.2f; c->b = 0.25f; c->a = 1.0f;
+            { float _r, _g, _b, _a; unpack_color(CA_THEME_BG_SURFACE, &_r, &_g, &_b, &_a); c->r = _r; c->g = _g; c->b = _b; c->a = _a; }
             c->in_use = true;
         }
         /* Fill */
@@ -588,7 +589,7 @@ static void paint_scrollbars(Ca_Window *win, Ca_Node *node, ClipRect clip)
             cmd->y             = node->y + margin;
             cmd->w             = bar_w;
             cmd->h             = track_h;
-            cmd->r = 1.0f; cmd->g = 1.0f; cmd->b = 1.0f; cmd->a = 0.05f;
+            unpack_color(CA_THEME_SCROLLBAR_TRACK, &cmd->r, &cmd->g, &cmd->b, &cmd->a);
             cmd->corner_radius = bar_w * 0.5f;
             cmd->in_use        = true;
             set_clip(cmd, clip);
@@ -602,7 +603,7 @@ static void paint_scrollbars(Ca_Window *win, Ca_Node *node, ClipRect clip)
             cmd->y             = thumb_y;
             cmd->w             = bar_w;
             cmd->h             = thumb_h;
-            cmd->r = 1.0f; cmd->g = 1.0f; cmd->b = 1.0f; cmd->a = 0.35f;
+            unpack_color(CA_THEME_SCROLLBAR_THUMB, &cmd->r, &cmd->g, &cmd->b, &cmd->a);
             cmd->corner_radius = bar_w * 0.5f;
             cmd->in_use        = true;
             set_clip(cmd, clip);
@@ -632,7 +633,7 @@ static void paint_scrollbars(Ca_Window *win, Ca_Node *node, ClipRect clip)
             cmd->y             = bar_y;
             cmd->w             = track_w;
             cmd->h             = bar_h;
-            cmd->r = 1.0f; cmd->g = 1.0f; cmd->b = 1.0f; cmd->a = 0.05f;
+            unpack_color(CA_THEME_SCROLLBAR_TRACK, &cmd->r, &cmd->g, &cmd->b, &cmd->a);
             cmd->corner_radius = bar_h * 0.5f;
             cmd->in_use        = true;
             set_clip(cmd, clip);
@@ -646,7 +647,7 @@ static void paint_scrollbars(Ca_Window *win, Ca_Node *node, ClipRect clip)
             cmd->y             = bar_y;
             cmd->w             = thumb_w;
             cmd->h             = bar_h;
-            cmd->r = 1.0f; cmd->g = 1.0f; cmd->b = 1.0f; cmd->a = 0.35f;
+            unpack_color(CA_THEME_SCROLLBAR_THUMB, &cmd->r, &cmd->g, &cmd->b, &cmd->a);
             cmd->corner_radius = bar_h * 0.5f;
             cmd->in_use        = true;
             set_clip(cmd, clip);
@@ -677,7 +678,7 @@ static void paint_text_wrapped(Ca_Window *win, Ca_Font *font,
     float ui_s = win->ui_scale > 0.0f ? win->ui_scale : 1.0f;
     float cs   = font->content_scale / ui_s;
     float desired_size = node->desc.font_size > 0.0f ? node->desc.font_size : font->default_size;
-    Ca_FontTier *tier  = ca_font_tier(font, desired_size);
+    Ca_FontTier *tier  = ca_font_select_tier(font, node->desc.font_bold);
     float font_scale   = desired_size / tier->logical_px;
     float cs_eff       = cs / font_scale;
 
@@ -810,7 +811,7 @@ static void paint_text(Ca_Window *win, Ca_Font *font,
     float ui_s = win->ui_scale > 0.0f ? win->ui_scale : 1.0f;
     float cs   = font->content_scale / ui_s;
     float desired_size = node->desc.font_size > 0.0f ? node->desc.font_size : font->default_size;
-    Ca_FontTier *tier  = ca_font_tier(font, desired_size);
+    Ca_FontTier *tier  = ca_font_select_tier(font, node->desc.font_bold);
     float font_scale   = desired_size / tier->logical_px;
     float cs_eff       = cs / font_scale;
 
@@ -895,7 +896,7 @@ static void paint_text_left(Ca_Window *win, Ca_Font *font,
     float ui_s = win->ui_scale > 0.0f ? win->ui_scale : 1.0f;
     float cs   = font->content_scale / ui_s;
     float desired_size = node->desc.font_size > 0.0f ? node->desc.font_size : font->default_size;
-    Ca_FontTier *tier  = ca_font_tier(font, desired_size);
+    Ca_FontTier *tier  = ca_font_select_tier(font, node->desc.font_bold);
     float font_scale   = desired_size / tier->logical_px;
     float cs_eff       = cs / font_scale;
 
@@ -940,12 +941,12 @@ static void paint_text_left(Ca_Window *win, Ca_Font *font,
 /* Measure x-advance for a substring of text (byte_count bytes) */
 static float measure_text_advance(Ca_Font *font, const char *text, int byte_count,
                                   float content_scale, float ui_scale,
-                                  float font_size)
+                                  float font_size, bool bold)
 {
     float ui_s = ui_scale > 0.0f ? ui_scale : 1.0f;
     float cs   = content_scale / ui_s;
     float desired = font_size > 0.0f ? font_size : font->default_size;
-    Ca_FontTier *tier = ca_font_tier(font, desired);
+    Ca_FontTier *tier = ca_font_select_tier(font, bold);
     float fs     = desired / tier->logical_px;
     float cs_eff = cs / fs;
     float w = 0.0f;
@@ -967,7 +968,8 @@ static void paint_cursor(Ca_Window *win, Ca_Font *font,
 
     float advance = measure_text_advance(font, text, cursor_pos,
                                          font->content_scale, win->ui_scale,
-                                         node->desc.font_size);
+                                         node->desc.font_size,
+                                         node->desc.font_bold);
     float cursor_x = node->x + node->desc.padding_left + advance;
     float cursor_h = node->h * 0.7f;
     float cursor_y = node->y + (node->h - cursor_h) * 0.5f;
@@ -1211,7 +1213,7 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
                 c->x = n->x; c->y = drop_y;
                 c->w = n->w; c->h = opt_h * (float)sel->option_count;
                 c->corner_radius = 4.0f;
-                c->r = 0.15f; c->g = 0.15f; c->b = 0.2f; c->a = 0.95f;
+                { float _r, _g, _b, _a; unpack_color(CA_THEME_POPUP_BG, &_r, &_g, &_b, &_a); c->r = _r; c->g = _g; c->b = _b; c->a = _a; }
                 c->in_use = true;
                 c->overlay = true;
             }
@@ -1223,7 +1225,7 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
                     memset(c, 0, sizeof(*c));
                     c->type = CA_DRAW_RECT;
                     c->x = n->x; c->y = oy; c->w = n->w; c->h = opt_h;
-                    c->r = 0.25f; c->g = 0.25f; c->b = 0.35f; c->a = 1.0f;
+                    { float _r, _g, _b, _a; unpack_color(CA_THEME_BG_OVERLAY, &_r, &_g, &_b, &_a); c->r = _r; c->g = _g; c->b = _b; c->a = _a; }
                     c->in_use = true;
                     c->overlay = true;
                 }
@@ -1277,7 +1279,7 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
                 c->type = CA_DRAW_RECT;
                 c->x = tip_x; c->y = tip_y; c->w = tip_w; c->h = tip_h;
                 c->corner_radius = 4.0f;
-                c->r = 0.1f; c->g = 0.1f; c->b = 0.15f; c->a = 0.95f;
+                { float _r, _g, _b, _a; unpack_color(CA_THEME_POPUP_BG, &_r, &_g, &_b, &_a); c->r = _r; c->g = _g; c->b = _b; c->a = _a; }
                 c->in_use = true;
                 c->overlay = true;
             }
@@ -1287,7 +1289,7 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
             tmp.in_use = true;
             tmp.x = tip_x; tmp.y = tip_y; tmp.w = tip_w; tmp.h = tip_h;
             tmp.window = win;
-            paint_text(win, font, &tmp, tt->text, ca_color(0.9f,0.9f,0.9f,1));
+            paint_text(win, font, &tmp, tt->text, CA_THEME_POPUP_TEXT);
             for (uint32_t gi = glyph_start; gi < win->draw_cmd_count; ++gi)
                 win->draw_cmds[gi].overlay = true;
         }
@@ -1310,7 +1312,7 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
                 c->x = cm->open_x; c->y = cm->open_y;
                 c->w = menu_w; c->h = menu_h;
                 c->corner_radius = 4.0f;
-                c->r = 0.12f; c->g = 0.12f; c->b = 0.17f; c->a = 0.95f;
+                { float _r, _g, _b, _a; unpack_color(CA_THEME_POPUP_BG, &_r, &_g, &_b, &_a); c->r = _r; c->g = _g; c->b = _b; c->a = _a; }
                 c->in_use = true;
                 c->overlay = true;
             }
@@ -1324,7 +1326,7 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
                 tmp.w = menu_w - 16.0f;
                 tmp.h = item_h;
                 tmp.window = win;
-                paint_text(win, font, &tmp, cm->items[mi], ca_color(0.85f,0.85f,0.85f,1));
+                paint_text(win, font, &tmp, cm->items[mi], CA_THEME_POPUP_TEXT);
                 for (uint32_t gi = glyph_start; gi < win->draw_cmd_count; ++gi)
                     win->draw_cmds[gi].overlay = true;
             }

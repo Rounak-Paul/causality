@@ -435,6 +435,7 @@ static Ca_CssPropId lookup_property(const char *name)
         { "border-radius",    CA_CSS_PROP_BORDER_RADIUS },
         { "opacity",          CA_CSS_PROP_OPACITY },
         { "font-size",        CA_CSS_PROP_FONT_SIZE },
+        { "font-weight",      CA_CSS_PROP_FONT_WEIGHT },
         { "text-align",       CA_CSS_PROP_TEXT_ALIGN },
         { "overflow",         CA_CSS_PROP_OVERFLOW },
         { "overflow-x",       CA_CSS_PROP_OVERFLOW_X },
@@ -509,6 +510,13 @@ static bool lookup_keyword(const char *name, Ca_CssPropId prop, int *out)
         { "scroll",  CA_CSS_OVERFLOW_SCROLL },
         { "auto",    CA_CSS_OVERFLOW_AUTO },
     };
+    /* font-weight */
+    static Ca_KwEntry fontweight_kw[] = {
+        { "normal", 0 },
+        { "bold",   1 },
+        { "100",    0 }, { "200", 0 }, { "300", 0 }, { "400", 0 },
+        { "500",    0 }, { "600", 1 }, { "700", 1 }, { "800", 1 }, { "900", 1 },
+    };
     /* text-align */
     static Ca_KwEntry textalign_kw[] = {
         { "left",   CA_CSS_TEXT_ALIGN_LEFT },
@@ -533,6 +541,8 @@ static bool lookup_keyword(const char *name, Ca_CssPropId prop, int *out)
             tbl = overflow_kw; count = 4; break;
         case CA_CSS_PROP_TEXT_ALIGN:
             tbl = textalign_kw; count = 3; break;
+        case CA_CSS_PROP_FONT_WEIGHT:
+            tbl = fontweight_kw; count = 10; break;
         case CA_CSS_PROP_TEXT_WRAP:
             tbl = wrap_kw; count = 2; break;
         default: return false;

@@ -67,6 +67,7 @@ typedef enum {
     CA_CSS_PROP_OPACITY,
     /* Typography */
     CA_CSS_PROP_FONT_SIZE,
+    CA_CSS_PROP_FONT_WEIGHT,
     CA_CSS_PROP_TEXT_ALIGN,
     /* Overflow */
     CA_CSS_PROP_OVERFLOW,

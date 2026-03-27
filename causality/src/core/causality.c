@@ -24,8 +24,10 @@ Ca_Instance *ca_instance_create(const Ca_InstanceDesc *desc)
     /* Cache font settings from descriptor */
     if (desc && desc->font_path)
         snprintf(inst->font_path, sizeof(inst->font_path), "%s", desc->font_path);
+    if (desc && desc->bold_font_path)
+        snprintf(inst->bold_font_path, sizeof(inst->bold_font_path), "%s", desc->bold_font_path);
     inst->font_size_px = (desc && desc->font_size_px > 0.0f)
-                         ? desc->font_size_px : 18.0f;
+                         ? desc->font_size_px : 12.0f;
 
     if (!ca_renderer_init(inst, desc)) {
         ca_ui_shutdown(inst);

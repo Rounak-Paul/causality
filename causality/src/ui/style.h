@@ -66,6 +66,7 @@ typedef struct {
     float    border_radius;
     float    opacity;
     float    font_size;
+    bool     font_bold;
     float    flex_grow, flex_shrink;
 
     uint32_t background_color;

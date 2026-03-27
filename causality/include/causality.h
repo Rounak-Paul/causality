@@ -56,8 +56,9 @@ typedef struct Ca_InstanceDesc {
     bool        prefer_dedicated_gpu;
     /* Font — leave NULL to use the built-in Roboto Mono Nerd Font.
        Set font_path to override with a custom .ttf or .otf file. */
-    const char *font_path;       /* path to a .ttf or .otf file, or NULL */
-    float       font_size_px;    /* desired size in logical pixels (default: 14) */
+    const char *font_path;       /* path to regular .ttf or .otf, or NULL for embedded */
+    const char *bold_font_path;  /* path to bold .ttf or .otf, or NULL for embedded bold */
+    float       font_size_px;    /* desired size in logical pixels (default: 12) */
 } Ca_InstanceDesc;
 
 Ca_Instance *ca_instance_create(const Ca_InstanceDesc *desc);

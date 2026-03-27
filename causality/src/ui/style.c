@@ -298,6 +298,10 @@ void ca_style_resolve(Ca_Stylesheet *ss,
                 case CA_CSS_PROP_BORDER_RADIUS:    out->border_radius   = css_val_to_px(val); break;
                 case CA_CSS_PROP_OPACITY:          out->opacity         = val->number;        break;
                 case CA_CSS_PROP_FONT_SIZE:        out->font_size       = css_val_to_px(val); break;
+                case CA_CSS_PROP_FONT_WEIGHT:
+                    if (val->type == CA_CSS_VAL_KEYWORD)
+                        out->font_bold = (val->keyword != 0);
+                    break;
                 case CA_CSS_PROP_TEXT_ALIGN:
                     if (val->type == CA_CSS_VAL_KEYWORD)
                         out->text_align = val->keyword;
@@ -486,6 +490,10 @@ void ca_style_apply_to_node(const Ca_ResolvedStyle *style,
     /* Font size */
     if (nd->font_size <= 0.0f && STYLE_SET(CA_CSS_PROP_FONT_SIZE))
         nd->font_size = style->font_size;
+
+    /* Font weight (bold) */
+    if (STYLE_SET(CA_CSS_PROP_FONT_WEIGHT))
+        nd->font_bold = style->font_bold;
 
     /* Text align */
     if (nd->text_align == 0 && STYLE_SET(CA_CSS_PROP_TEXT_ALIGN)) {

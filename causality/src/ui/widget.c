@@ -18,6 +18,7 @@
 #include "widget.h"
 #include "node.h"
 #include "style.h"
+#include "ca_theme.h"
 #include "font.h"
 #include "viewport.h"
 
@@ -554,7 +555,7 @@ void ca_hr(const Ca_HrDesc *desc)
         /* Defaults after CSS */
         if (node->desc.height <= 0.0f) node->desc.height = s(1.0f);
         if (node->desc.background == 0)
-            node->desc.background = ca_color(0.3f, 0.3f, 0.3f, 1.0f);
+            node->desc.background = CA_THEME_BG_SURFACE;
     }
 }
 
@@ -609,7 +610,7 @@ Ca_TextInput *ca_input(const Ca_InputDesc *desc)
     node->widget      = inp;
     inp->cursor     = 0;
     inp->sel_start  = -1;
-    inp->placeholder_color = ca_color(0.5f, 0.5f, 0.5f, 1.0f);
+    inp->placeholder_color = CA_THEME_TEXT_DIM;
 
     if (desc->text)
         snprintf(inp->text, CA_INPUT_TEXT_MAX, "%s", desc->text);
@@ -1254,7 +1255,7 @@ Ca_Progress *ca_progress(const Ca_ProgressDesc *desc)
     p->value = desc->value;
     node->widget_type = CA_WIDGET_PROGRESS;
     node->widget      = p;
-    p->bar_color = desc->bar_color ? desc->bar_color : ca_color(0.2f, 0.6f, 1.0f, 1.0f);
+    p->bar_color = desc->bar_color ? desc->bar_color : CA_THEME_ACCENT;
 
     if (desc->hidden) node->desc.hidden = true;
 
@@ -1285,8 +1286,8 @@ Ca_Select *ca_select(const Ca_SelectDesc *desc)
     Ca_NodeDesc nd = {0};
     nd.width  = desc->width > 0 ? s(desc->width) : s(140.0f);
     nd.height = s(26.0f);
-    nd.corner_radius = s(4.0f);
-    nd.background = ca_color(0.2f, 0.2f, 0.25f, 1.0f);
+    nd.corner_radius = s(3.0f);
+    nd.background = CA_THEME_BG_BASE;
 
     Ca_Node *node = ca_node_add(ctx_top(), &nd);
     if (!node) return NULL;
@@ -1358,10 +1359,10 @@ Ca_TabBar *ca_tabs(const Ca_TabBarDesc *desc)
     }
     tb->on_change = desc->on_change;
     tb->change_data = desc->change_data;
-    tb->active_bg     = desc->active_bg     ? desc->active_bg     : ca_color(0.3f, 0.3f, 0.4f, 1.0f);
-    tb->inactive_bg   = desc->inactive_bg   ? desc->inactive_bg   : ca_color(0.15f, 0.15f, 0.2f, 1.0f);
-    tb->active_text   = desc->active_text   ? desc->active_text   : ca_color(1.0f, 1.0f, 1.0f, 1.0f);
-    tb->inactive_text = desc->inactive_text ? desc->inactive_text : ca_color(0.6f, 0.6f, 0.6f, 1.0f);
+    tb->active_bg     = desc->active_bg     ? desc->active_bg     : CA_THEME_BG_OVERLAY;
+    tb->inactive_bg   = desc->inactive_bg   ? desc->inactive_bg   : CA_THEME_TRANSPARENT;
+    tb->active_text   = desc->active_text   ? desc->active_text   : CA_THEME_ACCENT;
+    tb->inactive_text = desc->inactive_text ? desc->inactive_text : CA_THEME_TEXT_DIM;
 
     if (desc->hidden)   node->desc.hidden   = true;
     if (desc->disabled) node->desc.disabled = true;
@@ -1458,10 +1459,12 @@ Ca_TreeNode *ca_tree_node_begin(const Ca_TreeNodeDesc *desc)
 
     /* Create a header row node for the clickable label */
     Ca_NodeDesc hdr = {0};
-    hdr.direction = CA_DIR_ROW;
-    hdr.height = s(20.0f);
+    hdr.direction    = CA_DIR_ROW;
+    hdr.height       = node->desc.height > 0.0f ? node->desc.height : s(20.0f);
+    hdr.font_size    = node->desc.font_size;  /* inherit from CSS */
+    hdr.font_bold    = node->desc.font_bold;  /* inherit from CSS */
     hdr.padding_left = s(4.0f) * (float)tn->depth;
-    hdr.text_align = 1; /* left-aligned */
+    hdr.text_align   = 1; /* left-aligned */
     /* Sensible defaults — CSS can override via the tree node style */
     hdr.corner_radius = 0.0f;
     Ca_Node *hdr_node = ca_node_add(node, &hdr);
@@ -1642,18 +1645,12 @@ Ca_MenuBar *ca_menu_bar(const Ca_MenuBarDesc *desc)
         mb->menu_count = CA_MAX_MENUS_PER_BAR;
 
     /* Theme colors — use caller-provided or sensible defaults */
-    mb->header_highlight = desc->header_highlight ? desc->header_highlight
-                         : ca_color(0.25f, 0.25f, 0.28f, 1.0f);
-    mb->dropdown_bg      = desc->dropdown_bg ? desc->dropdown_bg
-                         : ca_color(0.15f, 0.15f, 0.17f, 0.98f);
-    mb->dropdown_border  = desc->dropdown_border ? desc->dropdown_border
-                         : ca_color(0.25f, 0.25f, 0.28f, 1.0f);
-    mb->dropdown_hover   = desc->dropdown_hover ? desc->dropdown_hover
-                         : ca_color(0.25f, 0.25f, 0.30f, 1.0f);
-    mb->dropdown_text    = desc->dropdown_text ? desc->dropdown_text
-                         : ca_color(0.85f, 0.85f, 0.85f, 1.0f);
-    mb->text_color       = desc->text_color ? desc->text_color
-                         : ca_color(0.80f, 0.80f, 0.82f, 1.0f);
+    mb->header_highlight = desc->header_highlight ? desc->header_highlight : CA_THEME_BG_OVERLAY;
+    mb->dropdown_bg      = desc->dropdown_bg      ? desc->dropdown_bg      : CA_THEME_POPUP_BG;
+    mb->dropdown_border  = desc->dropdown_border  ? desc->dropdown_border  : CA_THEME_BG_SURFACE;
+    mb->dropdown_hover   = desc->dropdown_hover   ? desc->dropdown_hover   : CA_THEME_BG_OVERLAY;
+    mb->dropdown_text    = desc->dropdown_text    ? desc->dropdown_text    : CA_THEME_POPUP_TEXT;
+    mb->text_color       = desc->text_color       ? desc->text_color       : CA_THEME_TEXT_MUTED;
 
     uint32_t dummy = 0;
     apply_css(bar, &bar->desc, CA_ELEM_DIV, desc->style, desc->id, &dummy);
@@ -1759,7 +1756,7 @@ Ca_Modal *ca_modal_begin(const Ca_ModalDesc *desc)
     m->visible = desc->visible;
     m->overlay_color = desc->overlay_color
         ? desc->overlay_color
-        : ca_color(0.0f, 0.0f, 0.0f, 0.5f);
+        : CA_THEME_MODAL_OVERLAY;
 
     uint32_t dummy = 0;
     apply_css(node, &node->desc, CA_ELEM_MODAL, desc->style, desc->id, &dummy);
@@ -1805,9 +1802,8 @@ Ca_Splitter *ca_split_begin(const Ca_SplitDesc *desc)
     sp->min_ratio = (desc->min_ratio > 0.0f) ? desc->min_ratio : 0.1f;
     sp->max_ratio = (desc->max_ratio > 0.0f) ? desc->max_ratio : 0.9f;
     sp->bar_size  = (desc->bar_size > 0.0f)  ? s(desc->bar_size)  : s(4.0f);
-    sp->bar_color = desc->bar_color ? desc->bar_color : ca_color(0.25f, 0.25f, 0.3f, 1.0f);
-    sp->bar_hover_color = desc->bar_hover_color
-        ? desc->bar_hover_color : ca_color(0.35f, 0.55f, 0.9f, 1.0f);
+    sp->bar_color       = desc->bar_color       ? desc->bar_color       : CA_THEME_BG_VOID;
+    sp->bar_hover_color = desc->bar_hover_color ? desc->bar_hover_color : CA_THEME_ACCENT;
     sp->dragging  = false;
 
     node->widget_type = CA_WIDGET_SPLITTER;
