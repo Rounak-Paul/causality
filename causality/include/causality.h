@@ -84,6 +84,9 @@ typedef struct Ca_WindowDesc {
 Ca_Window *ca_window_create(Ca_Instance *instance, const Ca_WindowDesc *desc);
 void       ca_window_destroy(Ca_Window *window);
 
+/// Returns the Ca_Instance that owns this window.
+Ca_Instance *ca_window_instance(Ca_Window *window);
+
 /* Request the window to close at the end of the current tick.
    Safe to call from button callbacks or any other context.
    The window is fully destroyed by the event loop on the next frame. */

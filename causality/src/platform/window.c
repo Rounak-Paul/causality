@@ -283,6 +283,11 @@ void ca_window_close(Ca_Window *window)
     glfwSetWindowShouldClose(window->glfw, GLFW_TRUE);
 }
 
+Ca_Instance *ca_window_instance(Ca_Window *window)
+{
+    return (window && window->in_use) ? window->instance : NULL;
+}
+
 bool ca_window_is_open(const Ca_Window *window)
 {
     return window && window->in_use;

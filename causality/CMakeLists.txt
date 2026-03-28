@@ -1,6 +1,11 @@
 file(GLOB_RECURSE CAUSALITY_SOURCES CONFIGURE_DEPENDS src/*.c)
 
-add_library(causality STATIC ${CAUSALITY_SOURCES})
+add_library(causality SHARED ${CAUSALITY_SOURCES})
+
+# Export all symbols on Windows (no per-function __declspec(dllexport) in source)
+if(WIN32)
+    set_target_properties(causality PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
+endif()
 
 # shaderc — bundled with the LunarG Vulkan SDK, used for runtime GLSL compilation
 # Derive the SDK root from find_package(Vulkan) or the VULKAN_SDK env var
@@ -48,12 +53,13 @@ target_include_directories(causality
 
 target_link_libraries(causality
     PUBLIC
-        Vulkan::Vulkan
-        glfw
-        VulkanMemoryAllocator
-        glm-header-only
-        Threads::Threads
-        ${SHADERC_LIB}
+        Vulkan::Vulkan     # Vk* types appear in the public causality.h API
+    PRIVATE
+        glfw               # internal windowing — not in public headers
+        VulkanMemoryAllocator  # internal GPU memory — not in public headers
+        glm-header-only    # internal math — not in public headers
+        Threads::Threads   # internal threading — not in public headers
+        ${SHADERC_LIB}     # internal shader compilation — not in public headers
 )
 
 # Platform-specific link libraries
