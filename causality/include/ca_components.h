@@ -176,78 +176,78 @@ typedef struct Ca_MenuBarDesc {
    ============================================================ */
 
 /* Checkbox */
-Ca_Checkbox *ca_checkbox(const Ca_CheckboxDesc *desc);
-void         ca_checkbox_set(Ca_Checkbox *cb, bool checked);
-bool         ca_checkbox_get(const Ca_Checkbox *cb);
-void         ca_checkbox_set_hidden(Ca_Checkbox *cb, bool hidden);
-void         ca_checkbox_set_disabled(Ca_Checkbox *cb, bool disabled);
+CA_API Ca_Checkbox *ca_checkbox(const Ca_CheckboxDesc *desc);
+CA_API void         ca_checkbox_set(Ca_Checkbox *cb, bool checked);
+CA_API bool         ca_checkbox_get(const Ca_Checkbox *cb);
+CA_API void         ca_checkbox_set_hidden(Ca_Checkbox *cb, bool hidden);
+CA_API void         ca_checkbox_set_disabled(Ca_Checkbox *cb, bool disabled);
 
 /* Radio button */
-Ca_Radio    *ca_radio(const Ca_RadioDesc *desc);
-int          ca_radio_group_get(Ca_Window *win, int group);
-void         ca_radio_set_hidden(Ca_Radio *r, bool hidden);
-void         ca_radio_set_disabled(Ca_Radio *r, bool disabled);
+CA_API Ca_Radio    *ca_radio(const Ca_RadioDesc *desc);
+CA_API int          ca_radio_group_get(Ca_Window *win, int group);
+CA_API void         ca_radio_set_hidden(Ca_Radio *r, bool hidden);
+CA_API void         ca_radio_set_disabled(Ca_Radio *r, bool disabled);
 
 /* Slider */
-Ca_Slider   *ca_slider(const Ca_SliderDesc *desc);
-void         ca_slider_set(Ca_Slider *s, float value);
-float        ca_slider_get(const Ca_Slider *s);
-void         ca_slider_set_hidden(Ca_Slider *s, bool hidden);
-void         ca_slider_set_disabled(Ca_Slider *s, bool disabled);
+CA_API Ca_Slider   *ca_slider(const Ca_SliderDesc *desc);
+CA_API void         ca_slider_set(Ca_Slider *s, float value);
+CA_API float        ca_slider_get(const Ca_Slider *s);
+CA_API void         ca_slider_set_hidden(Ca_Slider *s, bool hidden);
+CA_API void         ca_slider_set_disabled(Ca_Slider *s, bool disabled);
 
 /* Toggle switch */
-Ca_Toggle   *ca_toggle(const Ca_ToggleDesc *desc);
-void         ca_toggle_set(Ca_Toggle *t, bool on);
-bool         ca_toggle_get(const Ca_Toggle *t);
-void         ca_toggle_set_hidden(Ca_Toggle *t, bool hidden);
-void         ca_toggle_set_disabled(Ca_Toggle *t, bool disabled);
+CA_API Ca_Toggle   *ca_toggle(const Ca_ToggleDesc *desc);
+CA_API void         ca_toggle_set(Ca_Toggle *t, bool on);
+CA_API bool         ca_toggle_get(const Ca_Toggle *t);
+CA_API void         ca_toggle_set_hidden(Ca_Toggle *t, bool hidden);
+CA_API void         ca_toggle_set_disabled(Ca_Toggle *t, bool disabled);
 
 /* Progress bar */
-Ca_Progress *ca_progress(const Ca_ProgressDesc *desc);
-void         ca_progress_set(Ca_Progress *p, float value);
-void         ca_progress_set_hidden(Ca_Progress *p, bool hidden);
+CA_API Ca_Progress *ca_progress(const Ca_ProgressDesc *desc);
+CA_API void         ca_progress_set(Ca_Progress *p, float value);
+CA_API void         ca_progress_set_hidden(Ca_Progress *p, bool hidden);
 
 /* Select / dropdown */
-Ca_Select   *ca_select(const Ca_SelectDesc *desc);
-void         ca_select_set(Ca_Select *s, int index);
-int          ca_select_get(const Ca_Select *s);
-void         ca_select_set_hidden(Ca_Select *s, bool hidden);
-void         ca_select_set_disabled(Ca_Select *s, bool disabled);
+CA_API Ca_Select   *ca_select(const Ca_SelectDesc *desc);
+CA_API void         ca_select_set(Ca_Select *s, int index);
+CA_API int          ca_select_get(const Ca_Select *s);
+CA_API void         ca_select_set_hidden(Ca_Select *s, bool hidden);
+CA_API void         ca_select_set_disabled(Ca_Select *s, bool disabled);
 
 /* Tab bar */
-Ca_TabBar   *ca_tabs(const Ca_TabBarDesc *desc);
-int          ca_tabs_active(const Ca_TabBar *t);
-void         ca_tabs_set_hidden(Ca_TabBar *t, bool hidden);
-void         ca_tabs_set_disabled(Ca_TabBar *t, bool disabled);
+CA_API Ca_TabBar   *ca_tabs(const Ca_TabBarDesc *desc);
+CA_API int          ca_tabs_active(const Ca_TabBar *t);
+CA_API void         ca_tabs_set_hidden(Ca_TabBar *t, bool hidden);
+CA_API void         ca_tabs_set_disabled(Ca_TabBar *t, bool disabled);
 
 /* Tree view */
-void         ca_tree_begin(const Ca_DivDesc *desc);
-void         ca_tree_end(void);
-Ca_TreeNode *ca_tree_node_begin(const Ca_TreeNodeDesc *desc);
-void         ca_tree_node_end(void);
-bool         ca_tree_node_expanded(const Ca_TreeNode *n);
-void         ca_tree_node_set_hidden(Ca_TreeNode *n, bool hidden);
+CA_API void         ca_tree_begin(const Ca_DivDesc *desc);
+CA_API void         ca_tree_end(void);
+CA_API Ca_TreeNode *ca_tree_node_begin(const Ca_TreeNodeDesc *desc);
+CA_API void         ca_tree_node_end(void);
+CA_API bool         ca_tree_node_expanded(const Ca_TreeNode *n);
+CA_API void         ca_tree_node_set_hidden(Ca_TreeNode *n, bool hidden);
 
 /* Table */
-void ca_table_begin(const Ca_TableDesc *desc);
-void ca_table_end(void);
-void ca_table_row_begin(const Ca_DivDesc *desc);
-void ca_table_row_end(void);
-void ca_table_cell(const Ca_TextDesc *desc);
+CA_API void ca_table_begin(const Ca_TableDesc *desc);
+CA_API void ca_table_end(void);
+CA_API void ca_table_row_begin(const Ca_DivDesc *desc);
+CA_API void ca_table_row_end(void);
+CA_API void ca_table_cell(const Ca_TextDesc *desc);
 
 /* Tooltip — attach to the previously created element */
-void ca_tooltip(const Ca_TooltipDesc *desc);
+CA_API void ca_tooltip(const Ca_TooltipDesc *desc);
 
 /* Context menu — attach to the previously created element */
-void ca_context_menu(const Ca_CtxMenuDesc *desc);
+CA_API void ca_context_menu(const Ca_CtxMenuDesc *desc);
 
 /* Menu bar */
-Ca_MenuBar *ca_menu_bar(const Ca_MenuBarDesc *desc);
+CA_API Ca_MenuBar *ca_menu_bar(const Ca_MenuBarDesc *desc);
 
 /* Modal / dialog */
-Ca_Modal *ca_modal_begin(const Ca_ModalDesc *desc);
-void      ca_modal_end(void);
-void      ca_modal_set_visible(Ca_Modal *modal, bool visible);
+CA_API Ca_Modal *ca_modal_begin(const Ca_ModalDesc *desc);
+CA_API void      ca_modal_end(void);
+CA_API void      ca_modal_set_visible(Ca_Modal *modal, bool visible);
 
 #ifdef __cplusplus
 }

@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include "ca_api.h"
 
 /* ============================================================
    CSS VALUE TYPES
@@ -190,5 +191,5 @@ typedef struct Ca_Stylesheet {
    API
    ============================================================ */
 
-Ca_Stylesheet *ca_css_parse(const char *css_text);
-void           ca_css_destroy(Ca_Stylesheet *ss);
+CA_API Ca_Stylesheet *ca_css_parse(const char *css_text);
+CA_API void           ca_css_destroy(Ca_Stylesheet *ss);
