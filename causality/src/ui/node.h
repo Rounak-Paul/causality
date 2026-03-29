@@ -15,5 +15,6 @@ Ca_Node *ca_node_root(Ca_Window *window);
 Ca_Node *ca_node_add(Ca_Node *parent, const Ca_NodeDesc *desc);
 void     ca_node_remove(Ca_Node *node);
 void     ca_node_clear(Ca_Node *node);
+void     ca_node_trim_children(Ca_Node *parent, uint32_t keep_count);
 void     ca_node_set_desc(Ca_Node *node, const Ca_NodeDesc *desc);
 void     ca_node_subscribe(Ca_Node *node, Ca_State *state, Ca_DirtyFlags on_change);

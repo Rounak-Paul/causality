@@ -350,6 +350,15 @@ CA_API void ca_ui_end(void);
 /// Must be paired with ca_div_end().
 CA_API void ca_div_clear(Ca_Div *div);
 
+/// Enters a div in keyed reconciliation mode.
+/// Children created while active are matched/reused by key (id) when possible,
+/// and any old unmatched children are removed on the matching ca_div_end().
+CA_API void ca_reconcile_begin(Ca_Div *div);
+
+/// Sets a one-shot reconciliation key for the next created element.
+/// If set, this key overrides descriptor id for matching in reconcile mode.
+CA_API void ca_reconcile_key(const char *key);
+
 /* ---- Container elements (push / pop the parent stack) ---- */
 
 CA_API Ca_Div *ca_div_begin(const Ca_DivDesc *desc);

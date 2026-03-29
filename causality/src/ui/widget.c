@@ -198,6 +198,9 @@ static Ca_Button *add_button(Ca_Window *win, Ca_Node *parent, const Ca_BtnDesc *
 static struct {
     Ca_Window *window;
     Ca_Node   *stack[CA_STACK_MAX];
+    uint16_t   child_cursor[CA_STACK_MAX];
+    bool       reconcile[CA_STACK_MAX];
+    char       next_key[CA_NODE_ID_MAX];
     int        depth;    /* index of top; -1 = empty */
     bool       active;
 } g_ctx;
@@ -208,16 +211,127 @@ static Ca_Node *ctx_top(void)
     return g_ctx.stack[g_ctx.depth];
 }
 
+static bool ctx_top_reconcile(void)
+{
+    return g_ctx.active && g_ctx.depth >= 0 && g_ctx.reconcile[g_ctx.depth];
+}
+
+static uint16_t *ctx_top_cursor(void)
+{
+    assert(g_ctx.active && g_ctx.depth >= 0);
+    return &g_ctx.child_cursor[g_ctx.depth];
+}
+
 static void ctx_push(Ca_Node *node)
 {
     assert(g_ctx.depth + 1 < CA_STACK_MAX);
-    g_ctx.stack[++g_ctx.depth] = node;
+    ++g_ctx.depth;
+    g_ctx.stack[g_ctx.depth] = node;
+    g_ctx.child_cursor[g_ctx.depth] = 0;
+    g_ctx.reconcile[g_ctx.depth] = false;
+}
+
+static void ctx_push_mode(Ca_Node *node, bool reconcile)
+{
+    assert(g_ctx.depth + 1 < CA_STACK_MAX);
+    ++g_ctx.depth;
+    g_ctx.stack[g_ctx.depth] = node;
+    g_ctx.child_cursor[g_ctx.depth] = 0;
+    g_ctx.reconcile[g_ctx.depth] = reconcile;
 }
 
 static void ctx_pop(void)
 {
     assert(g_ctx.depth >= 0);
+    if (g_ctx.reconcile[g_ctx.depth]) {
+        Ca_Node *node = g_ctx.stack[g_ctx.depth];
+        ca_node_trim_children(node, g_ctx.child_cursor[g_ctx.depth]);
+    }
     --g_ctx.depth;
+}
+
+static const char *consume_next_key(void)
+{
+    if (!g_ctx.next_key[0]) return NULL;
+    static char key_buf[CA_NODE_ID_MAX];
+    snprintf(key_buf, sizeof(key_buf), "%s", g_ctx.next_key);
+    g_ctx.next_key[0] = '\0';
+    return key_buf;
+}
+
+static void reorder_child_to_cursor(Ca_Node *parent, uint32_t from, uint32_t to)
+{
+    if (from == to || from >= parent->child_count || to >= parent->child_count) return;
+    Ca_Node *picked = parent->children[from];
+    if (from > to) {
+        for (uint32_t i = from; i > to; --i)
+            parent->children[i] = parent->children[i - 1];
+        parent->children[to] = picked;
+    }
+}
+
+static bool node_key_eq(const Ca_Node *node, const char *key)
+{
+    if (!key || !key[0]) return false;
+    return node->id[0] && strcmp(node->id, key) == 0;
+}
+
+static bool node_kind_match(const Ca_Node *node, uint8_t widget_type,
+                            Ca_ElementType elem_type)
+{
+    if (widget_type != CA_WIDGET_NONE && node->widget_type != widget_type)
+        return false;
+    if (elem_type != 0 && node->elem_type != (uint8_t)elem_type)
+        return false;
+    return true;
+}
+
+static Ca_Node *claim_child(const Ca_NodeDesc *nd, uint8_t widget_type,
+                            Ca_ElementType elem_type, const char *key,
+                            bool *out_reused)
+{
+    Ca_Node *parent = ctx_top();
+    uint16_t *cursor = ctx_top_cursor();
+    uint32_t idx = *cursor;
+    Ca_Node *node = NULL;
+    *out_reused = false;
+
+    if (!ctx_top_reconcile()) {
+        node = ca_node_add(parent, nd);
+        if (!node) return NULL;
+        *cursor = (uint16_t)(*cursor + 1);
+        return node;
+    }
+
+    if (idx < parent->child_count) {
+        Ca_Node *cand = parent->children[idx];
+        bool key_ok = key ? node_key_eq(cand, key) : !cand->id[0];
+        if (key_ok && node_kind_match(cand, widget_type, elem_type))
+            node = cand;
+    }
+
+    if (!node && key && key[0]) {
+        for (uint32_t i = idx + 1; i < parent->child_count; ++i) {
+            Ca_Node *cand = parent->children[i];
+            if (!node_key_eq(cand, key)) continue;
+            if (!node_kind_match(cand, widget_type, elem_type)) continue;
+            reorder_child_to_cursor(parent, i, idx);
+            node = parent->children[idx];
+            break;
+        }
+    }
+
+    if (node) {
+        ca_node_set_desc(node, nd);
+        *out_reused = true;
+    } else {
+        node = ca_node_add(parent, nd);
+        if (!node) return NULL;
+        reorder_child_to_cursor(parent, parent->child_count - 1, idx);
+    }
+
+    *cursor = (uint16_t)(*cursor + 1);
+    return node;
 }
 
 /* Scale a value by the window's UI scale factor */
@@ -317,6 +431,7 @@ void ca_ui_begin(Ca_Window *window, const Ca_DivDesc *root_desc)
     g_ctx.window = window;
     g_ctx.depth  = -1;
     g_ctx.active = true;
+    g_ctx.next_key[0] = '\0';
 
     Ca_NodeDesc nd = div_to_nd(root_desc);
     Ca_Node *root  = ca_node_root(window);
@@ -355,6 +470,7 @@ void ca_widget_ctx_enter(Ca_Window *win)
     g_ctx.window = win;
     g_ctx.depth  = -1;
     g_ctx.active = true;
+    g_ctx.next_key[0] = '\0';
 }
 
 void ca_widget_ctx_leave(void)
@@ -362,6 +478,23 @@ void ca_widget_ctx_leave(void)
     assert(g_ctx.active);
     assert(g_ctx.depth == -1 && "unclosed ca_div_begin / ca_div_clear");
     g_ctx.active = false;
+}
+
+void ca_reconcile_key(const char *key)
+{
+    assert(g_ctx.active);
+    if (!key || !key[0]) {
+        g_ctx.next_key[0] = '\0';
+        return;
+    }
+    snprintf(g_ctx.next_key, sizeof(g_ctx.next_key), "%s", key);
+}
+
+void ca_reconcile_begin(Ca_Div *div)
+{
+    assert(g_ctx.active);
+    assert(div);
+    ctx_push_mode((Ca_Node *)div, true);
 }
 
 /* ============================================================
@@ -372,13 +505,16 @@ Ca_Div *ca_div_begin(const Ca_DivDesc *desc)
 {
     assert(g_ctx.active);
     Ca_NodeDesc nd = div_to_nd(desc);
-    Ca_Node *node  = add_container(ctx_top(), &nd);
+    const char *next_key = consume_next_key();
+    const char *id = next_key ? next_key : (desc ? desc->id : NULL);
+    bool reused = false;
+    Ca_Node *node = claim_child(&nd, CA_WIDGET_NONE, CA_ELEM_DIV, id, &reused);
     assert(node);
 
     uint32_t dummy = 0;
     apply_css(node, &node->desc, CA_ELEM_DIV,
               desc ? desc->style : NULL,
-              desc ? desc->id : NULL, &dummy);
+              id, &dummy);
 
     /* Store drag callbacks on the node */
     if (desc) {
@@ -388,7 +524,7 @@ Ca_Div *ca_div_begin(const Ca_DivDesc *desc)
         node->drag_data     = desc->drag_data;
     }
 
-    ctx_push(node);
+    ctx_push_mode(node, ctx_top_reconcile());
     return (Ca_Div *)node;
 }
 
@@ -405,11 +541,41 @@ void ca_div_end(void)
 Ca_Label *ca_text(const Ca_TextDesc *desc)
 {
     assert(g_ctx.active && desc);
-    Ca_Label *lbl = add_label(g_ctx.window, ctx_top(), desc);
+    const char *next_key = consume_next_key();
+    const char *id = next_key ? next_key : desc->id;
+
+    Ca_NodeDesc nd = {0};
+    nd.width     = s(desc->width);
+    nd.height    = s(desc->height);
+    nd.text_wrap = desc->wrap ? 1 : 0;
+
+    bool reused = false;
+    Ca_Node *node = claim_child(&nd, CA_WIDGET_LABEL, CA_ELEM_TEXT, id, &reused);
+    if (!node) return NULL;
+
+    Ca_Label *lbl = NULL;
+    if (reused && node->widget_type == CA_WIDGET_LABEL && node->widget)
+        lbl = (Ca_Label *)node->widget;
+    if (!lbl) {
+        lbl = alloc_label(g_ctx.window);
+        if (!lbl) return NULL;
+        memset(lbl, 0, sizeof(*lbl));
+        lbl->in_use = true;
+        node->widget_type = CA_WIDGET_LABEL;
+        node->widget = lbl;
+    }
+
+    lbl->node = node;
+    lbl->in_use = true;
+    if (desc->text)
+        snprintf(lbl->text, CA_LABEL_TEXT_MAX, "%s", desc->text);
+    else
+        lbl->text[0] = '\0';
+
     if (lbl && lbl->node) {
         if (desc->hidden) lbl->node->desc.hidden = true;
         apply_css(lbl->node, &lbl->node->desc, CA_ELEM_TEXT,
-                  desc->style, desc->id, &lbl->color);
+                  desc->style, id, &lbl->color);
         /* Default height if neither user nor CSS set it.
            Skip for wrapped labels — their height is computed at layout time
            from the actual wrapped line count. */
@@ -442,12 +608,52 @@ Ca_Label *ca_text(const Ca_TextDesc *desc)
 Ca_Button *ca_btn(const Ca_BtnDesc *desc)
 {
     assert(g_ctx.active && desc);
-    Ca_Button *btn = add_button(g_ctx.window, ctx_top(), desc);
+    const char *next_key = consume_next_key();
+    const char *id = next_key ? next_key : desc->id;
+
+    Ca_NodeDesc nd   = {0};
+    nd.width         = s(desc->width);
+    nd.height        = s(desc->height);
+    nd.background    = desc->background;
+    nd.corner_radius = s(desc->corner_radius);
+    nd.padding_top   = s(desc->padding[0]);
+    nd.padding_right = s(desc->padding[1]);
+    nd.padding_bottom= s(desc->padding[2]);
+    nd.padding_left  = s(desc->padding[3]);
+    nd.gap           = s(desc->gap);
+    nd.direction     = dir_from_int(desc->direction);
+
+    bool reused = false;
+    Ca_Node *node = claim_child(&nd, CA_WIDGET_BUTTON, CA_ELEM_BUTTON, id, &reused);
+    if (!node) return NULL;
+
+    Ca_Button *btn = NULL;
+    if (reused && node->widget_type == CA_WIDGET_BUTTON && node->widget)
+        btn = (Ca_Button *)node->widget;
+    if (!btn) {
+        btn = alloc_button(g_ctx.window);
+        if (!btn) return NULL;
+        memset(btn, 0, sizeof(*btn));
+        btn->in_use = true;
+        node->widget_type = CA_WIDGET_BUTTON;
+        node->widget = btn;
+    }
+
+    btn->node = node;
+    btn->in_use = true;
+    if (desc->text)
+        snprintf(btn->text, CA_BUTTON_TEXT_MAX, "%s", desc->text);
+    else
+        btn->text[0] = '\0';
+    btn->text_color = desc->text_color;
+    btn->on_click = desc->on_click;
+    btn->click_data = desc->click_data;
+
     if (btn && btn->node) {
         if (desc->hidden)   btn->node->desc.hidden   = true;
         if (desc->disabled) btn->node->desc.disabled = true;
         apply_css(btn->node, &btn->node->desc, CA_ELEM_BUTTON,
-                  desc->style, desc->id, &btn->text_color);
+                  desc->style, id, &btn->text_color);
         /* Auto-width from text if neither user nor CSS set it */
         if (btn->node->desc.width <= 0.0f) {
             float tw = measure_text_px(g_ctx.window, desc->text);
@@ -463,15 +669,54 @@ Ca_Button *ca_btn(const Ca_BtnDesc *desc)
 Ca_Button *ca_btn_begin(const Ca_BtnDesc *desc)
 {
     assert(g_ctx.active && desc);
-    Ca_Button *btn = add_button(g_ctx.window, ctx_top(), desc);
-    assert(btn);
+    const char *next_key = consume_next_key();
+    const char *id = next_key ? next_key : desc->id;
+
+    Ca_NodeDesc nd   = {0};
+    nd.width         = s(desc->width);
+    nd.height        = s(desc->height);
+    nd.background    = desc->background;
+    nd.corner_radius = s(desc->corner_radius);
+    nd.padding_top   = s(desc->padding[0]);
+    nd.padding_right = s(desc->padding[1]);
+    nd.padding_bottom= s(desc->padding[2]);
+    nd.padding_left  = s(desc->padding[3]);
+    nd.gap           = s(desc->gap);
+    nd.direction     = dir_from_int(desc->direction);
+
+    bool reused = false;
+    Ca_Node *node = claim_child(&nd, CA_WIDGET_BUTTON, CA_ELEM_BUTTON, id, &reused);
+    assert(node);
+
+    Ca_Button *btn = NULL;
+    if (reused && node->widget_type == CA_WIDGET_BUTTON && node->widget)
+        btn = (Ca_Button *)node->widget;
+    if (!btn) {
+        btn = alloc_button(g_ctx.window);
+        if (!btn) return NULL;
+        memset(btn, 0, sizeof(*btn));
+        btn->in_use = true;
+        node->widget_type = CA_WIDGET_BUTTON;
+        node->widget = btn;
+    }
+
+    btn->node = node;
+    btn->in_use = true;
+    if (desc->text)
+        snprintf(btn->text, CA_BUTTON_TEXT_MAX, "%s", desc->text);
+    else
+        btn->text[0] = '\0';
+    btn->text_color = desc->text_color;
+    btn->on_click = desc->on_click;
+    btn->click_data = desc->click_data;
+
     if (desc->hidden)   btn->node->desc.hidden   = true;
     if (desc->disabled) btn->node->desc.disabled = true;
     apply_css(btn->node, &btn->node->desc, CA_ELEM_BUTTON,
-              desc->style, desc->id, &btn->text_color);
+              desc->style, id, &btn->text_color);
     /* Nestable buttons auto-size from children; only apply fallback
        if no CSS sets the dimension either. */
-    ctx_push(btn->node);
+    ctx_push_mode(btn->node, ctx_top_reconcile());
     return btn;
 }
 
@@ -491,15 +736,18 @@ void ca_list_begin(const Ca_DivDesc *desc)
     Ca_NodeDesc nd = div_to_nd(desc);
     nd.direction = CA_DIR_COLUMN;
     if (!desc || nd.gap <= 0.0f) nd.gap = s(2.0f);
-    Ca_Node *node = add_container(ctx_top(), &nd);
+    const char *next_key = consume_next_key();
+    const char *id = next_key ? next_key : (desc ? desc->id : NULL);
+    bool reused = false;
+    Ca_Node *node = claim_child(&nd, CA_WIDGET_NONE, CA_ELEM_LIST, id, &reused);
     assert(node);
 
     uint32_t dummy = 0;
     apply_css(node, &node->desc, CA_ELEM_LIST,
               desc ? desc->style : NULL,
-              desc ? desc->id : NULL, &dummy);
+              id, &dummy);
 
-    ctx_push(node);
+    ctx_push_mode(node, ctx_top_reconcile());
 }
 
 void ca_list_end(void)
@@ -518,15 +766,18 @@ void ca_li_begin(const Ca_DivDesc *desc)
     Ca_NodeDesc nd = div_to_nd(desc);
     nd.direction = CA_DIR_ROW;
     if (!desc || nd.gap <= 0.0f) nd.gap = s(4.0f);
-    Ca_Node *node = add_container(ctx_top(), &nd);
+    const char *next_key = consume_next_key();
+    const char *id = next_key ? next_key : (desc ? desc->id : NULL);
+    bool reused = false;
+    Ca_Node *node = claim_child(&nd, CA_WIDGET_NONE, CA_ELEM_LI, id, &reused);
     assert(node);
 
     uint32_t dummy = 0;
     apply_css(node, &node->desc, CA_ELEM_LI,
               desc ? desc->style : NULL,
-              desc ? desc->id : NULL, &dummy);
+              id, &dummy);
 
-    ctx_push(node);
+    ctx_push_mode(node, ctx_top_reconcile());
 }
 
 void ca_li_end(void)
@@ -542,16 +793,19 @@ void ca_li_end(void)
 void ca_hr(const Ca_HrDesc *desc)
 {
     assert(g_ctx.active);
+    const char *next_key = consume_next_key();
+    const char *id = next_key ? next_key : (desc ? desc->id : NULL);
     Ca_NodeDesc nd = {0};
     /* Only set user-specified values; leave zeros for CSS to fill */
     if (desc && desc->thickness > 0.0f) nd.height = s(desc->thickness);
     if (desc && desc->color) nd.background = desc->color;
-    Ca_Node *node = add_container(ctx_top(), &nd);
+    bool reused = false;
+    Ca_Node *node = claim_child(&nd, CA_WIDGET_NONE, CA_ELEM_HR, id, &reused);
     if (node) {
         uint32_t dummy = 0;
         apply_css(node, &node->desc, CA_ELEM_HR,
                   desc ? desc->style : NULL,
-                  desc ? desc->id : NULL, &dummy);
+                  id, &dummy);
         /* Defaults after CSS */
         if (node->desc.height <= 0.0f) node->desc.height = s(1.0f);
         if (node->desc.background == 0)
@@ -566,17 +820,20 @@ void ca_hr(const Ca_HrDesc *desc)
 void ca_spacer(const Ca_SpacerDesc *desc)
 {
     assert(g_ctx.active);
+    const char *next_key = consume_next_key();
+    const char *id = next_key ? next_key : (desc ? desc->id : NULL);
     Ca_NodeDesc nd = {0};
     if (desc) {
         nd.width  = s(desc->width);
         nd.height = s(desc->height);
     }
-    Ca_Node *node = add_container(ctx_top(), &nd);
+    bool reused = false;
+    Ca_Node *node = claim_child(&nd, CA_WIDGET_NONE, CA_ELEM_SPACER, id, &reused);
     if (node) {
         uint32_t dummy = 0;
         apply_css(node, &node->desc, CA_ELEM_SPACER,
                   desc ? desc->style : NULL,
-                  desc ? desc->id : NULL, &dummy);
+                  id, &dummy);
     }
 }
 
@@ -587,8 +844,8 @@ void ca_spacer(const Ca_SpacerDesc *desc)
 Ca_TextInput *ca_input(const Ca_InputDesc *desc)
 {
     assert(g_ctx.active && desc);
-    Ca_TextInput *inp = alloc_input(g_ctx.window);
-    if (!inp) return NULL;
+    const char *next_key = consume_next_key();
+    const char *id = next_key ? next_key : desc->id;
 
     Ca_NodeDesc nd = {0};
     nd.width          = s(desc->width);
@@ -600,14 +857,25 @@ Ca_TextInput *ca_input(const Ca_InputDesc *desc)
     nd.padding_bottom = s(desc->padding[2]);
     nd.padding_left   = s(desc->padding[3]);
 
-    Ca_Node *node = ca_node_add(ctx_top(), &nd);
+    bool reused = false;
+    Ca_Node *node = claim_child(&nd, CA_WIDGET_TEXT_INPUT, CA_ELEM_INPUT, id, &reused);
     if (!node) return NULL;
+
+    Ca_TextInput *inp = NULL;
+    if (reused && node->widget_type == CA_WIDGET_TEXT_INPUT && node->widget)
+        inp = (Ca_TextInput *)node->widget;
+    if (!inp) {
+        inp = alloc_input(g_ctx.window);
+        if (!inp) return NULL;
+        memset(inp, 0, sizeof(*inp));
+        inp->in_use = true;
+        node->widget_type = CA_WIDGET_TEXT_INPUT;
+        node->widget = inp;
+    }
 
     inp->node       = node;
     inp->in_use     = true;
     inp->text_color = desc->text_color;
-    node->widget_type = CA_WIDGET_TEXT_INPUT;
-    node->widget      = inp;
     inp->cursor     = 0;
     inp->sel_start  = -1;
     inp->placeholder_color = CA_THEME_TEXT_DIM;
@@ -633,7 +901,7 @@ Ca_TextInput *ca_input(const Ca_InputDesc *desc)
     if (desc->disabled) node->desc.disabled = true;
 
     apply_css(node, &node->desc, CA_ELEM_INPUT,
-              desc->style, desc->id, &inp->text_color);
+              desc->style, id, &inp->text_color);
 
     /* Default size if neither user nor CSS set it */
     if (node->desc.width  <= 0.0f) node->desc.width  = s(160.0f);
@@ -1025,21 +1293,32 @@ const char *ca_input_get_text(const Ca_TextInput *input)
 Ca_Checkbox *ca_checkbox(const Ca_CheckboxDesc *desc)
 {
     assert(g_ctx.active && desc);
-    Ca_Checkbox *cb = alloc_checkbox(g_ctx.window);
-    if (!cb) return NULL;
+    const char *next_key = consume_next_key();
+    const char *id = next_key ? next_key : desc->id;
 
     Ca_NodeDesc nd = {0};
     nd.direction = CA_DIR_ROW;
     nd.height = s(20.0f);
 
-    Ca_Node *node = ca_node_add(ctx_top(), &nd);
+    bool reused = false;
+    Ca_Node *node = claim_child(&nd, CA_WIDGET_CHECKBOX, CA_ELEM_CHECKBOX, id, &reused);
     if (!node) return NULL;
+
+    Ca_Checkbox *cb = NULL;
+    if (reused && node->widget_type == CA_WIDGET_CHECKBOX && node->widget)
+        cb = (Ca_Checkbox *)node->widget;
+    if (!cb) {
+        cb = alloc_checkbox(g_ctx.window);
+        if (!cb) return NULL;
+        memset(cb, 0, sizeof(*cb));
+        cb->in_use = true;
+        node->widget_type = CA_WIDGET_CHECKBOX;
+        node->widget = cb;
+    }
 
     cb->node = node;
     cb->in_use = true;
     cb->checked = desc->checked;
-    node->widget_type = CA_WIDGET_CHECKBOX;
-    node->widget      = cb;
     cb->text_color = 0; /* default white */
     if (desc->text) snprintf(cb->text, CA_LABEL_TEXT_MAX, "%s", desc->text);
     else cb->text[0] = '\0';
@@ -1050,7 +1329,7 @@ Ca_Checkbox *ca_checkbox(const Ca_CheckboxDesc *desc)
     if (desc->disabled) node->desc.disabled = true;
 
     uint32_t dummy = 0;
-    apply_css(node, &node->desc, CA_ELEM_CHECKBOX, desc->style, desc->id, &cb->text_color);
+    apply_css(node, &node->desc, CA_ELEM_CHECKBOX, desc->style, id, &cb->text_color);
 
     /* Auto-width from text */
     if (node->desc.width <= 0.0f) {
@@ -1194,21 +1473,32 @@ float ca_slider_get(const Ca_Slider *s)
 Ca_Toggle *ca_toggle(const Ca_ToggleDesc *desc)
 {
     assert(g_ctx.active && desc);
-    Ca_Toggle *t = alloc_toggle(g_ctx.window);
-    if (!t) return NULL;
+    const char *next_key = consume_next_key();
+    const char *id = next_key ? next_key : desc->id;
 
     Ca_NodeDesc nd = {0};
     nd.width  = s(40.0f);
     nd.height = s(22.0f);
 
-    Ca_Node *node = ca_node_add(ctx_top(), &nd);
+    bool reused = false;
+    Ca_Node *node = claim_child(&nd, CA_WIDGET_TOGGLE, CA_ELEM_TOGGLE, id, &reused);
     if (!node) return NULL;
+
+    Ca_Toggle *t = NULL;
+    if (reused && node->widget_type == CA_WIDGET_TOGGLE && node->widget)
+        t = (Ca_Toggle *)node->widget;
+    if (!t) {
+        t = alloc_toggle(g_ctx.window);
+        if (!t) return NULL;
+        memset(t, 0, sizeof(*t));
+        t->in_use = true;
+        node->widget_type = CA_WIDGET_TOGGLE;
+        node->widget = t;
+    }
 
     t->node = node;
     t->in_use = true;
     t->on = desc->on;
-    node->widget_type = CA_WIDGET_TOGGLE;
-    node->widget      = t;
     t->on_change = desc->on_change;
     t->change_data = desc->change_data;
 
@@ -1216,7 +1506,7 @@ Ca_Toggle *ca_toggle(const Ca_ToggleDesc *desc)
     if (desc->disabled) node->desc.disabled = true;
 
     uint32_t dummy = 0;
-    apply_css(node, &node->desc, CA_ELEM_TOGGLE, desc->style, desc->id, &dummy);
+    apply_css(node, &node->desc, CA_ELEM_TOGGLE, desc->style, id, &dummy);
     return t;
 }
 
@@ -1403,12 +1693,15 @@ void ca_tree_begin(const Ca_DivDesc *desc)
     Ca_NodeDesc nd = div_to_nd(desc);
     nd.direction = CA_DIR_COLUMN;
     if (nd.gap <= 0.0f) nd.gap = s(1.0f);
-    Ca_Node *node = add_container(ctx_top(), &nd);
+    const char *next_key = consume_next_key();
+    const char *id = next_key ? next_key : (desc ? desc->id : NULL);
+    bool reused = false;
+    Ca_Node *node = claim_child(&nd, CA_WIDGET_NONE, CA_ELEM_TREE, id, &reused);
     assert(node);
     uint32_t dummy = 0;
     apply_css(node, &node->desc, CA_ELEM_TREE,
-              desc ? desc->style : NULL, desc ? desc->id : NULL, &dummy);
-    ctx_push(node);
+              desc ? desc->style : NULL, id, &dummy);
+    ctx_push_mode(node, ctx_top_reconcile());
 }
 
 void ca_tree_end(void)
@@ -1420,20 +1713,31 @@ void ca_tree_end(void)
 Ca_TreeNode *ca_tree_node_begin(const Ca_TreeNodeDesc *desc)
 {
     assert(g_ctx.active && desc);
-    Ca_TreeNode *tn = alloc_treenode(g_ctx.window);
-    if (!tn) return NULL;
+    const char *next_key = consume_next_key();
+    const char *id = next_key ? next_key : desc->id;
 
     Ca_NodeDesc nd = {0};
     nd.direction = CA_DIR_COLUMN;
 
-    Ca_Node *node = ca_node_add(ctx_top(), &nd);
+    bool reused = false;
+    Ca_Node *node = claim_child(&nd, CA_WIDGET_TREENODE, CA_ELEM_TREENODE, id, &reused);
     if (!node) return NULL;
+
+    Ca_TreeNode *tn = NULL;
+    if (reused && node->widget_type == CA_WIDGET_TREENODE && node->widget)
+        tn = (Ca_TreeNode *)node->widget;
+    if (!tn) {
+        tn = alloc_treenode(g_ctx.window);
+        if (!tn) return NULL;
+        memset(tn, 0, sizeof(*tn));
+        tn->in_use = true;
+        node->widget_type = CA_WIDGET_TREENODE;
+        node->widget = tn;
+    }
 
     tn->node = node;
     tn->in_use = true;
-    tn->expanded = desc->expanded;
-    node->widget_type = CA_WIDGET_TREENODE;
-    node->widget      = tn;
+    if (!reused) tn->expanded = desc->expanded;
     tn->text_color = 0;
     if (desc->text) snprintf(tn->text, CA_LABEL_TEXT_MAX, "%s", desc->text);
     else tn->text[0] = '\0';
@@ -1455,7 +1759,7 @@ Ca_TreeNode *ca_tree_node_begin(const Ca_TreeNodeDesc *desc)
     }
 
     uint32_t dummy = 0;
-    apply_css(node, &node->desc, CA_ELEM_TREENODE, desc->style, desc->id, &tn->text_color);
+    apply_css(node, &node->desc, CA_ELEM_TREENODE, desc->style, id, &tn->text_color);
 
     /* Create a header row node for the clickable label */
     Ca_NodeDesc hdr = {0};
@@ -1467,10 +1771,18 @@ Ca_TreeNode *ca_tree_node_begin(const Ca_TreeNodeDesc *desc)
     hdr.text_align   = 1; /* left-aligned */
     /* Sensible defaults — CSS can override via the tree node style */
     hdr.corner_radius = 0.0f;
-    Ca_Node *hdr_node = ca_node_add(node, &hdr);
+    Ca_Node *hdr_node = NULL;
+    if (reused && node->child_count > 0)
+        hdr_node = node->children[0];
+    if (hdr_node)
+        ca_node_set_desc(hdr_node, &hdr);
+    else
+        hdr_node = ca_node_add(node, &hdr);
     (void)hdr_node;
 
-    ctx_push(node);
+    ctx_push_mode(node, ctx_top_reconcile());
+    if (ctx_top_reconcile())
+        *ctx_top_cursor() = 1;
     return tn;
 }
 
@@ -1627,18 +1939,29 @@ void ca_tooltip(const Ca_TooltipDesc *desc)
 Ca_MenuBar *ca_menu_bar(const Ca_MenuBarDesc *desc)
 {
     assert(g_ctx.active && desc);
-    Ca_MenuBar *mb = alloc_menubar(g_ctx.window);
-    if (!mb) return NULL;
+    const char *next_key = consume_next_key();
+    const char *id = next_key ? next_key : desc->id;
 
     /* Bar container — dimensions and styling driven by CSS */
     Ca_NodeDesc nd = {0};
     nd.direction = CA_DIR_ROW;
 
-    Ca_Node *bar = ca_node_add(ctx_top(), &nd);
+    bool reused = false;
+    Ca_Node *bar = claim_child(&nd, CA_WIDGET_MENUBAR, CA_ELEM_DIV, id, &reused);
     if (!bar) return NULL;
 
-    bar->widget_type = CA_WIDGET_MENUBAR;
-    bar->widget      = mb;
+    Ca_MenuBar *mb = NULL;
+    if (reused && bar->widget_type == CA_WIDGET_MENUBAR && bar->widget)
+        mb = (Ca_MenuBar *)bar->widget;
+    if (!mb) {
+        mb = alloc_menubar(g_ctx.window);
+        if (!mb) return NULL;
+        memset(mb, 0, sizeof(*mb));
+        mb->in_use = true;
+        bar->widget_type = CA_WIDGET_MENUBAR;
+        bar->widget = mb;
+    }
+
     mb->node = bar;
     mb->in_use = true;
     mb->active_menu = -1;
@@ -1655,7 +1978,9 @@ Ca_MenuBar *ca_menu_bar(const Ca_MenuBarDesc *desc)
     mb->text_color       = desc->text_color       ? desc->text_color       : CA_THEME_TEXT_MUTED;
 
     uint32_t dummy = 0;
-    apply_css(bar, &bar->desc, CA_ELEM_DIV, desc->style, desc->id, &dummy);
+    apply_css(bar, &bar->desc, CA_ELEM_DIV, desc->style, id, &dummy);
+
+    ca_node_trim_children(bar, 0);
 
     for (int mi = 0; mi < mb->menu_count; ++mi) {
         const Ca_MenuDesc *mdesc = &desc->menus[mi];

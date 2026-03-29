@@ -258,6 +258,18 @@ void ca_node_clear(Ca_Node *node)
     node->dirty |= CA_DIRTY_CHILDREN | CA_DIRTY_LAYOUT;
 }
 
+void ca_node_trim_children(Ca_Node *parent, uint32_t keep_count)
+{
+    if (!parent || !parent->in_use) return;
+    if (keep_count >= parent->child_count) return;
+
+    for (uint32_t i = keep_count; i < parent->child_count; ++i)
+        free_subtree(parent->children[i]);
+
+    parent->child_count = keep_count;
+    parent->dirty |= CA_DIRTY_CHILDREN | CA_DIRTY_LAYOUT;
+}
+
 void ca_node_set_desc(Ca_Node *node, const Ca_NodeDesc *desc)
 {
     assert(node && node->in_use && desc);
