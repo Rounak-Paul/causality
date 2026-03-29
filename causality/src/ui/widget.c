@@ -1570,8 +1570,8 @@ void ca_progress_set(Ca_Progress *p, float value)
 Ca_Select *ca_select(const Ca_SelectDesc *desc)
 {
     assert(g_ctx.active && desc);
-    Ca_Select *sel = alloc_select(g_ctx.window);
-    if (!sel) return NULL;
+    const char *next_key = consume_next_key();
+    const char *id = next_key ? next_key : desc->id;
 
     Ca_NodeDesc nd = {0};
     nd.width  = desc->width > 0 ? s(desc->width) : s(140.0f);
@@ -1579,15 +1579,27 @@ Ca_Select *ca_select(const Ca_SelectDesc *desc)
     nd.corner_radius = s(3.0f);
     nd.background = CA_THEME_BG_BASE;
 
-    Ca_Node *node = ca_node_add(ctx_top(), &nd);
+    bool reused = false;
+    Ca_Node *node = claim_child(&nd, CA_WIDGET_SELECT, CA_ELEM_SELECT, id, &reused);
     if (!node) return NULL;
+
+    Ca_Select *sel = NULL;
+    if (reused && node->widget_type == CA_WIDGET_SELECT && node->widget)
+        sel = (Ca_Select *)node->widget;
+    if (!sel) {
+        sel = alloc_select(g_ctx.window);
+        if (!sel) return NULL;
+        memset(sel, 0, sizeof(*sel));
+        sel->in_use = true;
+        node->widget_type = CA_WIDGET_SELECT;
+        node->widget = sel;
+    }
 
     sel->node = node;
     sel->in_use = true;
     sel->selected = desc->selected;
-    node->widget_type = CA_WIDGET_SELECT;
-    node->widget      = sel;
-    sel->open = false;
+    if (!reused)
+        sel->open = false;
     sel->option_count = desc->option_count;
     if (sel->option_count > CA_MAX_SELECT_OPTIONS)
         sel->option_count = CA_MAX_SELECT_OPTIONS;
@@ -1602,7 +1614,7 @@ Ca_Select *ca_select(const Ca_SelectDesc *desc)
     if (desc->disabled) node->desc.disabled = true;
 
     uint32_t dummy = 0;
-    apply_css(node, &node->desc, CA_ELEM_SELECT, desc->style, desc->id, &dummy);
+    apply_css(node, &node->desc, CA_ELEM_SELECT, desc->style, id, &dummy);
     return sel;
 }
 
@@ -1628,14 +1640,27 @@ int ca_select_get(const Ca_Select *s)
 Ca_TabBar *ca_tabs(const Ca_TabBarDesc *desc)
 {
     assert(g_ctx.active && desc);
-    Ca_TabBar *tb = alloc_tabbar(g_ctx.window);
-    if (!tb) return NULL;
+    const char *next_key = consume_next_key();
+    const char *id = next_key ? next_key : desc->id;
 
     Ca_NodeDesc nd = {0};
     nd.direction = CA_DIR_ROW;
 
-    Ca_Node *node = ca_node_add(ctx_top(), &nd);
+    bool reused = false;
+    Ca_Node *node = claim_child(&nd, CA_WIDGET_TABBAR, CA_ELEM_TABBAR, id, &reused);
     if (!node) return NULL;
+
+    Ca_TabBar *tb = NULL;
+    if (reused && node->widget_type == CA_WIDGET_TABBAR && node->widget)
+        tb = (Ca_TabBar *)node->widget;
+    if (!tb) {
+        tb = alloc_tabbar(g_ctx.window);
+        if (!tb) return NULL;
+        memset(tb, 0, sizeof(*tb));
+        tb->in_use = true;
+        node->widget_type = CA_WIDGET_TABBAR;
+        node->widget = tb;
+    }
 
     tb->node = node;
     tb->in_use = true;
@@ -1658,7 +1683,9 @@ Ca_TabBar *ca_tabs(const Ca_TabBarDesc *desc)
     if (desc->disabled) node->desc.disabled = true;
 
     uint32_t dummy = 0;
-    apply_css(node, &node->desc, CA_ELEM_TABBAR, desc->style, desc->id, &dummy);
+    apply_css(node, &node->desc, CA_ELEM_TABBAR, desc->style, id, &dummy);
+
+    ca_node_trim_children(node, 0);
 
     /* Create child nodes for each tab header */
     for (int i = 0; i < tb->count; ++i) {
@@ -1814,14 +1841,27 @@ bool ca_tree_node_expanded(const Ca_TreeNode *n)
 void ca_table_begin(const Ca_TableDesc *desc)
 {
     assert(g_ctx.active && desc);
-    Ca_Table *tbl = alloc_table(g_ctx.window);
-    if (!tbl) return;
+    const char *next_key = consume_next_key();
+    const char *id = next_key ? next_key : desc->id;
 
     Ca_NodeDesc nd = {0};
     nd.direction = CA_DIR_COLUMN;
 
-    Ca_Node *node = ca_node_add(ctx_top(), &nd);
+    bool reused = false;
+    Ca_Node *node = claim_child(&nd, CA_WIDGET_TABLE, CA_ELEM_TABLE, id, &reused);
     if (!node) return;
+
+    Ca_Table *tbl = NULL;
+    if (reused && node->widget_type == CA_WIDGET_TABLE && node->widget)
+        tbl = (Ca_Table *)node->widget;
+    if (!tbl) {
+        tbl = alloc_table(g_ctx.window);
+        if (!tbl) return;
+        memset(tbl, 0, sizeof(*tbl));
+        tbl->in_use = true;
+        node->widget_type = CA_WIDGET_TABLE;
+        node->widget = tbl;
+    }
 
     tbl->node = node;
     tbl->in_use = true;
@@ -1831,8 +1871,8 @@ void ca_table_begin(const Ca_TableDesc *desc)
         tbl->column_widths[i] = desc->column_widths ? s(desc->column_widths[i]) : s(80.0f);
 
     uint32_t dummy = 0;
-    apply_css(node, &node->desc, CA_ELEM_TABLE, desc->style, desc->id, &dummy);
-    ctx_push(node);
+    apply_css(node, &node->desc, CA_ELEM_TABLE, desc->style, id, &dummy);
+    ctx_push_mode(node, ctx_top_reconcile());
 }
 
 void ca_table_end(void)
@@ -1846,11 +1886,14 @@ void ca_table_row_begin(const Ca_DivDesc *desc)
     assert(g_ctx.active);
     Ca_NodeDesc nd = div_to_nd(desc);
     nd.direction = CA_DIR_ROW;
-    Ca_Node *node = add_container(ctx_top(), &nd);
+    const char *next_key = consume_next_key();
+    const char *id = next_key ? next_key : (desc ? desc->id : NULL);
+    bool reused = false;
+    Ca_Node *node = claim_child(&nd, CA_WIDGET_NONE, CA_ELEM_TABLE_ROW, id, &reused);
     assert(node);
     uint32_t dummy = 0;
     apply_css(node, &node->desc, CA_ELEM_TABLE_ROW,
-              desc ? desc->style : NULL, desc ? desc->id : NULL, &dummy);
+              desc ? desc->style : NULL, id, &dummy);
 
     /* Apply column widths from the table ancestor */
     Ca_Node *p = node->parent;
@@ -1859,7 +1902,7 @@ void ca_table_row_begin(const Ca_DivDesc *desc)
         p = p->parent;
     }
 
-    ctx_push(node);
+    ctx_push_mode(node, ctx_top_reconcile());
 }
 
 void ca_table_row_end(void)
@@ -1871,6 +1914,9 @@ void ca_table_row_end(void)
 void ca_table_cell(const Ca_TextDesc *desc)
 {
     assert(g_ctx.active && desc);
+
+    const char *next_key = consume_next_key();
+    const char *id = next_key ? next_key : desc->id;
 
     /* Find the table ancestor and look up column width */
     Ca_Node *row = ctx_top();
@@ -1889,26 +1935,35 @@ void ca_table_cell(const Ca_TextDesc *desc)
         }
     }
 
-    Ca_Label *lbl = alloc_label(g_ctx.window);
-    if (!lbl) return;
-
     Ca_NodeDesc nd = {0};
     nd.width = cell_w;
     nd.height = s(24.0f);
     nd.padding_left = s(4.0f);
     nd.padding_right = s(4.0f);
 
-    Ca_Node *node = ca_node_add(ctx_top(), &nd);
+    bool reused = false;
+    Ca_Node *node = claim_child(&nd, CA_WIDGET_LABEL, CA_ELEM_TABLE_CELL, id, &reused);
     if (!node) return;
+
+    Ca_Label *lbl = NULL;
+    if (reused && node->widget_type == CA_WIDGET_LABEL && node->widget)
+        lbl = (Ca_Label *)node->widget;
+    if (!lbl) {
+        lbl = alloc_label(g_ctx.window);
+        if (!lbl) return;
+        memset(lbl, 0, sizeof(*lbl));
+        lbl->in_use = true;
+        node->widget_type = CA_WIDGET_LABEL;
+        node->widget = lbl;
+    }
 
     lbl->node = node;
     lbl->in_use = true;
     lbl->color = desc->color;
-    node->widget_type = CA_WIDGET_LABEL;
-    node->widget      = lbl;
     if (desc->text) snprintf(lbl->text, CA_LABEL_TEXT_MAX, "%s", desc->text);
+    else lbl->text[0] = '\0';
 
-    apply_css(node, &node->desc, CA_ELEM_TABLE_CELL, desc->style, desc->id, &lbl->color);
+    apply_css(node, &node->desc, CA_ELEM_TABLE_CELL, desc->style, id, &lbl->color);
 }
 
 /* ============================================================
@@ -2083,29 +2138,39 @@ void ca_context_menu(const Ca_CtxMenuDesc *desc)
 Ca_Modal *ca_modal_begin(const Ca_ModalDesc *desc)
 {
     assert(g_ctx.active && desc);
-    Ca_Modal *m = alloc_modal(g_ctx.window);
-    if (!m) return NULL;
+    const char *next_key = consume_next_key();
+    const char *id = next_key ? next_key : desc->id;
 
     Ca_NodeDesc nd = {0};
     /* The modal takes full parent size, overlay renders in paint */
     nd.hidden = !desc->visible;
 
-    Ca_Node *node = ca_node_add(ctx_top(), &nd);
+    bool reused = false;
+    Ca_Node *node = claim_child(&nd, CA_WIDGET_MODAL, CA_ELEM_MODAL, id, &reused);
     if (!node) return NULL;
+
+    Ca_Modal *m = NULL;
+    if (reused && node->widget_type == CA_WIDGET_MODAL && node->widget)
+        m = (Ca_Modal *)node->widget;
+    if (!m) {
+        m = alloc_modal(g_ctx.window);
+        if (!m) return NULL;
+        memset(m, 0, sizeof(*m));
+        m->in_use = true;
+        node->widget_type = CA_WIDGET_MODAL;
+        node->widget = m;
+    }
 
     m->node = node;
     m->in_use = true;
     m->visible = desc->visible;
-
-    node->widget_type = CA_WIDGET_MODAL;
-    node->widget      = m;
     m->overlay_color = desc->overlay_color
         ? desc->overlay_color
         : CA_THEME_MODAL_OVERLAY;
 
     uint32_t dummy = 0;
-    apply_css(node, &node->desc, CA_ELEM_MODAL, desc->style, desc->id, &dummy);
-    ctx_push(node);
+    apply_css(node, &node->desc, CA_ELEM_MODAL, desc->style, id, &dummy);
+    ctx_push_mode(node, ctx_top_reconcile());
     return m;
 }
 
@@ -2130,15 +2195,28 @@ void ca_modal_set_visible(Ca_Modal *modal, bool visible)
 Ca_Splitter *ca_split_begin(const Ca_SplitDesc *desc)
 {
     assert(g_ctx.active && desc);
-    Ca_Splitter *sp = alloc_splitter(g_ctx.window);
-    if (!sp) return NULL;
+    const char *next_key = consume_next_key();
+    const char *id = next_key ? next_key : desc->id;
 
     Ca_NodeDesc nd = {0};
     nd.direction = dir_from_int(desc->direction);
     /* The splitter itself fills available space by default (width/height = 0) */
 
-    Ca_Node *node = ca_node_add(ctx_top(), &nd);
+    bool reused = false;
+    Ca_Node *node = claim_child(&nd, CA_WIDGET_SPLITTER, CA_ELEM_SPLITTER, id, &reused);
     if (!node) return NULL;
+
+    Ca_Splitter *sp = NULL;
+    if (reused && node->widget_type == CA_WIDGET_SPLITTER && node->widget)
+        sp = (Ca_Splitter *)node->widget;
+    if (!sp) {
+        sp = alloc_splitter(g_ctx.window);
+        if (!sp) return NULL;
+        memset(sp, 0, sizeof(*sp));
+        sp->in_use = true;
+        node->widget_type = CA_WIDGET_SPLITTER;
+        node->widget = sp;
+    }
 
     sp->node      = node;
     sp->in_use    = true;
@@ -2151,14 +2229,11 @@ Ca_Splitter *ca_split_begin(const Ca_SplitDesc *desc)
     sp->bar_hover_color = desc->bar_hover_color ? desc->bar_hover_color : CA_THEME_ACCENT;
     sp->dragging  = false;
 
-    node->widget_type = CA_WIDGET_SPLITTER;
-    node->widget      = sp;
-
     uint32_t dummy = 0;
     apply_css(node, &node->desc, CA_ELEM_SPLITTER,
-              desc->style, desc->id, &dummy);
+              desc->style, id, &dummy);
 
-    ctx_push(node);
+    ctx_push_mode(node, ctx_top_reconcile());
     return sp;
 }
 
