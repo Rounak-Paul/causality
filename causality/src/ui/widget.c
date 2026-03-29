@@ -1666,12 +1666,27 @@ Ca_MenuBar *ca_menu_bar(const Ca_MenuBarDesc *desc)
         menu->item_count = mdesc->item_count;
         if (menu->item_count > CA_MAX_ITEMS_PER_MENU)
             menu->item_count = CA_MAX_ITEMS_PER_MENU;
+        menu->active_sub = -1;
         for (int ii = 0; ii < menu->item_count; ++ii) {
             if (mdesc->items[ii].label)
                 snprintf(menu->items[ii].label, CA_MENU_LABEL_MAX, "%s",
                          mdesc->items[ii].label);
-            menu->items[ii].action = mdesc->items[ii].action;
+            menu->items[ii].action      = mdesc->items[ii].action;
             menu->items[ii].action_data = mdesc->items[ii].action_data;
+            menu->items[ii].separator   = mdesc->items[ii].separator;
+            int nsub = mdesc->items[ii].sub_item_count;
+            if (nsub > CA_MAX_SUB_ITEMS_PER_ITEM) nsub = CA_MAX_SUB_ITEMS_PER_ITEM;
+            menu->items[ii].sub_item_count = nsub;
+            if (nsub > 0 && mdesc->items[ii].sub_items) {
+                for (int si = 0; si < nsub; si++) {
+                    const Ca_MenuItemDesc *sd = &mdesc->items[ii].sub_items[si];
+                    if (sd->label)
+                        snprintf(menu->items[ii].sub_items[si].label,
+                                 CA_MENU_LABEL_MAX, "%s", sd->label);
+                    menu->items[ii].sub_items[si].action      = sd->action;
+                    menu->items[ii].sub_items[si].action_data = sd->action_data;
+                }
+            }
         }
 
         float tw = measure_text_px(g_ctx.window, menu->label);
@@ -2268,6 +2283,44 @@ void ca_widget_input_pass(Ca_Window *win)
         }
     }
 
+    /* --- Menu bar sub-menu hover tracking (runs every frame) --- */
+    if (win->menubar_pool) {
+        for (uint32_t i = 0; i < CA_MAX_MENUBARS_PER_WINDOW; ++i) {
+            Ca_MenuBar *mb = &win->menubar_pool[i];
+            if (!mb->in_use || !mb->node || mb->active_menu < 0) continue;
+            Ca_MenuBarMenu *am = &mb->menus[mb->active_menu];
+            Ca_Node *hdr = am->header_node;
+            if (!hdr) continue;
+            float item_h = 24.0f;
+            float menu_w = 160.0f;
+            float drop_x = hdr->x;
+            float drop_y = hdr->y + hdr->h;
+            int new_sub  = -1;
+            /* Hover over a sub-menu-capable item opens it */
+            for (int ii = 0; ii < am->item_count; ++ii) {
+                if (!am->items[ii].sub_item_count) continue;
+                float iy = drop_y + item_h * (float)ii;
+                if (mx >= drop_x && mx <= drop_x + menu_w &&
+                    my >= iy    && my <= iy + item_h) {
+                    new_sub = ii;
+                    break;
+                }
+            }
+            /* Keep sub open when mouse is inside the sub-panel */
+            if (new_sub < 0 && am->active_sub >= 0) {
+                int   asi   = am->active_sub;
+                float sub_w = 160.0f;
+                float sub_x = drop_x + menu_w;
+                float sub_y = drop_y + item_h * (float)asi;
+                float sub_h = 24.0f * (float)am->items[asi].sub_item_count;
+                if (mx >= sub_x && mx <= sub_x + sub_w &&
+                    my >= sub_y && my <= sub_y + sub_h)
+                    new_sub = asi;
+            }
+            am->active_sub = new_sub;
+        }
+    }
+
     /* --- Click handling: focus + button activation --- */
     if (win->mouse_click_this_frame) {
         /* Click on an input or button focuses it */
@@ -2415,23 +2468,62 @@ void ca_widget_input_pass(Ca_Window *win)
                     Ca_Node *hdr = am->header_node;
                     if (hdr) {
                         float item_h = 24.0f;
-                        float menu_w = 140.0f;
+                        float menu_w = 160.0f;
                         float drop_x = hdr->x;
                         float drop_y = hdr->y + hdr->h;
                         bool item_hit = false;
 
-                        for (int ii = 0; ii < am->item_count; ++ii) {
-                            float iy = drop_y + item_h * (float)ii;
-                            if (mx >= drop_x && mx <= drop_x + menu_w &&
-                                my >= iy && my <= iy + item_h) {
-                                mb->active_menu = -1;
-                                mb->node->dirty |= CA_DIRTY_CONTENT;
-                                if (am->items[ii].action)
-                                    am->items[ii].action(am->items[ii].action_data);
-                                item_hit = true;
-                                break;
+                        /* Check click in open sub-menu panel first */
+                        bool sub_hit = false;
+                        if (am->active_sub >= 0) {
+                            int   asi        = am->active_sub;
+                            float sub_item_h = 24.0f;
+                            float sub_w      = 160.0f;
+                            float sub_x      = drop_x + menu_w;
+                            float sub_y      = drop_y + item_h * (float)asi;
+                            for (int si = 0; si < am->items[asi].sub_item_count; ++si) {
+                                float siy = sub_y + sub_item_h * (float)si;
+                                if (mx >= sub_x && mx <= sub_x + sub_w &&
+                                    my >= siy  && my <= siy + sub_item_h) {
+                                    Ca_MenuBarSubItem *sitem = &am->items[asi].sub_items[si];
+                                    am->active_sub  = -1;
+                                    mb->active_menu = -1;
+                                    mb->node->dirty |= CA_DIRTY_CONTENT;
+                                    if (sitem->action)
+                                        sitem->action(sitem->action_data);
+                                    sub_hit  = true;
+                                    item_hit = true;
+                                    break;
+                                }
                             }
                         }
+
+                        if (!sub_hit) {
+                            for (int ii = 0; ii < am->item_count; ++ii) {
+                                float iy = drop_y + item_h * (float)ii;
+                                if (mx >= drop_x && mx <= drop_x + menu_w &&
+                                    my >= iy && my <= iy + item_h) {
+                                    /* Separator: consume click but don't close */
+                                    if (am->items[ii].separator) {
+                                        item_hit = true;
+                                        break;
+                                    }
+                                    /* Item with sub-menu: hover handles it, click is a no-op */
+                                    if (am->items[ii].sub_item_count > 0) {
+                                        item_hit = true;
+                                        break;
+                                    }
+                                    am->active_sub  = -1;
+                                    mb->active_menu = -1;
+                                    mb->node->dirty |= CA_DIRTY_CONTENT;
+                                    if (am->items[ii].action)
+                                        am->items[ii].action(am->items[ii].action_data);
+                                    item_hit = true;
+                                    break;
+                                }
+                            }
+                        }
+
                         if (!item_hit) {
                             /* Check if clicked another menu header */
                             bool switched = false;
@@ -2439,6 +2531,7 @@ void ca_widget_input_pass(Ca_Window *win)
                                 if (mi == mb->active_menu) continue;
                                 if (mb->menus[mi].header_node &&
                                     point_in_node(mb->menus[mi].header_node, mx, my)) {
+                                    am->active_sub  = -1;
                                     mb->active_menu = mi;
                                     mb->node->dirty |= CA_DIRTY_CONTENT;
                                     switched = true;
@@ -2447,6 +2540,7 @@ void ca_widget_input_pass(Ca_Window *win)
                             }
                             if (!switched) {
                                 /* Click anywhere else closes dropdown */
+                                am->active_sub  = -1;
                                 mb->active_menu = -1;
                                 mb->node->dirty |= CA_DIRTY_CONTENT;
                             }

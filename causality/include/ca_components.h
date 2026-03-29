@@ -146,9 +146,12 @@ typedef struct Ca_ModalDesc {
 
 /* Menu bar item — a single clickable entry inside a dropdown menu. */
 typedef struct Ca_MenuItemDesc {
-    const char      *label;
-    Ca_MenuActionFn  action;
-    void            *action_data;
+    const char                   *label;
+    Ca_MenuActionFn               action;
+    void                         *action_data;
+    bool                          separator;      /* render as a divider line    */
+    const struct Ca_MenuItemDesc *sub_items;      /* nested items (or NULL)      */
+    int                           sub_item_count;
 } Ca_MenuItemDesc;
 
 /* Menu — a labelled group of items that drops down from the bar. */

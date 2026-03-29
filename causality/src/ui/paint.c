@@ -1382,9 +1382,27 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
             for (int ii = 0; ii < am->item_count; ++ii) {
                 float iy = drop_y + item_h * (float)ii;
 
-                /* Hover highlight */
-                if (win->mouse_x >= drop_x && win->mouse_x <= drop_x + menu_w &&
-                    win->mouse_y >= iy && win->mouse_y <= iy + item_h) {
+                /* --- Separator --- */
+                if (am->items[ii].separator) {
+                    if (win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
+                        Ca_DrawCmd *c = &win->draw_cmds[win->draw_cmd_count++];
+                        memset(c, 0, sizeof(*c));
+                        c->type = CA_DRAW_RECT;
+                        c->x    = drop_x + 8.0f;
+                        c->y    = iy + item_h * 0.5f - 0.5f;
+                        c->w    = menu_w - 16.0f;
+                        c->h    = 1.0f;
+                        unpack_color(mb->dropdown_border, &c->r, &c->g, &c->b, &c->a);
+                        c->in_use  = true;
+                        c->overlay = true;
+                    }
+                    continue;
+                }
+
+                /* Hover highlight — also highlight when this item's sub-menu is open */
+                if ((win->mouse_x >= drop_x && win->mouse_x <= drop_x + menu_w &&
+                     win->mouse_y >= iy      && win->mouse_y <= iy + item_h) ||
+                    am->active_sub == ii) {
                     if (win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
                         Ca_DrawCmd *c = &win->draw_cmds[win->draw_cmd_count++];
                         memset(c, 0, sizeof(*c));
@@ -1392,7 +1410,7 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
                         c->x = drop_x; c->y = iy;
                         c->w = menu_w; c->h = item_h;
                         unpack_color(mb->dropdown_hover, &c->r, &c->g, &c->b, &c->a);
-                        c->in_use = true;
+                        c->in_use  = true;
                         c->overlay = true;
                     }
                 }
@@ -1411,6 +1429,86 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
                            mb->dropdown_text);
                 for (uint32_t gi = glyph_start; gi < win->draw_cmd_count; ++gi)
                     win->draw_cmds[gi].overlay = true;
+
+                /* Sub-menu arrow ">" for items with sub-items */
+                if (am->items[ii].sub_item_count > 0) {
+                    uint32_t gs2 = win->draw_cmd_count;
+                    Ca_Node tmp2;
+                    memset(&tmp2, 0, sizeof(tmp2));
+                    tmp2.in_use = true;
+                    tmp2.x = drop_x + menu_w - 20.0f;
+                    tmp2.y = iy;
+                    tmp2.w = 16.0f;
+                    tmp2.h = item_h;
+                    tmp2.window = win;
+                    tmp2.desc.text_align = 1;
+                    paint_text(win, font, &tmp2, ">", mb->dropdown_text);
+                    for (uint32_t gi = gs2; gi < win->draw_cmd_count; ++gi)
+                        win->draw_cmds[gi].overlay = true;
+                }
+            }
+
+            /* Sub-menu panel (shown when active_sub >= 0) */
+            if (am->active_sub >= 0 && am->active_sub < am->item_count) {
+                int   asi        = am->active_sub;
+                float sub_item_h = 24.0f;
+                float sub_menu_w = 160.0f;
+                float sub_x      = drop_x + menu_w;
+                float sub_y      = drop_y + item_h * (float)asi;
+                float sub_h      = sub_item_h * (float)am->items[asi].sub_item_count;
+
+                /* Sub-menu background */
+                if (win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
+                    Ca_DrawCmd *c = &win->draw_cmds[win->draw_cmd_count++];
+                    memset(c, 0, sizeof(*c));
+                    c->type = CA_DRAW_RECT;
+                    c->x = sub_x; c->y = sub_y;
+                    c->w = sub_menu_w; c->h = sub_h;
+                    c->corner_radius = 3.0f;
+                    unpack_color(mb->dropdown_bg, &c->r, &c->g, &c->b, &c->a);
+                    c->in_use      = true;
+                    c->overlay     = true;
+                    c->border_width = 1.0f;
+                    unpack_color(mb->dropdown_border,
+                                 &c->border_r, &c->border_g,
+                                 &c->border_b, &c->border_a);
+                }
+
+                for (int si = 0; si < am->items[asi].sub_item_count; ++si) {
+                    float siy = sub_y + sub_item_h * (float)si;
+
+                    /* Hover highlight */
+                    if (win->mouse_x >= sub_x && win->mouse_x <= sub_x + sub_menu_w &&
+                        win->mouse_y >= siy   && win->mouse_y <= siy + sub_item_h) {
+                        if (win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
+                            Ca_DrawCmd *c = &win->draw_cmds[win->draw_cmd_count++];
+                            memset(c, 0, sizeof(*c));
+                            c->type = CA_DRAW_RECT;
+                            c->x = sub_x; c->y = siy;
+                            c->w = sub_menu_w; c->h = sub_item_h;
+                            unpack_color(mb->dropdown_hover, &c->r, &c->g, &c->b, &c->a);
+                            c->in_use  = true;
+                            c->overlay = true;
+                        }
+                    }
+
+                    /* Sub-item text */
+                    uint32_t gs = win->draw_cmd_count;
+                    Ca_Node stmp;
+                    memset(&stmp, 0, sizeof(stmp));
+                    stmp.in_use = true;
+                    stmp.x = sub_x + 12.0f;
+                    stmp.y = siy;
+                    stmp.w = sub_menu_w - 24.0f;
+                    stmp.h = sub_item_h;
+                    stmp.window = win;
+                    stmp.desc.text_align = 1;
+                    paint_text(win, font, &stmp,
+                               am->items[asi].sub_items[si].label,
+                               mb->dropdown_text);
+                    for (uint32_t gi = gs; gi < win->draw_cmd_count; ++gi)
+                        win->draw_cmds[gi].overlay = true;
+                }
             }
         }
     }

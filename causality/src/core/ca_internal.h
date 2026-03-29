@@ -257,6 +257,7 @@ typedef struct {
 #define CA_MAX_MENUS_PER_BAR         16
 #define CA_MAX_ITEMS_PER_MENU        16
 #define CA_MENU_LABEL_MAX            64
+#define CA_MAX_SUB_ITEMS_PER_ITEM     8
 #define CA_MAX_SELECT_OPTIONS        16
 #define CA_MAX_TAB_LABELS            16
 #define CA_MAX_CTXMENU_ITEMS         16
@@ -599,10 +600,20 @@ struct Ca_Viewport {
     bool                 needs_redraw;
 };
 
+/* Internal: one entry inside a sub-menu (one level of nesting only) */
 typedef struct {
     char             label[CA_MENU_LABEL_MAX];
     Ca_MenuActionFn  action;
     void            *action_data;
+} Ca_MenuBarSubItem;
+
+typedef struct {
+    char                label[CA_MENU_LABEL_MAX];
+    Ca_MenuActionFn     action;
+    void               *action_data;
+    bool                separator;                           /* render as divider line       */
+    Ca_MenuBarSubItem   sub_items[CA_MAX_SUB_ITEMS_PER_ITEM];
+    int                 sub_item_count;
 } Ca_MenuBarItem;
 
 typedef struct {
@@ -610,6 +621,7 @@ typedef struct {
     Ca_MenuBarItem  items[CA_MAX_ITEMS_PER_MENU];
     int             item_count;
     Ca_Node        *header_node;
+    int             active_sub;   /* index of item with open sub-menu, -1=none */
 } Ca_MenuBarMenu;
 
 struct Ca_MenuBar {
