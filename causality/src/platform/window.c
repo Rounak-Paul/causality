@@ -150,7 +150,10 @@ bool ca_window_system_tick(Ca_Instance *inst)
             inst->windows[i].key_count  = 0;
         }
 
-    glfwWaitEvents();
+    if (inst->continuous)
+        glfwPollEvents();
+    else
+        glfwWaitEvents();
 
     /* Dispatch all queued input / resize events */
     ca_event_dispatch(inst);

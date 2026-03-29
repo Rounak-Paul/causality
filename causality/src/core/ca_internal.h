@@ -325,6 +325,8 @@ typedef enum {
     CA_WIDGET_SPLITTER   = 13,
     CA_WIDGET_IMAGE      = 14,
     CA_WIDGET_VIEWPORT   = 15,
+    CA_WIDGET_MODAL      = 16,
+    CA_WIDGET_MENUBAR    = 17,
 } Ca_WidgetType;
 
 /* ======================================================
@@ -790,6 +792,11 @@ struct Ca_Instance {
     /* Image pool — user-loaded textures for ca_image() */
     Ca_Image         images[CA_MAX_IMAGES];
     VkDescriptorPool image_desc_pool; /* shared pool for image descriptor sets */
+
+    /* When true, ca_window_system_tick uses glfwPollEvents() instead of
+       glfwWaitEvents(), keeping the loop running continuously at full speed.
+       Set via ca_instance_set_continuous(). */
+    bool continuous;
 };
 
 /* ======================================================

@@ -1637,6 +1637,8 @@ Ca_MenuBar *ca_menu_bar(const Ca_MenuBarDesc *desc)
     Ca_Node *bar = ca_node_add(ctx_top(), &nd);
     if (!bar) return NULL;
 
+    bar->widget_type = CA_WIDGET_MENUBAR;
+    bar->widget      = mb;
     mb->node = bar;
     mb->in_use = true;
     mb->active_menu = -1;
@@ -1754,6 +1756,9 @@ Ca_Modal *ca_modal_begin(const Ca_ModalDesc *desc)
     m->node = node;
     m->in_use = true;
     m->visible = desc->visible;
+
+    node->widget_type = CA_WIDGET_MODAL;
+    node->widget      = m;
     m->overlay_color = desc->overlay_color
         ? desc->overlay_color
         : CA_THEME_MODAL_OVERLAY;

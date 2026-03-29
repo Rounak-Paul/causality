@@ -68,6 +68,12 @@ void ca_instance_wake(void)
     glfwPostEmptyEvent();
 }
 
+void ca_instance_set_continuous(Ca_Instance *instance, bool continuous)
+{
+    if (!instance) return;
+    instance->continuous = continuous;
+}
+
 void ca_instance_set_stylesheet(Ca_Instance *instance, Ca_Stylesheet *ss)
 {
     if (!instance) return;

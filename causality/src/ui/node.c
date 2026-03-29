@@ -134,6 +134,8 @@ static void release_widget(Ca_Node *node)
     case CA_WIDGET_TABLE:     ((Ca_Table *)node->widget)->in_use = false; break;
     case CA_WIDGET_SPLITTER:  ((Ca_Splitter *)node->widget)->in_use = false; break;
     case CA_WIDGET_VIEWPORT:  ((Ca_Viewport *)node->widget)->in_use = false; break;
+    case CA_WIDGET_MODAL:     ((Ca_Modal   *)node->widget)->in_use  = false; break;
+    case CA_WIDGET_MENUBAR:   ((Ca_MenuBar *)node->widget)->in_use  = false; break;
     default: break;
     }
 }
