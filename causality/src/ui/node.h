@@ -18,3 +18,7 @@ void     ca_node_clear(Ca_Node *node);
 void     ca_node_trim_children(Ca_Node *parent, uint32_t keep_count);
 void     ca_node_set_desc(Ca_Node *node, const Ca_NodeDesc *desc);
 void     ca_node_subscribe(Ca_Node *node, Ca_State *state, Ca_DirtyFlags on_change);
+
+/* Desc diff helpers — used by widget.c for post-CSS dirty detection */
+bool     layout_desc_changed(const Ca_NodeDesc *a, const Ca_NodeDesc *b);
+bool     content_desc_changed(const Ca_NodeDesc *a, const Ca_NodeDesc *b);

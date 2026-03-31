@@ -37,6 +37,11 @@ void ca_state_flush_dirty(Ca_Instance *inst)
                 node->dirty |= s->sub_flags[j];
         }
 
+        for (uint8_t k = 0; k < s->fn_observer_count; ++k) {
+            if (s->fn_observers[k])
+                s->fn_observers[k](s->data, s->fn_observer_data[k]);
+        }
+
         s->dirty = false;
     }
     inst->dirty_state_count = 0;
@@ -44,10 +49,12 @@ void ca_state_flush_dirty(Ca_Instance *inst)
 
 /* ---- Public API ---- */
 
-Ca_State *ca_state_create(Ca_Instance *instance, const Ca_StateDesc *desc)
+/* Public-facing create: takes (inst, data_size, initial) — wraps Ca_StateDesc. */
+Ca_State *ca_state_create(Ca_Instance *instance, size_t data_size,
+                          const void *initial)
 {
-    assert(instance && desc);
-    assert(desc->data_size > 0);
+    assert(instance && data_size > 0);
+    Ca_StateDesc desc = { (uint32_t)data_size, initial };
 
     for (uint32_t i = 0; i < CA_MAX_STATES; ++i) {
         Ca_State *s = &instance->state_pool[i];
@@ -58,11 +65,11 @@ Ca_State *ca_state_create(Ca_Instance *instance, const Ca_StateDesc *desc)
         memset(s, 0, sizeof(*s));
 
         s->instance  = instance;
-        s->data_size = (uint16_t)desc->data_size;
-        s->data      = (uint8_t *)calloc(1, desc->data_size);
+        s->data_size = (uint16_t)desc.data_size;
+        s->data      = (uint8_t *)calloc(1, desc.data_size);
         s->in_use    = true;
-        if (desc->initial)
-            memcpy(s->data, desc->initial, desc->data_size);
+        if (desc.initial)
+            memcpy(s->data, desc.initial, desc.data_size);
         return s;
     }
 
@@ -97,4 +104,24 @@ void ca_state_get(const Ca_State *state, void *out_value)
 {
     assert(state && state->in_use && out_value);
     memcpy(out_value, state->data, state->data_size);
+}
+
+uint64_t ca_state_generation(const Ca_State *state)
+{
+    assert(state && state->in_use);
+    return state->generation;
+}
+
+void ca_state_observe(Ca_State *state,
+                      void (*fn)(const void *value, void *user),
+                      void *user)
+{
+    assert(state && state->in_use && fn);
+    if (state->fn_observer_count >= 8) {
+        fprintf(stderr, "[causality] ca_state_observe: observer limit reached\n");
+        return;
+    }
+    state->fn_observers[state->fn_observer_count]     = fn;
+    state->fn_observer_data[state->fn_observer_count] = user;
+    state->fn_observer_count++;
 }

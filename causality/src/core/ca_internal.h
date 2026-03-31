@@ -344,6 +344,10 @@ struct Ca_State {
     Ca_Node      *subscribers[CA_MAX_STATE_SUBSCRIBERS];
     uint8_t       sub_flags[CA_MAX_STATE_SUBSCRIBERS];
     uint32_t      sub_count;
+    /* Function observers — called in ca_state_flush_dirty when value changes */
+    void        (*fn_observers[8])(const void *value, void *user);
+    void         *fn_observer_data[8];
+    uint8_t       fn_observer_count;
 };
 
 /* ======================================================
@@ -636,6 +640,7 @@ struct Ca_MenuBar {
     uint32_t          dropdown_hover;
     uint32_t          dropdown_text;
     uint32_t          text_color;
+    float             item_font_size; /* dropdown item font size (derived from CSS) */
 };
 
 /* ======================================================
@@ -691,6 +696,11 @@ struct Ca_Window {
     float         user_drag_start_x;   /* mouse x when drag began */
     float         user_drag_start_y;   /* mouse y when drag began */
     bool          user_drag_active;    /* true after drag threshold exceeded */
+
+    /* Scrollbar drag state */
+    Ca_Node      *scrollbar_drag_node; /* node whose scrollbar is being dragged */
+    bool          scrollbar_drag_y;    /* true = Y-axis, false = X-axis */
+    float         scrollbar_drag_grab; /* offset from thumb origin to mouse at drag start */
 
     /* UI scale factor (1.0 = default, 2.0 = 200%, like browser zoom) */
     float         ui_scale;

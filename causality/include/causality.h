@@ -701,6 +701,62 @@ CA_API void ca_viewport_set_callbacks(Ca_Viewport *viewport,
 /* Auto-include the component layer for backward compatibility. */
 #include "ca_components.h"
 
+/* ============================================================
+   REACTIVE STATE
+   ============================================================
+
+   Ca_State is a typed, observable value that lives in the Causality
+   instance.  When its value changes (via ca_state_set), subscribers
+   are notified before the next frame's UI rebuild:
+
+     - Node subscriptions  (ca_node_subscribe) mark nodes dirty so the
+       paint cache is invalidated and the node repaints.
+     - Function observers  (ca_state_observe) fire a callback so code
+       can push new text, toggle visibility, rebuild sections, etc.
+
+   Typical usage:
+
+       // create (once, at init):
+       Ca_State *sel = ca_state_create(inst, sizeof(Qs_Entity), &invalid);
+
+       // observe (once, at init):
+       ca_state_observe(sel, on_selection_changed, my_ctx);
+
+       // mutate (at event time, not every frame):
+       ca_state_set(sel, &new_entity);
+
+   The observer fires exactly once per mutation, before the UI rebuild
+   loop runs.  On idle frames where no mutation occurred, zero work is
+   done.
+   ============================================================ */
+
+typedef struct Ca_State Ca_State;
+
+/// Creates a new state with the given value size and optional initial value.
+CA_API Ca_State *ca_state_create(Ca_Instance *inst, size_t data_size,
+                                  const void *initial);
+
+/// Destroys a state and releases its resources.
+CA_API void ca_state_destroy(Ca_State *state);
+
+/// Sets the state value.  Performs a memcmp — if the value is unchanged
+/// no subscribers or observers are notified.
+CA_API void ca_state_set(Ca_State *state, const void *value);
+
+/// Reads the current state value into out (must be data_size bytes).
+CA_API void ca_state_get(const Ca_State *state, void *out);
+
+/// Returns a monotonically increasing generation counter.  Increments on
+/// every successful (value-changing) ca_state_set call.
+CA_API uint64_t ca_state_generation(const Ca_State *state);
+
+/// Registers a function observer.  The callback fires before each frame's
+/// UI rebuild, exactly once per value-changing ca_state_set call.
+/// Up to 8 observers per state.
+CA_API void ca_state_observe(Ca_State *state,
+                              void (*fn)(const void *value, void *user),
+                              void *user);
+
 #ifdef __cplusplus
 }
 #endif

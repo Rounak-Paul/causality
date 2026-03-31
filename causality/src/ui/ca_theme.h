@@ -55,8 +55,9 @@
 #define CA_THEME_MODAL_OVERLAY ca_color(0.0f, 0.0f, 0.0f, 0.50f)
 
 /* ---- Scrollbar ---- */
-#define CA_THEME_SCROLLBAR_TRACK ca_color(1.0f, 1.0f, 1.0f, 0.05f)
-#define CA_THEME_SCROLLBAR_THUMB ca_color(1.0f, 1.0f, 1.0f, 0.35f)
+#define CA_THEME_SCROLLBAR_TRACK        ca_color(1.0f, 1.0f, 1.0f, 0.05f)
+#define CA_THEME_SCROLLBAR_THUMB        ca_color(1.0f, 1.0f, 1.0f, 0.35f)
+#define CA_THEME_SCROLLBAR_THUMB_ACTIVE ca_color(1.0f, 1.0f, 1.0f, 0.70f)
 
 /* ---- Fatal (slightly warmer red than danger) ---- */
 #define CA_THEME_FATAL ca_color(1.0f, 0.325f, 0.439f, 1.0f)

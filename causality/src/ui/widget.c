@@ -121,6 +121,40 @@ ALLOC_POOL_FN(splitter,  Ca_Splitter,  splitter_pool,  CA_MAX_SPLITTERS_PER_WIND
 ALLOC_POOL_FN(menubar,   Ca_MenuBar,   menubar_pool,   CA_MAX_MENUBARS_PER_WINDOW)
 
 /* ============================================================
+   INTERNAL — reactive field helpers
+
+   Every widget that uses claim_child MUST update its stored value via these
+   macros instead of bare assignments.  They compare the incoming value against
+   whatever is already stored: if it changed AND the node was reused, they mark
+   CA_DIRTY_CONTENT so the paint pass re-renders that node automatically.
+
+   This is the single, consistent pattern used by every built-in widget.  When
+   adding a new custom widget that calls claim_child, follow the same pattern.
+
+   WIDGET_SET_TEXT  – for const char * / char-buffer text fields (uses strcmp)
+   WIDGET_SET       – for scalar fields (bool, int, float, uint32_t …)
+   ============================================================ */
+
+/* Compare-write-dirty for a char-buffer text field. */
+#define WIDGET_SET_TEXT(node, reused, buf, bufsize, new_text)                  \
+    do {                                                                        \
+        const char *_wt = (new_text) ? (new_text) : "";                        \
+        if (!(reused) || strcmp((buf), _wt) != 0) {                            \
+            snprintf((buf), (bufsize), "%s", _wt);                             \
+            if (reused) (node)->dirty |= CA_DIRTY_CONTENT;                     \
+        }                                                                       \
+    } while (0)
+
+/* Compare-write-dirty for any scalar field. */
+#define WIDGET_SET(node, reused, field, new_val)                               \
+    do {                                                                        \
+        if (!(reused) || (field) != (new_val)) {                               \
+            (field) = (new_val);                                                \
+            if (reused) (node)->dirty |= CA_DIRTY_CONTENT;                     \
+        }                                                                       \
+    } while (0)
+
+/* ============================================================
    INTERNAL — node creation helpers
    ============================================================ */
 
@@ -204,6 +238,13 @@ static struct {
     int        depth;    /* index of top; -1 = empty */
     bool       active;
 } g_ctx;
+
+/* Pending pre-CSS desc snapshot: set in claim_child/ca_ui_begin just before
+   node->desc is overwritten with the (sparse, pre-CSS) new descriptor.
+   Consumed inside apply_css to diff old CSS-resolved vs new CSS-resolved desc
+   and set dirty flags only when something actually changed. */
+static Ca_NodeDesc  s_pre_css_desc;
+static Ca_Node     *s_pre_css_node;
 
 static Ca_Node *ctx_top(void)
 {
@@ -322,7 +363,12 @@ static Ca_Node *claim_child(const Ca_NodeDesc *nd, uint8_t widget_type,
     }
 
     if (node) {
-        ca_node_set_desc(node, nd);
+        /* Snapshot the old CSS-resolved desc BEFORE overwriting with the sparse
+           incoming nd.  apply_css will compare post-CSS nd against this snapshot
+           and set dirty flags only when visuals or layout actually changed. */
+        s_pre_css_desc = node->desc;
+        s_pre_css_node = node;
+        node->desc     = *nd;   /* bare assign – no dirty, CSS hasn't run yet */
         *out_reused = true;
     } else {
         node = ca_node_add(parent, nd);
@@ -387,6 +433,16 @@ static void apply_css(Ca_Node *node, Ca_NodeDesc *nd,
     if ((rs.set_mask & (1ULL << CA_CSS_PROP_DISPLAY)) &&
         rs.display == CA_CSS_DISPLAY_NONE)
         nd->hidden = true;
+
+    /* Post-CSS dirty detection: compare the fully-resolved *nd against the
+       snapshot saved before claim_child/ca_ui_begin wrote the sparse desc.
+       This fires only when a node was reused (s_pre_css_node != NULL).
+       New nodes are always dirty via ca_node_add, so no extra check needed. */
+    if (s_pre_css_node == node) {
+        if (content_desc_changed(&s_pre_css_desc, nd)) node->dirty |= CA_DIRTY_CONTENT;
+        if (layout_desc_changed(&s_pre_css_desc, nd))  node->dirty |= CA_DIRTY_LAYOUT;
+        s_pre_css_node = NULL;
+    }
 }
 
 static Ca_NodeDesc div_to_nd(const Ca_DivDesc *d)
@@ -436,7 +492,12 @@ void ca_ui_begin(Ca_Window *window, const Ca_DivDesc *root_desc)
     Ca_NodeDesc nd = div_to_nd(root_desc);
     Ca_Node *root  = ca_node_root(window);
     assert(root && "failed to create root node");
-    ca_node_set_desc(root, &nd);
+
+    /* Apply same pending-desc pattern as claim_child so root is only dirtied
+       when its CSS-resolved desc actually changes between frames. */
+    s_pre_css_desc = root->desc;
+    s_pre_css_node = root;
+    root->desc     = nd;
 
     /* Apply CSS to root */
     uint32_t dummy_color = 0;
@@ -567,10 +628,7 @@ Ca_Label *ca_text(const Ca_TextDesc *desc)
 
     lbl->node = node;
     lbl->in_use = true;
-    if (desc->text)
-        snprintf(lbl->text, CA_LABEL_TEXT_MAX, "%s", desc->text);
-    else
-        lbl->text[0] = '\0';
+    WIDGET_SET_TEXT(node, reused, lbl->text, CA_LABEL_TEXT_MAX, desc->text);
 
     if (lbl && lbl->node) {
         if (desc->hidden) lbl->node->desc.hidden = true;
@@ -641,10 +699,7 @@ Ca_Button *ca_btn(const Ca_BtnDesc *desc)
 
     btn->node = node;
     btn->in_use = true;
-    if (desc->text)
-        snprintf(btn->text, CA_BUTTON_TEXT_MAX, "%s", desc->text);
-    else
-        btn->text[0] = '\0';
+    WIDGET_SET_TEXT(node, reused, btn->text, CA_BUTTON_TEXT_MAX, desc->text);
     btn->text_color = desc->text_color;
     btn->on_click = desc->on_click;
     btn->click_data = desc->click_data;
@@ -702,10 +757,7 @@ Ca_Button *ca_btn_begin(const Ca_BtnDesc *desc)
 
     btn->node = node;
     btn->in_use = true;
-    if (desc->text)
-        snprintf(btn->text, CA_BUTTON_TEXT_MAX, "%s", desc->text);
-    else
-        btn->text[0] = '\0';
+    WIDGET_SET_TEXT(node, reused, btn->text, CA_BUTTON_TEXT_MAX, desc->text);
     btn->text_color = desc->text_color;
     btn->on_click = desc->on_click;
     btn->click_data = desc->click_data;
@@ -879,11 +931,7 @@ Ca_TextInput *ca_input(const Ca_InputDesc *desc)
     inp->cursor     = 0;
     inp->sel_start  = -1;
     inp->placeholder_color = CA_THEME_TEXT_DIM;
-
-    if (desc->text)
-        snprintf(inp->text, CA_INPUT_TEXT_MAX, "%s", desc->text);
-    else
-        inp->text[0] = '\0';
+    WIDGET_SET_TEXT(node, reused, inp->text, CA_INPUT_TEXT_MAX, desc->text);
 
     if (desc->placeholder)
         snprintf(inp->placeholder, CA_INPUT_TEXT_MAX, "%s", desc->placeholder);
@@ -982,6 +1030,8 @@ void ca_label_set_text(Ca_Label *label, const char *text)
 {
     assert(label && label->in_use);
     if (!text) text = "";
+    const char *cur = label->dyn_text ? label->dyn_text : label->text;
+    if (strcmp(cur, text) == 0) return;
     size_t len = strlen(text);
     if (len < CA_LABEL_TEXT_MAX) {
         memcpy(label->text, text, len + 1);
@@ -1274,7 +1324,9 @@ void ca_button_set_background(Ca_Button *button, uint32_t color)
 void ca_input_set_text(Ca_TextInput *input, const char *text)
 {
     assert(input && input->in_use);
-    snprintf(input->text, CA_INPUT_TEXT_MAX, "%s", text ? text : "");
+    if (!text) text = "";
+    if (strcmp(input->text, text) == 0) return;
+    snprintf(input->text, CA_INPUT_TEXT_MAX, "%s", text);
     input->cursor = (int)strlen(input->text);
     input->sel_start = -1;
     input->node->dirty |= CA_DIRTY_CONTENT;
@@ -1318,10 +1370,9 @@ Ca_Checkbox *ca_checkbox(const Ca_CheckboxDesc *desc)
 
     cb->node = node;
     cb->in_use = true;
-    cb->checked = desc->checked;
+    WIDGET_SET(node, reused, cb->checked, desc->checked);
     cb->text_color = 0; /* default white */
-    if (desc->text) snprintf(cb->text, CA_LABEL_TEXT_MAX, "%s", desc->text);
-    else cb->text[0] = '\0';
+    WIDGET_SET_TEXT(node, reused, cb->text, CA_LABEL_TEXT_MAX, desc->text);
     cb->on_change = desc->on_change;
     cb->change_data = desc->change_data;
 
@@ -1498,7 +1549,7 @@ Ca_Toggle *ca_toggle(const Ca_ToggleDesc *desc)
 
     t->node = node;
     t->in_use = true;
-    t->on = desc->on;
+    WIDGET_SET(node, reused, t->on, desc->on);
     t->on_change = desc->on_change;
     t->change_data = desc->change_data;
 
@@ -1597,15 +1648,15 @@ Ca_Select *ca_select(const Ca_SelectDesc *desc)
 
     sel->node = node;
     sel->in_use = true;
-    sel->selected = desc->selected;
+    WIDGET_SET(node, reused, sel->selected, desc->selected);
     if (!reused)
         sel->open = false;
-    sel->option_count = desc->option_count;
-    if (sel->option_count > CA_MAX_SELECT_OPTIONS)
-        sel->option_count = CA_MAX_SELECT_OPTIONS;
-    for (int i = 0; i < sel->option_count; ++i) {
-        if (desc->options[i])
-            snprintf(sel->options[i], CA_OPTION_TEXT_MAX, "%s", desc->options[i]);
+    {
+        int new_count = desc->option_count;
+        if (new_count > CA_MAX_SELECT_OPTIONS) new_count = CA_MAX_SELECT_OPTIONS;
+        WIDGET_SET(node, reused, sel->option_count, new_count);
+        for (int i = 0; i < sel->option_count; ++i)
+            WIDGET_SET_TEXT(node, reused, sel->options[i], CA_OPTION_TEXT_MAX, desc->options[i]);
     }
     sel->on_change = desc->on_change;
     sel->change_data = desc->change_data;
@@ -1664,13 +1715,15 @@ Ca_TabBar *ca_tabs(const Ca_TabBarDesc *desc)
 
     tb->node = node;
     tb->in_use = true;
-    tb->active = desc->active;
-    tb->count = desc->count;
-    if (tb->count > CA_MAX_TAB_LABELS) tb->count = CA_MAX_TAB_LABELS;
-    for (int i = 0; i < tb->count; ++i) {
-        if (desc->labels[i])
-            snprintf(tb->labels[i], CA_OPTION_TEXT_MAX, "%s", desc->labels[i]);
-        tb->tab_nodes[i] = NULL;
+    WIDGET_SET(node, reused, tb->active, desc->active);
+    {
+        int new_count = desc->count;
+        if (new_count > CA_MAX_TAB_LABELS) new_count = CA_MAX_TAB_LABELS;
+        WIDGET_SET(node, reused, tb->count, new_count);
+        for (int i = 0; i < tb->count; ++i) {
+            WIDGET_SET_TEXT(node, reused, tb->labels[i], CA_OPTION_TEXT_MAX, desc->labels[i]);
+            tb->tab_nodes[i] = NULL;
+        }
     }
     tb->on_change = desc->on_change;
     tb->change_data = desc->change_data;
@@ -1685,14 +1738,19 @@ Ca_TabBar *ca_tabs(const Ca_TabBarDesc *desc)
     uint32_t dummy = 0;
     apply_css(node, &node->desc, CA_ELEM_TABBAR, desc->style, id, &dummy);
 
+    float item_fs = node->desc.font_size; /* inherit font-size from CSS (e.g. panel-tab-bar) */
+
     ca_node_trim_children(node, 0);
 
     /* Create child nodes for each tab header */
     for (int i = 0; i < tb->count; ++i) {
         Ca_NodeDesc tnd = {0};
         float tw = measure_text_px(g_ctx.window, tb->labels[i]);
-        tnd.width = (tw > 0 ? tw : s(40.0f)) + s(16.0f);
+        tnd.width  = (tw > 0 ? tw : s(40.0f)) + s(16.0f);
+        /* height = 0: layout stretches the node to fill the full bar cross-axis so
+           the active background covers the entire tab-bar height (no gap). */
         tnd.background = (i == tb->active) ? tb->active_bg : tb->inactive_bg;
+        tnd.font_size  = item_fs;
         Ca_Node *tab_node = ca_node_add(node, &tnd);
         if (tab_node) {
             tab_node->elem_type = CA_ELEM_TAB;
@@ -1766,14 +1824,12 @@ Ca_TreeNode *ca_tree_node_begin(const Ca_TreeNodeDesc *desc)
     tn->in_use = true;
     if (!reused) tn->expanded = desc->expanded;
     tn->text_color = 0;
-    if (desc->text) snprintf(tn->text, CA_LABEL_TEXT_MAX, "%s", desc->text);
-    else tn->text[0] = '\0';
+    WIDGET_SET_TEXT(node, reused, tn->text, CA_LABEL_TEXT_MAX, desc->text);
     tn->on_toggle = desc->on_toggle;
     tn->toggle_data = desc->toggle_data;
-    tn->is_leaf = desc->is_leaf;
-    tn->icon[0] = '\0';
-    if (desc->icon) snprintf(tn->icon, sizeof(tn->icon), "%s", desc->icon);
-    tn->icon_color = desc->icon_color;
+    WIDGET_SET(node, reused, tn->is_leaf, desc->is_leaf);
+    WIDGET_SET_TEXT(node, reused, tn->icon, sizeof(tn->icon), desc->icon);
+    WIDGET_SET(node, reused, tn->icon_color, desc->icon_color);
 
     if (desc->hidden) node->desc.hidden = true;
 
@@ -1960,8 +2016,7 @@ void ca_table_cell(const Ca_TextDesc *desc)
     lbl->node = node;
     lbl->in_use = true;
     lbl->color = desc->color;
-    if (desc->text) snprintf(lbl->text, CA_LABEL_TEXT_MAX, "%s", desc->text);
-    else lbl->text[0] = '\0';
+    WIDGET_SET_TEXT(node, reused, lbl->text, CA_LABEL_TEXT_MAX, desc->text);
 
     apply_css(node, &node->desc, CA_ELEM_TABLE_CELL, desc->style, id, &lbl->color);
 }
@@ -2071,15 +2126,19 @@ Ca_MenuBar *ca_menu_bar(const Ca_MenuBarDesc *desc)
 
         float tw = measure_text_px(g_ctx.window, menu->label);
 
-        /* Header node — padding & alignment via CSS (.menu-bar-item) */
+        /* Header node — padding & alignment via caller-supplied item_style */
         Ca_NodeDesc hnd = {0};
         hnd.align_items = CA_ALIGN_CENTER;
 
         Ca_Node *hdr = ca_node_add(bar, &hnd);
         if (!hdr) continue;
 
-        apply_css(hdr, &hdr->desc, CA_ELEM_DIV, "menu-bar-item", NULL, &dummy);
+        apply_css(hdr, &hdr->desc, CA_ELEM_DIV, desc->item_style, NULL, &dummy);
         hdr->desc.width = tw + hdr->desc.padding_left + hdr->desc.padding_right;
+
+        /* Derive dropdown item font size from the header node's CSS font size */
+        if (mb->item_font_size <= 0.0f && hdr->desc.font_size > 0.0f)
+            mb->item_font_size = hdr->desc.font_size;
 
         menu->header_node = hdr;
 
@@ -2087,7 +2146,8 @@ Ca_MenuBar *ca_menu_bar(const Ca_MenuBarDesc *desc)
         Ca_Label *lbl = alloc_label(g_ctx.window);
         if (lbl) {
             Ca_NodeDesc lnd = {0};
-            lnd.width = tw;
+            lnd.width     = tw;
+            lnd.font_size = hdr->desc.font_size; /* render label at CSS-specified size */
             Ca_Node *ln = ca_node_add(hdr, &lnd);
             if (ln) {
                 ln->widget_type = CA_WIDGET_LABEL;
@@ -2608,9 +2668,161 @@ void ca_widget_input_pass(Ca_Window *win)
 {
     float mx = (float)win->mouse_x;
     float my = (float)win->mouse_y;
+    bool left_down = win->mouse_buttons[0];
 
-    /* --- Scroll handling --- */
-    if (win->scroll_this_frame && win->node_pool) {
+    /* --- Scrollbar drag handling ---
+       Scrollbars are paint-only overlays (no nodes).  We hit-test them here
+       using the same geometry as paint_scrollbars, and drive scroll_x/scroll_y
+       directly.  Scrollbar drag takes priority over wheel scroll and other drags.
+
+       Geometry (Y scrollbar):
+         bar_w=6, margin=2
+         bar_x = node->x + node->w - bar_w - margin    (right edge)
+         track spans [node->y+margin .. node->y+margin+track_h]
+         thumb: size proportional to viewport/content, min 16px
+                thumb_y = node->y + margin + scroll_pct * (track_h - thumb_h)
+    */
+    if (win->node_pool) {
+        static const float SB_BAR_W  = 6.0f;
+        static const float SB_MARGIN = 2.0f;
+        static const float SB_HIT_EXPAND = 4.0f; /* wider hit zone than visual */
+
+        /* --- Start drag on mouse-click in a scrollbar region --- */
+        if (left_down && win->mouse_click_this_frame && !win->scrollbar_drag_node) {
+            /* Find the innermost overflow-scroll node whose scrollbar was hit */
+            float best_area = 1e18f;
+            Ca_Node *best = NULL;
+            bool best_y = true;
+
+            for (uint32_t i = 0; i < CA_MAX_NODES_PER_WINDOW; ++i) {
+                Ca_Node *n = &win->node_pool[i];
+                if (!n->in_use || n->desc.hidden) continue;
+
+                /* Y scrollbar */
+                if (n->desc.overflow_y >= 2 && n->content_h > n->h) {
+                    float bar_x = n->x + n->w - SB_BAR_W - SB_MARGIN;
+                    if (mx >= bar_x - SB_HIT_EXPAND &&
+                        mx <= bar_x + SB_BAR_W + SB_HIT_EXPAND &&
+                        my >= n->y && my <= n->y + n->h) {
+                        float area = n->w * n->h;
+                        if (area < best_area) {
+                            best_area = area;
+                            best = n;
+                            best_y = true;
+                        }
+                    }
+                }
+
+                /* X scrollbar */
+                if (n->desc.overflow_x >= 2 && n->content_w > n->w) {
+                    float bar_y = n->y + n->h - SB_BAR_W - SB_MARGIN;
+                    if (my >= bar_y - SB_HIT_EXPAND &&
+                        my <= bar_y + SB_BAR_W + SB_HIT_EXPAND &&
+                        mx >= n->x && mx <= n->x + n->w) {
+                        float area = n->w * n->h;
+                        if (area < best_area) {
+                            best_area = area;
+                            best = n;
+                            best_y = false;
+                        }
+                    }
+                }
+            }
+
+            if (best) {
+                win->scrollbar_drag_node  = best;
+                win->scrollbar_drag_y     = best_y;
+                win->mouse_click_this_frame = false; /* consume click — no focus/button activation */
+
+                if (best_y) {
+                    /* Compute grab offset from thumb top to mouse click */
+                    float track_h  = best->h - SB_MARGIN * 2;
+                    float ratio    = best->h / best->content_h;
+                    float thumb_h  = track_h * ratio;
+                    if (thumb_h < 16.0f) thumb_h = 16.0f;
+                    if (thumb_h > track_h) thumb_h = track_h;
+                    float max_s    = best->content_h - best->h;
+                    float pct      = (max_s > 0.0f) ? best->scroll_y / max_s : 0.0f;
+                    float thumb_y  = best->y + SB_MARGIN + pct * (track_h - thumb_h);
+                    /* If click is on the thumb, grab relative to its top.
+                       If click is on the track, center the thumb on the mouse. */
+                    if (my >= thumb_y && my <= thumb_y + thumb_h)
+                        win->scrollbar_drag_grab = my - thumb_y;
+                    else
+                        win->scrollbar_drag_grab = thumb_h * 0.5f;
+                } else {
+                    float track_w  = best->w - SB_MARGIN * 2;
+                    float ratio    = best->w / best->content_w;
+                    float thumb_w  = track_w * ratio;
+                    if (thumb_w < 16.0f) thumb_w = 16.0f;
+                    if (thumb_w > track_w) thumb_w = track_w;
+                    float max_s    = best->content_w - best->w;
+                    float pct      = (max_s > 0.0f) ? best->scroll_x / max_s : 0.0f;
+                    float thumb_x  = best->x + SB_MARGIN + pct * (track_w - thumb_w);
+                    if (mx >= thumb_x && mx <= thumb_x + thumb_w)
+                        win->scrollbar_drag_grab = mx - thumb_x;
+                    else
+                        win->scrollbar_drag_grab = thumb_w * 0.5f;
+                }
+            }
+        }
+
+        /* --- Update scroll position while dragging --- */
+        if (win->scrollbar_drag_node && left_down) {
+            Ca_Node *n = win->scrollbar_drag_node;
+            if (win->scrollbar_drag_y) {
+                float track_h = n->h - SB_MARGIN * 2;
+                float ratio   = n->h / n->content_h;
+                float thumb_h = track_h * ratio;
+                if (thumb_h < 16.0f) thumb_h = 16.0f;
+                if (thumb_h > track_h) thumb_h = track_h;
+                float travel  = track_h - thumb_h;
+                float thumb_y = my - win->scrollbar_drag_grab;
+                float pct     = (travel > 0.0f) ? (thumb_y - (n->y + SB_MARGIN)) / travel
+                                                 : 0.0f;
+                if (pct < 0.0f) pct = 0.0f;
+                if (pct > 1.0f) pct = 1.0f;
+                float max_s = n->content_h - n->h;
+                if (max_s < 0.0f) max_s = 0.0f;
+                float new_scroll = pct * max_s;
+                if (new_scroll != n->scroll_y) {
+                    n->scroll_y = new_scroll;
+                    n->dirty |= CA_DIRTY_LAYOUT | CA_DIRTY_CONTENT;
+                }
+            } else {
+                float track_w = n->w - SB_MARGIN * 2;
+                float ratio   = n->w / n->content_w;
+                float thumb_w = track_w * ratio;
+                if (thumb_w < 16.0f) thumb_w = 16.0f;
+                if (thumb_w > track_w) thumb_w = track_w;
+                float travel  = track_w - thumb_w;
+                float thumb_x = mx - win->scrollbar_drag_grab;
+                float pct     = (travel > 0.0f) ? (thumb_x - (n->x + SB_MARGIN)) / travel
+                                                 : 0.0f;
+                if (pct < 0.0f) pct = 0.0f;
+                if (pct > 1.0f) pct = 1.0f;
+                float max_s = n->content_w - n->w;
+                if (max_s < 0.0f) max_s = 0.0f;
+                float new_scroll = pct * max_s;
+                if (new_scroll != n->scroll_x) {
+                    n->scroll_x = new_scroll;
+                    n->dirty |= CA_DIRTY_LAYOUT | CA_DIRTY_CONTENT;
+                }
+            }
+        }
+
+        /* --- End drag on mouse release --- */
+        if (!left_down && win->scrollbar_drag_node) {
+            if (win->scrollbar_drag_node) {
+                /* Force repaint so thumb returns to normal color */
+                win->scrollbar_drag_node->dirty |= CA_DIRTY_CONTENT;
+            }
+            win->scrollbar_drag_node = NULL;
+        }
+    }
+
+    /* --- Scroll wheel handling (skipped if dragging scrollbar) --- */
+    if (win->scroll_this_frame && win->node_pool && !win->scrollbar_drag_node) {
         static const float SCROLL_SPEED = 30.0f;
         Ca_Node *scroll_target = NULL;
         for (uint32_t i = 0; i < CA_MAX_NODES_PER_WINDOW; ++i) {
@@ -2691,27 +2903,32 @@ void ca_widget_input_pass(Ca_Window *win)
             Ca_MenuBarMenu *am = &mb->menus[mb->active_menu];
             Ca_Node *hdr = am->header_node;
             if (!hdr) continue;
-            float item_h = 24.0f;
+            const float sep_h = 8.0f;
+            float item_h = 20.0f;
             float menu_w = 160.0f;
             float drop_x = hdr->x;
             float drop_y = hdr->y + hdr->h;
             int new_sub  = -1;
             /* Hover over a sub-menu-capable item opens it */
+            float iy = drop_y;
             for (int ii = 0; ii < am->item_count; ++ii) {
-                if (!am->items[ii].sub_item_count) continue;
-                float iy = drop_y + item_h * (float)ii;
-                if (mx >= drop_x && mx <= drop_x + menu_w &&
-                    my >= iy    && my <= iy + item_h) {
+                float this_h = am->items[ii].separator ? sep_h : item_h;
+                if (am->items[ii].sub_item_count > 0 &&
+                    mx >= drop_x && mx <= drop_x + menu_w &&
+                    my >= iy    && my <= iy + this_h) {
                     new_sub = ii;
                     break;
                 }
+                iy += this_h;
             }
             /* Keep sub open when mouse is inside the sub-panel */
             if (new_sub < 0 && am->active_sub >= 0) {
                 int   asi   = am->active_sub;
                 float sub_w = 160.0f;
                 float sub_x = drop_x + menu_w;
-                float sub_y = drop_y + item_h * (float)asi;
+                float sub_y = drop_y;
+                for (int jj = 0; jj < asi; ++jj)
+                    sub_y += am->items[jj].separator ? sep_h : item_h;
                 float sub_h = 24.0f * (float)am->items[asi].sub_item_count;
                 if (mx >= sub_x && mx <= sub_x + sub_w &&
                     my >= sub_y && my <= sub_y + sub_h)
@@ -2723,6 +2940,105 @@ void ca_widget_input_pass(Ca_Window *win)
 
     /* --- Click handling: focus + button activation --- */
     if (win->mouse_click_this_frame) {
+        /* Overlay priority: open menu dropdown captures all clicks */
+        bool click_consumed = false;
+        if (win->menubar_pool) {
+            for (uint32_t i = 0; i < CA_MAX_MENUBARS_PER_WINDOW && !click_consumed; ++i) {
+                Ca_MenuBar *mb = &win->menubar_pool[i];
+                if (!mb->in_use || !mb->node || mb->active_menu < 0) continue;
+
+                click_consumed = true;
+                Ca_MenuBarMenu *am = &mb->menus[mb->active_menu];
+                Ca_Node *hdr = am->header_node;
+                if (hdr) {
+                    const float sep_h = 8.0f;
+                    float item_h = 20.0f;
+                    float menu_w = 160.0f;
+                    float drop_x = hdr->x;
+                    float drop_y = hdr->y + hdr->h;
+                    bool item_hit = false;
+
+                    /* Check click in open sub-menu panel first */
+                    bool sub_hit = false;
+                    if (am->active_sub >= 0) {
+                        int   asi        = am->active_sub;
+                        float sub_item_h = 20.0f;
+                        float sub_w      = 160.0f;
+                        float sub_x      = drop_x + menu_w;
+                        float sub_y      = drop_y;
+                        for (int jj = 0; jj < asi; ++jj)
+                            sub_y += am->items[jj].separator ? sep_h : item_h;
+                        for (int si = 0; si < am->items[asi].sub_item_count; ++si) {
+                            float siy = sub_y + sub_item_h * (float)si;
+                            if (mx >= sub_x && mx <= sub_x + sub_w &&
+                                my >= siy  && my <= siy + sub_item_h) {
+                                Ca_MenuBarSubItem *sitem = &am->items[asi].sub_items[si];
+                                am->active_sub  = -1;
+                                mb->active_menu = -1;
+                                mb->node->dirty |= CA_DIRTY_CONTENT;
+                                if (sitem->action)
+                                    sitem->action(sitem->action_data);
+                                sub_hit  = true;
+                                item_hit = true;
+                                break;
+                            }
+                        }
+                    }
+
+                    if (!sub_hit) {
+                        float iy = drop_y;
+                        for (int ii = 0; ii < am->item_count; ++ii) {
+                            float this_h = am->items[ii].separator ? sep_h : item_h;
+                            if (mx >= drop_x && mx <= drop_x + menu_w &&
+                                my >= iy && my <= iy + this_h) {
+                                /* Separator: consume click but don't close */
+                                if (am->items[ii].separator) {
+                                    item_hit = true;
+                                    break;
+                                }
+                                /* Item with sub-menu: hover handles it, click is a no-op */
+                                if (am->items[ii].sub_item_count > 0) {
+                                    item_hit = true;
+                                    break;
+                                }
+                                am->active_sub  = -1;
+                                mb->active_menu = -1;
+                                mb->node->dirty |= CA_DIRTY_CONTENT;
+                                if (am->items[ii].action)
+                                    am->items[ii].action(am->items[ii].action_data);
+                                item_hit = true;
+                                break;
+                            }
+                            iy += this_h;
+                        }
+                    }
+
+                    if (!item_hit) {
+                        /* Check if clicked another menu header */
+                        bool switched = false;
+                        for (int mi = 0; mi < mb->menu_count; ++mi) {
+                            if (mi == mb->active_menu) continue;
+                            if (mb->menus[mi].header_node &&
+                                point_in_node(mb->menus[mi].header_node, mx, my)) {
+                                am->active_sub  = -1;
+                                mb->active_menu = mi;
+                                mb->node->dirty |= CA_DIRTY_CONTENT;
+                                switched = true;
+                                break;
+                            }
+                        }
+                        if (!switched) {
+                            /* Click anywhere else closes dropdown */
+                            am->active_sub  = -1;
+                            mb->active_menu = -1;
+                            mb->node->dirty |= CA_DIRTY_CONTENT;
+                        }
+                    }
+                }
+            }
+        }
+
+        if (!click_consumed) {
         /* Click on an input or button focuses it */
         Ca_Node *clicked_focus = NULL;
 
@@ -2856,105 +3172,17 @@ void ca_widget_input_pass(Ca_Window *win)
             }
         }
 
-        /* Menu bar — toggle dropdown or pick item */
+        /* Menu bar header clicks (no dropdown is open) */
         if (win->menubar_pool) {
             for (uint32_t i = 0; i < CA_MAX_MENUBARS_PER_WINDOW; ++i) {
                 Ca_MenuBar *mb = &win->menubar_pool[i];
-                if (!mb->in_use || !mb->node) continue;
-
-                if (mb->active_menu >= 0) {
-                    /* A dropdown is open — check if click hit a dropdown item */
-                    Ca_MenuBarMenu *am = &mb->menus[mb->active_menu];
-                    Ca_Node *hdr = am->header_node;
-                    if (hdr) {
-                        float item_h = 24.0f;
-                        float menu_w = 160.0f;
-                        float drop_x = hdr->x;
-                        float drop_y = hdr->y + hdr->h;
-                        bool item_hit = false;
-
-                        /* Check click in open sub-menu panel first */
-                        bool sub_hit = false;
-                        if (am->active_sub >= 0) {
-                            int   asi        = am->active_sub;
-                            float sub_item_h = 24.0f;
-                            float sub_w      = 160.0f;
-                            float sub_x      = drop_x + menu_w;
-                            float sub_y      = drop_y + item_h * (float)asi;
-                            for (int si = 0; si < am->items[asi].sub_item_count; ++si) {
-                                float siy = sub_y + sub_item_h * (float)si;
-                                if (mx >= sub_x && mx <= sub_x + sub_w &&
-                                    my >= siy  && my <= siy + sub_item_h) {
-                                    Ca_MenuBarSubItem *sitem = &am->items[asi].sub_items[si];
-                                    am->active_sub  = -1;
-                                    mb->active_menu = -1;
-                                    mb->node->dirty |= CA_DIRTY_CONTENT;
-                                    if (sitem->action)
-                                        sitem->action(sitem->action_data);
-                                    sub_hit  = true;
-                                    item_hit = true;
-                                    break;
-                                }
-                            }
-                        }
-
-                        if (!sub_hit) {
-                            for (int ii = 0; ii < am->item_count; ++ii) {
-                                float iy = drop_y + item_h * (float)ii;
-                                if (mx >= drop_x && mx <= drop_x + menu_w &&
-                                    my >= iy && my <= iy + item_h) {
-                                    /* Separator: consume click but don't close */
-                                    if (am->items[ii].separator) {
-                                        item_hit = true;
-                                        break;
-                                    }
-                                    /* Item with sub-menu: hover handles it, click is a no-op */
-                                    if (am->items[ii].sub_item_count > 0) {
-                                        item_hit = true;
-                                        break;
-                                    }
-                                    am->active_sub  = -1;
-                                    mb->active_menu = -1;
-                                    mb->node->dirty |= CA_DIRTY_CONTENT;
-                                    if (am->items[ii].action)
-                                        am->items[ii].action(am->items[ii].action_data);
-                                    item_hit = true;
-                                    break;
-                                }
-                            }
-                        }
-
-                        if (!item_hit) {
-                            /* Check if clicked another menu header */
-                            bool switched = false;
-                            for (int mi = 0; mi < mb->menu_count; ++mi) {
-                                if (mi == mb->active_menu) continue;
-                                if (mb->menus[mi].header_node &&
-                                    point_in_node(mb->menus[mi].header_node, mx, my)) {
-                                    am->active_sub  = -1;
-                                    mb->active_menu = mi;
-                                    mb->node->dirty |= CA_DIRTY_CONTENT;
-                                    switched = true;
-                                    break;
-                                }
-                            }
-                            if (!switched) {
-                                /* Click anywhere else closes dropdown */
-                                am->active_sub  = -1;
-                                mb->active_menu = -1;
-                                mb->node->dirty |= CA_DIRTY_CONTENT;
-                            }
-                        }
-                    }
-                } else {
-                    /* No dropdown open — check if a menu header was clicked */
-                    for (int mi = 0; mi < mb->menu_count; ++mi) {
-                        if (mb->menus[mi].header_node &&
-                            point_in_node(mb->menus[mi].header_node, mx, my)) {
-                            mb->active_menu = mi;
-                            mb->node->dirty |= CA_DIRTY_CONTENT;
-                            break;
-                        }
+                if (!mb->in_use || !mb->node || mb->active_menu >= 0) continue;
+                for (int mi = 0; mi < mb->menu_count; ++mi) {
+                    if (mb->menus[mi].header_node &&
+                        point_in_node(mb->menus[mi].header_node, mx, my)) {
+                        mb->active_menu = mi;
+                        mb->node->dirty |= CA_DIRTY_CONTENT;
+                        break;
                     }
                 }
             }
@@ -3009,6 +3237,8 @@ void ca_widget_input_pass(Ca_Window *win)
                 }
             }
         }
+
+        } /* end !click_consumed */
 
         /* Context menu — right-click detection is below */
     }

@@ -150,20 +150,63 @@ static void free_subtree(Ca_Node *node)
     node->draw_cmd_idx = -1;
 }
 
-static bool layout_desc_changed(const Ca_NodeDesc *a, const Ca_NodeDesc *b)
+bool layout_desc_changed(const Ca_NodeDesc *a, const Ca_NodeDesc *b)
 {
-    return a->width         != b->width          ||
-           a->height        != b->height         ||
-           a->min_w         != b->min_w          ||
-           a->min_h         != b->min_h          ||
-           a->max_w         != b->max_w          ||
-           a->max_h         != b->max_h          ||
-           a->padding_top   != b->padding_top    ||
-           a->padding_right != b->padding_right  ||
-           a->padding_bottom!= b->padding_bottom ||
-           a->padding_left  != b->padding_left   ||
-           a->gap           != b->gap            ||
-           a->direction     != b->direction;
+    return a->width          != b->width          ||
+           a->height         != b->height         ||
+           a->min_w          != b->min_w          ||
+           a->min_h          != b->min_h          ||
+           a->max_w          != b->max_w          ||
+           a->max_h          != b->max_h          ||
+           a->padding_top    != b->padding_top    ||
+           a->padding_right  != b->padding_right  ||
+           a->padding_bottom != b->padding_bottom ||
+           a->padding_left   != b->padding_left   ||
+           a->margin_top     != b->margin_top     ||
+           a->margin_right   != b->margin_right   ||
+           a->margin_bottom  != b->margin_bottom  ||
+           a->margin_left    != b->margin_left    ||
+           a->gap            != b->gap            ||
+           a->direction      != b->direction      ||
+           a->align_items    != b->align_items    ||
+           a->justify_content!= b->justify_content||
+           a->flex_grow      != b->flex_grow      ||
+           a->flex_shrink    != b->flex_shrink    ||
+           a->flex_wrap      != b->flex_wrap      ||
+           a->overflow_x     != b->overflow_x     ||
+           a->overflow_y     != b->overflow_y     ||
+           a->hidden         != b->hidden         ||
+           a->position       != b->position       ||
+           a->pos_x          != b->pos_x          ||
+           a->pos_y          != b->pos_y          ||
+           a->border_width   != b->border_width   ||
+           a->text_wrap      != b->text_wrap      ||
+           a->width_pct      != b->width_pct      ||
+           a->height_pct     != b->height_pct     ||
+           a->font_size      != b->font_size      ||
+           a->font_bold      != b->font_bold;
+}
+
+bool content_desc_changed(const Ca_NodeDesc *a, const Ca_NodeDesc *b)
+{
+    return a->background      != b->background      ||
+           a->corner_radius   != b->corner_radius   ||
+           a->opacity         != b->opacity         ||
+           a->font_size       != b->font_size       ||
+           a->font_bold       != b->font_bold       ||
+           a->text_align      != b->text_align      ||
+           a->disabled        != b->disabled        ||
+           a->hidden          != b->hidden          ||
+           a->overflow_x      != b->overflow_x      ||
+           a->overflow_y      != b->overflow_y      ||
+           a->border_color    != b->border_color    ||
+           a->border_width    != b->border_width    ||
+           a->shadow_offset_x != b->shadow_offset_x ||
+           a->shadow_offset_y != b->shadow_offset_y ||
+           a->shadow_blur     != b->shadow_blur     ||
+           a->shadow_color    != b->shadow_color    ||
+           a->z_index         != b->z_index         ||
+           a->text_wrap       != b->text_wrap;
 }
 
 /* ---- Propagation ---- */
@@ -274,10 +317,11 @@ void ca_node_set_desc(Ca_Node *node, const Ca_NodeDesc *desc)
 {
     assert(node && node->in_use && desc);
 
-    bool layout = layout_desc_changed(&node->desc, desc);
-    node->desc   = *desc;
-    node->dirty |= CA_DIRTY_CONTENT;
-    if (layout) node->dirty |= CA_DIRTY_LAYOUT;
+    bool layout  = layout_desc_changed(&node->desc, desc);
+    bool content = content_desc_changed(&node->desc, desc);
+    node->desc = *desc;
+    if (content) node->dirty |= CA_DIRTY_CONTENT;
+    if (layout)  node->dirty |= CA_DIRTY_LAYOUT;
 }
 
 void ca_node_subscribe(Ca_Node *node, Ca_State *state, Ca_DirtyFlags on_change)

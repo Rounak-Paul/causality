@@ -580,6 +580,10 @@ static void paint_scrollbars(Ca_Window *win, Ca_Node *node, ClipRect clip)
         float thumb_y    = node->y + margin + scroll_pct * (track_h - thumb_h);
         float bar_x      = node->x + node->w - bar_w - margin;
 
+        bool dragging_y = (win->scrollbar_drag_node == node && win->scrollbar_drag_y);
+        uint32_t thumb_col = dragging_y ? CA_THEME_SCROLLBAR_THUMB_ACTIVE
+                                        : CA_THEME_SCROLLBAR_THUMB;
+
         /* Track */
         if (win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
             Ca_DrawCmd *cmd = &win->draw_cmds[win->draw_cmd_count++];
@@ -603,7 +607,7 @@ static void paint_scrollbars(Ca_Window *win, Ca_Node *node, ClipRect clip)
             cmd->y             = thumb_y;
             cmd->w             = bar_w;
             cmd->h             = thumb_h;
-            unpack_color(CA_THEME_SCROLLBAR_THUMB, &cmd->r, &cmd->g, &cmd->b, &cmd->a);
+            unpack_color(thumb_col, &cmd->r, &cmd->g, &cmd->b, &cmd->a);
             cmd->corner_radius = bar_w * 0.5f;
             cmd->in_use        = true;
             set_clip(cmd, clip);
@@ -623,6 +627,10 @@ static void paint_scrollbars(Ca_Window *win, Ca_Node *node, ClipRect clip)
         float scroll_pct = (max_scroll > 0.0f) ? node->scroll_x / max_scroll : 0.0f;
         float thumb_x    = node->x + margin + scroll_pct * (track_w - thumb_w);
         float bar_y      = node->y + node->h - bar_h - margin;
+
+        bool dragging_x = (win->scrollbar_drag_node == node && !win->scrollbar_drag_y);
+        uint32_t thumb_col_x = dragging_x ? CA_THEME_SCROLLBAR_THUMB_ACTIVE
+                                           : CA_THEME_SCROLLBAR_THUMB;
 
         /* Track */
         if (win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
@@ -647,7 +655,7 @@ static void paint_scrollbars(Ca_Window *win, Ca_Node *node, ClipRect clip)
             cmd->y             = bar_y;
             cmd->w             = thumb_w;
             cmd->h             = bar_h;
-            unpack_color(CA_THEME_SCROLLBAR_THUMB, &cmd->r, &cmd->g, &cmd->b, &cmd->a);
+            unpack_color(thumb_col_x, &cmd->r, &cmd->g, &cmd->b, &cmd->a);
             cmd->corner_radius = bar_h * 0.5f;
             cmd->in_use        = true;
             set_clip(cmd, clip);
@@ -1129,6 +1137,18 @@ static void clear_dirty_recursive(Ca_Node *node)
         clear_dirty_recursive(node->children[i]);
 }
 
+/* True when a node is entirely outside an active clip rect.
+   Used to cull off-screen nodes inside scroll containers so we don't
+   waste draw command budget on content that will never be visible. */
+static bool node_outside_clip(const Ca_Node *node, ClipRect clip)
+{
+    if (!clip.active) return false;
+    return (node->x + node->w <= clip.x  ||
+            node->x            >= clip.x + clip.w ||
+            node->y + node->h <= clip.y  ||
+            node->y            >= clip.y + clip.h);
+}
+
 static void paint_tree_cached(Ca_Instance *inst, Ca_Window *win,
                               Ca_Node *node, ClipRect clip)
 {
@@ -1137,6 +1157,16 @@ static void paint_tree_cached(Ca_Instance *inst, Ca_Window *win,
     /* Hidden nodes produce no draw commands.  Clear dirty flags on the
        entire subtree so they don't perpetually trigger paint passes. */
     if (node->desc.hidden) {
+        clear_dirty_recursive(node);
+        return;
+    }
+
+    /* Nodes fully outside the current clip (e.g. scrolled out of view) are
+       culled: no draw commands are generated.  Dirty flags are cleared so
+       the incremental-paint scan doesn't trigger phantom paint passes every
+       frame.  When the node scrolls back into view, layout_and_invalidate
+       will re-mark it dirty via position-change detection. */
+    if (node_outside_clip(node, clip)) {
         clear_dirty_recursive(node);
         return;
     }
@@ -1301,7 +1331,7 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
             Ca_CtxMenu *cm = &win->ctxmenu_pool[i];
             if (!cm->in_use || !cm->open || cm->item_count <= 0) continue;
 
-            float item_h = 24.0f;
+            float item_h = 20.0f;
             float menu_w = 120.0f;
             float menu_h = item_h * (float)cm->item_count;
 
@@ -1326,6 +1356,7 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
                 tmp.w = menu_w - 16.0f;
                 tmp.h = item_h;
                 tmp.window = win;
+                tmp.desc.font_size = 12.0f;
                 paint_text(win, font, &tmp, cm->items[mi], CA_THEME_POPUP_TEXT);
                 for (uint32_t gi = glyph_start; gi < win->draw_cmd_count; ++gi)
                     win->draw_cmds[gi].overlay = true;
@@ -1355,11 +1386,17 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
                 c->overlay = true;
             }
 
-            float item_h = 24.0f;
+            const float sep_h = 8.0f;
+            float item_h = 20.0f;
             float menu_w = 160.0f;
+            float drop_item_fs = mb->item_font_size > 0.0f ? mb->item_font_size : 12.0f;
             float drop_x = hdr->x;
             float drop_y = hdr->y + hdr->h;
-            float menu_h = item_h * (float)am->item_count;
+
+            /* Compute total menu height, separators take less space */
+            float menu_h = 0.0f;
+            for (int ii = 0; ii < am->item_count; ++ii)
+                menu_h += am->items[ii].separator ? sep_h : item_h;
 
             /* Dropdown background */
             if (win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
@@ -1379,8 +1416,9 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
             }
 
             /* Dropdown items */
+            float iy = drop_y;
             for (int ii = 0; ii < am->item_count; ++ii) {
-                float iy = drop_y + item_h * (float)ii;
+                float this_h = am->items[ii].separator ? sep_h : item_h;
 
                 /* --- Separator --- */
                 if (am->items[ii].separator) {
@@ -1389,26 +1427,27 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
                         memset(c, 0, sizeof(*c));
                         c->type = CA_DRAW_RECT;
                         c->x    = drop_x + 8.0f;
-                        c->y    = iy + item_h * 0.5f - 0.5f;
+                        c->y    = iy + this_h * 0.5f - 0.5f;
                         c->w    = menu_w - 16.0f;
                         c->h    = 1.0f;
                         unpack_color(mb->dropdown_border, &c->r, &c->g, &c->b, &c->a);
                         c->in_use  = true;
                         c->overlay = true;
                     }
+                    iy += this_h;
                     continue;
                 }
 
                 /* Hover highlight — also highlight when this item's sub-menu is open */
                 if ((win->mouse_x >= drop_x && win->mouse_x <= drop_x + menu_w &&
-                     win->mouse_y >= iy      && win->mouse_y <= iy + item_h) ||
+                     win->mouse_y >= iy      && win->mouse_y <= iy + this_h) ||
                     am->active_sub == ii) {
                     if (win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
                         Ca_DrawCmd *c = &win->draw_cmds[win->draw_cmd_count++];
                         memset(c, 0, sizeof(*c));
                         c->type = CA_DRAW_RECT;
                         c->x = drop_x; c->y = iy;
-                        c->w = menu_w; c->h = item_h;
+                        c->w = menu_w; c->h = this_h;
                         unpack_color(mb->dropdown_hover, &c->r, &c->g, &c->b, &c->a);
                         c->in_use  = true;
                         c->overlay = true;
@@ -1422,15 +1461,16 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
                 tmp.x = drop_x + 12.0f;
                 tmp.y = iy;
                 tmp.w = menu_w - 24.0f;
-                tmp.h = item_h;
+                tmp.h = this_h;
                 tmp.window = win;
                 tmp.desc.text_align = 1; /* left-align */
+                tmp.desc.font_size = drop_item_fs;
                 paint_text(win, font, &tmp, am->items[ii].label,
                            mb->dropdown_text);
                 for (uint32_t gi = glyph_start; gi < win->draw_cmd_count; ++gi)
                     win->draw_cmds[gi].overlay = true;
 
-                /* Sub-menu arrow ">" for items with sub-items */
+                /* Chevron arrow for items with a sub-menu */
                 if (am->items[ii].sub_item_count > 0) {
                     uint32_t gs2 = win->draw_cmd_count;
                     Ca_Node tmp2;
@@ -1439,22 +1479,27 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
                     tmp2.x = drop_x + menu_w - 20.0f;
                     tmp2.y = iy;
                     tmp2.w = 16.0f;
-                    tmp2.h = item_h;
+                    tmp2.h = this_h;
                     tmp2.window = win;
                     tmp2.desc.text_align = 1;
-                    paint_text(win, font, &tmp2, ">", mb->dropdown_text);
+                    tmp2.desc.font_size = drop_item_fs;
+                    paint_text(win, font, &tmp2, "\xEE\xAA\xB6", mb->dropdown_text);
                     for (uint32_t gi = gs2; gi < win->draw_cmd_count; ++gi)
                         win->draw_cmds[gi].overlay = true;
                 }
+
+                iy += this_h;
             }
 
             /* Sub-menu panel (shown when active_sub >= 0) */
             if (am->active_sub >= 0 && am->active_sub < am->item_count) {
                 int   asi        = am->active_sub;
-                float sub_item_h = 24.0f;
+                float sub_item_h = 20.0f;
                 float sub_menu_w = 160.0f;
                 float sub_x      = drop_x + menu_w;
-                float sub_y      = drop_y + item_h * (float)asi;
+                float sub_y      = drop_y;
+                for (int jj = 0; jj < asi; ++jj)
+                    sub_y += am->items[jj].separator ? sep_h : item_h;
                 float sub_h      = sub_item_h * (float)am->items[asi].sub_item_count;
 
                 /* Sub-menu background */
@@ -1503,6 +1548,7 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
                     stmp.h = sub_item_h;
                     stmp.window = win;
                     stmp.desc.text_align = 1;
+                    stmp.desc.font_size = drop_item_fs;
                     paint_text(win, font, &stmp,
                                am->items[asi].sub_items[si].label,
                                mb->dropdown_text);

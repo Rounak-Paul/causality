@@ -166,6 +166,7 @@ typedef struct Ca_MenuBarDesc {
     const Ca_MenuDesc *menus;
     int                menu_count;
     const char        *id, *style;
+    const char        *item_style;        /* CSS class for each menu header item (NULL = none) */
     uint32_t header_highlight;   /* active-header bg     (0 = default) */
     uint32_t dropdown_bg;        /* dropdown background  (0 = default) */
     uint32_t dropdown_border;    /* dropdown border      (0 = default) */
