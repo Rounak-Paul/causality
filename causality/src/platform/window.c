@@ -303,6 +303,130 @@ bool ca_window_is_open(const Ca_Window *window)
     return window && window->in_use;
 }
 
+/* ---- Edge / corner resize for undecorated windows ---- */
+
+/* Bitmask for the 8 resize zones */
+#define RESIZE_LEFT   1
+#define RESIZE_RIGHT  2
+#define RESIZE_TOP    4
+#define RESIZE_BOTTOM 8
+
+#define RESIZE_BORDER 6  /* px hit zone on each edge */
+#define RESIZE_MIN_W 200
+#define RESIZE_MIN_H 120
+
+static int resize_edge_for_pos(int win_w, int win_h, double cx, double cy)
+{
+    int edge = 0;
+    if (cx < RESIZE_BORDER)           edge |= RESIZE_LEFT;
+    if (cx > win_w - RESIZE_BORDER)   edge |= RESIZE_RIGHT;
+    if (cy < RESIZE_BORDER)           edge |= RESIZE_TOP;
+    if (cy > win_h - RESIZE_BORDER)   edge |= RESIZE_BOTTOM;
+    return edge;
+}
+
+static GLFWcursor *s_cursors[3]; /* hresize, vresize, crossresize */
+static bool        s_cursors_init = false;
+
+static void ensure_cursors(void)
+{
+    if (s_cursors_init) return;
+    s_cursors[0] = glfwCreateStandardCursor(GLFW_HRESIZE_CURSOR);
+    s_cursors[1] = glfwCreateStandardCursor(GLFW_VRESIZE_CURSOR);
+    s_cursors[2] = glfwCreateStandardCursor(GLFW_RESIZE_ALL_CURSOR);
+    s_cursors_init = true;
+}
+
+void ca_window_resize_pass(Ca_Window *win)
+{
+    if (!win || !win->in_use || win->titlebar_maximized) return;
+
+    ensure_cursors();
+
+    bool left_down = win->mouse_buttons[0];
+    double cx, cy;
+    glfwGetCursorPos(win->glfw, &cx, &cy);
+    int win_w, win_h;
+    glfwGetWindowSize(win->glfw, &win_w, &win_h);
+
+    /* --- Continue active resize --- */
+    if (win->resize_active) {
+        if (!left_down) {
+            /* Button released — end resize */
+            win->resize_active = false;
+            glfwSetCursor(win->glfw, NULL);
+            return;
+        }
+
+        int wx, wy;
+        glfwGetWindowPos(win->glfw, &wx, &wy);
+        double sx = (double)wx + cx;
+        double sy = (double)wy + cy;
+        double ddx = sx - win->resize_start_cursor_sx;
+        double ddy = sy - win->resize_start_cursor_sy;
+
+        int new_x = win->resize_start_win_x;
+        int new_y = win->resize_start_win_y;
+        int new_w = win->resize_start_win_w;
+        int new_h = win->resize_start_win_h;
+
+        if (win->resize_edge & RESIZE_RIGHT)  new_w = (int)(win->resize_start_win_w + ddx);
+        if (win->resize_edge & RESIZE_BOTTOM) new_h = (int)(win->resize_start_win_h + ddy);
+        if (win->resize_edge & RESIZE_LEFT) {
+            new_w = (int)(win->resize_start_win_w - ddx);
+            new_x = (int)(win->resize_start_win_x + ddx);
+        }
+        if (win->resize_edge & RESIZE_TOP) {
+            new_h = (int)(win->resize_start_win_h - ddy);
+            new_y = (int)(win->resize_start_win_y + ddy);
+        }
+
+        if (new_w < RESIZE_MIN_W) {
+            if (win->resize_edge & RESIZE_LEFT)
+                new_x = win->resize_start_win_x + win->resize_start_win_w - RESIZE_MIN_W;
+            new_w = RESIZE_MIN_W;
+        }
+        if (new_h < RESIZE_MIN_H) {
+            if (win->resize_edge & RESIZE_TOP)
+                new_y = win->resize_start_win_y + win->resize_start_win_h - RESIZE_MIN_H;
+            new_h = RESIZE_MIN_H;
+        }
+
+        glfwSetWindowPos(win->glfw, new_x, new_y);
+        glfwSetWindowSize(win->glfw, new_w, new_h);
+        return;
+    }
+
+    /* --- Not resizing — hit-test edges to show cursor feedback --- */
+    int edge = resize_edge_for_pos(win_w, win_h, cx, cy);
+
+    if (edge == 0) {
+        glfwSetCursor(win->glfw, NULL);
+        return;
+    }
+
+    /* Choose cursor shape */
+    bool horiz = (edge == RESIZE_LEFT  || edge == RESIZE_RIGHT);
+    bool vert  = (edge == RESIZE_TOP   || edge == RESIZE_BOTTOM);
+    if (horiz && !vert)       glfwSetCursor(win->glfw, s_cursors[0]);
+    else if (vert && !horiz)  glfwSetCursor(win->glfw, s_cursors[1]);
+    else                      glfwSetCursor(win->glfw, s_cursors[2]);
+
+    /* Start resize on mouse press */
+    if (left_down && win->mouse_click_this_frame) {
+        int wx, wy;
+        glfwGetWindowPos(win->glfw, &wx, &wy);
+        win->resize_active          = true;
+        win->resize_edge            = edge;
+        win->resize_start_win_x     = wx;
+        win->resize_start_win_y     = wy;
+        win->resize_start_win_w     = win_w;
+        win->resize_start_win_h     = win_h;
+        win->resize_start_cursor_sx = (double)wx + cx;
+        win->resize_start_cursor_sy = (double)wy + cy;
+    }
+}
+
 void ca_window_set_scale(Ca_Window *window, float scale)
 {
     if (!window || !window->in_use) return;

@@ -764,6 +764,16 @@ struct Ca_Window {
     int            titlebar_pre_max_y;
     int            titlebar_pre_max_w;
     int            titlebar_pre_max_h;
+
+    /* Edge / corner resize state (manual implementation for undecorated windows) */
+    bool           resize_active;          /* currently resizing                 */
+    int            resize_edge;            /* bitmask: 1=left 2=right 4=top 8=bottom */
+    int            resize_start_win_x;     /* window pos at drag start            */
+    int            resize_start_win_y;
+    int            resize_start_win_w;     /* window size at drag start           */
+    int            resize_start_win_h;
+    double         resize_start_cursor_sx; /* screen-space cursor at drag start   */
+    double         resize_start_cursor_sy;
 };
 
 /* ======================================================

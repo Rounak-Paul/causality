@@ -40,13 +40,16 @@ static void on_titlebar_drag_start(const Ca_DragEvent *ev, void *ud)
     (void)ud;
     Ca_Window *win = ev->window;
     int wx, wy;
+    double cx, cy;
     glfwGetWindowPos(win->glfw, &wx, &wy);
+    /* Use glfwGetCursorPos (real-time OS query) instead of ev->start_x which
+       comes from the cached cursor-callback value.  They agree at drag start
+       but the real-time variant keeps drag and move consistent. */
+    glfwGetCursorPos(win->glfw, &cx, &cy);
     win->titlebar_drag_win_x    = wx;
     win->titlebar_drag_win_y    = wy;
-    /* Store the screen-space cursor position at drag start:
-       screen_x = window_x + cursor_window_x */
-    win->titlebar_drag_screen_x = (double)wx + (double)ev->start_x;
-    win->titlebar_drag_screen_y = (double)wy + (double)ev->start_y;
+    win->titlebar_drag_screen_x = (double)wx + cx;
+    win->titlebar_drag_screen_y = (double)wy + cy;
 }
 
 static void on_titlebar_drag(const Ca_DragEvent *ev, void *ud)
@@ -54,13 +57,21 @@ static void on_titlebar_drag(const Ca_DragEvent *ev, void *ud)
     (void)ud;
     Ca_Window *win = ev->window;
 
-    /* After the window moves, ev->x/y are relative to the NEW window pos.
-       Recompute screen-space cursor = current_win_pos + cursor_window_pos,
-       then compute delta from the recorded drag-start screen position. */
+    /* ev->x/y come from win->mouse_x/y which is only updated when the
+       physical cursor moves (cursor-pos callback).  When we call
+       glfwSetWindowPos the window moves under a stationary cursor — no
+       callback fires — leaving win->mouse_x stale relative to the new
+       window pos.  Combining that stale value with a fresh glfwGetWindowPos
+       gives a wrong screen-cursor estimate, accumulating drift.
+       Fix: query the cursor position directly from the OS via
+       glfwGetCursorPos; it is always consistent with the current window pos
+       returned by glfwGetWindowPos (same Cocoa/Win32/XQueryPointer frame). */
     int wx, wy;
+    double cx, cy;
     glfwGetWindowPos(win->glfw, &wx, &wy);
-    double cur_sx = (double)wx + (double)ev->x;
-    double cur_sy = (double)wy + (double)ev->y;
+    glfwGetCursorPos(win->glfw, &cx, &cy);
+    double cur_sx = (double)wx + cx;
+    double cur_sy = (double)wy + cy;
     double dx = cur_sx - win->titlebar_drag_screen_x;
     double dy = cur_sy - win->titlebar_drag_screen_y;
     glfwSetWindowPos(win->glfw,

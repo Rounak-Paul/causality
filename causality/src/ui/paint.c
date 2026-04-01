@@ -1834,10 +1834,6 @@ void ca_paint_pass(Ca_Instance *inst, Ca_Window *win)
     /* 3. Decorations — always fresh, never cached (depend on global focus state) */
     Ca_Font *font = inst->font;
     if (font) {
-        /* Focus ring on the currently focused element */
-        if (win->focused_node)
-            paint_focus_ring(win, win->focused_node);
-
         /* Cursor for focused text input */
         if (win->focused_node && win->input_pool) {
             for (uint32_t i = 0; i < CA_MAX_INPUTS_PER_WINDOW; ++i) {
