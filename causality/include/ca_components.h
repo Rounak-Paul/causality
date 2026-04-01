@@ -173,6 +173,10 @@ typedef struct Ca_MenuBarDesc {
     uint32_t dropdown_hover;     /* item hover bg        (0 = default) */
     uint32_t dropdown_text;      /* dropdown item text   (0 = default) */
     uint32_t text_color;         /* header label text    (0 = default) */
+    /* Inline fallbacks — used when style/item_style CSS classes are absent */
+    float    bar_height;         /* outer bar fixed height (0 = CSS/auto)  */
+    float    item_padding_lr;    /* per-side padding for each header item   */
+    float    item_font_size;     /* font size for header item labels        */
 } Ca_MenuBarDesc;
 
 /* ============================================================

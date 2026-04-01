@@ -490,8 +490,8 @@ void ca_ui_begin(Ca_Window *window, const Ca_DivDesc *root_desc)
     g_ctx.next_key[0] = '\0';
 
     Ca_NodeDesc nd = div_to_nd(root_desc);
-    Ca_Node *root  = ca_node_root(window);
-    assert(root && "failed to create root node");
+    Ca_Node *root  = window->content_root;
+    assert(root && "ca_ui_begin: content_root not initialised (ca_ui_window_init not called?)");
 
     /* Apply same pending-desc pattern as claim_child so root is only dirtied
        when its CSS-resolved desc actually changes between frames. */
@@ -2089,6 +2089,11 @@ Ca_MenuBar *ca_menu_bar(const Ca_MenuBarDesc *desc)
 
     uint32_t dummy = 0;
     apply_css(bar, &bar->desc, CA_ELEM_DIV, desc->style, id, &dummy);
+    /* Inline fallback: apply bar_height when no CSS class governs it */
+    if (!desc->style && desc->bar_height > 0.0f) {
+        bar->desc.height      = desc->bar_height;
+        bar->desc.align_items = CA_ALIGN_CENTER;
+    }
 
     ca_node_trim_children(bar, 0);
 
@@ -2134,6 +2139,15 @@ Ca_MenuBar *ca_menu_bar(const Ca_MenuBarDesc *desc)
         if (!hdr) continue;
 
         apply_css(hdr, &hdr->desc, CA_ELEM_DIV, desc->item_style, NULL, &dummy);
+        /* Inline fallback: apply padding/font_size when no CSS class governs it */
+        if (!desc->item_style) {
+            if (desc->item_padding_lr > 0.0f) {
+                hdr->desc.padding_left  = desc->item_padding_lr;
+                hdr->desc.padding_right = desc->item_padding_lr;
+            }
+            if (desc->item_font_size > 0.0f)
+                hdr->desc.font_size = desc->item_font_size;
+        }
         hdr->desc.width = tw + hdr->desc.padding_left + hdr->desc.padding_right;
 
         /* Derive dropdown item font size from the header node's CSS font size */

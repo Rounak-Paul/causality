@@ -215,6 +215,13 @@ Ca_Window *ca_window_create(Ca_Instance *inst, const Ca_WindowDesc *desc)
        that occupied this slot (dangling pointers, input flags, etc.). */
     memset(slot, 0, sizeof(*slot));
 
+    /* Copy the window title before creating the GLFW window */
+    snprintf(slot->title, sizeof(slot->title), "%s",
+             desc->title ? desc->title : "");
+
+    /* Custom title bar: always create undecorated GLFW windows */
+    glfwWindowHint(GLFW_DECORATED, GLFW_FALSE);
+
     GLFWwindow *glfw = glfwCreateWindow(
         desc->width  > 0 ? desc->width  : 1280,
         desc->height > 0 ? desc->height : 720,

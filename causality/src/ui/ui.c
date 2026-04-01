@@ -6,6 +6,7 @@
 #include "paint.h"
 #include "widget.h"
 #include "css.h"
+#include "title_bar.h"
 
 #include <GLFW/glfw3.h>
 #include <string.h>
@@ -133,6 +134,7 @@ void ca_ui_shutdown(Ca_Instance *inst)
 void ca_ui_window_init(Ca_Window *win)
 {
     ca_node_system_init(win);
+    ca_title_bar_init(win);
 }
 
 void ca_ui_window_shutdown(Ca_Window *win)
@@ -286,6 +288,29 @@ void ca_ui_update(Ca_Instance *inst)
                     any_content = true;
             }
             if (needs_layout) {
+                if (layout_and_invalidate(win))
+                    any_content = true;
+            }
+        }
+
+        /* Title bar rebuild — runs after on_frame_fn so any menu changes
+           from the frame callback are reflected in the same frame.        */
+        if (win->titlebar_needs_rebuild) {
+            ca_widget_ctx_enter(win);
+            ca_title_bar_rebuild(win);
+            ca_widget_ctx_leave();
+            win->titlebar_needs_rebuild = false;
+
+            bool needs_layout_tb = false;
+            for (uint32_t j = 0; j < CA_MAX_NODES_PER_WINDOW; ++j) {
+                Ca_Node *n = &win->node_pool[j];
+                if (!n->in_use) continue;
+                if (n->dirty & (CA_DIRTY_LAYOUT | CA_DIRTY_CHILDREN))
+                    needs_layout_tb = true;
+                if (n->dirty & CA_DIRTY_CONTENT)
+                    any_content = true;
+            }
+            if (needs_layout_tb) {
                 if (layout_and_invalidate(win))
                     any_content = true;
             }

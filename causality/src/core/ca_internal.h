@@ -747,6 +747,23 @@ struct Ca_Window {
     /* Per-frame user callback (fires after input pass, before paint) */
     void        (*on_frame_fn)(void *user_data);
     void         *on_frame_data;
+
+    /* Custom title bar */
+    Ca_Node       *title_bar_node;        /* system-managed title bar container  */
+    Ca_Node       *content_root;          /* user content is built here          */
+    char           title[256];            /* window title text                   */
+    bool           titlebar_needs_rebuild;
+    bool           titlebar_maximized;
+    Ca_MenuBarMenu titlebar_menus[CA_MAX_MENUS_PER_BAR];
+    int            titlebar_menu_count;
+    int            titlebar_drag_win_x;   /* window pos at drag start            */
+    int            titlebar_drag_win_y;
+    double         titlebar_drag_screen_x; /* screen-space cursor at drag start  */
+    double         titlebar_drag_screen_y;
+    int            titlebar_pre_max_x;    /* window geometry before maximizing   */
+    int            titlebar_pre_max_y;
+    int            titlebar_pre_max_w;
+    int            titlebar_pre_max_h;
 };
 
 /* ======================================================

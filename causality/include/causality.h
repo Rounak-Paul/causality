@@ -109,6 +109,9 @@ CA_API bool       ca_window_is_open(const Ca_Window *window);
 CA_API void       ca_window_set_scale(Ca_Window *window, float scale);
 CA_API float      ca_window_get_scale(Ca_Window *window);
 
+/* Set the window title displayed in the custom title bar. */
+CA_API void ca_window_set_title(Ca_Window *window, const char *title);
+
 /* ============================================================
    EVENTS
    ============================================================ */
@@ -700,6 +703,14 @@ CA_API void ca_viewport_set_callbacks(Ca_Viewport *viewport,
 
 /* Auto-include the component layer for backward compatibility. */
 #include "ca_components.h"
+
+/* Title bar menu API — declared here because it requires Ca_MenuDesc
+   which is defined in ca_components.h above. */
+
+/* Deep-copy 'count' Ca_MenuDesc items into the title bar menu strip.
+   Pass NULL / 0 to remove all menus. */
+CA_API void ca_window_set_title_bar_menus(Ca_Window        *window,
+                                          const Ca_MenuDesc *menus, int count);
 
 /* ============================================================
    REACTIVE STATE
