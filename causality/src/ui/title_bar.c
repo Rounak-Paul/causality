@@ -154,7 +154,7 @@ void ca_title_bar_init(Ca_Window *win)
     /* ---- Title bar node: horizontal strip, fixed 30 px ---- */
     Ca_NodeDesc tb = {0};
     tb.direction   = CA_HORIZONTAL;
-    tb.height      = 24.0f;
+    tb.height      = 22.0f;
     tb.align_items = CA_ALIGN_CENTER;
     tb.background  = ca_color(0x16 / 255.0f, 0x16 / 255.0f, 0x1a / 255.0f, 1.0f);
     tb.overflow_x  = 1; /* hidden */
@@ -233,7 +233,7 @@ void ca_title_bar_rebuild(Ca_Window *win)
             .menus           = menu_descs,
             .menu_count      = win->titlebar_menu_count,
             .text_color      = COL_BTN,
-            .bar_height      = 24.0f,
+            .bar_height      = 22.0f,
             .item_padding_lr = 4.0f,
             .item_font_size  = 12.0f,
             .dropdown_bg     = ca_color(0x16/255.f, 0x16/255.f, 0x1a/255.f, 1.0f),
@@ -245,7 +245,7 @@ void ca_title_bar_rebuild(Ca_Window *win)
 
     /* ---- Centre: drag zone with window title ---- */
     Ca_Node *drag = (Ca_Node *)ca_div_begin(&(Ca_DivDesc){
-        .height        = 24.0f,
+        .height        = 22.0f,
         .on_drag_start = on_titlebar_drag_start,
         .on_drag       = on_titlebar_drag,
         .on_drag_end   = on_titlebar_drag_end,
@@ -265,14 +265,14 @@ void ca_title_bar_rebuild(Ca_Window *win)
     ca_div_end(); /* drag zone */
 
     /* ---- Right: window control buttons ---- */
-    Ca_Node *ctrl = (Ca_Node *)ca_div_begin(&(Ca_DivDesc){ .height = 24.0f });
+    Ca_Node *ctrl = (Ca_Node *)ca_div_begin(&(Ca_DivDesc){ .height = 22.0f });
     ctrl->desc.align_items = CA_ALIGN_CENTER;
     ctrl->dirty |= CA_DIRTY_LAYOUT;
 
     Ca_Button *min_btn = ca_btn(&(Ca_BtnDesc){
         .text       = ICON_MINUS,
-        .width      = 24.0f,
-        .height     = 24.0f,
+        .width      = 22.0f,
+        .height     = 22.0f,
         .background = 0,
         .text_color = COL_BTN,
         .on_click   = on_minimize_click,
@@ -284,8 +284,8 @@ void ca_title_bar_rebuild(Ca_Window *win)
 
     Ca_Button *max_btn = ca_btn(&(Ca_BtnDesc){
         .text       = win->titlebar_maximized ? ICON_RESTORE : ICON_MAXIMIZE,
-        .width      = 24.0f,
-        .height     = 24.0f,
+        .width      = 22.0f,
+        .height     = 22.0f,
         .background = 0,
         .text_color = COL_BTN,
         .on_click   = on_maximize_click,
@@ -297,8 +297,8 @@ void ca_title_bar_rebuild(Ca_Window *win)
 
     Ca_Button *cls_btn = ca_btn(&(Ca_BtnDesc){
         .text       = ICON_TIMES,
-        .width      = 24.0f,
-        .height     = 24.0f,
+        .width      = 22.0f,
+        .height     = 22.0f,
         .background = 0,
         .text_color = COL_CLOSE,
         .on_click   = on_close_click,
