@@ -237,6 +237,7 @@ static struct {
     char       next_key[CA_NODE_ID_MAX];
     int        depth;    /* index of top; -1 = empty */
     bool       active;
+    bool       auto_ctx; /* true when ca_div_clear auto-entered the context */
 } g_ctx;
 
 /* Pending pre-CSS desc snapshot: set in claim_child/ca_ui_begin just before
@@ -593,6 +594,12 @@ void ca_div_end(void)
 {
     assert(g_ctx.active && g_ctx.depth >= 0);
     ctx_pop();
+
+    /* Auto-leave when a ca_div_clear-initiated context pops back to root. */
+    if (g_ctx.auto_ctx && g_ctx.depth == -1) {
+        g_ctx.active   = false;
+        g_ctx.auto_ctx = false;
+    }
 }
 
 /* ============================================================
@@ -1304,9 +1311,21 @@ void ca__set_background_widget(void *widget, uint32_t color)
 
 void ca_div_clear(Ca_Div *div)
 {
-    assert(g_ctx.active);
-    ca_node_clear((Ca_Node *)div);
-    ctx_push((Ca_Node *)div);
+    Ca_Node *node = (Ca_Node *)div;
+    assert(node);
+
+    /* Auto-enter a build context if not inside ca_ui_begin / ca_ui_end. */
+    if (!g_ctx.active) {
+        assert(node->window);
+        g_ctx.window   = node->window;
+        g_ctx.depth    = -1;
+        g_ctx.active   = true;
+        g_ctx.auto_ctx = true;
+        g_ctx.next_key[0] = '\0';
+    }
+
+    ca_node_clear(node);
+    ctx_push(node);
 }
 
 /* ---- Scroll container helpers (look up node by CSS id) ---- */
