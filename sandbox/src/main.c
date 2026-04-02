@@ -221,13 +221,13 @@ static void on_drag_move(const Ca_DragEvent *ev, void *user_data)
     (void)user_data;
     char buf[128];
     snprintf(buf, sizeof(buf), "Dragging: dx=%.0f  dy=%.0f", ev->dx, ev->dy);
-    ca_label_set_text(g_drag_label, buf);
+    ca_set_text(g_drag_label, buf);
 }
 
 static void on_drag_end(const Ca_DragEvent *ev, void *user_data)
 {
     (void)ev; (void)user_data;
-    ca_label_set_text(g_drag_label, "Drag ended — grab the box again!");
+    ca_set_text(g_drag_label, "Drag ended — grab the box again!");
 }
 
 /* ---- Button callbacks ---- */
@@ -236,10 +236,10 @@ static void on_toggle_click(Ca_Button *btn, void *user_data)
 {
     (void)user_data;
     g_toggle = !g_toggle;
-    ca_label_set_text(g_status_label, g_toggle ? "Toggled ON" : "Toggled OFF");
-    ca_button_set_text(btn, g_toggle ? "Turn OFF" : "Turn ON");
+    ca_set_text(g_status_label, g_toggle ? "Toggled ON" : "Toggled OFF");
+    ca_set_text(btn, g_toggle ? "Turn OFF" : "Turn ON");
     /* Triggers CSS transition on background-color */
-    ca_button_set_background(btn, g_toggle
+    ca_set_background(btn, g_toggle
         ? ca_color(0.95f, 0.40f, 0.10f, 1.0f)   /* warm orange */
         : ca_color(0.54f, 0.71f, 0.98f, 1.0f));  /* #89b4fa     */
     printf("[ui] toggle = %s\n", g_toggle ? "ON" : "OFF");
@@ -249,14 +249,14 @@ static void on_compound_click(Ca_Button *btn, void *user_data)
 {
     (void)btn; (void)user_data;
     printf("[ui] compound button clicked\n");
-    ca_label_set_text(g_status_label, "Compound button clicked!");
+    ca_set_text(g_status_label, "Compound button clicked!");
 }
 
 static void on_accent_click(Ca_Button *btn, void *user_data)
 {
     (void)btn; (void)user_data;
     printf("[ui] accent clicked\n");
-    ca_label_set_text(g_status_label, "Accent button pressed");
+    ca_set_text(g_status_label, "Accent button pressed");
 }
 
 /* ---- Text input callback ---- */
@@ -264,10 +264,10 @@ static void on_accent_click(Ca_Button *btn, void *user_data)
 static void on_name_change(Ca_TextInput *input, void *user_data)
 {
     (void)user_data;
-    const char *text = ca_input_get_text(input);
+    const char *text = ca_get_text(input);
     char buf[128];
     snprintf(buf, sizeof(buf), "You typed: %s", text);
-    ca_label_set_text(g_input_echo, buf);
+    ca_set_text(g_input_echo, buf);
     printf("[input] \"%s\"\n", text);
 }
 
@@ -276,7 +276,7 @@ static void on_name_change(Ca_TextInput *input, void *user_data)
 static void on_check_change(Ca_Checkbox *cb, void *user_data)
 {
     (void)user_data;
-    ca_label_set_text(g_check_label, ca_checkbox_get(cb) ? "Checked!" : "Unchecked");
+    ca_set_text(g_check_label, ca_checkbox_get(cb) ? "Checked!" : "Unchecked");
 }
 
 static void on_slider_change(Ca_Slider *sl, void *user_data)
@@ -284,13 +284,13 @@ static void on_slider_change(Ca_Slider *sl, void *user_data)
     (void)user_data;
     char buf[64];
     snprintf(buf, sizeof(buf), "Value: %.1f", ca_slider_get(sl));
-    ca_label_set_text(g_slider_label, buf);
+    ca_set_text(g_slider_label, buf);
 }
 
 static void on_toggle_sw_change(Ca_Toggle *tg, void *user_data)
 {
     (void)user_data;
-    ca_label_set_text(g_toggle_label, ca_toggle_get(tg) ? "ON" : "OFF");
+    ca_set_text(g_toggle_label, ca_toggle_get(tg) ? "ON" : "OFF");
 }
 
 static void on_select_change(Ca_Select *sel, void *user_data)
@@ -298,7 +298,7 @@ static void on_select_change(Ca_Select *sel, void *user_data)
     (void)user_data;
     char buf[128];
     snprintf(buf, sizeof(buf), "Selected: index %d", ca_select_get(sel));
-    ca_label_set_text(g_select_label, buf);
+    ca_set_text(g_select_label, buf);
 }
 
 static void on_tab_change(Ca_TabBar *tb, void *user_data)
@@ -306,7 +306,7 @@ static void on_tab_change(Ca_TabBar *tb, void *user_data)
     (void)user_data;
     char buf[64];
     snprintf(buf, sizeof(buf), "Active tab: %d", ca_tabs_active(tb));
-    ca_label_set_text(g_tab_label, buf);
+    ca_set_text(g_tab_label, buf);
 }
 
 static void on_close_click(Ca_Button *btn, void *user_data)

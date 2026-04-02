@@ -1026,52 +1026,81 @@ static void maybe_transition(Ca_Node *node, Ca_CssPropId prop,
     slot->duration   = node->transition_duration;
 }
 
-void ca_label_set_text(Ca_Label *label, const char *text)
-{
-    assert(label && label->in_use);
-    if (!text) text = "";
-    const char *cur = label->dyn_text ? label->dyn_text : label->text;
-    if (strcmp(cur, text) == 0) return;
-    size_t len = strlen(text);
-    if (len < CA_LABEL_TEXT_MAX) {
-        memcpy(label->text, text, len + 1);
-        free(label->dyn_text);
-        label->dyn_text = NULL;
-    } else {
-        char *buf = (char *)realloc(label->dyn_text, len + 1);
-        if (buf) {
-            memcpy(buf, text, len + 1);
-            label->dyn_text = buf;
-        }
-    }
-    label->node->dirty |= CA_DIRTY_CONTENT;
-    if (label->node->desc.text_wrap)
-        label->node->dirty |= CA_DIRTY_LAYOUT;
-}
-
-void ca_label_set_color(Ca_Label *label, uint32_t color)
-{
-    assert(label && label->in_use);
-    if (label->color != color) {
-        label->color = color;
-        label->node->dirty |= CA_DIRTY_CONTENT;
-    }
-}
-
-void ca_label_set_hidden(Ca_Label *label, bool hidden)
-{
-    assert(label && label->in_use);
-    if (label->node->desc.hidden != hidden) {
-        label->node->desc.hidden = hidden;
-        label->node->dirty |= CA_DIRTY_LAYOUT | CA_DIRTY_CONTENT;
-    }
-}
+/* Old per-widget setters removed — see unified ca__set_text / ca__set_color /
+   ca__set_background / ca__get_text below. */
 
 /* ============================================================
-   RUNTIME SETTERS — hidden / disabled (all widget types)
+   RUNTIME SETTERS — unified ca_set_style / ca_set_hidden / ca_set_disabled
    ============================================================ */
 
-/* Internal helpers to avoid repetition */
+/* Internal helpers */
+
+/* Re-resolve CSS classes on a node at runtime.
+   out_text_color is optional — pass the widget's text_color field address
+   for widgets that carry their own text colour (button, checkbox, etc.),
+   or NULL for widgets that don't (div, slider, progress, etc.). */
+static void node_set_style(Ca_Node *node, const char *style,
+                            uint32_t *out_text_color)
+{
+    const char *new_classes = style ? style : "";
+    if (strcmp(node->classes, new_classes) == 0) return;
+
+    /* Snapshot pre-CSS desc for dirty detection */
+    Ca_NodeDesc old_desc = node->desc;
+
+    /* Reset desc so CSS values aren't blocked by stale inline values.
+       Preserve hidden/disabled which are orthogonal to CSS classes. */
+    bool was_hidden   = node->desc.hidden;
+    bool was_disabled = node->desc.disabled;
+    memset(&node->desc, 0, sizeof(node->desc));
+    node->desc.hidden   = was_hidden;
+    node->desc.disabled = was_disabled;
+
+    /* Update classes and re-resolve CSS */
+    snprintf(node->classes, CA_NODE_CLASS_MAX, "%s", new_classes);
+
+    Ca_Stylesheet *ss = node->window->instance->stylesheet;
+    if (ss) {
+        Ca_ResolvedStyle rs;
+        float scale = node->window->ui_scale;
+        ca_style_resolve(ss, node, (Ca_ElementType)node->elem_type,
+                         node->classes, &rs);
+        /* Scale CSS pixel values */
+        if (!rs.width_pct)  rs.width  *= scale;
+        if (!rs.height_pct) rs.height *= scale;
+        rs.min_width    *= scale;  rs.max_width  *= scale;
+        rs.min_height   *= scale;  rs.max_height *= scale;
+        rs.padding[0]   *= scale;  rs.padding[1] *= scale;
+        rs.padding[2]   *= scale;  rs.padding[3] *= scale;
+        rs.gap          *= scale;
+        rs.border_radius *= scale;
+        rs.margin[0]    *= scale;  rs.margin[1]  *= scale;
+        rs.margin[2]    *= scale;  rs.margin[3]  *= scale;
+
+        uint32_t dummy_color = 0;
+        ca_style_apply_to_node(&rs, &node->desc,
+                               out_text_color ? out_text_color : &dummy_color);
+
+        node->transition_duration = rs.transition_duration;
+        node->transition_props    = rs.transition_props;
+
+        if ((rs.set_mask & (1ULL << CA_CSS_PROP_DISPLAY)) &&
+            rs.display == CA_CSS_DISPLAY_NONE)
+            node->desc.hidden = true;
+    }
+
+    /* Dirty detection against old state */
+    if (content_desc_changed(&old_desc, &node->desc))
+        node->dirty |= CA_DIRTY_CONTENT;
+    if (layout_desc_changed(&old_desc, &node->desc))
+        node->dirty |= CA_DIRTY_LAYOUT;
+
+    /* Fire transitions for animated properties */
+    if (old_desc.background != node->desc.background)
+        maybe_transition(node, CA_CSS_PROP_BACKGROUND_COLOR,
+                         0, 0, old_desc.background, node->desc.background);
+}
+
 static void node_set_hidden(Ca_Node *node, bool hidden)
 {
     if (node->desc.hidden != hidden) {
@@ -1090,29 +1119,187 @@ static void node_set_disabled(Ca_Node *node, bool disabled)
     }
 }
 
-/* Div */
-void ca_div_set_hidden(Ca_Div *div, bool hidden)
+/* Resolve the text_color field pointer from the node's widget back-pointer.
+   Returns NULL for widget types that don't carry a text colour. */
+static uint32_t *resolve_text_color(Ca_Node *node)
+{
+    if (!node->widget) return NULL;
+    switch (node->widget_type) {
+    case CA_WIDGET_LABEL:      return &((Ca_Label *)node->widget)->color;
+    case CA_WIDGET_BUTTON:     return &((Ca_Button *)node->widget)->text_color;
+    case CA_WIDGET_TEXT_INPUT:  return &((Ca_TextInput *)node->widget)->text_color;
+    case CA_WIDGET_CHECKBOX:   return &((Ca_Checkbox *)node->widget)->text_color;
+    case CA_WIDGET_RADIO:      return &((Ca_Radio *)node->widget)->text_color;
+    case CA_WIDGET_TREENODE:   return &((Ca_TreeNode *)node->widget)->text_color;
+    case CA_WIDGET_MENUBAR:    return &((Ca_MenuBar *)node->widget)->text_color;
+    default:                   return NULL;
+    }
+}
+
+/* ---- Unified public API (backing functions for _Generic macros) ---- */
+
+void ca__set_style_node(Ca_Div *div, const char *style)
+{
+    Ca_Node *n = (Ca_Node *)div;
+    assert(n);
+    node_set_style(n, style, resolve_text_color(n));
+}
+
+void ca__set_style_widget(void *widget, const char *style)
+{
+    Ca_Node *n = *(Ca_Node **)widget;
+    assert(n);
+    node_set_style(n, style, resolve_text_color(n));
+}
+
+void ca__set_hidden_node(Ca_Div *div, bool hidden)
 {
     assert(div);
     node_set_hidden((Ca_Node *)div, hidden);
 }
 
-void ca_div_set_disabled(Ca_Div *div, bool disabled)
+void ca__set_hidden_widget(void *widget, bool hidden)
+{
+    Ca_Node *n = *(Ca_Node **)widget;
+    assert(n);
+    node_set_hidden(n, hidden);
+}
+
+void ca__set_disabled_node(Ca_Div *div, bool disabled)
 {
     assert(div);
     node_set_disabled((Ca_Node *)div, disabled);
 }
 
-bool ca_div_is_hidden(const Ca_Div *div)
+void ca__set_disabled_widget(void *widget, bool disabled)
 {
-    assert(div);
-    return ((const Ca_Node *)div)->desc.hidden;
+    Ca_Node *n = *(Ca_Node **)widget;
+    assert(n);
+    node_set_disabled(n, disabled);
 }
 
-bool ca_div_is_disabled(const Ca_Div *div)
+/* ---- Unified ca_set_text / ca_get_text ---- */
+
+void ca__set_text(void *widget, const char *text)
+{
+    Ca_Node *n = *(Ca_Node **)widget;
+    assert(n);
+    if (!text) text = "";
+    switch (n->widget_type) {
+    case CA_WIDGET_LABEL: {
+        Ca_Label *lbl = (Ca_Label *)widget;
+        const char *cur = lbl->dyn_text ? lbl->dyn_text : lbl->text;
+        if (strcmp(cur, text) == 0) return;
+        size_t len = strlen(text);
+        if (len < CA_LABEL_TEXT_MAX) {
+            memcpy(lbl->text, text, len + 1);
+            free(lbl->dyn_text);
+            lbl->dyn_text = NULL;
+        } else {
+            char *buf = (char *)realloc(lbl->dyn_text, len + 1);
+            if (buf) { memcpy(buf, text, len + 1); lbl->dyn_text = buf; }
+        }
+        n->dirty |= CA_DIRTY_CONTENT;
+        if (n->desc.text_wrap) n->dirty |= CA_DIRTY_LAYOUT;
+        break;
+    }
+    case CA_WIDGET_BUTTON: {
+        Ca_Button *btn = (Ca_Button *)widget;
+        snprintf(btn->text, CA_BUTTON_TEXT_MAX, "%s", text);
+        n->dirty |= CA_DIRTY_CONTENT;
+        break;
+    }
+    case CA_WIDGET_TEXT_INPUT: {
+        Ca_TextInput *inp = (Ca_TextInput *)widget;
+        if (strcmp(inp->text, text) == 0) return;
+        snprintf(inp->text, CA_INPUT_TEXT_MAX, "%s", text);
+        inp->cursor = (int)strlen(inp->text);
+        inp->sel_start = -1;
+        n->dirty |= CA_DIRTY_CONTENT;
+        break;
+    }
+    case CA_WIDGET_CHECKBOX: {
+        Ca_Checkbox *cb = (Ca_Checkbox *)widget;
+        snprintf(cb->text, CA_LABEL_TEXT_MAX, "%s", text);
+        n->dirty |= CA_DIRTY_CONTENT;
+        break;
+    }
+    case CA_WIDGET_TREENODE: {
+        Ca_TreeNode *tn = (Ca_TreeNode *)widget;
+        snprintf(tn->text, CA_LABEL_TEXT_MAX, "%s", text);
+        n->dirty |= CA_DIRTY_CONTENT;
+        break;
+    }
+    default:
+        assert(!"ca_set_text: widget type does not support text");
+        break;
+    }
+}
+
+const char *ca__get_text(const void *widget)
+{
+    const Ca_Node *n = *(const Ca_Node *const *)widget;
+    assert(n);
+    switch (n->widget_type) {
+    case CA_WIDGET_LABEL: {
+        const Ca_Label *lbl = (const Ca_Label *)widget;
+        return lbl->dyn_text ? lbl->dyn_text : lbl->text;
+    }
+    case CA_WIDGET_BUTTON:
+        return ((const Ca_Button *)widget)->text;
+    case CA_WIDGET_TEXT_INPUT:
+        return ((const Ca_TextInput *)widget)->text;
+    case CA_WIDGET_CHECKBOX:
+        return ((const Ca_Checkbox *)widget)->text;
+    case CA_WIDGET_TREENODE:
+        return ((const Ca_TreeNode *)widget)->text;
+    default:
+        assert(!"ca_get_text: widget type does not support text");
+        return "";
+    }
+}
+
+/* ---- Unified ca_set_color ---- */
+
+void ca__set_color(void *widget, uint32_t color)
+{
+    Ca_Node *n = *(Ca_Node **)widget;
+    assert(n);
+    uint32_t *tc = resolve_text_color(n);
+    if (!tc) {
+        assert(!"ca_set_color: widget type does not have text color");
+        return;
+    }
+    if (*tc != color) {
+        *tc = color;
+        n->dirty |= CA_DIRTY_CONTENT;
+    }
+}
+
+/* ---- Unified ca_set_background ---- */
+
+static void node_set_background(Ca_Node *n, uint32_t color)
+{
+    uint32_t old_color = n->desc.background;
+    if (old_color != color) {
+        maybe_transition(n, CA_CSS_PROP_BACKGROUND_COLOR,
+                         0, 0, old_color, color);
+        n->desc.background = color;
+        n->dirty |= CA_DIRTY_CONTENT;
+    }
+}
+
+void ca__set_background_node(Ca_Div *div, uint32_t color)
 {
     assert(div);
-    return ((const Ca_Node *)div)->desc.disabled;
+    node_set_background((Ca_Node *)div, color);
+}
+
+void ca__set_background_widget(void *widget, uint32_t color)
+{
+    Ca_Node *n = *(Ca_Node **)widget;
+    assert(n);
+    node_set_background(n, color);
 }
 
 void ca_div_clear(Ca_Div *div)
@@ -1120,148 +1307,6 @@ void ca_div_clear(Ca_Div *div)
     assert(g_ctx.active);
     ca_node_clear((Ca_Node *)div);
     ctx_push((Ca_Node *)div);
-}
-
-/* Button */
-void ca_button_set_hidden(Ca_Button *button, bool hidden)
-{
-    assert(button && button->in_use);
-    node_set_hidden(button->node, hidden);
-}
-
-void ca_button_set_disabled(Ca_Button *button, bool disabled)
-{
-    assert(button && button->in_use);
-    node_set_disabled(button->node, disabled);
-}
-
-bool ca_button_is_hidden(const Ca_Button *button)
-{
-    assert(button && button->in_use);
-    return button->node->desc.hidden;
-}
-
-bool ca_button_is_disabled(const Ca_Button *button)
-{
-    assert(button && button->in_use);
-    return button->node->desc.disabled;
-}
-
-/* TextInput */
-void ca_input_set_hidden(Ca_TextInput *input, bool hidden)
-{
-    assert(input && input->in_use);
-    node_set_hidden(input->node, hidden);
-}
-
-void ca_input_set_disabled(Ca_TextInput *input, bool disabled)
-{
-    assert(input && input->in_use);
-    node_set_disabled(input->node, disabled);
-}
-
-bool ca_input_is_hidden(const Ca_TextInput *input)
-{
-    assert(input && input->in_use);
-    return input->node->desc.hidden;
-}
-
-bool ca_input_is_disabled(const Ca_TextInput *input)
-{
-    assert(input && input->in_use);
-    return input->node->desc.disabled;
-}
-
-/* Checkbox */
-void ca_checkbox_set_hidden(Ca_Checkbox *cb, bool hidden)
-{
-    assert(cb && cb->in_use);
-    node_set_hidden(cb->node, hidden);
-}
-
-void ca_checkbox_set_disabled(Ca_Checkbox *cb, bool disabled)
-{
-    assert(cb && cb->in_use);
-    node_set_disabled(cb->node, disabled);
-}
-
-/* Radio */
-void ca_radio_set_hidden(Ca_Radio *r, bool hidden)
-{
-    assert(r && r->in_use);
-    node_set_hidden(r->node, hidden);
-}
-
-void ca_radio_set_disabled(Ca_Radio *r, bool disabled)
-{
-    assert(r && r->in_use);
-    node_set_disabled(r->node, disabled);
-}
-
-/* Slider */
-void ca_slider_set_hidden(Ca_Slider *s, bool hidden)
-{
-    assert(s && s->in_use);
-    node_set_hidden(s->node, hidden);
-}
-
-void ca_slider_set_disabled(Ca_Slider *s, bool disabled)
-{
-    assert(s && s->in_use);
-    node_set_disabled(s->node, disabled);
-}
-
-/* Toggle */
-void ca_toggle_set_hidden(Ca_Toggle *t, bool hidden)
-{
-    assert(t && t->in_use);
-    node_set_hidden(t->node, hidden);
-}
-
-void ca_toggle_set_disabled(Ca_Toggle *t, bool disabled)
-{
-    assert(t && t->in_use);
-    node_set_disabled(t->node, disabled);
-}
-
-/* Progress */
-void ca_progress_set_hidden(Ca_Progress *p, bool hidden)
-{
-    assert(p && p->in_use);
-    node_set_hidden(p->node, hidden);
-}
-
-/* Select */
-void ca_select_set_hidden(Ca_Select *s, bool hidden)
-{
-    assert(s && s->in_use);
-    node_set_hidden(s->node, hidden);
-}
-
-void ca_select_set_disabled(Ca_Select *s, bool disabled)
-{
-    assert(s && s->in_use);
-    node_set_disabled(s->node, disabled);
-}
-
-/* TabBar */
-void ca_tabs_set_hidden(Ca_TabBar *t, bool hidden)
-{
-    assert(t && t->in_use);
-    node_set_hidden(t->node, hidden);
-}
-
-void ca_tabs_set_disabled(Ca_TabBar *t, bool disabled)
-{
-    assert(t && t->in_use);
-    node_set_disabled(t->node, disabled);
-}
-
-/* TreeNode */
-void ca_tree_node_set_hidden(Ca_TreeNode *n, bool hidden)
-{
-    assert(n && n->in_use);
-    node_set_hidden(n->node, hidden);
 }
 
 /* ---- Scroll container helpers (look up node by CSS id) ---- */
@@ -1302,41 +1347,7 @@ void ca_window_set_on_frame(Ca_Window *window, void (*fn)(void *), void *user_da
     window->on_frame_data = user_data;
 }
 
-void ca_button_set_text(Ca_Button *button, const char *text)
-{
-    assert(button && button->in_use);
-    snprintf(button->text, CA_BUTTON_TEXT_MAX, "%s", text ? text : "");
-    button->node->dirty |= CA_DIRTY_CONTENT;
-}
-
-void ca_button_set_background(Ca_Button *button, uint32_t color)
-{
-    assert(button && button->in_use);
-    uint32_t old_color = button->node->desc.background;
-    if (old_color != color) {
-        maybe_transition(button->node, CA_CSS_PROP_BACKGROUND_COLOR,
-                         0, 0, old_color, color);
-    }
-    button->node->desc.background = color;
-    button->node->dirty |= CA_DIRTY_CONTENT;
-}
-
-void ca_input_set_text(Ca_TextInput *input, const char *text)
-{
-    assert(input && input->in_use);
-    if (!text) text = "";
-    if (strcmp(input->text, text) == 0) return;
-    snprintf(input->text, CA_INPUT_TEXT_MAX, "%s", text);
-    input->cursor = (int)strlen(input->text);
-    input->sel_start = -1;
-    input->node->dirty |= CA_DIRTY_CONTENT;
-}
-
-const char *ca_input_get_text(const Ca_TextInput *input)
-{
-    assert(input && input->in_use);
-    return input->text;
-}
+/* Old per-widget setters removed — see unified API below. */
 
 /* ============================================================
    PUBLIC — Checkbox

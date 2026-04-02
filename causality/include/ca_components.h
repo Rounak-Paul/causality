@@ -187,46 +187,33 @@ typedef struct Ca_MenuBarDesc {
 CA_API Ca_Checkbox *ca_checkbox(const Ca_CheckboxDesc *desc);
 CA_API void         ca_checkbox_set(Ca_Checkbox *cb, bool checked);
 CA_API bool         ca_checkbox_get(const Ca_Checkbox *cb);
-CA_API void         ca_checkbox_set_hidden(Ca_Checkbox *cb, bool hidden);
-CA_API void         ca_checkbox_set_disabled(Ca_Checkbox *cb, bool disabled);
 
 /* Radio button */
 CA_API Ca_Radio    *ca_radio(const Ca_RadioDesc *desc);
 CA_API int          ca_radio_group_get(Ca_Window *win, int group);
-CA_API void         ca_radio_set_hidden(Ca_Radio *r, bool hidden);
-CA_API void         ca_radio_set_disabled(Ca_Radio *r, bool disabled);
 
 /* Slider */
 CA_API Ca_Slider   *ca_slider(const Ca_SliderDesc *desc);
 CA_API void         ca_slider_set(Ca_Slider *s, float value);
 CA_API float        ca_slider_get(const Ca_Slider *s);
-CA_API void         ca_slider_set_hidden(Ca_Slider *s, bool hidden);
-CA_API void         ca_slider_set_disabled(Ca_Slider *s, bool disabled);
 
 /* Toggle switch */
 CA_API Ca_Toggle   *ca_toggle(const Ca_ToggleDesc *desc);
 CA_API void         ca_toggle_set(Ca_Toggle *t, bool on);
 CA_API bool         ca_toggle_get(const Ca_Toggle *t);
-CA_API void         ca_toggle_set_hidden(Ca_Toggle *t, bool hidden);
-CA_API void         ca_toggle_set_disabled(Ca_Toggle *t, bool disabled);
 
 /* Progress bar */
 CA_API Ca_Progress *ca_progress(const Ca_ProgressDesc *desc);
 CA_API void         ca_progress_set(Ca_Progress *p, float value);
-CA_API void         ca_progress_set_hidden(Ca_Progress *p, bool hidden);
 
 /* Select / dropdown */
 CA_API Ca_Select   *ca_select(const Ca_SelectDesc *desc);
 CA_API void         ca_select_set(Ca_Select *s, int index);
 CA_API int          ca_select_get(const Ca_Select *s);
-CA_API void         ca_select_set_hidden(Ca_Select *s, bool hidden);
-CA_API void         ca_select_set_disabled(Ca_Select *s, bool disabled);
 
 /* Tab bar */
 CA_API Ca_TabBar   *ca_tabs(const Ca_TabBarDesc *desc);
 CA_API int          ca_tabs_active(const Ca_TabBar *t);
-CA_API void         ca_tabs_set_hidden(Ca_TabBar *t, bool hidden);
-CA_API void         ca_tabs_set_disabled(Ca_TabBar *t, bool disabled);
 
 /* Tree view */
 CA_API void         ca_tree_begin(const Ca_DivDesc *desc);
@@ -234,7 +221,6 @@ CA_API void         ca_tree_end(void);
 CA_API Ca_TreeNode *ca_tree_node_begin(const Ca_TreeNodeDesc *desc);
 CA_API void         ca_tree_node_end(void);
 CA_API bool         ca_tree_node_expanded(const Ca_TreeNode *n);
-CA_API void         ca_tree_node_set_hidden(Ca_TreeNode *n, bool hidden);
 
 /* Table */
 CA_API void ca_table_begin(const Ca_TableDesc *desc);

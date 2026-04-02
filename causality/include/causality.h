@@ -394,19 +394,6 @@ CA_API Ca_Label *ca_h4(const Ca_TextDesc *desc);        /* 16px */
 CA_API Ca_Label *ca_h5(const Ca_TextDesc *desc);        /* 14px */
 CA_API Ca_Label *ca_h6(const Ca_TextDesc *desc);        /* 12px */
 
-/* ---- Runtime setters ---- */
-
-CA_API void ca_label_set_text(Ca_Label *label, const char *text);
-CA_API void ca_label_set_color(Ca_Label *label, uint32_t color);
-CA_API void ca_label_set_hidden(Ca_Label *label, bool hidden);
-
-/* ---- Div runtime setters ---- */
-
-CA_API void ca_div_set_hidden(Ca_Div *div, bool hidden);
-CA_API void ca_div_set_disabled(Ca_Div *div, bool disabled);
-CA_API bool ca_div_is_hidden(const Ca_Div *div);
-CA_API bool ca_div_is_disabled(const Ca_Div *div);
-
 /* ---- Scroll container queries (by CSS id) ---- */
 
 /// Scrolls a scroll container to the top of its content.
@@ -419,20 +406,6 @@ CA_API void ca_scroll_to_bottom(Ca_Window *window, const char *id);
 
 /// Registers a per-frame callback invoked after input processing, before paint.
 CA_API void ca_window_set_on_frame(Ca_Window *window, void (*fn)(void *), void *user_data);
-
-CA_API void ca_button_set_text(Ca_Button *button, const char *text);
-CA_API void ca_button_set_background(Ca_Button *button, uint32_t color);
-CA_API void ca_button_set_hidden(Ca_Button *button, bool hidden);
-CA_API void ca_button_set_disabled(Ca_Button *button, bool disabled);
-CA_API bool ca_button_is_hidden(const Ca_Button *button);
-CA_API bool ca_button_is_disabled(const Ca_Button *button);
-
-CA_API void ca_input_set_text(Ca_TextInput *input, const char *text);
-CA_API const char *ca_input_get_text(const Ca_TextInput *input);
-CA_API void ca_input_set_hidden(Ca_TextInput *input, bool hidden);
-CA_API void ca_input_set_disabled(Ca_TextInput *input, bool disabled);
-CA_API bool ca_input_is_hidden(const Ca_TextInput *input);
-CA_API bool ca_input_is_disabled(const Ca_TextInput *input);
 
 /* Component widgets (checkbox, slider, tabs, tree, table, menu bar, etc.)
    are defined in ca_components.h — included automatically below. */
@@ -703,6 +676,63 @@ CA_API void ca_viewport_set_callbacks(Ca_Viewport *viewport,
 
 /* Auto-include the component layer for backward compatibility. */
 #include "ca_components.h"
+
+/* ============================================================
+   UNIFIED RUNTIME SETTERS — ca_set_style / ca_set_hidden / ca_set_disabled
+
+   These use C11 _Generic to accept ANY widget handle (Ca_Div*, Ca_Button*,
+   Ca_Label*, Ca_Checkbox*, etc.) as the first argument.
+
+       Ca_Button *btn = ca_btn(&(Ca_BtnDesc){...});
+       ca_set_style(btn, "primary active");
+       ca_set_hidden(btn, false);
+       ca_set_disabled(btn, true);
+
+       Ca_Div *panel = ca_div_begin(&(Ca_DivDesc){...});
+       ca_set_style(panel, "sidebar collapsed");
+
+   ============================================================ */
+
+/* Backing functions (do not call directly — use the macros below) */
+CA_API void ca__set_style_node(Ca_Div *div, const char *style);
+CA_API void ca__set_style_widget(void *widget, const char *style);
+CA_API void ca__set_hidden_node(Ca_Div *div, bool hidden);
+CA_API void ca__set_hidden_widget(void *widget, bool hidden);
+CA_API void ca__set_disabled_node(Ca_Div *div, bool disabled);
+CA_API void ca__set_disabled_widget(void *widget, bool disabled);
+CA_API void ca__set_text(void *widget, const char *text);
+CA_API const char *ca__get_text(const void *widget);
+CA_API void ca__set_color(void *widget, uint32_t color);
+CA_API void ca__set_background_node(Ca_Div *div, uint32_t color);
+CA_API void ca__set_background_widget(void *widget, uint32_t color);
+
+#define ca_set_style(widget, style) \
+    _Generic((widget),              \
+        Ca_Div *: ca__set_style_node,  \
+        default:  ca__set_style_widget \
+    )((widget), (style))
+
+#define ca_set_hidden(widget, hidden) \
+    _Generic((widget),                \
+        Ca_Div *: ca__set_hidden_node,  \
+        default:  ca__set_hidden_widget \
+    )((widget), (hidden))
+
+#define ca_set_disabled(widget, disabled) \
+    _Generic((widget),                    \
+        Ca_Div *: ca__set_disabled_node,  \
+        default:  ca__set_disabled_widget \
+    )((widget), (disabled))
+
+#define ca_set_text(widget, text)   ca__set_text((widget), (text))
+#define ca_get_text(widget)         ca__get_text((widget))
+#define ca_set_color(widget, color) ca__set_color((widget), (color))
+
+#define ca_set_background(widget, color) \
+    _Generic((widget),                   \
+        Ca_Div *: ca__set_background_node,  \
+        default:  ca__set_background_widget \
+    )((widget), (color))
 
 /* Title bar menu API — declared here because it requires Ca_MenuDesc
    which is defined in ca_components.h above. */
