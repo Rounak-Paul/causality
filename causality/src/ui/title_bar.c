@@ -254,7 +254,7 @@ void ca_title_bar_rebuild(Ca_Window *win)
         });
     }
 
-    /* ---- Centre: drag zone with window title ---- */
+    /* ---- Centre: drag zone (invisible, handles window dragging) ---- */
     Ca_Node *drag = (Ca_Node *)ca_div_begin(&(Ca_DivDesc){
         .height        = 22.0f,
         .on_drag_start = on_titlebar_drag_start,
@@ -265,13 +265,6 @@ void ca_title_bar_rebuild(Ca_Window *win)
     drag->desc.align_items     = CA_ALIGN_CENTER;
     drag->desc.justify_content = CA_ALIGN_CENTER;
     drag->dirty |= CA_DIRTY_LAYOUT;
-
-    Ca_Label *ttl = ca_text(&(Ca_TextDesc){
-        .text  = win->title,
-        .color = COL_TEXT_DIM,
-    });
-    ttl->node->desc.font_size = 12.0f;
-    ttl->node->dirty |= CA_DIRTY_CONTENT;
 
     ca_div_end(); /* drag zone */
 
@@ -320,6 +313,28 @@ void ca_title_bar_rebuild(Ca_Window *win)
     cls_btn->node->dirty |= CA_DIRTY_CONTENT;
 
     ca_div_end(); /* controls */
+
+    /* ---- Title overlay: absolutely positioned, full width, centered.
+       Drawn on top of the flex-flow children but has no interaction
+       callbacks so buttons and menu items (smaller nodes) still win
+       both hover and drag hit-tests.                                 ---- */
+    Ca_Node *overlay = (Ca_Node *)ca_div_begin(&(Ca_DivDesc){
+        .position = CA_POSITION_ABSOLUTE,
+        .pos_x    = 0.0f,
+        .pos_y    = 0.0f,
+    });
+    overlay->desc.align_items     = CA_ALIGN_CENTER;
+    overlay->desc.justify_content = CA_ALIGN_CENTER;
+    overlay->dirty |= CA_DIRTY_LAYOUT;
+
+    Ca_Label *ttl = ca_text(&(Ca_TextDesc){
+        .text  = win->title,
+        .color = COL_TEXT_DIM,
+    });
+    ttl->node->desc.font_size = 12.0f;
+    ttl->node->dirty |= CA_DIRTY_CONTENT;
+
+    ca_div_end(); /* title overlay */
 
     ca_div_end(); /* title_bar_node */
 }
