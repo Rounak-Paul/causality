@@ -1079,6 +1079,10 @@ static void node_set_style(Ca_Node *node, const char *style,
     node->desc.hidden   = was_hidden;
     node->desc.disabled = was_disabled;
 
+    /* Reset text color so CSS can re-apply it */
+    uint32_t old_text_color = out_text_color ? *out_text_color : 0;
+    if (out_text_color) *out_text_color = 0;
+
     /* Update classes and re-resolve CSS */
     snprintf(node->classes, CA_NODE_CLASS_MAX, "%s", new_classes);
 
@@ -1117,6 +1121,10 @@ static void node_set_style(Ca_Node *node, const char *style,
         node->dirty |= CA_DIRTY_CONTENT;
     if (layout_desc_changed(&old_desc, &node->desc))
         node->dirty |= CA_DIRTY_LAYOUT;
+
+    /* Text color changed — mark content dirty for repaint */
+    if (out_text_color && *out_text_color != old_text_color)
+        node->dirty |= CA_DIRTY_CONTENT;
 
     /* Fire transitions for animated properties */
     if (old_desc.background != node->desc.background)
