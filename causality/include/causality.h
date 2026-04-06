@@ -682,6 +682,11 @@ CA_API Ca_Instance *ca_viewport_instance(Ca_Viewport *viewport);
 /// Marks the viewport as needing a redraw on the next frame.
 CA_API void ca_viewport_request_redraw(Ca_Viewport *viewport);
 
+/// Returns the viewport's layout-computed screen-space rectangle.
+/// x,y = top-left corner in window coordinates; w,h = size in layout pixels.
+CA_API void ca_viewport_screen_rect(const Ca_Viewport *viewport,
+                                     float *x, float *y, float *w, float *h);
+
 /// Replaces the render and resize callbacks on an existing viewport.
 CA_API void ca_viewport_set_callbacks(Ca_Viewport *viewport,
                                       Ca_ViewportRenderFn on_render, void *render_data,

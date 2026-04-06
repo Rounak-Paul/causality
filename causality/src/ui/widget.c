@@ -2567,6 +2567,20 @@ void ca_viewport_request_redraw(Ca_Viewport *viewport)
     if (viewport) viewport->needs_redraw = true;
 }
 
+void ca_viewport_screen_rect(const Ca_Viewport *viewport,
+                              float *x, float *y, float *w, float *h)
+{
+    if (!viewport || !viewport->node) {
+        if (x) *x = 0; if (y) *y = 0;
+        if (w) *w = 0; if (h) *h = 0;
+        return;
+    }
+    if (x) *x = viewport->node->x;
+    if (y) *y = viewport->node->y;
+    if (w) *w = viewport->node->w;
+    if (h) *h = viewport->node->h;
+}
+
 /* ============================================================
    INPUT PASS — hit-test, focus, keyboard
    ============================================================ */
