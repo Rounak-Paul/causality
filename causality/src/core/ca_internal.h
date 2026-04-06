@@ -155,6 +155,7 @@ typedef enum {
     CA_DIRTY_CONTENT  = 1 << 0,
     CA_DIRTY_LAYOUT   = 1 << 1,
     CA_DIRTY_CHILDREN = 1 << 2,
+    CA_DIRTY_REBUILD  = 1 << 3,
 } Ca_DirtyFlags;
 
 typedef enum {
@@ -409,6 +410,9 @@ struct Ca_Node {
     void         *drag_fn_move;     /* Ca_DragFn */
     void         *drag_fn_end;      /* Ca_DragFn */
     void         *drag_data;        /* user_data for drag callbacks */
+    /* Reactive builder — ca_div_set_builder / ca_div_invalidate */
+    void        (*builder_fn)(Ca_Div *div, void *user_data);
+    void         *builder_data;
     /* Debug overlay — set true during paint when node was dirty (paint-flash) */
     bool          dbg_repainted;
 };

@@ -353,6 +353,19 @@ CA_API void ca_ui_end(void);
 /// Must be paired with ca_div_end().
 CA_API void ca_div_clear(Ca_Div *div);
 
+/// Registers a builder callback on a div.  When the div is invalidated
+/// (via ca_div_invalidate), the framework calls `fn(div, user_data)` on the
+/// next frame to reconstruct its children.  The builder function receives the
+/// div already cleared and entered as the current parent — do NOT call
+/// ca_div_clear or ca_div_end inside the builder.
+CA_API void ca_div_set_builder(Ca_Div *div,
+                               void (*fn)(Ca_Div *div, void *user_data),
+                               void *user_data);
+
+/// Marks a div with a registered builder for reconstruction on the next frame.
+/// Has no effect if no builder is registered.
+CA_API void ca_div_invalidate(Ca_Div *div);
+
 /// Enters a div in keyed reconciliation mode.
 /// Children created while active are matched/reused by key (id) when possible,
 /// and any old unmatched children are removed on the matching ca_div_end().

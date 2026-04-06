@@ -186,6 +186,16 @@ void ca_ui_update(Ca_Instance *inst)
     /* 1. Propagate state dirty flags to subscriber nodes */
     ca_state_flush_dirty(inst);
 
+    /* 1b. Rebuild pass — run builder callbacks on invalidated divs.
+       This happens inside a build context per window so that widget
+       creation (ca_div_clear + builder_fn + ca_div_end) works.
+       Must run before layout so newly created nodes get laid out. */
+    for (int i = 0; i < CA_MAX_WINDOWS; ++i) {
+        Ca_Window *win = &inst->windows[i];
+        if (!win->in_use || !win->root || !win->node_pool) continue;
+        ca_widget_rebuild_pass(win);
+    }
+
     for (int i = 0; i < CA_MAX_WINDOWS; ++i) {
         Ca_Window *win = &inst->windows[i];
         if (!win->in_use || !win->root || !win->node_pool) continue;

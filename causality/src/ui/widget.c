@@ -542,6 +542,22 @@ void ca_widget_ctx_leave(void)
     g_ctx.active = false;
 }
 
+void ca_widget_rebuild_pass(Ca_Window *win)
+{
+    if (!win || !win->node_pool) return;
+    for (uint32_t i = 0; i < CA_MAX_NODES_PER_WINDOW; ++i) {
+        Ca_Node *n = &win->node_pool[i];
+        if (!n->in_use) continue;
+        if (!(n->dirty & CA_DIRTY_REBUILD)) continue;
+        if (!n->builder_fn) { n->dirty &= ~CA_DIRTY_REBUILD; continue; }
+
+        n->dirty &= ~CA_DIRTY_REBUILD;
+        ca_div_clear((Ca_Div *)n);              /* clears children, pushes build ctx */
+        n->builder_fn((Ca_Div *)n, n->builder_data);
+        ca_div_end();                           /* pops build ctx */
+    }
+}
+
 void ca_reconcile_key(const char *key)
 {
     assert(g_ctx.active);
@@ -1326,6 +1342,24 @@ void ca_div_clear(Ca_Div *div)
 
     ca_node_clear(node);
     ctx_push(node);
+}
+
+void ca_div_set_builder(Ca_Div *div,
+                        void (*fn)(Ca_Div *div, void *user_data),
+                        void *user_data)
+{
+    Ca_Node *node = (Ca_Node *)div;
+    assert(node && node->in_use);
+    node->builder_fn   = fn;
+    node->builder_data = user_data;
+}
+
+void ca_div_invalidate(Ca_Div *div)
+{
+    Ca_Node *node = (Ca_Node *)div;
+    assert(node && node->in_use);
+    if (!node->builder_fn) return;
+    node->dirty |= CA_DIRTY_REBUILD;
 }
 
 /* ---- Scroll container helpers (look up node by CSS id) ---- */
