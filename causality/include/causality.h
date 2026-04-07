@@ -720,6 +720,7 @@ CA_API void ca__set_disabled_node(Ca_Div *div, bool disabled);
 CA_API void ca__set_disabled_widget(void *widget, bool disabled);
 CA_API void ca__set_text(void *widget, const char *text);
 CA_API const char *ca__get_text(const void *widget);
+CA_API bool ca_input_is_focused(const Ca_TextInput *input);
 CA_API void ca__set_color(void *widget, uint32_t color);
 CA_API void ca__set_background_node(Ca_Div *div, uint32_t color);
 CA_API void ca__set_background_widget(void *widget, uint32_t color);

@@ -1209,6 +1209,15 @@ void ca__set_disabled_widget(void *widget, bool disabled)
     node_set_disabled(n, disabled);
 }
 
+/* ---- Focus query ---- */
+
+bool ca_input_is_focused(const Ca_TextInput *input)
+{
+    if (!input || !input->node) return false;
+    Ca_Window *win = input->node->window;
+    return win && win->focused_node == input->node;
+}
+
 /* ---- Unified ca_set_text / ca_get_text ---- */
 
 void ca__set_text(void *widget, const char *text)
