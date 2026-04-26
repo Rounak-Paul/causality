@@ -845,9 +845,9 @@ static void paint_text(Ca_Window *win, Ca_Font *font,
         left_logical = node->x + node->desc.padding_left;
     } else {
         switch (node->desc.text_align) {
-        case 1:  left_logical = node->x + node->desc.padding_left; break;
+        case 1:  left_logical = node->x + (node->w - text_w) * 0.5f; break;
         case 2:  left_logical = node->x + node->w - text_w - node->desc.padding_right; break;
-        default: left_logical = node->x + (node->w - text_w) * 0.5f; break;
+        default: left_logical = node->x + node->desc.padding_left; break;
         }
     }
 
@@ -1466,7 +1466,7 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
                 tmp.w = menu_w - 24.0f;
                 tmp.h = this_h;
                 tmp.window = win;
-                tmp.desc.text_align = 1; /* left-align */
+                tmp.desc.text_align = 0; /* left-align */
                 tmp.desc.font_size = drop_item_fs;
                 paint_text(win, font, &tmp, am->items[ii].label,
                            mb->dropdown_text);
@@ -1484,7 +1484,7 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
                     tmp2.w = 16.0f;
                     tmp2.h = this_h;
                     tmp2.window = win;
-                    tmp2.desc.text_align = 1;
+                    tmp2.desc.text_align = 0;
                     tmp2.desc.font_size = drop_item_fs;
                     paint_text(win, font, &tmp2, "\xEE\xAA\xB6", mb->dropdown_text);
                     for (uint32_t gi = gs2; gi < win->draw_cmd_count; ++gi)
@@ -1550,7 +1550,7 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
                     stmp.w = sub_menu_w - 24.0f;
                     stmp.h = sub_item_h;
                     stmp.window = win;
-                    stmp.desc.text_align = 1;
+                    stmp.desc.text_align = 0;
                     stmp.desc.font_size = drop_item_fs;
                     paint_text(win, font, &stmp,
                                am->items[asi].sub_items[si].label,
@@ -1743,7 +1743,7 @@ static void paint_debug_overlay(Ca_Instance *inst, Ca_Window *win)
         tmp.window = win;                                              \
         tmp.x = panel_x + pad; tmp.y = y;                             \
         tmp.w = panel_w - pad * 2; tmp.h = line_h;                    \
-        tmp.desc.text_align = 1; /* left */                            \
+        tmp.desc.text_align = 0; /* left */                            \
         tmp.desc.font_size  = 11.0f;                                  \
         {                                                              \
             uint32_t _gs = win->draw_cmd_count;                        \

@@ -346,6 +346,7 @@ static void popup_ui(Ca_Window *popup)
             .on_click   = on_close_click,
             .click_data = popup,
         });
+        ca_btn_end();
     ca_ui_end();
 }
 
@@ -451,18 +452,21 @@ int main(void)
                 .style    = "btn-toggle",
                 .on_click = on_toggle_click,
             });
+            ca_btn_end();
             ca_btn_begin(&(Ca_BtnDesc){
                 .text       = "Open Popup",
                 .style      = "btn-popup",
                 .on_click   = on_popup_click,
                 .click_data = &app_ctx,
             });
+            ca_btn_end();
             ca_btn_begin(&(Ca_BtnDesc){
                 .text     = "Accent",
                 .style    = "btn-accent",
                 .on_click = on_accent_click,
             });
-        ca_btn_end();
+            ca_btn_end();
+        ca_div_end();
 
         ca_spacer(&(Ca_SpacerDesc){ .height = 2 });
 
@@ -772,7 +776,7 @@ int main(void)
         ca_tooltip(&(Ca_TooltipDesc){
             .text = "This is a tooltip!",
         });
-
+        ca_btn_end();
         ca_hr(NULL);
 
         /* ---- 17. Modal / Dialog ---- */

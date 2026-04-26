@@ -717,6 +717,7 @@ Ca_Button *ca_btn_begin(const Ca_BtnDesc *desc)
     nd.padding_left  = s(desc->padding[3]);
     nd.gap           = s(desc->gap);
     nd.direction     = dir_from_int(desc->direction);
+    nd.text_align    = 1; /* center, matching HTML <button> user-agent default */
 
     bool reused = false;
     Ca_Node *node = claim_child(&nd, CA_WIDGET_BUTTON, CA_ELEM_BUTTON, id, &reused);
@@ -1889,7 +1890,7 @@ Ca_TreeNode *ca_tree_node_begin(const Ca_TreeNodeDesc *desc)
     hdr.font_size    = node->desc.font_size;  /* inherit from CSS */
     hdr.font_bold    = node->desc.font_bold;  /* inherit from CSS */
     hdr.padding_left = s(4.0f) * (float)tn->depth;
-    hdr.text_align   = 1; /* left-aligned */
+    hdr.text_align   = 0; /* left-aligned */
     /* Sensible defaults — CSS can override via the tree node style */
     hdr.corner_radius = 0.0f;
     Ca_Node *hdr_node = NULL;

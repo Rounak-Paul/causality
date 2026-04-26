@@ -501,8 +501,8 @@ void ca_style_apply_to_node(const Ca_ResolvedStyle *style,
     /* Text align */
     if (nd->text_align == 0 && STYLE_SET(CA_CSS_PROP_TEXT_ALIGN)) {
         switch (style->text_align) {
-            case CA_CSS_TEXT_ALIGN_LEFT:   nd->text_align = 1; break;
-            case CA_CSS_TEXT_ALIGN_CENTER: nd->text_align = 0; break;
+            case CA_CSS_TEXT_ALIGN_LEFT:   nd->text_align = 0; break;
+            case CA_CSS_TEXT_ALIGN_CENTER: nd->text_align = 1; break;
             case CA_CSS_TEXT_ALIGN_RIGHT:  nd->text_align = 2; break;
         }
     }

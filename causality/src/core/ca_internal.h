@@ -193,7 +193,7 @@ typedef struct {
     /* Overflow clipping / scrolling */
     float        font_size;     /* 0 = use default baked size */
     bool         font_bold;     /* true = use bold font tier */
-    uint8_t      text_align;    /* 0=center, 1=left, 2=right */
+    uint8_t      text_align;    /* 0=left (default), 1=center, 2=right */
     uint8_t      overflow_x;   /* 0=visible, 1=hidden, 2=scroll, 3=auto */
     uint8_t      overflow_y;
     bool         hidden;       /* display: none */

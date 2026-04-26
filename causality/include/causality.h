@@ -548,8 +548,8 @@ CA_API void ca_image(const Ca_ImageDesc *desc);
      );
 
    Elements reference classes via the 'style' field of their descriptor:
-     ca_div(&(Ca_DivDesc){ .style = "container" });
-     ca_btn(&(Ca_BtnDesc){ .text = "OK", .style = "btn-primary" });
+     ca_div_begin(&(Ca_DivDesc){ .style = "container" });
+     ca_btn_begin(&(Ca_BtnDesc){ .text = "OK", .style = "btn-primary" });
    ============================================================ */
 
 typedef struct Ca_Stylesheet Ca_Stylesheet;
@@ -696,8 +696,10 @@ CA_API void ca_viewport_set_callbacks(Ca_Viewport *viewport,
                                       Ca_ViewportRenderFn on_render, void *render_data,
                                       Ca_ViewportResizeFn on_resize, void *resize_data);
 
-/* Auto-include the component layer for backward compatibility. */
+/* Component widgets and the reactivity primitives are part of the canonical
+   public surface; pull them in here so consumers only need <causality.h>. */
 #include "ca_components.h"
+#include "ca_reactive.h"
 
 /* ============================================================
    UNIFIED RUNTIME SETTERS — ca_set_style / ca_set_hidden / ca_set_disabled
@@ -705,12 +707,12 @@ CA_API void ca_viewport_set_callbacks(Ca_Viewport *viewport,
    These use C11 _Generic to accept ANY widget handle (Ca_Div*, Ca_Button*,
    Ca_Label*, Ca_Checkbox*, etc.) as the first argument.
 
-       Ca_Button *btn = ca_btn(&(Ca_BtnDesc){...});
+       Ca_Button *btn = ca_btn_begin(&(Ca_BtnDesc){...});
        ca_set_style(btn, "primary active");
        ca_set_hidden(btn, false);
        ca_set_disabled(btn, true);
 
-       Ca_Div *panel = ca_div(&(Ca_DivDesc){...});
+       Ca_Div *panel = ca_div_begin(&(Ca_DivDesc){...});
        ca_set_style(panel, "sidebar collapsed");
 
    ============================================================ */

@@ -376,7 +376,7 @@ static void layout_node(Ca_Node *node, float x, float y, float avail_w, float av
     /* If any child has explicit flex-grow, only those children grow;
        children without flex-grow use their natural content size.
        If NO child has explicit flex-grow, all auto-sized children
-       share remaining space equally (backward-compatible behaviour). */
+       share remaining space equally. */
     bool any_explicit_flex_grow = false;
     for (uint32_t i = 0; i < node->child_count; ++i) {
         Ca_Node *child = node->children[i];

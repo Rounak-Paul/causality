@@ -12,7 +12,7 @@
  *   │   ├── ca_menu_bar(...)     (left-aligned menus, if any)
  *   │   ├── drag div            (flex-grow:1, drag-to-move, title text)
  *   │   └── controls div        (min / max / close buttons)
- *   └── win->content_root  (flex-grow via backward-compat, user content)
+ *   └── win->content_root  (flex-grow: 1, holds user content)
  */
 
 #include "title_bar.h"
@@ -180,7 +180,7 @@ void ca_title_bar_init(Ca_Window *win)
     /* ---- Content root: fills remaining space below title bar ---- */
     Ca_NodeDesc cr = {0};
     cr.direction  = CA_VERTICAL;
-    /* width = 0, height = 0 → auto-fill via backward-compat flex grow */
+    /* width = 0, height = 0 → auto-fill via default flex grow */
     Ca_Node *crnode = ca_node_add(root, &cr);
     assert(crnode && "ca_title_bar_init: failed to allocate content_root");
     win->content_root = crnode;
@@ -286,7 +286,7 @@ void ca_title_bar_rebuild(Ca_Window *win)
         .click_data = win,
     });
     min_btn->node->desc.font_size  = 14.0f;
-    min_btn->node->desc.text_align = 0; /* center */
+    min_btn->node->desc.text_align = 1; /* center */
     min_btn->node->dirty |= CA_DIRTY_CONTENT;
     ca_btn_end(); /* min btn */
 
@@ -300,7 +300,7 @@ void ca_title_bar_rebuild(Ca_Window *win)
         .click_data = win,
     });
     max_btn->node->desc.font_size  = 14.0f;
-    max_btn->node->desc.text_align = 0;
+    max_btn->node->desc.text_align = 1;
     max_btn->node->dirty |= CA_DIRTY_CONTENT;
     ca_btn_end(); /* max btn */
 
@@ -314,7 +314,7 @@ void ca_title_bar_rebuild(Ca_Window *win)
         .click_data = win,
     });
     cls_btn->node->desc.font_size  = 14.0f;
-    cls_btn->node->desc.text_align = 0;
+    cls_btn->node->desc.text_align = 1;
     cls_btn->node->dirty |= CA_DIRTY_CONTENT;
     ca_btn_end(); /* close btn */
 
