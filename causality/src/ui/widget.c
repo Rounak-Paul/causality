@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Sol/Causality contributors.
+
 /* widget.c — HTML-like declarative UI elements
  *
  * Every element can nest children, just like HTML.
@@ -20,6 +23,7 @@
 #include "style.h"
 #include "ca_theme.h"
 #include "font.h"
+#include "../../include/ca_reactive.h"
 #include "viewport.h"
 
 #include <assert.h>
@@ -542,22 +546,6 @@ void ca_widget_ctx_leave(void)
     g_ctx.active = false;
 }
 
-void ca_widget_rebuild_pass(Ca_Window *win)
-{
-    if (!win || !win->node_pool) return;
-    for (uint32_t i = 0; i < CA_MAX_NODES_PER_WINDOW; ++i) {
-        Ca_Node *n = &win->node_pool[i];
-        if (!n->in_use) continue;
-        if (!(n->dirty & CA_DIRTY_REBUILD)) continue;
-        if (!n->builder_fn) { n->dirty &= ~CA_DIRTY_REBUILD; continue; }
-
-        n->dirty &= ~CA_DIRTY_REBUILD;
-        ca_div_clear((Ca_Div *)n);              /* clears children, pushes build ctx */
-        n->builder_fn((Ca_Div *)n, n->builder_data);
-        ca_div_end();                           /* pops build ctx */
-    }
-}
-
 void ca_reconcile_key(const char *key)
 {
     assert(g_ctx.active);
@@ -616,6 +604,31 @@ void ca_div_end(void)
         g_ctx.active   = false;
         g_ctx.auto_ctx = false;
     }
+}
+
+void ca_btn_end(void)        { assert(g_ctx.active && g_ctx.depth > 0); ctx_pop(); }
+void ca_list_end(void)       { assert(g_ctx.active && g_ctx.depth > 0); ctx_pop(); }
+void ca_li_end(void)         { assert(g_ctx.active && g_ctx.depth > 0); ctx_pop(); }
+void ca_tree_end(void)       { assert(g_ctx.active && g_ctx.depth > 0); ctx_pop(); }
+void ca_table_end(void)      { assert(g_ctx.active && g_ctx.depth > 0); ctx_pop(); }
+void ca_table_row_end(void)  { assert(g_ctx.active && g_ctx.depth > 0); ctx_pop(); }
+void ca_modal_end(void)      { assert(g_ctx.active && g_ctx.depth > 0); ctx_pop(); }
+void ca_split_end(void)      { assert(g_ctx.active && g_ctx.depth > 0); ctx_pop(); }
+
+void ca_tree_node_end(void)
+{
+    assert(g_ctx.active && g_ctx.depth > 0);
+    /* If a collapsed tree node is being closed, hide all children except
+       the header row. */
+    Ca_Node *node = ctx_top();
+    if (node && node->widget_type == CA_WIDGET_TREENODE) {
+        Ca_TreeNode *tn = (Ca_TreeNode *)node->widget;
+        if (tn && !tn->expanded) {
+            for (uint32_t i = 1; i < node->child_count; ++i)
+                node->children[i]->desc.hidden = true;
+        }
+    }
+    ctx_pop();
 }
 
 /* ============================================================
@@ -682,67 +695,10 @@ Ca_Label *ca_text(const Ca_TextDesc *desc)
 }
 
 /* ============================================================
-   PUBLIC — <button>  (nestable OR self-closing)
+   PUBLIC — <button>  (nestable; close with ca_btn_end)
    ============================================================ */
 
-/* Self-closing: ca_btn creates a leaf button with built-in text */
-Ca_Button *ca_btn(const Ca_BtnDesc *desc)
-{
-    assert(g_ctx.active && desc);
-    const char *next_key = consume_next_key();
-    const char *id = next_key ? next_key : desc->id;
-
-    Ca_NodeDesc nd   = {0};
-    nd.width         = s(desc->width);
-    nd.height        = s(desc->height);
-    nd.background    = desc->background;
-    nd.corner_radius = s(desc->corner_radius);
-    nd.padding_top   = s(desc->padding[0]);
-    nd.padding_right = s(desc->padding[1]);
-    nd.padding_bottom= s(desc->padding[2]);
-    nd.padding_left  = s(desc->padding[3]);
-    nd.gap           = s(desc->gap);
-    nd.direction     = dir_from_int(desc->direction);
-
-    bool reused = false;
-    Ca_Node *node = claim_child(&nd, CA_WIDGET_BUTTON, CA_ELEM_BUTTON, id, &reused);
-    if (!node) return NULL;
-
-    Ca_Button *btn = NULL;
-    if (reused && node->widget_type == CA_WIDGET_BUTTON && node->widget)
-        btn = (Ca_Button *)node->widget;
-    if (!btn) {
-        btn = alloc_button(g_ctx.window);
-        if (!btn) return NULL;
-        memset(btn, 0, sizeof(*btn));
-        btn->in_use = true;
-        node->widget_type = CA_WIDGET_BUTTON;
-        node->widget = btn;
-    }
-
-    btn->node = node;
-    btn->in_use = true;
-    WIDGET_SET_TEXT(node, reused, btn->text, CA_BUTTON_TEXT_MAX, desc->text);
-    btn->text_color = desc->text_color;
-    btn->on_click = desc->on_click;
-    btn->click_data = desc->click_data;
-
-    if (btn && btn->node) {
-        if (desc->hidden)   btn->node->desc.hidden   = true;
-        if (desc->disabled) btn->node->desc.disabled = true;
-        apply_css(btn->node, &btn->node->desc, CA_ELEM_BUTTON,
-                  desc->style, id, &btn->text_color);
-        /* Auto-width from text if neither user nor CSS set it */
-        if (btn->node->desc.width <= 0.0f) {
-            float tw = measure_text_px(g_ctx.window, desc->text);
-            btn->node->desc.width = tw > 0.0f ? tw + s(16.0f) : s(72.0f);
-        }
-        if (btn->node->desc.height <= 0.0f) btn->node->desc.height = s(24.0f);
-    }
-    return btn;
-}
-
-/* Nestable: btn_begin pushes the button onto the stack so children
+/* Nestable: ca_btn pushes the button onto the stack so children
    (text, icons, other elements) are laid out inside the button rect. */
 Ca_Button *ca_btn_begin(const Ca_BtnDesc *desc)
 {
@@ -795,11 +751,6 @@ Ca_Button *ca_btn_begin(const Ca_BtnDesc *desc)
     return btn;
 }
 
-void ca_btn_end(void)
-{
-    assert(g_ctx.active && g_ctx.depth > 0);
-    ctx_pop();
-}
 
 /* ============================================================
    PUBLIC — <list>  (vertical container, default gap 4)
@@ -825,11 +776,6 @@ void ca_list_begin(const Ca_DivDesc *desc)
     ctx_push_mode(node, ctx_top_reconcile());
 }
 
-void ca_list_end(void)
-{
-    assert(g_ctx.active && g_ctx.depth > 0);
-    ctx_pop();
-}
 
 /* ============================================================
    PUBLIC — <li>  (list item — horizontal container, default gap 8)
@@ -855,11 +801,6 @@ void ca_li_begin(const Ca_DivDesc *desc)
     ctx_push_mode(node, ctx_top_reconcile());
 }
 
-void ca_li_end(void)
-{
-    assert(g_ctx.active && g_ctx.depth > 0);
-    ctx_pop();
-}
 
 /* ============================================================
    PUBLIC — <hr>  (horizontal rule — self-closing)
@@ -1361,22 +1302,43 @@ void ca_div_clear(Ca_Div *div)
     ctx_push(node);
 }
 
-void ca_div_set_builder(Ca_Div *div,
-                        void (*fn)(Ca_Div *div, void *user_data),
-                        void *user_data)
+/* Effect body installed by ca_div_set_builder. Re-runs whenever any
+   signal the user's builder reads via ca_signal_get changes, or when
+   the effect is manually invalidated via ca_effect_invalidate. */
+static void div_builder_effect_fn(void *user)
+{
+    Ca_Node *node = (Ca_Node *)user;
+    if (!node || !node->in_use || !node->builder_fn) return;
+    ca_div_clear((Ca_Div *)node);
+    node->builder_fn((Ca_Div *)node, node->builder_data);
+    ca_div_end();
+    node->dirty |= CA_DIRTY_LAYOUT | CA_DIRTY_CHILDREN;
+}
+
+Ca_Effect *ca_div_set_builder(Ca_Div *div,
+                              void (*fn)(Ca_Div *div, void *user_data),
+                              void *user_data)
 {
     Ca_Node *node = (Ca_Node *)div;
-    assert(node && node->in_use);
+    assert(node && node->in_use && node->window && node->window->instance);
     node->builder_fn   = fn;
     node->builder_data = user_data;
+    if (node->builder_effect) {
+        ca_effect_destroy(node->builder_effect);
+        node->builder_effect = NULL;
+    }
+    if (!fn) return NULL;
+    node->builder_effect =
+        ca_effect(node->window->instance, div_builder_effect_fn, node);
+    return node->builder_effect;
 }
 
 void ca_div_invalidate(Ca_Div *div)
 {
     Ca_Node *node = (Ca_Node *)div;
     assert(node && node->in_use);
-    if (!node->builder_fn) return;
-    node->dirty |= CA_DIRTY_REBUILD;
+    if (node->builder_effect)
+        ca_effect_invalidate(node->builder_effect);
 }
 
 /* ---- Scroll container helpers (look up node by CSS id) ---- */
@@ -1870,11 +1832,6 @@ void ca_tree_begin(const Ca_DivDesc *desc)
     ctx_push_mode(node, ctx_top_reconcile());
 }
 
-void ca_tree_end(void)
-{
-    assert(g_ctx.active && g_ctx.depth > 0);
-    ctx_pop();
-}
 
 Ca_TreeNode *ca_tree_node_begin(const Ca_TreeNodeDesc *desc)
 {
@@ -1950,20 +1907,6 @@ Ca_TreeNode *ca_tree_node_begin(const Ca_TreeNodeDesc *desc)
     return tn;
 }
 
-void ca_tree_node_end(void)
-{
-    assert(g_ctx.active && g_ctx.depth > 0);
-    /* If tree node starts collapsed, hide all children except the header */
-    Ca_Node *node = ctx_top();
-    if (node->widget_type == CA_WIDGET_TREENODE) {
-        Ca_TreeNode *tn = (Ca_TreeNode *)node->widget;
-        if (tn && !tn->expanded) {
-            for (uint32_t i = 1; i < node->child_count; ++i)
-                node->children[i]->desc.hidden = true;
-        }
-    }
-    ctx_pop();
-}
 
 bool ca_tree_node_expanded(const Ca_TreeNode *n)
 {
@@ -2012,11 +1955,6 @@ void ca_table_begin(const Ca_TableDesc *desc)
     ctx_push_mode(node, ctx_top_reconcile());
 }
 
-void ca_table_end(void)
-{
-    assert(g_ctx.active && g_ctx.depth > 0);
-    ctx_pop();
-}
 
 void ca_table_row_begin(const Ca_DivDesc *desc)
 {
@@ -2042,11 +1980,6 @@ void ca_table_row_begin(const Ca_DivDesc *desc)
     ctx_push_mode(node, ctx_top_reconcile());
 }
 
-void ca_table_row_end(void)
-{
-    assert(g_ctx.active && g_ctx.depth > 0);
-    ctx_pop();
-}
 
 void ca_table_cell(const Ca_TextDesc *desc)
 {
@@ -2329,11 +2262,6 @@ Ca_Modal *ca_modal_begin(const Ca_ModalDesc *desc)
     return m;
 }
 
-void ca_modal_end(void)
-{
-    assert(g_ctx.active && g_ctx.depth > 0);
-    ctx_pop();
-}
 
 void ca_modal_set_visible(Ca_Modal *modal, bool visible)
 {
@@ -2392,11 +2320,6 @@ Ca_Splitter *ca_split_begin(const Ca_SplitDesc *desc)
     return sp;
 }
 
-void ca_split_end(void)
-{
-    assert(g_ctx.active && g_ctx.depth > 0);
-    ctx_pop();
-}
 
 float ca_split_get_ratio(const Ca_Splitter *s)
 {

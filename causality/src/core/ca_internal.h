@@ -1,7 +1,11 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Sol/Causality contributors.
+
 /* ca_internal.h — internal struct definitions, never exposed publicly */
 #pragma once
 
 #include "causality.h"
+#include "causality_config.h"
 #ifdef _WIN32
   #include <windows.h>
 #else
@@ -9,12 +13,8 @@
 #endif
 #include <stdint.h>
 
-/* ======================================================
-   RENDERER
-   ====================================================== */
-
-#define CA_FRAMES_IN_FLIGHT     2
-#define CA_MAX_SWAPCHAIN_IMAGES 8
+/* All pool/limit constants are defined (with override hooks) in
+   causality_config.h. They are intentionally not redefined here. */
 
 typedef struct {
     VkCommandBuffer cmd;
@@ -139,14 +139,13 @@ typedef struct {
 } Ca_EventHandler;
 
 /* ======================================================
-   UI — forward declarations (State and Node reference each other)
+   UI — forward declarations
    ====================================================== */
 
-typedef struct Ca_State Ca_State;
-typedef struct Ca_Node  Ca_Node;
+typedef struct Ca_Node Ca_Node;
 
 /* ======================================================
-   UI — dirty flags, layout enums, node descriptor, state descriptor
+   UI — dirty flags, layout enums, node descriptor.
    (These are internal; users work with widgets instead.)
    ====================================================== */
 
@@ -155,7 +154,6 @@ typedef enum {
     CA_DIRTY_CONTENT  = 1 << 0,
     CA_DIRTY_LAYOUT   = 1 << 1,
     CA_DIRTY_CHILDREN = 1 << 2,
-    CA_DIRTY_REBUILD  = 1 << 3,
 } Ca_DirtyFlags;
 
 typedef enum {
@@ -219,42 +217,12 @@ typedef struct {
     bool         height_pct;
 } Ca_NodeDesc;
 
-/* Internal state descriptor — used by ca_state_create inside the library. */
-typedef struct {
-    uint32_t    data_size;
-    const void *initial;
-} Ca_StateDesc;
-
 /* ======================================================
-   UI — constants
+   UI — constants (limits live in causality_config.h)
    ====================================================== */
 
-#define CA_MAX_STATES               512
-#define CA_MAX_NODES_PER_WINDOW    2048
-#define CA_MAX_NODE_CHILDREN        256
-#define CA_MAX_NODE_SUBS              8
-#define CA_MAX_STATE_SUBSCRIBERS     64
-#define CA_MAX_DRAW_CMDS_PER_WINDOW 8192
-#define CA_MAX_TRANSITIONS_PER_NODE  4
-
-#define CA_MAX_LABELS_PER_WINDOW    512
-#define CA_MAX_BUTTONS_PER_WINDOW   384
-#define CA_MAX_INPUTS_PER_WINDOW     64
-#define CA_MAX_CHECKBOXES_PER_WINDOW 64
-#define CA_MAX_RADIOS_PER_WINDOW     64
-#define CA_MAX_SLIDERS_PER_WINDOW    32
-#define CA_MAX_TOGGLES_PER_WINDOW    32
-#define CA_MAX_PROGRESS_PER_WINDOW   32
-#define CA_MAX_SELECTS_PER_WINDOW    16
-#define CA_MAX_TABBARS_PER_WINDOW     8
-#define CA_MAX_TREENODES_PER_WINDOW  256
-#define CA_MAX_TABLES_PER_WINDOW      8
-#define CA_MAX_TOOLTIPS_PER_WINDOW   32
-#define CA_MAX_CTXMENUS_PER_WINDOW    8
-#define CA_MAX_MODALS_PER_WINDOW      4
-#define CA_MAX_SPLITTERS_PER_WINDOW   16
-#define CA_MAX_VIEWPORTS_PER_WINDOW   8
-#define CA_MAX_MENUBARS_PER_WINDOW    2
+/* Constants below are *not* user-tunable: they are tied to specific data
+   structures inside the library and changing them requires code changes. */
 #define CA_MAX_MENUS_PER_BAR         16
 #define CA_MAX_ITEMS_PER_MENU        16
 #define CA_MENU_LABEL_MAX            64
@@ -262,11 +230,6 @@ typedef struct {
 #define CA_MAX_SELECT_OPTIONS        16
 #define CA_MAX_TAB_LABELS            16
 #define CA_MAX_CTXMENU_ITEMS         16
-#define CA_LABEL_TEXT_MAX           256
-#define CA_BUTTON_TEXT_MAX          128
-#define CA_INPUT_TEXT_MAX           512
-#define CA_OPTION_TEXT_MAX          128
-#define CA_CHAR_BUF_MAX             32
 
 /* ======================================================
    UI — draw command (CPU-side, one per visible node or glyph)
@@ -332,26 +295,6 @@ typedef enum {
 } Ca_WidgetType;
 
 /* ======================================================
-   UI — State (full definition)
-   ====================================================== */
-
-struct Ca_State {
-    Ca_Instance  *instance;
-    uint64_t      generation;
-    uint16_t      data_size;
-    bool          dirty;
-    bool          in_use;
-    uint8_t      *data;       /* heap-allocated, data_size bytes */
-    Ca_Node      *subscribers[CA_MAX_STATE_SUBSCRIBERS];
-    uint8_t       sub_flags[CA_MAX_STATE_SUBSCRIBERS];
-    uint32_t      sub_count;
-    /* Function observers — called in ca_state_flush_dirty when value changes */
-    void        (*fn_observers[8])(const void *value, void *user);
-    void         *fn_observer_data[8];
-    uint8_t       fn_observer_count;
-};
-
-/* ======================================================
    UI — node transition (for CSS transition property)
    ====================================================== */
 
@@ -383,9 +326,6 @@ struct Ca_Node {
     Ca_Node      *parent;
     Ca_Node      *children[CA_MAX_NODE_CHILDREN];
     uint32_t      child_count;
-    Ca_State     *subs[CA_MAX_NODE_SUBS];
-    uint8_t       sub_flags[CA_MAX_NODE_SUBS];
-    uint32_t      sub_count;
     int32_t       draw_cmd_idx;    /* -1 = no slot assigned           */
     uint8_t       widget_type;     /* Ca_WidgetType — for unified per-node paint */
     void         *widget;          /* back-pointer to widget struct (Ca_Label* etc.) */
@@ -410,9 +350,11 @@ struct Ca_Node {
     void         *drag_fn_move;     /* Ca_DragFn */
     void         *drag_fn_end;      /* Ca_DragFn */
     void         *drag_data;        /* user_data for drag callbacks */
-    /* Reactive builder — ca_div_set_builder / ca_div_invalidate */
-    void        (*builder_fn)(Ca_Div *div, void *user_data);
-    void         *builder_data;
+    /* Reactive builder — ca_div_set_builder. The effect re-runs the
+       builder whenever any signal it read via ca_signal_get changes. */
+    void          (*builder_fn)(Ca_Div *div, void *user_data);
+    void           *builder_data;
+    struct Ca_Effect *builder_effect;
     /* Debug overlay — set true during paint when node was dirty (paint-flash) */
     bool          dbg_repainted;
 };
@@ -821,11 +763,6 @@ struct Ca_Instance {
 
     /* CSS stylesheet (owned by instance; NULL if none loaded) */
     struct Ca_Stylesheet *stylesheet;
-
-    /* UI state pool */
-    Ca_State        *state_pool;
-    uint16_t         dirty_states[CA_MAX_STATES]; /* ring buffer of dirty indices */
-    uint32_t         dirty_state_count;
 
     /* Shared SSBO descriptor set layout + pool for instanced rendering */
     VkDescriptorSetLayout ssbo_desc_layout;

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Sol/Causality contributors.
+
 /* pipeline.h — rect and text drawing pipelines */
 #pragma once
 

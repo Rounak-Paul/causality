@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Sol/Causality contributors.
+
 /* font.c — font atlas creation with regular and bold styles at a single size */
 
 #define STB_TRUETYPE_IMPLEMENTATION

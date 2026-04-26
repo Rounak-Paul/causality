@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Sol/Causality contributors.
+
 /* node.c — node pool, tree building, and subscription wiring */
 #include "node.h"
 
@@ -322,26 +325,4 @@ void ca_node_set_desc(Ca_Node *node, const Ca_NodeDesc *desc)
     node->desc = *desc;
     if (content) node->dirty |= CA_DIRTY_CONTENT;
     if (layout)  node->dirty |= CA_DIRTY_LAYOUT;
-}
-
-void ca_node_subscribe(Ca_Node *node, Ca_State *state, Ca_DirtyFlags on_change)
-{
-    assert(node && node->in_use && state && state->in_use);
-
-    if (node->sub_count >= CA_MAX_NODE_SUBS) {
-        fprintf(stderr, "[causality] ca_node_subscribe: node sub limit (%d)\n", CA_MAX_NODE_SUBS);
-        return;
-    }
-    if (state->sub_count >= CA_MAX_STATE_SUBSCRIBERS) {
-        fprintf(stderr, "[causality] ca_node_subscribe: state sub limit (%d)\n", CA_MAX_STATE_SUBSCRIBERS);
-        return;
-    }
-
-    node->subs[node->sub_count]      = state;
-    node->sub_flags[node->sub_count] = (uint8_t)on_change;
-    node->sub_count++;
-
-    state->subscribers[state->sub_count] = node;
-    state->sub_flags[state->sub_count]   = (uint8_t)on_change;
-    state->sub_count++;
 }

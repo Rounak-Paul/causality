@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Sol/Causality contributors.
+
 #include "event.h"
 
 void ca_event_init(Ca_Instance *inst)

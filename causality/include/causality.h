@@ -1,9 +1,13 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Sol/Causality contributors.
+
 #pragma once
 
 #include <stdbool.h>
 #include <stdint.h>
 #include <vulkan/vulkan.h>
 #include "ca_api.h"
+#include "ca_reactive.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -291,11 +295,10 @@ typedef struct Ca_TextDesc {
     bool        hidden;            /* display: none — removed from layout   */
 } Ca_TextDesc;
 
-/* <button> — clickable element, can also nest children.
-   When used with ca_btn (self-closing), built-in text is rendered.
-   When used with ca_btn_begin / ca_btn_end, nest children inside. */
+/* <button> — clickable nestable element. Use ca_btn_begin / ca_btn_end and
+   nest children (text, icons, etc.) inside. */
 typedef struct Ca_BtnDesc {
-    const char *text;              /* built-in label (for self-closing ca_btn) */
+    const char *text;              /* optional inline label                  */
     float       width, height;     /* 0 = auto (72x24)                     */
     float       padding[4];        /* inner padding (for nested content)    */
     float       gap;               /* gap between nested children           */
@@ -353,17 +356,19 @@ CA_API void ca_ui_end(void);
 /// Must be paired with ca_div_end().
 CA_API void ca_div_clear(Ca_Div *div);
 
-/// Registers a builder callback on a div.  When the div is invalidated
-/// (via ca_div_invalidate), the framework calls `fn(div, user_data)` on the
-/// next frame to reconstruct its children.  The builder function receives the
-/// div already cleared and entered as the current parent — do NOT call
-/// ca_div_clear or ca_div_end inside the builder.
-CA_API void ca_div_set_builder(Ca_Div *div,
-                               void (*fn)(Ca_Div *div, void *user_data),
-                               void *user_data);
+/// Registers a builder callback on a div.  Internally creates an effect that
+/// re-runs the builder whenever any signal it reads via ca_signal_get
+/// changes, or when ca_effect_invalidate / ca_div_invalidate is called.
+/// The builder receives the div already cleared and entered as the current
+/// parent — do NOT call ca_div_clear or ca_div_end inside the builder.
+/// Returns the underlying Ca_Effect (owned by the instance) so callers can
+/// later invalidate it directly via ca_effect_invalidate.
+CA_API Ca_Effect *ca_div_set_builder(Ca_Div *div,
+                                     void (*fn)(Ca_Div *div, void *user_data),
+                                     void *user_data);
 
-/// Marks a div with a registered builder for reconstruction on the next frame.
-/// Has no effect if no builder is registered.
+/// Manually re-run the builder registered on this div.  Equivalent to
+/// ca_effect_invalidate on the effect returned by ca_div_set_builder.
 CA_API void ca_div_invalidate(Ca_Div *div);
 
 /// Enters a div in keyed reconciliation mode.
@@ -380,19 +385,18 @@ CA_API void ca_reconcile_key(const char *key);
 CA_API Ca_Div *ca_div_begin(const Ca_DivDesc *desc);
 CA_API void    ca_div_end(void);
 
-CA_API Ca_Button *ca_btn_begin(const Ca_BtnDesc *desc); /* nestable button      */
+CA_API Ca_Button *ca_btn_begin(const Ca_BtnDesc *desc);
 CA_API void       ca_btn_end(void);
 
-CA_API void ca_list_begin(const Ca_DivDesc *desc);      /* list (vertical, gap 4) */
+CA_API void ca_list_begin(const Ca_DivDesc *desc); /* vertical, gap 4 */
 CA_API void ca_list_end(void);
 
-CA_API void ca_li_begin(const Ca_DivDesc *desc);        /* list item (horiz, gap 8) */
+CA_API void ca_li_begin(const Ca_DivDesc *desc);   /* horizontal, gap 8 */
 CA_API void ca_li_end(void);
 
 /* ---- Self-closing elements ---- */
 
 CA_API Ca_Label     *ca_text(const Ca_TextDesc *desc);
-CA_API Ca_Button    *ca_btn(const Ca_BtnDesc *desc);       /* self-closing button  */
 CA_API Ca_TextInput *ca_input(const Ca_InputDesc *desc);    /* text input field     */
 
 CA_API void ca_hr(const Ca_HrDesc *desc);               /* horizontal rule      */
@@ -544,7 +548,7 @@ CA_API void ca_image(const Ca_ImageDesc *desc);
      );
 
    Elements reference classes via the 'style' field of their descriptor:
-     ca_div_begin(&(Ca_DivDesc){ .style = "container" });
+     ca_div(&(Ca_DivDesc){ .style = "container" });
      ca_btn(&(Ca_BtnDesc){ .text = "OK", .style = "btn-primary" });
    ============================================================ */
 
@@ -706,7 +710,7 @@ CA_API void ca_viewport_set_callbacks(Ca_Viewport *viewport,
        ca_set_hidden(btn, false);
        ca_set_disabled(btn, true);
 
-       Ca_Div *panel = ca_div_begin(&(Ca_DivDesc){...});
+       Ca_Div *panel = ca_div(&(Ca_DivDesc){...});
        ca_set_style(panel, "sidebar collapsed");
 
    ============================================================ */
@@ -761,61 +765,7 @@ CA_API void ca__set_background_widget(void *widget, uint32_t color);
 CA_API void ca_window_set_title_bar_menus(Ca_Window        *window,
                                           const Ca_MenuDesc *menus, int count);
 
-/* ============================================================
-   REACTIVE STATE
-   ============================================================
-
-   Ca_State is a typed, observable value that lives in the Causality
-   instance.  When its value changes (via ca_state_set), subscribers
-   are notified before the next frame's UI rebuild:
-
-     - Node subscriptions  (ca_node_subscribe) mark nodes dirty so the
-       paint cache is invalidated and the node repaints.
-     - Function observers  (ca_state_observe) fire a callback so code
-       can push new text, toggle visibility, rebuild sections, etc.
-
-   Typical usage:
-
-       // create (once, at init):
-       Ca_State *sel = ca_state_create(inst, sizeof(Qs_Entity), &invalid);
-
-       // observe (once, at init):
-       ca_state_observe(sel, on_selection_changed, my_ctx);
-
-       // mutate (at event time, not every frame):
-       ca_state_set(sel, &new_entity);
-
-   The observer fires exactly once per mutation, before the UI rebuild
-   loop runs.  On idle frames where no mutation occurred, zero work is
-   done.
-   ============================================================ */
-
-typedef struct Ca_State Ca_State;
-
-/// Creates a new state with the given value size and optional initial value.
-CA_API Ca_State *ca_state_create(Ca_Instance *inst, size_t data_size,
-                                  const void *initial);
-
-/// Destroys a state and releases its resources.
-CA_API void ca_state_destroy(Ca_State *state);
-
-/// Sets the state value.  Performs a memcmp — if the value is unchanged
-/// no subscribers or observers are notified.
-CA_API void ca_state_set(Ca_State *state, const void *value);
-
-/// Reads the current state value into out (must be data_size bytes).
-CA_API void ca_state_get(const Ca_State *state, void *out);
-
-/// Returns a monotonically increasing generation counter.  Increments on
-/// every successful (value-changing) ca_state_set call.
-CA_API uint64_t ca_state_generation(const Ca_State *state);
-
-/// Registers a function observer.  The callback fires before each frame's
-/// UI rebuild, exactly once per value-changing ca_state_set call.
-/// Up to 8 observers per state.
-CA_API void ca_state_observe(Ca_State *state,
-                              void (*fn)(const void *value, void *user),
-                              void *user);
+/* Reactivity is provided by ca_reactive.h (signals / effects / computed). */
 
 #ifdef __cplusplus
 }

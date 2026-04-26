@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Sol/Causality contributors.
+
 /* pipeline.c — Vulkan graphics pipelines for instanced rendering.
 
    Design:

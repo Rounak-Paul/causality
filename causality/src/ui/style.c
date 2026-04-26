@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Sol/Causality contributors.
+
 /* style.c — CSS style resolution, specificity calculation, and cascade */
 #include "style.h"
 

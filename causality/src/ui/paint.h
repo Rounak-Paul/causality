@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Sol/Causality contributors.
+
 /* paint.h — internal header for the paint (draw command generation) pass */
 #pragma once
 

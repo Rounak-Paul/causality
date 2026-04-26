@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Sol/Causality contributors.
+
 /* image.h — GPU-uploaded RGBA images for ca_image() widget */
 #pragma once
 

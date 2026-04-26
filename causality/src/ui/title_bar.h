@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Sol/Causality contributors.
+
 /* title_bar.h — Internal header for the custom window title bar.
  *
  * Called by ui.c and window.c.  Not part of the public API.

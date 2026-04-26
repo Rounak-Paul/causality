@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Sol/Causality contributors.
+
 /* shader.h — runtime GLSL → SPIR-V compilation via libshaderc */
 #pragma once
 

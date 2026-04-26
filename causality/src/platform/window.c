@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Sol/Causality contributors.
+
 #include "window.h"
 #include "event.h"
 #include "renderer.h"

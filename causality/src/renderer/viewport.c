@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Sol/Causality contributors.
+
 /* viewport.c — offscreen render target for external renderers */
 #include "viewport.h"
 #include <string.h>

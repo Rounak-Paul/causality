@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Sol/Causality contributors.
+
 #include <causality.h>
 #include <stdio.h>
 #include <string.h>
@@ -337,7 +340,7 @@ static void popup_ui(Ca_Window *popup)
             .style       = "input-field",
         });
         ca_spacer(&(Ca_SpacerDesc){ .height = 4 });
-        ca_btn(&(Ca_BtnDesc){
+        ca_btn_begin(&(Ca_BtnDesc){
             .text       = "Close",
             .style      = "close-btn",
             .on_click   = on_close_click,
@@ -443,23 +446,23 @@ int main(void)
             .direction = CA_HORIZONTAL,
             .style     = "btn-row",
         });
-            ca_btn(&(Ca_BtnDesc){
+            ca_btn_begin(&(Ca_BtnDesc){
                 .text     = "Turn ON",
                 .style    = "btn-toggle",
                 .on_click = on_toggle_click,
             });
-            ca_btn(&(Ca_BtnDesc){
+            ca_btn_begin(&(Ca_BtnDesc){
                 .text       = "Open Popup",
                 .style      = "btn-popup",
                 .on_click   = on_popup_click,
                 .click_data = &app_ctx,
             });
-            ca_btn(&(Ca_BtnDesc){
+            ca_btn_begin(&(Ca_BtnDesc){
                 .text     = "Accent",
                 .style    = "btn-accent",
                 .on_click = on_accent_click,
             });
-        ca_div_end();
+        ca_btn_end();
 
         ca_spacer(&(Ca_SpacerDesc){ .height = 2 });
 
@@ -762,7 +765,7 @@ int main(void)
         /* ---- 16. Tooltip ---- */
         ca_h3(&(Ca_TextDesc){ .text = "Tooltip", .style = "section" });
 
-        ca_btn(&(Ca_BtnDesc){
+        ca_btn_begin(&(Ca_BtnDesc){
             .text = "Hover me",
             .style = "btn-accent",
         });

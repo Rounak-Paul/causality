@@ -1,6 +1,8 @@
-/* ui.c — wires state, node, layout, and paint passes together */
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Sol/Causality contributors.
+
+/* ui.c — wires reactive flush, node, layout, and paint passes together */
 #include "ui.h"
-#include "state.h"
 #include "node.h"
 #include "layout.h"
 #include "paint.h"
@@ -124,12 +126,12 @@ static bool transition_tick(Ca_Node *node, double now)
 
 void ca_ui_init(Ca_Instance *inst)
 {
-    ca_state_system_init(inst);
+    (void)inst;
 }
 
 void ca_ui_shutdown(Ca_Instance *inst)
 {
-    ca_state_system_shutdown(inst);
+    (void)inst;
 }
 
 void ca_ui_window_init(Ca_Window *win)
@@ -183,19 +185,9 @@ static bool layout_and_invalidate(Ca_Window *win)
 
 void ca_ui_update(Ca_Instance *inst)
 {
-    /* 1. Propagate state dirty flags to subscriber nodes */
-    ca_state_flush_dirty(inst);
-
-    /* 1b. Rebuild pass — run builder callbacks on invalidated divs.
-       This happens inside a build context per window so that widget
-       creation (ca_div_clear + builder_fn + ca_div_end) works.
-       Must run before layout so newly created nodes get laid out. */
-    for (int i = 0; i < CA_MAX_WINDOWS; ++i) {
-        Ca_Window *win = &inst->windows[i];
-        if (!win->in_use || !win->root || !win->node_pool) continue;
-        ca_widget_rebuild_pass(win);
-    }
-
+    /* Builder rebuilds happen during ca_reactive_flush (called by
+       ca_instance_tick before this function) so the new tree is already
+       in place by the time we run layout. */
     for (int i = 0; i < CA_MAX_WINDOWS; ++i) {
         Ca_Window *win = &inst->windows[i];
         if (!win->in_use || !win->root || !win->node_pool) continue;

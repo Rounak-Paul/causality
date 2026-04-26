@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Sol/Causality contributors.
+
 /* shader.c — compile GLSL string literals to SPIR-V at runtime using libshaderc
    (libshaderc_combined ships with the LunarG Vulkan SDK)               */
 #include "shader.h"

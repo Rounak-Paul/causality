@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Sol/Causality contributors.
+
 /* css.c — CSS tokenizer + recursive descent parser */
 #include "css.h"
 

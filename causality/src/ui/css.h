@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Sol/Causality contributors.
+
 /* css.h — CSS parser and stylesheet data structures */
 #pragma once
 

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Sol/Causality contributors.
+
 /* gpu.c — public GPU resource accessors for external renderers */
 #include "ca_internal.h"
 

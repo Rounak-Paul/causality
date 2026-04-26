@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Sol/Causality contributors.
+
 /* swapchain.h — per-window swapchain + per-frame sync */
 #pragma once
 

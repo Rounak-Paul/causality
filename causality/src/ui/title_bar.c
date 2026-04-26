@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Sol/Causality contributors.
+
 /* title_bar.c — Custom window title bar for Causality windows.
  *
  * Provides drag-to-move, minimize, maximize/restore, close buttons, and
@@ -273,7 +276,7 @@ void ca_title_bar_rebuild(Ca_Window *win)
     ctrl->desc.align_items = CA_ALIGN_CENTER;
     ctrl->dirty |= CA_DIRTY_LAYOUT;
 
-    Ca_Button *min_btn = ca_btn(&(Ca_BtnDesc){
+    Ca_Button *min_btn = ca_btn_begin(&(Ca_BtnDesc){
         .text       = ICON_MINUS,
         .width      = 22.0f,
         .height     = 22.0f,
@@ -285,8 +288,9 @@ void ca_title_bar_rebuild(Ca_Window *win)
     min_btn->node->desc.font_size  = 14.0f;
     min_btn->node->desc.text_align = 0; /* center */
     min_btn->node->dirty |= CA_DIRTY_CONTENT;
+    ca_btn_end(); /* min btn */
 
-    Ca_Button *max_btn = ca_btn(&(Ca_BtnDesc){
+    Ca_Button *max_btn = ca_btn_begin(&(Ca_BtnDesc){
         .text       = win->titlebar_maximized ? ICON_RESTORE : ICON_MAXIMIZE,
         .width      = 22.0f,
         .height     = 22.0f,
@@ -298,8 +302,9 @@ void ca_title_bar_rebuild(Ca_Window *win)
     max_btn->node->desc.font_size  = 14.0f;
     max_btn->node->desc.text_align = 0;
     max_btn->node->dirty |= CA_DIRTY_CONTENT;
+    ca_btn_end(); /* max btn */
 
-    Ca_Button *cls_btn = ca_btn(&(Ca_BtnDesc){
+    Ca_Button *cls_btn = ca_btn_begin(&(Ca_BtnDesc){
         .text       = ICON_TIMES,
         .width      = 22.0f,
         .height     = 22.0f,
@@ -311,6 +316,7 @@ void ca_title_bar_rebuild(Ca_Window *win)
     cls_btn->node->desc.font_size  = 14.0f;
     cls_btn->node->desc.text_align = 0;
     cls_btn->node->dirty |= CA_DIRTY_CONTENT;
+    ca_btn_end(); /* close btn */
 
     ca_div_end(); /* controls */
 

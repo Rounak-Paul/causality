@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Sol/Causality contributors.
+
 /* font.h — GPU font atlas with regular and bold styles.
    Uses stb_truetype pack API for crisp text at the configured font size.
    Both regular and bold Ubuntu Nerd Font are baked into a single atlas.

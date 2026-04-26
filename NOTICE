@@ -1,0 +1,37 @@
+Causality — reactive UI library on Vulkan
+Copyright 2026 Causality contributors
+
+Licensed under the Apache License, Version 2.0 (see LICENSE).
+
+This product includes the following third-party software:
+
+  - GLFW (Zlib) at vendors/glfw/
+      Copyright (c) 2002-2006 Marcus Geelnard
+      Copyright (c) 2006-2019 Camilla Löwy
+      https://www.glfw.org/
+
+  - GLM (MIT) at vendors/glm/
+      Copyright (c) 2005-present G-Truc Creation
+      https://github.com/g-truc/glm
+
+  - Vulkan Memory Allocator (MIT) at vendors/vma/
+      Copyright (c) 2017-2024 Advanced Micro Devices, Inc.
+      https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator
+
+  - stb_truetype (dual: Public Domain / MIT) at vendors/stb/
+      Copyright (c) 2017 Sean Barrett
+      https://github.com/nothings/stb
+
+  - shaderc (Apache-2.0) — link-time dep, supplied by the Vulkan SDK.
+      https://github.com/google/shaderc
+
+  - Vulkan headers (Apache-2.0) — link-time dep, supplied by the Vulkan SDK.
+
+  - Embedded font: Departure Mono Nerd Font Mono Regular
+      Departure Mono — SIL Open Font License 1.1
+      Copyright 2024 Helena Zhang (https://departuremono.com/)
+      Nerd Fonts patcher (MIT) — https://github.com/ryanoasis/nerd-fonts
+      Embedded as static byte arrays in src/renderer/embedded_font*.c.
+      A bundled font may be replaced via tools/embed_font.py.
+      The bold slot intentionally aliases the regular face because
+      Departure Mono ships only a Regular weight.

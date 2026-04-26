@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Sol/Causality contributors.
+
 /* layout.c — flexbox-inspired single-axis layout with full flex support */
 #include "layout.h"
 #include "css.h"

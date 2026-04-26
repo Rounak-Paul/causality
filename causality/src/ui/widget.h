@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Sol/Causality contributors.
+
 /* widget.h — internal widget implementation helpers */
 #pragma once
 
@@ -12,7 +15,3 @@ void ca_widget_input_pass(Ca_Window *win);
    widget creation functions work inside per-frame callbacks. */
 void ca_widget_ctx_enter(Ca_Window *win);
 void ca_widget_ctx_leave(void);
-
-/* Run the builder callback for every node with CA_DIRTY_REBUILD.
-   Called once per window per frame inside ca_ui_update, before layout. */
-void ca_widget_rebuild_pass(Ca_Window *win);

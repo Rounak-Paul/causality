@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Sol/Causality contributors.
+
 #include "renderer.h"
 #include "swapchain.h"
 #include "pipeline.h"
@@ -50,6 +53,9 @@ static bool create_vk_instance(Ca_Instance *inst, const char *app_name)
         .sType              = VK_STRUCTURE_TYPE_APPLICATION_INFO,
         .pApplicationName   = app_name ? app_name : "causality",
         .applicationVersion = VK_MAKE_VERSION(0, 1, 0),
+        /* Vulkan 1.3 is required: the renderer uses dynamic rendering
+           (VK_KHR_dynamic_rendering, core in 1.3) and synchronization2
+           barriers (vkCmdPipelineBarrier2 / VkImageMemoryBarrier2). */
         .pEngineName        = "causality",
         .engineVersion      = VK_MAKE_VERSION(0, 1, 0),
         .apiVersion         = VK_API_VERSION_1_3,
