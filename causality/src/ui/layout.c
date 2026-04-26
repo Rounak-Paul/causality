@@ -648,8 +648,16 @@ out_of_flow:
         Ca_Node *child = node->children[i];
         if (child->desc.hidden || child->desc.position == CA_POSITION_RELATIVE)
             continue;
-        float cw = child->desc.width  > 0.0f ? child->desc.width  : node->w;
-        float ch = child->desc.height > 0.0f ? child->desc.height : node->h;
+        /* Available space for the absolute child = parent's content box.
+           layout_node() itself will resolve width/height (including
+           percentages) against this. Passing the literal width here
+           would mis-resolve "width: 100%" as "100 pixels". */
+        float avail_cw = node->w
+            - node->desc.padding_left - node->desc.padding_right;
+        float avail_ch = node->h
+            - node->desc.padding_top  - node->desc.padding_bottom;
+        if (avail_cw < 0.0f) avail_cw = 0.0f;
+        if (avail_ch < 0.0f) avail_ch = 0.0f;
         float cx, cy;
         if (child->desc.position == CA_POSITION_ABSOLUTE) {
             /* Relative to parent's content box */
@@ -659,7 +667,7 @@ out_of_flow:
             cx = child->desc.pos_x;
             cy = child->desc.pos_y;
         }
-        layout_node(child, cx, cy, cw, ch);
+        layout_node(child, cx, cy, avail_cw, avail_ch);
     }
 }
 
