@@ -117,6 +117,33 @@ CA_API float      ca_window_get_scale(Ca_Window *window);
 CA_API void ca_window_set_title(Ca_Window *window, const char *title);
 
 /* ============================================================
+   STATUS BAR (system-managed bottom strip)
+   ============================================================
+
+   Causality reserves a horizontal strip at the bottom of the window for
+   a status bar. It is laid out automatically as a sibling of the user's
+   content_root, so user code never has to subtract the bar's height
+   from manual layout calculations — just fill content_root and the
+   status bar lives below it.
+
+   The builder runs every time the bar is invalidated. Inside the builder
+   the widget context is already inside the system-managed status bar
+   node, so the user just emits children (no outer ca_div_begin/_end
+   needed).
+
+   Pass fn = NULL to hide the bar. Setting height = 0 also hides it. */
+typedef void (*Ca_StatusBarFn)(Ca_Window *window, void *user_data);
+CA_API void ca_window_set_status_bar(Ca_Window      *window,
+                                     Ca_StatusBarFn  fn,
+                                     void           *user_data,
+                                     float           height);
+
+/* Force a status-bar rebuild on the next frame (e.g. when the data the
+   builder reads has changed). Equivalent to invalidating the bar's
+   internal effect. */
+CA_API void ca_window_invalidate_status_bar(Ca_Window *window);
+
+/* ============================================================
    EVENTS
    ============================================================ */
 

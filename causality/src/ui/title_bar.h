@@ -17,3 +17,7 @@ void ca_title_bar_init(Ca_Window *win);
 /* Called from ca_ui_update when win->titlebar_needs_rebuild is true.
    Must be called within a ca_widget_ctx_enter / ca_widget_ctx_leave pair. */
 void ca_title_bar_rebuild(Ca_Window *win);
+
+/* Called from ca_ui_update when win->statusbar_needs_rebuild is true.
+   Must be called within a ca_widget_ctx_enter / ca_widget_ctx_leave pair. */
+void ca_status_bar_rebuild(Ca_Window *win);

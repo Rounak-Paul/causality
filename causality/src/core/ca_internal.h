@@ -697,8 +697,14 @@ struct Ca_Window {
     /* Custom title bar */
     Ca_Node       *title_bar_node;        /* system-managed title bar container  */
     Ca_Node       *content_root;          /* user content is built here          */
+    Ca_Node       *status_bar_node;       /* system-managed status bar container */
     char           title[256];            /* window title text                   */
     bool           titlebar_needs_rebuild;
+    bool           statusbar_needs_rebuild;
+    /* Status bar user builder + config (NULL fn → bar hidden). */
+    void         (*status_bar_fn)(Ca_Window *window, void *user_data);
+    void          *status_bar_data;
+    float          status_bar_height;
     bool           titlebar_maximized;
     Ca_MenuBarMenu titlebar_menus[CA_MAX_MENUS_PER_BAR];
     int            titlebar_menu_count;

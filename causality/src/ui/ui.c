@@ -327,6 +327,28 @@ void ca_ui_update(Ca_Instance *inst)
             }
         }
 
+        /* Status bar rebuild — same pattern as title bar. */
+        if (win->statusbar_needs_rebuild) {
+            ca_widget_ctx_enter(win);
+            ca_status_bar_rebuild(win);
+            ca_widget_ctx_leave();
+            win->statusbar_needs_rebuild = false;
+
+            bool needs_layout_sb = false;
+            for (uint32_t j = 0; j < CA_MAX_NODES_PER_WINDOW; ++j) {
+                Ca_Node *n = &win->node_pool[j];
+                if (!n->in_use) continue;
+                if (n->dirty & (CA_DIRTY_LAYOUT | CA_DIRTY_CHILDREN))
+                    needs_layout_sb = true;
+                if (n->dirty & CA_DIRTY_CONTENT)
+                    any_content = true;
+            }
+            if (needs_layout_sb) {
+                if (layout_and_invalidate(win))
+                    any_content = true;
+            }
+        }
+
         /* 6. Incremental paint pass — only dirty nodes are repainted;
               clean nodes reuse cached draw commands.
               The one-shot dbg_force_repaint flag forces a single paint pass

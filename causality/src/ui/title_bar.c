@@ -185,6 +185,19 @@ void ca_title_bar_init(Ca_Window *win)
     assert(crnode && "ca_title_bar_init: failed to allocate content_root");
     win->content_root = crnode;
 
+    /* ---- Status bar node: hidden by default until the user installs a
+       builder via ca_window_set_status_bar. Sits as the bottom sibling
+       so the user's content_root flex-grows in the middle.         ---- */
+    Ca_NodeDesc sb = {0};
+    sb.direction  = CA_HORIZONTAL;
+    sb.height     = 0.0f;
+    sb.hidden     = true;
+    sb.overflow_x = 1;
+    sb.overflow_y = 1;
+    Ca_Node *sbnode = ca_node_add(root, &sb);
+    assert(sbnode && "ca_title_bar_init: failed to allocate status_bar_node");
+    win->status_bar_node = sbnode;
+
     win->titlebar_needs_rebuild = true;
 }
 
@@ -320,25 +333,33 @@ void ca_title_bar_rebuild(Ca_Window *win)
 
     ca_div_end(); /* controls */
 
-    /* ---- Title overlay: absolutely positioned, full width, centered.
-       Drawn on top of the flex-flow children but has no interaction
-       callbacks so buttons and menu items (smaller nodes) still win
-       both hover and drag hit-tests.                                 ---- */
+    /* ---- Title overlay: absolutely positioned, inherits the title-bar's
+       full width (width=0 → falls through to parent->w in layout, avoiding
+       a double ui_scale pass that `s(width)` would apply). The label is
+       sized to that same full width and centered via `text_align: center`,
+       so positioning never depends on flex-centering of the wrapping div.
+       The overlay has no interaction callbacks so buttons / menu items
+       (smaller siblings) still win hover and drag hit-tests.        ---- */
     Ca_Node *overlay = (Ca_Node *)ca_div_begin(&(Ca_DivDesc){
         .position = CA_POSITION_ABSOLUTE,
         .pos_x    = 0.0f,
         .pos_y    = 0.0f,
+        .height   = 22.0f,
     });
-    overlay->desc.align_items     = CA_ALIGN_CENTER;
-    overlay->desc.justify_content = CA_ALIGN_CENTER;
+    overlay->desc.overflow_x   = 1;  /* hidden — long titles don't escape */
+    overlay->desc.align_items  = CA_ALIGN_CENTER; /* vertically center label */
     overlay->dirty |= CA_DIRTY_LAYOUT;
 
     Ca_Label *ttl = ca_text(&(Ca_TextDesc){
         .text  = win->title,
         .color = COL_TEXT_DIM,
     });
-    ttl->node->desc.font_size = 12.0f;
-    ttl->node->dirty |= CA_DIRTY_CONTENT;
+    /* width = 0 inherits the overlay's (and thus title-bar's) full width;
+       text_align = 1 centers the rendered glyphs within that width. */
+    ttl->node->desc.width      = 0.0f;
+    ttl->node->desc.text_align = 1;
+    ttl->node->desc.font_size  = 12.0f;
+    ttl->node->dirty |= CA_DIRTY_CONTENT | CA_DIRTY_LAYOUT;
 
     ca_div_end(); /* title overlay */
 
@@ -405,4 +426,58 @@ void ca_window_set_title_bar_menus(Ca_Window        *window,
     }
 
     window->titlebar_needs_rebuild = true;
+}
+
+/* ------------------------------------------------------------------ */
+/* Status bar — public + internal                                      */
+/* ------------------------------------------------------------------ */
+
+void ca_status_bar_rebuild(Ca_Window *win)
+{
+    assert(win && win->status_bar_node);
+
+    /* Reset to empty children regardless of whether a builder is set;
+       this lets ca_window_set_status_bar(NULL,...) cleanly clear it. */
+    ca_div_clear((Ca_Div *)win->status_bar_node);
+
+    if (win->status_bar_fn) {
+        win->status_bar_fn(win, win->status_bar_data);
+    }
+
+    ca_div_end(); /* status_bar_node — auto-pops widget context */
+}
+
+void ca_window_set_status_bar(Ca_Window      *window,
+                              Ca_StatusBarFn  fn,
+                              void           *user_data,
+                              float           height)
+{
+    if (!window || !window->in_use || !window->status_bar_node) {
+        return;
+    }
+
+    window->status_bar_fn     = fn;
+    window->status_bar_data   = user_data;
+    window->status_bar_height = (height > 0.0f && fn) ? height : 0.0f;
+
+    Ca_Node *sb = window->status_bar_node;
+    sb->desc.height = window->status_bar_height;
+    sb->desc.hidden = (fn == NULL || window->status_bar_height <= 0.0f);
+    sb->dirty |= CA_DIRTY_LAYOUT | CA_DIRTY_CONTENT;
+
+    /* Mark root layout-dirty so the content_root resizes to absorb /
+       release the bar's height in the same frame. */
+    if (window->root) {
+        window->root->dirty |= CA_DIRTY_LAYOUT | CA_DIRTY_CHILDREN;
+    }
+
+    window->statusbar_needs_rebuild = true;
+}
+
+void ca_window_invalidate_status_bar(Ca_Window *window)
+{
+    if (!window || !window->in_use) {
+        return;
+    }
+    window->statusbar_needs_rebuild = true;
 }

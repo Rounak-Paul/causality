@@ -510,6 +510,16 @@ void ca_ui_begin(Ca_Window *window, const Ca_DivDesc *root_desc)
               root_desc ? root_desc->style : NULL,
               root_desc ? root_desc->id : NULL, &dummy_color);
 
+    /* The window's content_root is a system-managed flex slot between
+       the title bar and (optional) status bar. User-supplied width/
+       height/percent values would hijack the strip layout, so force
+       flex-grow=1 along the window's main axis and clear any explicit
+       main-axis sizing the user (or their CSS) just installed. The
+       cross axis is left untouched so width:100% / stretch still works. */
+    root->desc.flex_grow  = 1.0f;
+    root->desc.height     = 0.0f;
+    root->desc.height_pct = false;
+
     /* Default: root is vertically scrollable (like HTML body).
        Users can override via CSS (e.g. overflow: hidden). */
     if (root->desc.overflow_y == 0)
