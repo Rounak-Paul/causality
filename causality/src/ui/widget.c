@@ -2268,12 +2268,24 @@ Ca_MenuBar *ca_menu_bar(const Ca_MenuBarDesc *desc)
 void ca_context_menu(const Ca_CtxMenuDesc *desc)
 {
     assert(g_ctx.active && desc);
-    Ca_CtxMenu *cm = alloc_ctxmenu(g_ctx.window);
-    if (!cm) return;
 
     Ca_Node *parent = ctx_top();
     if (parent->child_count == 0) return;
     Ca_Node *target = parent->children[parent->child_count - 1];
+
+    /* Reuse an existing ctxmenu already bound to this node (reactive
+       reconcile rebuilds invoke ca_context_menu every frame on the
+       same reused node — without reuse the pool exhausts quickly). */
+    Ca_CtxMenu *cm = NULL;
+    Ca_Window  *win = g_ctx.window;
+    if (win && win->ctxmenu_pool) {
+        for (uint32_t i = 0; i < CA_MAX_CTXMENUS_PER_WINDOW; ++i) {
+            Ca_CtxMenu *c = &win->ctxmenu_pool[i];
+            if (c->in_use && c->node == target) { cm = c; break; }
+        }
+    }
+    if (!cm) cm = alloc_ctxmenu(win);
+    if (!cm) return;
 
     cm->node = target;
     cm->in_use = true;
