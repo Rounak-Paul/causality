@@ -2315,12 +2315,20 @@ Ca_Splitter *ca_split_begin(const Ca_SplitDesc *desc)
     sp->node      = node;
     sp->in_use    = true;
     sp->direction = desc->direction;
-    sp->ratio     = (desc->ratio > 0.0f && desc->ratio < 1.0f) ? desc->ratio : 0.5f;
+    /* The ratio is owned by the splitter widget once the user drags it.
+       Only seed it from the desc on initial creation; subsequent rebuilds
+       must preserve the dragged value. Callers that need to update the
+       ratio programmatically should use ca_split_set_ratio(). */
+    if (!reused) {
+        sp->ratio = (desc->ratio > 0.0f && desc->ratio < 1.0f) ? desc->ratio : 0.5f;
+    }
     sp->min_ratio = (desc->min_ratio > 0.0f) ? desc->min_ratio : 0.1f;
     sp->max_ratio = (desc->max_ratio > 0.0f) ? desc->max_ratio : 0.9f;
     sp->bar_size  = (desc->bar_size > 0.0f)  ? s(desc->bar_size)  : s(4.0f);
     sp->bar_color       = desc->bar_color       ? desc->bar_color       : CA_THEME_BG_VOID;
     sp->bar_hover_color = desc->bar_hover_color ? desc->bar_hover_color : CA_THEME_ACCENT;
+    sp->on_resize = desc->on_resize;
+    sp->user_data = desc->user_data;
     sp->dragging  = false;
 
     uint32_t dummy = 0;
@@ -3399,6 +3407,8 @@ void ca_widget_input_pass(Ca_Window *win)
             if (new_ratio != sp->ratio) {
                 sp->ratio = new_ratio;
                 n->dirty |= CA_DIRTY_LAYOUT | CA_DIRTY_CONTENT;
+                if (sp->on_resize)
+                    sp->on_resize(new_ratio, sp->user_data);
             }
         }
     }

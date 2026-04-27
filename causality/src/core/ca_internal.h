@@ -524,6 +524,12 @@ struct Ca_Splitter {
     uint32_t      bar_hover_color;
     bool          dragging;   /* true while user drags the divider */
     bool          in_use;
+    /* User callback fired when the user drags the divider and the
+       ratio changes. Allows the application to persist the new ratio
+       across rebuilds (since the splitter widget is destroyed and
+       recreated when its containing div re-runs its builder). */
+    void        (*on_resize)(float ratio, void *user_data);
+    void         *user_data;
 };
 
 struct Ca_Viewport {

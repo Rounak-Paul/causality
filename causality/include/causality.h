@@ -480,6 +480,11 @@ typedef struct Ca_SplitDesc {
     float    bar_size;         /* divider thickness in px (default 4)   */
     uint32_t bar_color;        /* divider colour (default dark grey)    */
     uint32_t bar_hover_color;  /* divider colour when hovered           */
+    /* Optional: invoked when the user drags the divider and the
+       ratio changes. Use this to persist the new ratio in your own
+       data model so subsequent rebuilds pass it back via .ratio. */
+    void   (*on_resize)(float ratio, void *user_data);
+    void    *user_data;
     const char *id, *style;
 } Ca_SplitDesc;
 
