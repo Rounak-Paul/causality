@@ -1718,8 +1718,8 @@ Ca_Select *ca_select(const Ca_SelectDesc *desc)
     const char *id = next_key ? next_key : desc->id;
 
     Ca_NodeDesc nd = {0};
-    nd.width  = desc->width > 0 ? s(desc->width) : s(140.0f);
-    nd.height = s(26.0f);
+    nd.width  = desc->width > 0 ? s(desc->width) : 0.0f;
+    nd.height = 0.0f; /* deferred to CSS; defaults to 26px below if unset */
     nd.corner_radius = s(3.0f);
     nd.background = CA_THEME_BG_BASE;
 
@@ -1759,6 +1759,13 @@ Ca_Select *ca_select(const Ca_SelectDesc *desc)
 
     uint32_t dummy = 0;
     apply_css(node, &node->desc, CA_ELEM_SELECT, desc->style, id, &dummy);
+
+    /* Sensible fallbacks if neither desc nor CSS supplied a size */
+    if (node->desc.width  <= 0.0f && !node->desc.width_pct)
+        node->desc.width  = s(140.0f);
+    if (node->desc.height <= 0.0f && !node->desc.height_pct)
+        node->desc.height = s(26.0f);
+
     return sel;
 }
 
