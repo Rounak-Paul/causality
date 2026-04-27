@@ -54,6 +54,45 @@ static float measure_text_px(Ca_Window *win, const char *text)
     return w;
 }
 
+/* Public variant of measure_text_px: same logic but lets the caller
+   pick the font size, so widget code that renders text at a non-default
+   point size (e.g. a 12 px editor buffer when the UI default is 14) can
+   still get an accurate pixel width.
+
+   Math derivation: paint_text scales advances by `cs / font_scale`,
+   where font_scale = desired_size / tier->logical_px. So the on-screen
+   advance per logical glyph is `pc->xadvance * desired_size / (cs *
+   tier->logical_px)`. We sum that across the string. */
+float ca_measure_text_px(Ca_Window *win, const char *text, float font_size)
+{
+    if (!win || !text || text[0] == '\0') return 0.0f;
+    Ca_Font *font = win->instance->font;
+    if (!font) return 0.0f;
+    float ui_s = win->ui_scale > 0.0f ? win->ui_scale : 1.0f;
+    float cs   = font->content_scale / ui_s;
+    float desired = font_size > 0.0f ? font_size : font->default_size;
+    Ca_FontTier *tier = ca_font_tier(font, desired);
+    float font_scale = desired / tier->logical_px;
+    float cs_eff = cs / font_scale;
+    float w = 0.0f;
+    const char *p = text;
+    while (*p) {
+        uint32_t cp = ca_utf8_decode(&p);
+        stbtt_packedchar *pc = ca_font_glyph(tier, cp);
+        if (pc) w += pc->xadvance / cs_eff;
+    }
+    return w;
+}
+
+bool ca_button_get_click_pos(const Ca_Button *button,
+                             float *out_x, float *out_y)
+{
+    if (!button || !button->last_click_valid) return false;
+    if (out_x) *out_x = button->last_click_x;
+    if (out_y) *out_y = button->last_click_y;
+    return true;
+}
+
 /* ============================================================
    INTERNAL — convert descriptors to Ca_NodeDesc (scaled)
    ============================================================ */
@@ -2174,6 +2213,15 @@ Ca_MenuBar *ca_menu_bar(const Ca_MenuBarDesc *desc)
                 hdr->desc.font_size = desc->item_font_size;
         }
         hdr->desc.width = tw + hdr->desc.padding_left + hdr->desc.padding_right;
+        /* Header should fill the bar's full vertical extent so that
+           `align_items: center` actually has space to centre the label
+           in. Without this the header collapses to label height (=
+           font_size) and the menu label sits flush against the bar's
+           top edge. Only override when neither caller CSS nor an
+           explicit desc height has set one. */
+        if (hdr->desc.height <= 0.0f && bar->desc.height > 0.0f) {
+            hdr->desc.height = bar->desc.height;
+        }
 
         /* Derive dropdown item font size from the header node's CSS font size */
         if (mb->item_font_size <= 0.0f && hdr->desc.font_size > 0.0f)
@@ -2181,11 +2229,22 @@ Ca_MenuBar *ca_menu_bar(const Ca_MenuBarDesc *desc)
 
         menu->header_node = hdr;
 
-        /* Label inside header */
+        /* Label inside header.
+
+           lnd.height is set explicitly to the font size so the label
+           node hugs the glyph extent rather than auto-filling the
+           header's full height. With auto-fill, the text inside the
+           label paints at its bbox top, so labels look stuck to the
+           top of the bar instead of vertically centred. Sizing the
+           label to font_size lets the parent header's
+           `align_items: center` line it up on the cross axis the way
+           the user expects. */
         Ca_Label *lbl = alloc_label(g_ctx.window);
         if (lbl) {
             Ca_NodeDesc lnd = {0};
             lnd.width     = tw;
+            lnd.height    = hdr->desc.font_size > 0.0f
+                                ? hdr->desc.font_size : 12.0f;
             lnd.font_size = hdr->desc.font_size; /* render label at CSS-specified size */
             Ca_Node *ln = ca_node_add(hdr, &lnd);
             if (ln) {
@@ -2933,6 +2992,12 @@ void ca_widget_input_pass(Ca_Window *win)
             for (uint32_t ki = 0; ki < win->key_count; ++ki) {
                 int key = win->key_buf[ki];
                 if (key == 257 /* ENTER */ || key == 32 /* SPACE */) {
+                    /* Keyboard activation has no spatial position; mark
+                       the click pos invalid so handlers fall back to a
+                       sensible default (typically end-of-line). */
+                    fbtn->last_click_valid = false;
+                    fbtn->last_click_x = 0.0f;
+                    fbtn->last_click_y = 0.0f;
                     fbtn->on_click(fbtn, fbtn->click_data);
                     break;
                 }
@@ -3131,8 +3196,12 @@ void ca_widget_input_pass(Ca_Window *win)
                 Ca_Button *btn = &win->button_pool[i];
                 if (!btn->in_use || !btn->on_click || !btn->node) continue;
                 if (is_effectively_disabled(btn->node)) continue;
-                if (point_in_node(btn->node, mx, my))
+                if (point_in_node(btn->node, mx, my)) {
+                    btn->last_click_x     = mx - btn->node->x;
+                    btn->last_click_y     = my - btn->node->y;
+                    btn->last_click_valid = true;
                     btn->on_click(btn, btn->click_data);
+                }
             }
         }
 
@@ -3447,6 +3516,10 @@ void ca_widget_input_pass(Ca_Window *win)
                         .x = mx, .y = my,
                         .start_x = mx, .start_y = my,
                         .dx = 0, .dy = 0,
+                        .local_x = mx - best->x,
+                        .local_y = my - best->y,
+                        .node_w  = best->w,
+                        .node_h  = best->h,
                     };
                     ((Ca_DragFn)best->drag_fn_start)(&ev, best->drag_data);
                 }
@@ -3464,6 +3537,10 @@ void ca_widget_input_pass(Ca_Window *win)
                     .start_y = win->user_drag_start_y,
                     .dx = mx - win->user_drag_start_x,
                     .dy = my - win->user_drag_start_y,
+                    .local_x = mx - dn->x,
+                    .local_y = my - dn->y,
+                    .node_w  = dn->w,
+                    .node_h  = dn->h,
                 };
                 ((Ca_DragFn)dn->drag_fn_move)(&ev, dn->drag_data);
             }
@@ -3480,6 +3557,10 @@ void ca_widget_input_pass(Ca_Window *win)
                     .start_y = win->user_drag_start_y,
                     .dx = mx - win->user_drag_start_x,
                     .dy = my - win->user_drag_start_y,
+                    .local_x = dn ? mx - dn->x : 0.0f,
+                    .local_y = dn ? my - dn->y : 0.0f,
+                    .node_w  = dn ? dn->w : 0.0f,
+                    .node_h  = dn ? dn->h : 0.0f,
                 };
                 ((Ca_DragFn)dn->drag_fn_end)(&ev, dn->drag_data);
             }

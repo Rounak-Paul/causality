@@ -228,6 +228,12 @@ typedef struct Ca_DragEvent {
     float      x, y;           /* current mouse position */
     float      start_x, start_y; /* where mouse was when drag began */
     float      dx, dy;         /* x - start_x, y - start_y */
+    /* Mouse position in the receiving node's local coordinate space
+       (origin = node's top-left, before content padding).  Useful for
+       widgets like a text editor that need to convert a click to a
+       (row, column) without looking up the node geometry. */
+    float      local_x, local_y;
+    float      node_w, node_h;
 } Ca_DragEvent;
 
 typedef void (*Ca_DragFn)(const Ca_DragEvent *event, void *user_data);
@@ -414,6 +420,20 @@ CA_API void    ca_div_end(void);
 
 CA_API Ca_Button *ca_btn_begin(const Ca_BtnDesc *desc);
 CA_API void       ca_btn_end(void);
+
+/* Read the most recent click position (in pixels) relative to the
+   button's content top-left. Valid only inside an Ca_ClickFn body
+   for the same button. Returns true on success, false if the button
+   has not been clicked yet or is NULL. */
+CA_API bool ca_button_get_click_pos(const Ca_Button *button,
+                                    float *out_x, float *out_y);
+
+/* Measure the rendered pixel width of `text` in the window's default
+   UI font at `font_size`. Pass `font_size <= 0` to use the font's
+   default size. Returns 0 if no font is loaded or the text is empty. */
+CA_API float ca_measure_text_px(Ca_Window *window,
+                                const char *text,
+                                float font_size);
 
 CA_API void ca_list_begin(const Ca_DivDesc *desc); /* vertical, gap 4 */
 CA_API void ca_list_end(void);

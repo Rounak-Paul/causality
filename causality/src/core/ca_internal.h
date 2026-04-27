@@ -380,6 +380,12 @@ struct Ca_Button {
     uint32_t    text_color;  /* packed RGBA; 0 → white default */
     Ca_ClickFn  on_click;
     void       *click_data;
+    /* Pixel offset of the most recent click relative to the button's
+       top-left. Populated immediately before `on_click` is fired so
+       handlers can do hit-testing (e.g. column under the cursor). */
+    float       last_click_x;
+    float       last_click_y;
+    bool        last_click_valid;
     bool        in_use;
 };
 
