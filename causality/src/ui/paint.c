@@ -1389,6 +1389,22 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
                 c->overlay = true;
             }
 
+            /* Re-paint the header label on top of the highlight rect */
+            {
+                uint32_t glyph_start = win->draw_cmd_count;
+                Ca_Node tmp;
+                memset(&tmp, 0, sizeof(tmp));
+                tmp.in_use = true;
+                tmp.x = hdr->x; tmp.y = hdr->y;
+                tmp.w = hdr->w; tmp.h = hdr->h;
+                tmp.window = win;
+                tmp.desc.text_align = 1; /* centered */
+                tmp.desc.font_size = mb->item_font_size > 0.0f ? mb->item_font_size : 12.0f;
+                paint_text(win, font, &tmp, am->label, mb->text_color);
+                for (uint32_t gi = glyph_start; gi < win->draw_cmd_count; ++gi)
+                    win->draw_cmds[gi].overlay = true;
+            }
+
             const float sep_h = 8.0f;
             float item_h = 20.0f;
             float menu_w = 160.0f;

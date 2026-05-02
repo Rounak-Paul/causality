@@ -2200,8 +2200,6 @@ Ca_MenuBar *ca_menu_bar(const Ca_MenuBarDesc *desc)
             }
         }
 
-        float tw = measure_text_px(g_ctx.window, menu->label);
-
         /* Header node — padding & alignment via caller-supplied item_style */
         Ca_NodeDesc hnd = {0};
         hnd.align_items = CA_ALIGN_CENTER;
@@ -2219,6 +2217,18 @@ Ca_MenuBar *ca_menu_bar(const Ca_MenuBarDesc *desc)
             if (desc->item_font_size > 0.0f)
                 hdr->desc.font_size = desc->item_font_size;
         }
+
+        /* Measure label at the font size the header will actually render at,
+           not at the font atlas default size.  Measuring at the wrong size
+           produces a header that is wider than the rendered text, which makes
+           labels appear left-aligned instead of centred. */
+        float render_fs = hdr->desc.font_size > 0.0f
+                              ? hdr->desc.font_size
+                              : (g_ctx.window->instance->font
+                                     ? g_ctx.window->instance->font->default_size
+                                     : 12.0f);
+        float tw = ca_measure_text_px(g_ctx.window, menu->label, render_fs);
+
         hdr->desc.width = tw + hdr->desc.padding_left + hdr->desc.padding_right;
         /* Header should fill the bar's full vertical extent so that
            `align_items: center` actually has space to centre the label
