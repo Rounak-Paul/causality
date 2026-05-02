@@ -226,8 +226,6 @@ static void bake_style(stbtt_pack_context *ctx,
         offset += g_range_defs[r].count;
     }
 
-    stbtt_PackSetOversampling(ctx, 1, 1);
-
     stbtt_pack_range text_ranges[CA_FONT_TEXT_RANGES];
     for (int r = 0; r < CA_FONT_TEXT_RANGES; r++) {
         text_ranges[r].font_size                        = tier->baked_px;
@@ -236,6 +234,7 @@ static void bake_style(stbtt_pack_context *ctx,
         text_ranges[r].chardata_for_range               = tier->ranges[r].chardata;
         text_ranges[r].array_of_unicode_codepoints      = NULL;
     }
+    stbtt_PackSetOversampling(ctx, 2, 2);
     stbtt_PackFontRanges(ctx, font_data, 0, text_ranges, CA_FONT_TEXT_RANGES);
 
     stbtt_pack_range icon_ranges[CA_FONT_ICON_RANGES];
@@ -247,6 +246,7 @@ static void bake_style(stbtt_pack_context *ctx,
         icon_ranges[r].chardata_for_range               = tier->ranges[ri].chardata;
         icon_ranges[r].array_of_unicode_codepoints      = NULL;
     }
+    stbtt_PackSetOversampling(ctx, 1, 1);
     stbtt_PackFontRanges(ctx, font_data, 0, icon_ranges, CA_FONT_ICON_RANGES);
 
     /* Validation: confirm a sample of ASCII glyphs packed correctly */
