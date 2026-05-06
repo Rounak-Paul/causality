@@ -165,10 +165,11 @@ void ca_title_bar_init(Ca_Window *win)
     root->desc.overflow_y = 1; /* hidden — root itself does not scroll */
     root->dirty |= CA_DIRTY_LAYOUT | CA_DIRTY_CONTENT;
 
-    /* ---- Title bar node: horizontal strip, fixed 30 px ---- */
+    /* ---- Title bar node: horizontal strip, height scales with ui_scale ---- */
+    float sc_init = win->ui_scale > 0.0f ? win->ui_scale : 1.0f;
     Ca_NodeDesc tb = {0};
     tb.direction   = CA_HORIZONTAL;
-    tb.height      = 22.0f;
+    tb.height      = 22.0f * sc_init;
     tb.align_items = CA_ALIGN_CENTER;
     tb.background  = ca_color(0x16 / 255.0f, 0x16 / 255.0f, 0x1a / 255.0f, 1.0f);
     tb.overflow_x  = 1; /* hidden */
@@ -212,6 +213,13 @@ void ca_title_bar_rebuild(Ca_Window *win)
     /* ca_div_clear removes all children and pushes title_bar_node onto
        the widget context stack so new children become its children.    */
     ca_div_clear((Ca_Div *)win->title_bar_node);
+
+    /* Scale factor — all pixel sizes below are multiples of 22px @ 1x */
+    float sc = win->ui_scale > 0.0f ? win->ui_scale : 1.0f;
+
+    /* Keep the container's own height in sync with the current scale */
+    win->title_bar_node->desc.height = 22.0f * sc;
+    win->title_bar_node->dirty |= CA_DIRTY_LAYOUT;
 
     /* ---- Colours (self-contained — no CSS classes needed) ---- */
     const uint32_t COL_TEXT_DIM = ca_color(0x4a/255.f, 0x4e/255.f, 0x6a/255.f, 1.0f);
@@ -260,8 +268,8 @@ void ca_title_bar_rebuild(Ca_Window *win)
             .menus           = menu_descs,
             .menu_count      = win->titlebar_menu_count,
             .text_color      = COL_BTN,
-            .bar_height      = 22.0f,
-            .item_padding_lr = 4.0f,
+            .bar_height      = 22.0f * sc,
+            .item_padding_lr = 4.0f  * sc,
             .item_font_size  = 12.0f,
             /* dropdown_bg/border/hover/text intentionally omitted — defaults
                from widget.c match the context-menu popup style. */

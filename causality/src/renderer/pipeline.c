@@ -304,8 +304,11 @@ static const char *TEXT_VERT_GLSL =
     "}\n";
 
 /* Fragment shader: samples the R8 font atlas; alpha = atlas red channel.
-   Apple-style rendering: gamma-correct alpha for fuller, smoother glyphs
-   without hinting, preserving all glyph shape detail.                   */
+   Gamma correction: the atlas stores linear coverage values but the display
+   applies sRGB gamma, making thin strokes appear darker/thinner than intended.
+   pow(a, 1/2.2) ≈ pow(a, 0.455) would be a full sRGB pre-compensation, but
+   that makes glyphs look too heavy.  pow(a, 0.6) is a lighter touch that
+   recovers thinned strokes without over-bloating them.                  */
 static const char *TEXT_FRAG_GLSL =
     "#version 450\n"
     "\n"
@@ -317,7 +320,7 @@ static const char *TEXT_FRAG_GLSL =
     "\n"
     "void main() {\n"
     "    float a = texture(font_atlas, v_uv).r;\n"
-    "    a = pow(a, 0.45);\n"
+    "    a = pow(a, 0.6);\n"
     "    out_color = vec4(v_color.rgb, v_color.a * a);\n"
     "}\n";
 

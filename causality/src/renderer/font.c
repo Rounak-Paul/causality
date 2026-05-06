@@ -234,7 +234,9 @@ static void bake_style(stbtt_pack_context *ctx,
         text_ranges[r].chardata_for_range               = tier->ranges[r].chardata;
         text_ranges[r].array_of_unicode_codepoints      = NULL;
     }
-    stbtt_PackSetOversampling(ctx, 2, 2);
+    stbtt_PackSetOversampling(ctx, 3, 2);  /* 3x horizontal gives much crisper
+                                               sub-pixel positioning on Latin text;
+                                               2x vertical matches typical usage. */
     stbtt_PackFontRanges(ctx, font_data, 0, text_ranges, CA_FONT_TEXT_RANGES);
 
     stbtt_pack_range icon_ranges[CA_FONT_ICON_RANGES];
@@ -300,9 +302,12 @@ static bool font_create_internal(Ca_Instance *inst, GLFWwindow *glfw_win,
     }
 
     /* Pack both styles into a shared atlas.
-       2048x2048 R8 comfortably holds 2 styles x ~1850 glyphs at 12px. */
-    out_font->atlas_w = 2048;
-    out_font->atlas_h = 2048;
+       4096x4096 R8 is needed to hold 2 styles x ~1850 glyphs at the baked
+       pixel size (font_px * content_scale, up to 56px on a 2x Retina display
+       with ED_FONT_PX=28).  2048x2048 was sized for 12px — too small for
+       HiDPI baking. */
+    out_font->atlas_w = 4096;
+    out_font->atlas_h = 4096;
     size_t bmp_sz = (size_t)out_font->atlas_w * out_font->atlas_h;
     unsigned char *bitmap = (unsigned char *)calloc(1, bmp_sz);
     if (!bitmap) return false;

@@ -436,6 +436,7 @@ void ca_window_set_scale(Ca_Window *window, float scale)
     if (scale < 0.25f) scale = 0.25f;
     if (scale > 4.0f)  scale = 4.0f;
     window->ui_scale = scale;
+    window->titlebar_needs_rebuild = true;
     if (window->root)
         window->root->dirty |= CA_DIRTY_LAYOUT | CA_DIRTY_CONTENT;
 }
