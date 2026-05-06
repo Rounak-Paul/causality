@@ -1403,7 +1403,7 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
                         c->type = CA_DRAW_RECT;
                         c->x = mx_pos + 8.0f; c->y = iy + sep_h * 0.5f - 0.5f;
                         c->w = menu_w - 16.0f; c->h = 1.0f;
-                        c->r = 0.200f; c->g = 0.200f; c->b = 0.267f; c->a = 1.0f;
+                        { float _r, _g, _b, _a; unpack_color(CA_THEME_POPUP_BORDER, &_r, &_g, &_b, &_a); c->r = _r; c->g = _g; c->b = _b; c->a = _a; }
                         c->in_use = true;
                         c->overlay = true;
                     }
@@ -1487,14 +1487,14 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
             }
 
             const float sep_h = 8.0f;
-            float item_h = 20.0f;
-            float menu_w = 160.0f;
+            float item_h = 24.0f;
+            float menu_w = 180.0f;
             float drop_item_fs = mb->item_font_size > 0.0f ? mb->item_font_size : 12.0f;
             float drop_x = hdr->x;
             float drop_y = hdr->y + hdr->h;
 
-            /* Compute total menu height, separators take less space */
-            float menu_h = 0.0f;
+            /* Compute total menu height (6px top+bottom inset, same as ctx menus) */
+            float menu_h = 6.0f;
             for (int ii = 0; ii < am->item_count; ++ii)
                 menu_h += am->items[ii].separator ? sep_h : item_h;
 
@@ -1505,7 +1505,7 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
                 c->type = CA_DRAW_RECT;
                 c->x = drop_x; c->y = drop_y;
                 c->w = menu_w; c->h = menu_h;
-                c->corner_radius = 3.0f;
+                c->corner_radius = 4.0f;
                 unpack_color(mb->dropdown_bg, &c->r, &c->g, &c->b, &c->a);
                 c->in_use = true;
                 c->overlay = true;
@@ -1516,7 +1516,7 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
             }
 
             /* Dropdown items */
-            float iy = drop_y;
+            float iy = drop_y + 3.0f; /* 3px top inset, same as ctx menus */
             for (int ii = 0; ii < am->item_count; ++ii) {
                 float this_h = am->items[ii].separator ? sep_h : item_h;
 
@@ -1546,8 +1546,9 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
                         Ca_DrawCmd *c = &win->draw_cmds[win->draw_cmd_count++];
                         memset(c, 0, sizeof(*c));
                         c->type = CA_DRAW_RECT;
-                        c->x = drop_x; c->y = iy;
-                        c->w = menu_w; c->h = this_h;
+                        c->x = drop_x + 2.0f; c->y = iy;
+                        c->w = menu_w - 4.0f; c->h = this_h;
+                        c->corner_radius = 3.0f;
                         unpack_color(mb->dropdown_hover, &c->r, &c->g, &c->b, &c->a);
                         c->in_use  = true;
                         c->overlay = true;
@@ -1594,13 +1595,13 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
             /* Sub-menu panel (shown when active_sub >= 0) */
             if (am->active_sub >= 0 && am->active_sub < am->item_count) {
                 int   asi        = am->active_sub;
-                float sub_item_h = 20.0f;
-                float sub_menu_w = 160.0f;
+                float sub_item_h = 24.0f;
+                float sub_menu_w = 180.0f;
                 float sub_x      = drop_x + menu_w;
                 float sub_y      = drop_y;
                 for (int jj = 0; jj < asi; ++jj)
                     sub_y += am->items[jj].separator ? sep_h : item_h;
-                float sub_h      = sub_item_h * (float)am->items[asi].sub_item_count;
+                float sub_h      = sub_item_h * (float)am->items[asi].sub_item_count + 6.0f;
 
                 /* Sub-menu background */
                 if (win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
@@ -1609,7 +1610,7 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
                     c->type = CA_DRAW_RECT;
                     c->x = sub_x; c->y = sub_y;
                     c->w = sub_menu_w; c->h = sub_h;
-                    c->corner_radius = 3.0f;
+                    c->corner_radius = 4.0f;
                     unpack_color(mb->dropdown_bg, &c->r, &c->g, &c->b, &c->a);
                     c->in_use      = true;
                     c->overlay     = true;
@@ -1619,8 +1620,9 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
                                  &c->border_b, &c->border_a);
                 }
 
+                float sub_iy = sub_y + 3.0f; /* 3px top inset */
                 for (int si = 0; si < am->items[asi].sub_item_count; ++si) {
-                    float siy = sub_y + sub_item_h * (float)si;
+                    float siy = sub_iy + sub_item_h * (float)si;
 
                     /* Hover highlight */
                     if (win->mouse_x >= sub_x && win->mouse_x <= sub_x + sub_menu_w &&
@@ -1629,8 +1631,9 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
                             Ca_DrawCmd *c = &win->draw_cmds[win->draw_cmd_count++];
                             memset(c, 0, sizeof(*c));
                             c->type = CA_DRAW_RECT;
-                            c->x = sub_x; c->y = siy;
-                            c->w = sub_menu_w; c->h = sub_item_h;
+                            c->x = sub_x + 2.0f; c->y = siy;
+                            c->w = sub_menu_w - 4.0f; c->h = sub_item_h;
+                            c->corner_radius = 3.0f;
                             unpack_color(mb->dropdown_hover, &c->r, &c->g, &c->b, &c->a);
                             c->in_use  = true;
                             c->overlay = true;

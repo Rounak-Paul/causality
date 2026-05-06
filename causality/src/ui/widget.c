@@ -2182,7 +2182,7 @@ Ca_MenuBar *ca_menu_bar(const Ca_MenuBarDesc *desc)
     /* Theme colors — use caller-provided or sensible defaults */
     mb->header_highlight = desc->header_highlight ? desc->header_highlight : CA_THEME_BG_OVERLAY;
     mb->dropdown_bg      = desc->dropdown_bg      ? desc->dropdown_bg      : CA_THEME_POPUP_BG;
-    mb->dropdown_border  = desc->dropdown_border  ? desc->dropdown_border  : CA_THEME_BG_SURFACE;
+    mb->dropdown_border  = desc->dropdown_border  ? desc->dropdown_border  : CA_THEME_POPUP_BORDER;
     mb->dropdown_hover   = desc->dropdown_hover   ? desc->dropdown_hover   : CA_THEME_BG_OVERLAY;
     mb->dropdown_text    = desc->dropdown_text    ? desc->dropdown_text    : CA_THEME_POPUP_TEXT;
     mb->text_color       = desc->text_color       ? desc->text_color       : CA_THEME_TEXT_MUTED;

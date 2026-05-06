@@ -263,10 +263,8 @@ void ca_title_bar_rebuild(Ca_Window *win)
             .bar_height      = 22.0f,
             .item_padding_lr = 4.0f,
             .item_font_size  = 12.0f,
-            .dropdown_bg     = ca_color(0x16/255.f, 0x16/255.f, 0x1a/255.f, 1.0f),
-            .dropdown_border = ca_color(0x2a/255.f, 0x2a/255.f, 0x35/255.f, 1.0f),
-            .dropdown_hover  = ca_color(0x24/255.f, 0x24/255.f, 0x30/255.f, 1.0f),
-            .dropdown_text   = ca_color(0xc8/255.f, 0xd0/255.f, 0xff/255.f, 1.0f),
+            /* dropdown_bg/border/hover/text intentionally omitted — defaults
+               from widget.c match the context-menu popup style. */
         });
     }
 
