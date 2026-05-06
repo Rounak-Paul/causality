@@ -228,6 +228,7 @@ typedef struct {
 #define CA_MENU_LABEL_MAX            64
 #define CA_MAX_SUB_ITEMS_PER_ITEM     8
 #define CA_MAX_SELECT_OPTIONS        16
+#define CA_SELECT_MAX_VISIBLE         8   /* max options visible without scrolling */
 #define CA_MAX_TAB_LABELS            16
 #define CA_MAX_CTXMENU_ITEMS         16
 
@@ -454,6 +455,8 @@ struct Ca_Select {
     int           option_count;
     int           selected;
     bool          open;
+    int           scroll_offset;  /* index of first visible option */
+    float         scroll_accum;   /* sub-integer scroll accumulator  */
     Ca_SelectFn   on_change;
     void         *change_data;
     bool          in_use;

@@ -1236,34 +1236,54 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
             if (!sel->open) continue;
             Ca_Node *n = sel->node;
 
-            float opt_h = n->h;
-            float drop_y = n->y + n->h;
-            /* Dropdown background */
+            float opt_h   = n->h;
+            float drop_y  = n->y + n->h;
+            int   visible = sel->option_count < CA_SELECT_MAX_VISIBLE
+                            ? sel->option_count : CA_SELECT_MAX_VISIBLE;
+            int   scroll  = sel->scroll_offset;
+
+            /* Clamp scroll so we never exceed available options */
+            if (scroll > sel->option_count - visible) scroll = sel->option_count - visible;
+            if (scroll < 0) scroll = 0;
+
+            /* Dropdown background — height capped to visible rows */
             if (win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
                 Ca_DrawCmd *c = &win->draw_cmds[win->draw_cmd_count++];
                 memset(c, 0, sizeof(*c));
                 c->type = CA_DRAW_RECT;
                 c->x = n->x; c->y = drop_y;
-                c->w = n->w; c->h = opt_h * (float)sel->option_count;
+                c->w = n->w; c->h = opt_h * (float)visible;
                 c->corner_radius = 4.0f;
-                { float _r, _g, _b, _a; unpack_color(CA_THEME_POPUP_BG, &_r, &_g, &_b, &_a); c->r = _r; c->g = _g; c->b = _b; c->a = _a; }
+                { float _r, _g, _b, _a; unpack_color(CA_THEME_POPUP_BG, &_r, &_g, &_b, &_a); c->r = _r; c->g = _g; c->b = _b; c->a = 1.0f; }
+                /* Visible border so the popup is distinguishable from adjacent panels */
+                c->border_width   = 1.0f;
+                c->border_r = 0.200f; c->border_g = 0.200f; c->border_b = 0.267f; c->border_a = 1.0f;
                 c->in_use = true;
                 c->overlay = true;
             }
-            /* Options */
-            for (int oi = 0; oi < sel->option_count; ++oi) {
-                float oy = drop_y + opt_h * (float)oi;
-                if (oi == sel->selected && win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
+            /* Options — only the visible window */
+            for (int vi = 0; vi < visible; ++vi) {
+                int oi = scroll + vi;
+                if (oi >= sel->option_count) break;
+                float oy = drop_y + opt_h * (float)vi;
+                bool is_selected = (oi == sel->selected);
+                bool is_hovered  = ((double)n->x <= win->mouse_x && win->mouse_x <= (double)(n->x + n->w) &&
+                                    (double)oy   <= win->mouse_y && win->mouse_y <= (double)(oy + opt_h));
+                if ((is_selected || is_hovered) && win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
                     Ca_DrawCmd *c = &win->draw_cmds[win->draw_cmd_count++];
                     memset(c, 0, sizeof(*c));
                     c->type = CA_DRAW_RECT;
                     c->x = n->x; c->y = oy; c->w = n->w; c->h = opt_h;
-                    { float _r, _g, _b, _a; unpack_color(CA_THEME_BG_OVERLAY, &_r, &_g, &_b, &_a); c->r = _r; c->g = _g; c->b = _b; c->a = _a; }
+                    if (is_selected)
+                        { float _r, _g, _b, _a; unpack_color(CA_THEME_BG_OVERLAY, &_r, &_g, &_b, &_a); c->r = _r; c->g = _g; c->b = _b; c->a = _a; }
+                    else
+                        { float _r, _g, _b, _a; unpack_color(CA_THEME_BG_SURFACE, &_r, &_g, &_b, &_a); c->r = _r; c->g = _g; c->b = _b; c->a = _a; }
                     c->in_use = true;
                     c->overlay = true;
                 }
                 uint32_t glyph_start = win->draw_cmd_count;
                 Ca_Node tmp = *n;
+                tmp.parent = NULL; /* break parent chain — overlay must not inherit parent clip */
                 tmp.x = n->x; tmp.y = oy; tmp.h = opt_h;
                 paint_text(win, font, &tmp, sel->options[oi], 0);
                 for (uint32_t gi = glyph_start; gi < win->draw_cmd_count; ++gi)
@@ -1330,39 +1350,100 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
 
     /* ---- Context menus ---- */
     if (win->ctxmenu_pool && font) {
+        const float item_h  = 24.0f;
+        const float sep_h   =  8.0f;
+        const float pad_x   = 12.0f;
+        const float menu_w  = 180.0f;
+
         for (uint32_t i = 0; i < CA_MAX_CTXMENUS_PER_WINDOW; ++i) {
             Ca_CtxMenu *cm = &win->ctxmenu_pool[i];
             if (!cm->in_use || !cm->open || cm->item_count <= 0) continue;
 
-            float item_h = 20.0f;
-            float menu_w = 120.0f;
-            float menu_h = item_h * (float)cm->item_count;
+            /* Compute total height (items + separators) */
+            float menu_h = 6.0f; /* top + bottom inset */
+            for (int mi = 0; mi < cm->item_count; ++mi) {
+                bool is_sep = (cm->items[mi][0] == '-' && cm->items[mi][1] == '\0');
+                menu_h += is_sep ? sep_h : item_h;
+            }
 
+            /* Clamp to window edges */
+            float mx_pos = cm->open_x;
+            float my_pos = cm->open_y;
+            if (win->sc.extent.width  > 0 && mx_pos + menu_w > (float)win->sc.extent.width)
+                mx_pos = (float)win->sc.extent.width  - menu_w;
+            if (win->sc.extent.height > 0 && my_pos + menu_h > (float)win->sc.extent.height)
+                my_pos = (float)win->sc.extent.height - menu_h;
+            if (mx_pos < 0) mx_pos = 0;
+            if (my_pos < 0) my_pos = 0;
+
+            /* Background with border */
             if (win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
                 Ca_DrawCmd *c = &win->draw_cmds[win->draw_cmd_count++];
                 memset(c, 0, sizeof(*c));
                 c->type = CA_DRAW_RECT;
-                c->x = cm->open_x; c->y = cm->open_y;
+                c->x = mx_pos; c->y = my_pos;
                 c->w = menu_w; c->h = menu_h;
                 c->corner_radius = 4.0f;
-                { float _r, _g, _b, _a; unpack_color(CA_THEME_POPUP_BG, &_r, &_g, &_b, &_a); c->r = _r; c->g = _g; c->b = _b; c->a = _a; }
+                { float _r, _g, _b, _a; unpack_color(CA_THEME_POPUP_BG, &_r, &_g, &_b, &_a); c->r = _r; c->g = _g; c->b = _b; c->a = 1.0f; }
+                c->border_width   = 1.0f;
+                c->border_r = 0.200f; c->border_g = 0.200f; c->border_b = 0.267f; c->border_a = 1.0f;
                 c->in_use = true;
                 c->overlay = true;
             }
+
+            /* Items */
+            float iy = my_pos + 3.0f; /* top inset */
             for (int mi = 0; mi < cm->item_count; ++mi) {
+                bool is_sep = (cm->items[mi][0] == '-' && cm->items[mi][1] == '\0');
+                if (is_sep) {
+                    /* Separator line */
+                    if (win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
+                        Ca_DrawCmd *c = &win->draw_cmds[win->draw_cmd_count++];
+                        memset(c, 0, sizeof(*c));
+                        c->type = CA_DRAW_RECT;
+                        c->x = mx_pos + 8.0f; c->y = iy + sep_h * 0.5f - 0.5f;
+                        c->w = menu_w - 16.0f; c->h = 1.0f;
+                        c->r = 0.200f; c->g = 0.200f; c->b = 0.267f; c->a = 1.0f;
+                        c->in_use = true;
+                        c->overlay = true;
+                    }
+                    iy += sep_h;
+                    continue;
+                }
+
+                /* Hover highlight */
+                bool hovered = ((double)mx_pos <= win->mouse_x &&
+                                win->mouse_x   <= (double)(mx_pos + menu_w) &&
+                                (double)iy     <= win->mouse_y &&
+                                win->mouse_y   <= (double)(iy + item_h));
+                if (hovered && win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
+                    Ca_DrawCmd *c = &win->draw_cmds[win->draw_cmd_count++];
+                    memset(c, 0, sizeof(*c));
+                    c->type = CA_DRAW_RECT;
+                    c->x = mx_pos + 2.0f; c->y = iy;
+                    c->w = menu_w - 4.0f; c->h = item_h;
+                    c->corner_radius = 3.0f;
+                    { float _r, _g, _b, _a; unpack_color(CA_THEME_BG_OVERLAY, &_r, &_g, &_b, &_a); c->r = _r; c->g = _g; c->b = _b; c->a = _a; }
+                    c->in_use = true;
+                    c->overlay = true;
+                }
+
+                /* Item label */
                 uint32_t glyph_start = win->draw_cmd_count;
                 Ca_Node tmp;
                 memset(&tmp, 0, sizeof(tmp));
                 tmp.in_use = true;
-                tmp.x = cm->open_x + 8.0f;
-                tmp.y = cm->open_y + item_h * (float)mi;
-                tmp.w = menu_w - 16.0f;
+                tmp.x = mx_pos + pad_x;
+                tmp.y = iy;
+                tmp.w = menu_w - pad_x * 2.0f;
                 tmp.h = item_h;
                 tmp.window = win;
                 tmp.desc.font_size = 12.0f;
                 paint_text(win, font, &tmp, cm->items[mi], CA_THEME_POPUP_TEXT);
                 for (uint32_t gi = glyph_start; gi < win->draw_cmd_count; ++gi)
                     win->draw_cmds[gi].overlay = true;
+
+                iy += item_h;
             }
         }
     }

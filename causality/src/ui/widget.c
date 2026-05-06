@@ -1209,6 +1209,35 @@ bool ca_input_is_focused(const Ca_TextInput *input)
     return win && win->focused_node == input->node;
 }
 
+void ca_input_focus(Ca_TextInput *input)
+{
+    if (!input || !input->node) return;
+    Ca_Window *win = input->node->window;
+    if (!win) return;
+    Ca_Node *old = win->focused_node;
+    win->focused_node = input->node;
+    if (old && old != input->node) old->dirty |= CA_DIRTY_CONTENT;
+    input->node->dirty |= CA_DIRTY_CONTENT;
+    /* Select all text for convenient overwrite */
+    input->sel_start = 0;
+    input->cursor    = (int)strlen(input->text);
+}
+
+/* Returns true if the given GLFW key was pressed (or held) this frame on the
+   window that owns this input.  Useful for callers that want to react to
+   Enter / Escape without needing access to Ca_Window internals. */
+bool ca_input_key_pressed(const Ca_TextInput *input, int glfw_key)
+{
+    if (!input || !input->node) return false;
+    Ca_Window *win = input->node->window;
+    if (!win) return false;
+    for (uint32_t i = 0; i < win->key_count; ++i) {
+        if (win->key_buf[i] == glfw_key && win->key_action_buf[i] != 0)
+            return true;
+    }
+    return false;
+}
+
 /* ---- Unified ca_set_text / ca_get_text ---- */
 
 void ca__set_text(void *widget, const char *text)
@@ -2288,7 +2317,18 @@ void ca_context_menu(const Ca_CtxMenuDesc *desc)
 
     Ca_Node *parent = ctx_top();
     if (parent->child_count == 0) return;
-    Ca_Node *target = parent->children[parent->child_count - 1];
+
+    /* When called inside a ca_tree_node_begin/end block the context stack
+       top is the tree node container.  Its children[0] is always the header
+       row (the actual visible/clickable row), regardless of how many child
+       entity nodes were added in previous frames.  Using children[child_count-1]
+       would target the last expanded child — wrong.  For every other container
+       the last child is correct (it was just created). */
+    Ca_Node *target;
+    if (parent->widget_type == CA_WIDGET_TREENODE)
+        target = parent->children[0];  /* always the header row */
+    else
+        target = parent->children[parent->child_count - 1];
 
     /* Reuse an existing ctxmenu already bound to this node (reactive
        reconcile rebuilds invoke ca_context_menu every frame on the
@@ -2301,12 +2341,13 @@ void ca_context_menu(const Ca_CtxMenuDesc *desc)
             if (c->in_use && c->node == target) { cm = c; break; }
         }
     }
+    bool reused = (cm != NULL);
     if (!cm) cm = alloc_ctxmenu(win);
     if (!cm) return;
 
     cm->node = target;
     cm->in_use = true;
-    cm->open = false;
+    if (!reused) cm->open = false;  /* preserve open state across reconcile rebuilds */
     cm->item_count = desc->item_count;
     if (cm->item_count > CA_MAX_CTXMENU_ITEMS)
         cm->item_count = CA_MAX_CTXMENU_ITEMS;
@@ -2963,22 +3004,57 @@ void ca_widget_input_pass(Ca_Window *win)
     /* --- Scroll wheel handling (skipped if dragging scrollbar) --- */
     if (win->scroll_this_frame && win->node_pool && !win->scrollbar_drag_node) {
         static const float SCROLL_SPEED = 30.0f;
-        Ca_Node *scroll_target = NULL;
-        for (uint32_t i = 0; i < CA_MAX_NODES_PER_WINDOW; ++i) {
-            Ca_Node *n = &win->node_pool[i];
-            if (!n->in_use) continue;
-            if (n->desc.overflow_y < 2) continue;
-            if (!point_in_node(n, mx, my)) continue;
-            if (!scroll_target || (n->w * n->h < scroll_target->w * scroll_target->h))
-                scroll_target = n;
+
+        /* First: if any select dropdown is open and the cursor is over it, scroll its list */
+        bool select_scroll_consumed = false;
+        if (win->select_pool) {
+            for (uint32_t i = 0; i < CA_MAX_SELECTS_PER_WINDOW; ++i) {
+                Ca_Select *sel = &win->select_pool[i];
+                if (!sel->in_use || !sel->node || !sel->open) continue;
+                /* Hit-test the visible dropdown panel */
+                float drop_y = sel->node->y + sel->node->h;
+                int visible = sel->option_count < CA_SELECT_MAX_VISIBLE
+                              ? sel->option_count : CA_SELECT_MAX_VISIBLE;
+                float drop_h = sel->node->h * (float)visible;
+                if (mx >= sel->node->x && mx <= sel->node->x + sel->node->w &&
+                    my >= drop_y && my <= drop_y + drop_h) {
+                    int max_offset = sel->option_count - visible;
+                    if (max_offset < 0) max_offset = 0;
+                    /* Accumulate fractional scroll for smooth trackpad support */
+                    sel->scroll_accum += (float)win->scroll_dy;
+                    int steps = (int)sel->scroll_accum;
+                    if (steps != 0) {
+                        sel->scroll_offset -= steps;
+                        sel->scroll_accum  -= (float)steps;
+                    }
+                    if (sel->scroll_offset < 0) sel->scroll_offset = 0;
+                    if (sel->scroll_offset > max_offset) sel->scroll_offset = max_offset;
+                    sel->node->dirty |= CA_DIRTY_CONTENT;
+                    select_scroll_consumed = true;
+                    break;
+                }
+            }
         }
-        if (scroll_target) {
-            scroll_target->scroll_y -= (float)win->scroll_dy * SCROLL_SPEED;
-            float max_scroll = scroll_target->content_h - scroll_target->h;
-            if (max_scroll < 0) max_scroll = 0;
-            if (scroll_target->scroll_y < 0) scroll_target->scroll_y = 0;
-            if (scroll_target->scroll_y > max_scroll) scroll_target->scroll_y = max_scroll;
-            scroll_target->dirty |= CA_DIRTY_LAYOUT | CA_DIRTY_CONTENT;
+
+        /* Then: normal scroll container handling (skipped if dropdown consumed scroll) */
+        if (!select_scroll_consumed) {
+            Ca_Node *scroll_target = NULL;
+            for (uint32_t i = 0; i < CA_MAX_NODES_PER_WINDOW; ++i) {
+                Ca_Node *n = &win->node_pool[i];
+                if (!n->in_use) continue;
+                if (n->desc.overflow_y < 2) continue;
+                if (!point_in_node(n, mx, my)) continue;
+                if (!scroll_target || (n->w * n->h < scroll_target->w * scroll_target->h))
+                    scroll_target = n;
+            }
+            if (scroll_target) {
+                scroll_target->scroll_y -= (float)win->scroll_dy * SCROLL_SPEED;
+                float max_scroll = scroll_target->content_h - scroll_target->h;
+                if (max_scroll < 0) max_scroll = 0;
+                if (scroll_target->scroll_y < 0) scroll_target->scroll_y = 0;
+                if (scroll_target->scroll_y > max_scroll) scroll_target->scroll_y = max_scroll;
+                scroll_target->dirty |= CA_DIRTY_LAYOUT | CA_DIRTY_CONTENT;
+            }
         }
     }
 
@@ -3183,6 +3259,60 @@ void ca_widget_input_pass(Ca_Window *win)
             }
         }
 
+        if (!click_consumed && win->ctxmenu_pool) {
+            /* Context menu item clicks — checked before normal widget clicks.
+               One menu can be open at a time.  If the click lands on a menu
+               item we fire the callback and consume the event; if it lands
+               outside we just close the menu without consuming, so the click
+               can still reach the tree node / button underneath. */
+            static const float CTX_ITEM_H = 24.0f;
+            static const float CTX_SEP_H  =  8.0f;
+            static const float CTX_MENU_W = 180.0f;
+            for (uint32_t i = 0; i < CA_MAX_CTXMENUS_PER_WINDOW; ++i) {
+                Ca_CtxMenu *cm = &win->ctxmenu_pool[i];
+                if (!cm->in_use || !cm->open) continue;
+
+                /* Compute menu height (mirrors paint.c logic) */
+                float menu_h = 6.0f; /* top + bottom inset */
+                for (int mi = 0; mi < cm->item_count; ++mi) {
+                    bool is_sep = (cm->items[mi][0] == '-' && cm->items[mi][1] == '\0');
+                    menu_h += is_sep ? CTX_SEP_H : CTX_ITEM_H;
+                }
+
+                /* Apply same screen-edge clamping as paint to get display bounds */
+                float mx_pos = cm->open_x;
+                float my_pos = cm->open_y;
+                if ((int)win->sc.extent.width  > 0 && mx_pos + CTX_MENU_W > (float)win->sc.extent.width)
+                    mx_pos = (float)win->sc.extent.width  - CTX_MENU_W;
+                if ((int)win->sc.extent.height > 0 && my_pos + menu_h > (float)win->sc.extent.height)
+                    my_pos = (float)win->sc.extent.height - menu_h;
+                if (mx_pos < 0.0f) mx_pos = 0.0f;
+                if (my_pos < 0.0f) my_pos = 0.0f;
+
+                bool inside_menu = (mx >= mx_pos && mx <= mx_pos + CTX_MENU_W &&
+                                    my >= my_pos && my <= my_pos + menu_h);
+
+                cm->open = false;
+                if (cm->node) cm->node->dirty |= CA_DIRTY_CONTENT;
+
+                if (inside_menu) {
+                    float iy = my_pos + 3.0f; /* top inset (mirrors paint) */
+                    for (int mi = 0; mi < cm->item_count; ++mi) {
+                        bool is_sep = (cm->items[mi][0] == '-' && cm->items[mi][1] == '\0');
+                        float this_h = is_sep ? CTX_SEP_H : CTX_ITEM_H;
+                        if (!is_sep && my >= iy && my <= iy + this_h) {
+                            if (cm->on_select)
+                                cm->on_select(mi, cm->select_data);
+                            break;
+                        }
+                        iy += this_h;
+                    }
+                    click_consumed = true;
+                }
+                break; /* only one menu open at a time */
+            }
+        }
+
         if (!click_consumed) {
         /* Click on an input or button focuses it */
         Ca_Node *clicked_focus = NULL;
@@ -3292,29 +3422,47 @@ void ca_widget_input_pass(Ca_Window *win)
                 if (!sel->in_use || !sel->node) continue;
                 if (is_effectively_disabled(sel->node)) continue;
                 if (sel->open) {
-                    /* Check if clicked on a dropdown option */
+                    /* Check if clicked on a visible dropdown option */
                     float opt_y = sel->node->y + sel->node->h;
                     float opt_h = sel->node->h;
-                    for (int oi = 0; oi < sel->option_count; ++oi) {
-                        float oy = opt_y + opt_h * (float)oi;
+                    int   visible = sel->option_count < CA_SELECT_MAX_VISIBLE
+                                    ? sel->option_count : CA_SELECT_MAX_VISIBLE;
+                    int   scroll  = sel->scroll_offset;
+                    if (scroll > sel->option_count - visible) scroll = sel->option_count - visible;
+                    if (scroll < 0) scroll = 0;
+                    bool clicked_option = false;
+                    for (int vi = 0; vi < visible; ++vi) {
+                        float oy = opt_y + opt_h * (float)vi;
                         if (mx >= sel->node->x && mx <= sel->node->x + sel->node->w &&
                             my >= oy && my <= oy + opt_h) {
-                            sel->selected = oi;
+                            sel->selected = scroll + vi;
                             sel->open = false;
+                            sel->scroll_accum = 0.0f;
                             sel->node->dirty |= CA_DIRTY_CONTENT;
                             if (sel->on_change) sel->on_change(sel, sel->change_data);
                             select_handled = true;
+                            clicked_option = true;
                             break;
                         }
                     }
-                    if (!select_handled) {
+                    if (!clicked_option) {
                         /* Click anywhere else closes the dropdown */
                         sel->open = false;
+                        sel->scroll_accum = 0.0f;
                         sel->node->dirty |= CA_DIRTY_CONTENT;
                         select_handled = true;
                     }
                 } else if (point_in_node(sel->node, mx, my)) {
                     sel->open = true;
+                    /* Scroll so selected item is visible */
+                    {
+                        int visible = sel->option_count < CA_SELECT_MAX_VISIBLE
+                                      ? sel->option_count : CA_SELECT_MAX_VISIBLE;
+                        if (sel->selected >= sel->scroll_offset + visible)
+                            sel->scroll_offset = sel->selected - visible + 1;
+                        else if (sel->selected < sel->scroll_offset)
+                            sel->scroll_offset = sel->selected;
+                    }
                     sel->node->dirty |= CA_DIRTY_CONTENT;
                     select_handled = true;
                 }
@@ -3393,21 +3541,35 @@ void ca_widget_input_pass(Ca_Window *win)
     }
 
     /* --- Right-click for context menus --- */
-    if (win->mouse_buttons[1] && win->ctxmenu_pool) {
-        /* Check mouse_buttons[1] (right button) just became pressed */
+    if (win->ctxmenu_pool) {
         static bool prev_right = false;
         bool right_now = win->mouse_buttons[1];
         if (right_now && !prev_right) {
+            /* Close any currently-open context menu first */
+            for (uint32_t i = 0; i < CA_MAX_CTXMENUS_PER_WINDOW; ++i) {
+                Ca_CtxMenu *cm = &win->ctxmenu_pool[i];
+                if (cm->in_use && cm->open) {
+                    cm->open = false;
+                    if (cm->node) cm->node->dirty |= CA_DIRTY_CONTENT;
+                }
+            }
+            /* Find the most specific (smallest-area) context menu under cursor.
+               This ensures a tree-node menu wins over its parent container. */
+            Ca_CtxMenu *best      = NULL;
+            float       best_area = 1e30f;
             for (uint32_t i = 0; i < CA_MAX_CTXMENUS_PER_WINDOW; ++i) {
                 Ca_CtxMenu *cm = &win->ctxmenu_pool[i];
                 if (!cm->in_use || !cm->node) continue;
                 if (point_in_node(cm->node, mx, my)) {
-                    cm->open = true;
-                    cm->open_x = mx;
-                    cm->open_y = my;
-                    cm->node->dirty |= CA_DIRTY_CONTENT;
-                    break;
+                    float area = cm->node->w * cm->node->h;
+                    if (area < best_area) { best_area = area; best = cm; }
                 }
+            }
+            if (best) {
+                best->open   = true;
+                best->open_x = mx;
+                best->open_y = my;
+                if (best->node) best->node->dirty |= CA_DIRTY_CONTENT;
             }
         }
         prev_right = right_now;
