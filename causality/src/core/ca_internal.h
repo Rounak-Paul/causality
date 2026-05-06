@@ -501,6 +501,8 @@ struct Ca_Table {
 struct Ca_Tooltip {
     Ca_Node      *node;       /* the target element */
     char          text[CA_LABEL_TEXT_MAX];
+    char          style[CA_NODE_CLASS_MAX]; /* optional CSS class string */
+    float         font_size;  /* resolved from CSS; 0 = use default */
     bool          in_use;
 };
 

@@ -224,6 +224,7 @@ CA_API void         ca_tree_end(void);
 CA_API Ca_TreeNode *ca_tree_node_begin(const Ca_TreeNodeDesc *desc);
 CA_API void         ca_tree_node_end(void);
 CA_API bool         ca_tree_node_expanded(const Ca_TreeNode *n);
+CA_API void         ca_tree_node_set_expanded(Ca_TreeNode *n, bool expanded);
 
 /* Table */
 CA_API void ca_table_begin(const Ca_TableDesc *desc);

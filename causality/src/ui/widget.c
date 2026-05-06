@@ -2003,6 +2003,19 @@ bool ca_tree_node_expanded(const Ca_TreeNode *n)
     return n->expanded;
 }
 
+void ca_tree_node_set_expanded(Ca_TreeNode *n, bool expanded)
+{
+    assert(n && n->in_use && n->node);
+    if (n->expanded == expanded) return;
+    n->expanded = expanded;
+    /* Mirror the hide/show logic from the click handler */
+    for (uint32_t ci = 1; ci < n->node->child_count; ++ci) {
+        n->node->children[ci]->desc.hidden = !expanded;
+        n->node->children[ci]->dirty |= CA_DIRTY_LAYOUT | CA_DIRTY_CONTENT;
+    }
+    n->node->dirty |= CA_DIRTY_LAYOUT | CA_DIRTY_CONTENT;
+}
+
 /* ============================================================
    PUBLIC — Table
    ============================================================ */
@@ -2131,18 +2144,55 @@ void ca_table_cell(const Ca_TextDesc *desc)
 void ca_tooltip(const Ca_TooltipDesc *desc)
 {
     assert(g_ctx.active && desc);
-    Ca_Tooltip *tt = alloc_tooltip(g_ctx.window);
-    if (!tt) return;
 
-    /* Attach to the last child of the current parent (the element just created) */
     Ca_Node *parent = ctx_top();
     if (parent->child_count == 0) return;
-    Ca_Node *target = parent->children[parent->child_count - 1];
+
+    /* When called inside a ca_tree_node_begin/end block, attach to the header
+       row (children[0]) — same convention as ca_context_menu. */
+    Ca_Node *target;
+    if (parent->widget_type == CA_WIDGET_TREENODE)
+        target = parent->children[0];
+    else
+        target = parent->children[parent->child_count - 1];
+
+    /* Reuse an existing tooltip already bound to this node so that
+       reconcile rebuilds don't exhaust the pool each frame. */
+    Ca_Tooltip *tt = NULL;
+    Ca_Window  *win = g_ctx.window;
+    if (win && win->tooltip_pool) {
+        for (uint32_t i = 0; i < CA_MAX_TOOLTIPS_PER_WINDOW; ++i) {
+            Ca_Tooltip *t = &win->tooltip_pool[i];
+            if (t->in_use && t->node == target) { tt = t; break; }
+        }
+    }
+    if (!tt) tt = alloc_tooltip(win);
+    if (!tt) return;
 
     tt->node = target;
     tt->in_use = true;
-    if (desc->text) snprintf(tt->text, CA_LABEL_TEXT_MAX, "%s", desc->text);
+    if (desc->text)  snprintf(tt->text,  CA_LABEL_TEXT_MAX, "%s", desc->text);
     else tt->text[0] = '\0';
+    if (desc->style) snprintf(tt->style, CA_NODE_CLASS_MAX, "%s", desc->style);
+    else tt->style[0] = '\0';
+
+    /* Resolve CSS font-size once here (widget build time) rather than every
+       frame in the renderer.  A one-element proxy node is used so that the
+       same ca_style_resolve path used by every other widget applies. */
+    tt->font_size = 0.0f;
+    Ca_Stylesheet *ss = win ? win->instance->stylesheet : NULL;
+    if (ss) {
+        Ca_Node proxy;
+        memset(&proxy, 0, sizeof(proxy));
+        proxy.in_use = true;
+        proxy.window = win;
+        if (tt->style[0])
+            snprintf(proxy.classes, CA_NODE_CLASS_MAX, "%s", tt->style);
+        Ca_ResolvedStyle rs;
+        memset(&rs, 0, sizeof(rs));
+        ca_style_resolve(ss, &proxy, CA_ELEM_TOOLTIP, proxy.classes, &rs);
+        tt->font_size = rs.font_size; /* 0 if no rule matched */
+    }
 }
 
 /* ============================================================

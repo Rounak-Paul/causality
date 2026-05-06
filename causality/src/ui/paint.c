@@ -1294,6 +1294,9 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
 
     /* ---- Tooltips ---- */
     if (win->tooltip_pool && font && win->hovered_node) {
+        float ui_s = win->ui_scale > 0.0f ? win->ui_scale : 1.0f;
+        float cs   = font->content_scale / ui_s;
+
         for (uint32_t i = 0; i < CA_MAX_TOOLTIPS_PER_WINDOW; ++i) {
             Ca_Tooltip *tt = &win->tooltip_pool[i];
             if (!tt->in_use || !tt->node || tt->text[0] == '\0') continue;
@@ -1305,12 +1308,18 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
             }
             if (!match) continue;
 
-            float tw = 0;
+            /* Font size resolved at widget-build time and cached in the slot */
+            Ca_FontTier *tier = ca_font_select_tier(font, false);
+            float tooltip_fs  = tt->font_size > 0.0f ? tt->font_size : font->default_size;
+            float font_scale  = tooltip_fs / tier->logical_px;
+            float cs_eff      = cs / font_scale;
+            float pad         = 5.0f;
+            float text_h      = (tier->ascent - tier->descent) * font_scale;
+            float tip_h       = text_h + pad * 2.0f;
+
+            /* Measure text width at the resolved font scale */
+            float tw = 0.0f;
             {
-                float cs = font->content_scale / (win->ui_scale > 0 ? win->ui_scale : 1.0f);
-                Ca_FontTier *tier = ca_font_tier(font, font->default_size);
-                float fs = font->default_size / tier->logical_px;
-                float cs_eff = cs / fs;
                 const char *tp = tt->text;
                 while (*tp) {
                     uint32_t cp = ca_utf8_decode(&tp);
@@ -1319,9 +1328,7 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
                 }
             }
 
-            float pad = 6.0f;
-            float tip_w = tw + pad * 2;
-            float tip_h = 22.0f;
+            float tip_w = tw + pad * 2.0f;
             float tip_x = tt->node->x;
             float tip_y = tt->node->y - tip_h - 4.0f;
             if (tip_y < 0) tip_y = tt->node->y + tt->node->h + 4.0f;
@@ -1331,8 +1338,10 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
                 memset(c, 0, sizeof(*c));
                 c->type = CA_DRAW_RECT;
                 c->x = tip_x; c->y = tip_y; c->w = tip_w; c->h = tip_h;
-                c->corner_radius = 4.0f;
+                c->corner_radius = 3.0f;
                 { float _r, _g, _b, _a; unpack_color(CA_THEME_POPUP_BG, &_r, &_g, &_b, &_a); c->r = _r; c->g = _g; c->b = _b; c->a = _a; }
+                c->border_width   = 1.0f;
+                c->border_r = 0.200f; c->border_g = 0.200f; c->border_b = 0.267f; c->border_a = 1.0f;
                 c->in_use = true;
                 c->overlay = true;
             }
@@ -1341,6 +1350,8 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
             memset(&tmp, 0, sizeof(tmp));
             tmp.in_use = true;
             tmp.x = tip_x; tmp.y = tip_y; tmp.w = tip_w; tmp.h = tip_h;
+            tmp.desc.font_size    = tooltip_fs;
+            tmp.desc.padding_left = pad;
             tmp.window = win;
             paint_text(win, font, &tmp, tt->text, CA_THEME_POPUP_TEXT);
             for (uint32_t gi = glyph_start; gi < win->draw_cmd_count; ++gi)
