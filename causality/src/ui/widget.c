@@ -1971,7 +1971,10 @@ Ca_TreeNode *ca_tree_node_begin(const Ca_TreeNodeDesc *desc)
     /* Create a header row node for the clickable label */
     Ca_NodeDesc hdr = {0};
     hdr.direction    = CA_DIR_ROW;
+    /* The CSS height is meant for the header row, not the container.
+       Lift it off the container so it auto-sizes when expanded. */
     hdr.height       = node->desc.height > 0.0f ? node->desc.height : s(20.0f);
+    node->desc.height = 0.0f;
     hdr.font_size    = node->desc.font_size;  /* inherit from CSS */
     hdr.font_bold    = node->desc.font_bold;  /* inherit from CSS */
     hdr.padding_left = s(4.0f) * (float)tn->depth;
