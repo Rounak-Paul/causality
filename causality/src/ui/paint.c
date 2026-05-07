@@ -731,7 +731,10 @@ static void paint_text_wrapped(Ca_Window *win, Ca_Font *font,
     cur_line_w = 0.0f;
     int cur_line = 0;
 
-    float xpos = floorf(left_x * cs_eff + 0.5f);
+    /* Keep xpos fractional so the 4x-oversampled atlas can provide sub-pixel
+       glyph positioning via bilinear UV interpolation.  Snap y for a stable
+       pixel-aligned baseline.                                               */
+    float xpos = left_x * cs_eff;
     float ypos = floorf(start_y * cs_eff + 0.5f);
 
     ClipRect clip = find_clip_for_node(node);
@@ -751,7 +754,7 @@ static void paint_text_wrapped(Ca_Window *win, Ca_Font *font,
         if (cur_line_w > 0.0f && with_space > max_w) {
             cur_line++;
             cur_line_w = word_w;
-            xpos = floorf(left_x * cs_eff + 0.5f);
+            xpos = left_x * cs_eff;
             ypos = floorf((start_y + line_height * cur_line) * cs_eff + 0.5f);
         } else {
             if (cur_line_w > 0.0f) {
@@ -789,7 +792,7 @@ static void paint_text_wrapped(Ca_Window *win, Ca_Font *font,
         if (*p == '\n') {
             cur_line++;
             cur_line_w = 0;
-            xpos = floorf(left_x * cs_eff + 0.5f);
+            xpos = left_x * cs_eff;
             ypos = floorf((start_y + line_height * cur_line) * cs_eff + 0.5f);
             p++;
         } else if (*p == ' ') {
@@ -851,10 +854,10 @@ static void paint_text(Ca_Window *win, Ca_Font *font,
         }
     }
 
-    /* Snap run origin to the nearest physical pixel (macOS-style: crisp
-       baseline; individual advances still accumulate fractionally for
-       accurate kerning with 1x1 atlas glyph coverage AA). */
-    float xpos = floorf(left_logical * cs_eff + 0.5f);
+    /* Keep xpos fractional: the 4x-oversampled atlas provides sub-pixel
+       glyph positioning through bilinear UV sampling.  Snap y for a
+       pixel-aligned baseline.                                          */
+    float xpos = left_logical * cs_eff;
     float ypos = floorf(baseline_logical * cs_eff + 0.5f);
 
     ClipRect clip      = find_clip_for_node(node);
@@ -916,7 +919,7 @@ static void paint_text_left(Ca_Window *win, Ca_Font *font,
         + (tier->ascent * font_scale + tier->descent * font_scale) * 0.5f;
     float left_logical = node->x + node->desc.padding_left;
 
-    float xpos = floorf(left_logical * cs_eff + 0.5f);
+    float xpos = left_logical * cs_eff;
     float ypos = floorf(baseline_logical * cs_eff + 0.5f);
 
     ClipRect clip       = find_clip_for_node(node);

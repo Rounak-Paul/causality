@@ -303,12 +303,13 @@ static const char *TEXT_VERT_GLSL =
     "    v_color = d.color;\n"
     "}\n";
 
-/* Fragment shader: samples the R8 font atlas; alpha = atlas red channel.
-   Gamma correction: the atlas stores linear coverage values but the display
-   applies sRGB gamma, making thin strokes appear darker/thinner than intended.
-   pow(a, 1/2.2) ≈ pow(a, 0.455) would be a full sRGB pre-compensation, but
-   that makes glyphs look too heavy.  pow(a, 0.6) is a lighter touch that
-   recovers thinned strokes without over-bloating them.                  */
+/* Fragment shader: samples the R8 font atlas; coverage = atlas red channel.
+   Gamma-correct alpha: the atlas stores linear coverage values, but a UNORM
+   framebuffer on an sRGB display has ~2.2 gamma applied by the monitor,
+   making antialiased edges appear darker/thinner than the glyph coverage.
+   pow(cov, 1/2.2) pre-compensates so perceived edge brightness matches the
+   actual coverage.  Output is premultiplied alpha (blend src=ONE) to avoid
+   dark fringing where the glyph quad edge falls between physical pixels.   */
 static const char *TEXT_FRAG_GLSL =
     "#version 450\n"
     "\n"
@@ -319,9 +320,13 @@ static const char *TEXT_FRAG_GLSL =
     "layout(location = 0) out vec4 out_color;\n"
     "\n"
     "void main() {\n"
-    "    float a = texture(font_atlas, v_uv).r;\n"
-    "    a = pow(a, 0.6);\n"
-    "    out_color = vec4(v_color.rgb, v_color.a * a);\n"
+    "    float cov = texture(font_atlas, v_uv).r;\n"
+    "    // Compensate for sRGB display gamma so coverage maps perceptually\n"
+    "    // to the correct edge brightness (1/2.2 = 0.45454545).\n"
+    "    float a = pow(clamp(cov, 0.0, 1.0), 0.45454545);\n"
+    "    float alpha = v_color.a * a;\n"
+    "    // Premultiplied-alpha: avoids dark fringe artifacts at glyph edges.\n"
+    "    out_color = vec4(v_color.rgb * alpha, alpha);\n"
     "}\n";
 
 bool ca_text_pipeline_create(Ca_Instance *inst, VkFormat color_format)
@@ -439,10 +444,13 @@ bool ca_text_pipeline_create(Ca_Instance *inst, VkFormat color_format)
         .sType                = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
         .rasterizationSamples = VK_SAMPLE_COUNT_1_BIT };
 
-    /* Alpha blending */
+    /* Premultiplied-alpha blending: shader outputs (color*alpha, alpha),
+       so the src color factor is ONE.  This is mathematically equivalent to
+       straight alpha for fully-opaque text colors and avoids dark fringing
+       at sub-pixel glyph edges.                                            */
     VkPipelineColorBlendAttachmentState blend_att = {
         .blendEnable         = VK_TRUE,
-        .srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA,
+        .srcColorBlendFactor = VK_BLEND_FACTOR_ONE,
         .dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
         .colorBlendOp        = VK_BLEND_OP_ADD,
         .srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE,

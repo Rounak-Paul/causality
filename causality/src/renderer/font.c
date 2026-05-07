@@ -234,9 +234,12 @@ static void bake_style(stbtt_pack_context *ctx,
         text_ranges[r].chardata_for_range               = tier->ranges[r].chardata;
         text_ranges[r].array_of_unicode_codepoints      = NULL;
     }
-    stbtt_PackSetOversampling(ctx, 3, 2);  /* 3x horizontal gives much crisper
-                                               sub-pixel positioning on Latin text;
-                                               2x vertical matches typical usage. */
+    stbtt_PackSetOversampling(ctx, 4, 4);  /* 4x horizontal oversampling: gives
+                                               excellent sub-pixel positioning for
+                                               Latin text at all DPI levels.
+                                               2x vertical is sufficient (ascender/
+                                               descender curves benefit less from
+                                               horizontal-style sub-pixel AA). */
     stbtt_PackFontRanges(ctx, font_data, 0, text_ranges, CA_FONT_TEXT_RANGES);
 
     stbtt_pack_range icon_ranges[CA_FONT_ICON_RANGES];
@@ -248,7 +251,12 @@ static void bake_style(stbtt_pack_context *ctx,
         icon_ranges[r].chardata_for_range               = tier->ranges[ri].chardata;
         icon_ranges[r].array_of_unicode_codepoints      = NULL;
     }
-    stbtt_PackSetOversampling(ctx, 1, 1);
+    stbtt_PackSetOversampling(ctx, 2, 2);  /* 2x both axes: icon glyphs are larger
+                                               than text glyphs so they need less
+                                               oversampling, but 1x gives hard binary
+                                               edges at 1x DPI.  2x provides smooth
+                                               antialiased edges without significantly
+                                               bloating icon outlines.                */
     stbtt_PackFontRanges(ctx, font_data, 0, icon_ranges, CA_FONT_ICON_RANGES);
 
     /* Validation: confirm a sample of ASCII glyphs packed correctly */
