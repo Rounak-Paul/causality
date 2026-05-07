@@ -106,6 +106,9 @@ typedef struct Ca_TabBarDesc {
     uint32_t     inactive_bg;      /* inactive tab background (0 = default) */
     uint32_t     active_text;      /* active tab text color   (0 = default) */
     uint32_t     inactive_text;    /* inactive tab text color (0 = default) */
+    float        tab_padding_x;    /* per-tab horizontal padding in logical px (0 = default 8) */
+    bool         tabs_fill;        /* true: tabs flex-grow to fill available row space */
+    bool         tabs_left_align;  /* true: left-align tab labels (false = centered) */
     bool         hidden;
     bool         disabled;
 } Ca_TabBarDesc;

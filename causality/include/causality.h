@@ -19,6 +19,10 @@ extern "C" {
 
 /* Maximum number of simultaneously open windows per instance. */
 #define CA_MAX_WINDOWS 8
+/* Reserved windows are owned by Causality internals (e.g. popup manager).
+   They do not count against CA_MAX_WINDOWS. */
+#define CA_RESERVED_POPUP_WINDOWS 1
+#define CA_MAX_WINDOWS_TOTAL (CA_MAX_WINDOWS + CA_RESERVED_POPUP_WINDOWS)
 
 /* ---- Opaque handles ---- */
 
@@ -117,6 +121,50 @@ CA_API float      ca_window_get_scale(Ca_Window *window);
 CA_API void ca_window_set_title(Ca_Window *window, const char *title);
 
 /* ============================================================
+   POPUP CONTROL (instance-managed message/confirm windows)
+   ============================================================ */
+
+typedef enum Ca_PopupButtons {
+   CA_POPUP_BUTTONS_OK = 0,
+   CA_POPUP_BUTTONS_OK_CANCEL,
+   CA_POPUP_BUTTONS_YES_NO,
+} Ca_PopupButtons;
+
+typedef enum Ca_PopupResult {
+   CA_POPUP_RESULT_NONE = 0,
+   CA_POPUP_RESULT_OK,
+   CA_POPUP_RESULT_CANCEL,
+   CA_POPUP_RESULT_YES,
+   CA_POPUP_RESULT_NO,
+   CA_POPUP_RESULT_CLOSED,
+   CA_POPUP_RESULT_REPLACED,
+} Ca_PopupResult;
+
+typedef void (*Ca_PopupResultFn)(Ca_PopupResult result, void *user_data);
+
+typedef struct Ca_PopupDesc {
+   const char       *title;          /* NULL -> "Message" */
+   const char       *message;        /* NULL -> "" */
+   Ca_PopupButtons   buttons;        /* default: OK */
+   bool              replace_active; /* true -> replace current popup */
+   bool              queue_if_busy;  /* true -> enqueue when busy */
+   Ca_PopupResultFn  on_result;      /* optional callback */
+   void             *result_data;
+} Ca_PopupDesc;
+
+/* Show a popup using Causality's reserved popup window control.
+   Returns false only when request is rejected (e.g. busy + no queue) or invalid.
+   If a popup is active and replace_active is false, queue_if_busy controls whether
+   this request is queued for later display. */
+CA_API bool ca_popup_show(Ca_Instance *instance, const Ca_PopupDesc *desc);
+
+/* Returns true when a popup is currently visible/active. */
+CA_API bool ca_popup_is_active(const Ca_Instance *instance);
+
+/* Drop any queued popup requests (does not close active popup). */
+CA_API void ca_popup_clear_queue(Ca_Instance *instance);
+
+/* ============================================================
    STATUS BAR (system-managed bottom strip)
    ============================================================
 
@@ -131,7 +179,8 @@ CA_API void ca_window_set_title(Ca_Window *window, const char *title);
    node, so the user just emits children (no outer ca_div_begin/_end
    needed).
 
-   Pass fn = NULL to hide the bar. Setting height = 0 also hides it. */
+   Pass fn = NULL to hide the bar. Setting height = 0 also hides it.
+   Height is specified in logical UI units and is scaled by window UI scale. */
 typedef void (*Ca_StatusBarFn)(Ca_Window *window, void *user_data);
 CA_API void ca_window_set_status_bar(Ca_Window      *window,
                                      Ca_StatusBarFn  fn,

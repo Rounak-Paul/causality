@@ -127,7 +127,7 @@ bool ca_window_system_init(void)
 
 void ca_window_system_shutdown(Ca_Instance *inst)
 {
-    for (int i = 0; i < CA_MAX_WINDOWS; ++i) {
+    for (int i = 0; i < CA_MAX_WINDOWS_TOTAL; ++i) {
         if (inst->windows[i].in_use)
             ca_window_destroy(&inst->windows[i]);
     }
@@ -143,7 +143,7 @@ void ca_window_system_shutdown(Ca_Instance *inst)
 bool ca_window_system_tick(Ca_Instance *inst)
 {
     /* Clear per-frame click flags before GLFW fires callbacks */
-    for (int i = 0; i < CA_MAX_WINDOWS; ++i)
+    for (int i = 0; i < CA_MAX_WINDOWS_TOTAL; ++i)
         if (inst->windows[i].in_use) {
             inst->windows[i].mouse_click_this_frame = false;
             inst->windows[i].scroll_dx = 0;
@@ -164,7 +164,7 @@ bool ca_window_system_tick(Ca_Instance *inst)
     /* Fire WINDOW_CLOSE event then destroy — order matters.
        Track whether we destroyed anything so we can re-focus. */
     bool destroyed_any = false;
-    for (int i = 0; i < CA_MAX_WINDOWS; ++i) {
+    for (int i = 0; i < CA_MAX_WINDOWS_TOTAL; ++i) {
         if (inst->windows[i].in_use && glfwWindowShouldClose(inst->windows[i].glfw)) {
             Ca_Event ev;
             ev.type   = CA_EVENT_WINDOW_CLOSE;
@@ -181,7 +181,7 @@ bool ca_window_system_tick(Ca_Instance *inst)
        the window content is consumed by the OS to re-focus the window rather
        than being delivered to the app as a button event. */
     if (destroyed_any) {
-        for (int i = 0; i < CA_MAX_WINDOWS; ++i) {
+        for (int i = 0; i < CA_MAX_WINDOWS_TOTAL; ++i) {
             if (inst->windows[i].in_use && inst->windows[i].glfw) {
                 glfwFocusWindow(inst->windows[i].glfw);
                 break;
@@ -189,7 +189,7 @@ bool ca_window_system_tick(Ca_Instance *inst)
         }
     }
 
-    for (int i = 0; i < CA_MAX_WINDOWS; ++i) {
+    for (int i = 0; i < CA_MAX_WINDOWS_TOTAL; ++i) {
         if (inst->windows[i].in_use) return true;
     }
     return false;
@@ -197,22 +197,16 @@ bool ca_window_system_tick(Ca_Instance *inst)
 
 /* ---- Per-window ---- */
 
-Ca_Window *ca_window_create(Ca_Instance *inst, const Ca_WindowDesc *desc)
+static Ca_Window *window_create_in_slot(Ca_Instance *inst, const Ca_WindowDesc *desc,
+                                        int slot_index)
 {
+    if (!inst || !desc) return NULL;
+    if (slot_index < 0 || slot_index >= CA_MAX_WINDOWS_TOTAL) return NULL;
+
+    Ca_Window *slot = &inst->windows[slot_index];
+    if (slot->in_use) return slot;
+
     assert(inst && desc);
-
-    Ca_Window *slot = NULL;
-    for (int i = 0; i < CA_MAX_WINDOWS; ++i) {
-        if (!inst->windows[i].in_use) {
-            slot = &inst->windows[i];
-            break;
-        }
-    }
-
-    if (!slot) {
-        fprintf(stderr, "[causality] window pool exhausted (max %d)\n", CA_MAX_WINDOWS);
-        return NULL;
-    }
 
     /* Zero the entire slot so no stale state survives from a previous window
        that occupied this slot (dangling pointers, input flags, etc.). */
@@ -270,6 +264,28 @@ Ca_Window *ca_window_create(Ca_Instance *inst, const Ca_WindowDesc *desc)
     glfwFocusWindow(glfw);
 
     return slot;
+}
+
+Ca_Window *ca_window_create(Ca_Instance *inst, const Ca_WindowDesc *desc)
+{
+    assert(inst && desc);
+
+    for (int i = 0; i < CA_MAX_WINDOWS; ++i) {
+        if (!inst->windows[i].in_use)
+            return window_create_in_slot(inst, desc, i);
+    }
+
+    fprintf(stderr, "[causality] window pool exhausted (max %d app windows)\n", CA_MAX_WINDOWS);
+    return NULL;
+}
+
+Ca_Window *ca_window_create_reserved(Ca_Instance *inst, const Ca_WindowDesc *desc,
+                                     int reserved_index)
+{
+    if (!inst || !desc) return NULL;
+    if (reserved_index < 0 || reserved_index >= CA_RESERVED_POPUP_WINDOWS)
+        return NULL;
+    return window_create_in_slot(inst, desc, CA_MAX_WINDOWS + reserved_index);
 }
 
 void ca_window_destroy(Ca_Window *window)

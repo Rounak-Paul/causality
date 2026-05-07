@@ -188,7 +188,7 @@ void ca_ui_update(Ca_Instance *inst)
     /* Builder rebuilds happen during ca_reactive_flush (called by
        ca_instance_tick before this function) so the new tree is already
        in place by the time we run layout. */
-    for (int i = 0; i < CA_MAX_WINDOWS; ++i) {
+    for (int i = 0; i < CA_MAX_WINDOWS_TOTAL; ++i) {
         Ca_Window *win = &inst->windows[i];
         if (!win->in_use || !win->root || !win->node_pool) continue;
 

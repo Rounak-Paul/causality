@@ -13,6 +13,9 @@
 /* Forward decls into the reactive subsystem (src/reactive/signal.c). */
 void ca_reactive_flush(Ca_Instance *inst);
 void ca_reactive_release_instance(Ca_Instance *inst);
+void ca_popup_system_init(Ca_Instance *inst);
+void ca_popup_system_tick(Ca_Instance *inst);
+void ca_popup_system_shutdown(Ca_Instance *inst);
 
 Ca_Instance *ca_instance_create(const Ca_InstanceDesc *desc)
 {
@@ -27,6 +30,7 @@ Ca_Instance *ca_instance_create(const Ca_InstanceDesc *desc)
 
     ca_event_init(inst);
     ca_ui_init(inst);
+    ca_popup_system_init(inst);
 
     /* Cache font settings from descriptor */
     if (desc && desc->font_path)
@@ -52,6 +56,7 @@ Ca_Instance *ca_instance_create(const Ca_InstanceDesc *desc)
 void ca_instance_destroy(Ca_Instance *instance)
 {
     if (!instance) return;
+    ca_popup_system_shutdown(instance);
     /* Destroy windows first — their Vulkan surfaces / swapchains
        require the device to still be alive for proper cleanup. */
     ca_window_system_shutdown(instance);
@@ -66,6 +71,7 @@ void ca_instance_destroy(Ca_Instance *instance)
 bool ca_instance_tick(Ca_Instance *instance)
 {
     if (!ca_window_system_tick(instance)) return false;
+    ca_popup_system_tick(instance);
     /* Run reactive effects scheduled since the previous tick. */
     ca_reactive_flush(instance);
     ca_ui_update(instance);

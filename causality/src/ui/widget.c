@@ -1868,18 +1868,35 @@ Ca_TabBar *ca_tabs(const Ca_TabBarDesc *desc)
     apply_css(node, &node->desc, CA_ELEM_TABBAR, desc->style, id, &dummy);
 
     float item_fs = node->desc.font_size; /* inherit font-size from CSS (e.g. panel-tab-bar) */
+    float tab_pad_x = s(desc->tab_padding_x > 0.0f ? desc->tab_padding_x : 8.0f);
+    bool tabs_fill = desc->tabs_fill;
+    bool tabs_left_align = desc->tabs_left_align;
 
     ca_node_trim_children(node, 0);
 
     /* Create child nodes for each tab header */
     for (int i = 0; i < tb->count; ++i) {
         Ca_NodeDesc tnd = {0};
-        float tw = measure_text_px(g_ctx.window, tb->labels[i]);
-        tnd.width  = (tw > 0 ? tw : s(40.0f)) + s(16.0f);
+        float tw = ca_measure_text_px(g_ctx.window, tb->labels[i], item_fs);
+        /* Add a small safety margin so glyph overhang/subpixel placement
+           never clips the final character even when text measurement is tight. */
+        float min_w = (tw > 0.0f ? tw : s(40.0f)) + tab_pad_x * 2.0f + s(8.0f);
+        if (tabs_fill) {
+            tnd.width = 0.0f;
+            tnd.min_w = min_w;
+            tnd.flex_grow = 1.0f;
+            tnd.flex_shrink = 1.0f;
+        } else {
+            tnd.width = min_w;
+        }
         /* height = 0: layout stretches the node to fill the full bar cross-axis so
            the active background covers the entire tab-bar height (no gap). */
         tnd.background = (i == tb->active) ? tb->active_bg : tb->inactive_bg;
         tnd.font_size  = item_fs;
+        tnd.padding_left = tab_pad_x;
+        tnd.padding_right = tab_pad_x;
+        tnd.text_align = tabs_left_align ? 0 : 1;
+        tnd.corner_radius = 0.0f;
         Ca_Node *tab_node = ca_node_add(node, &tnd);
         if (tab_node) {
             tab_node->elem_type = CA_ELEM_TAB;

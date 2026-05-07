@@ -716,15 +716,16 @@ bool ca_ssbo_layout_create(Ca_Instance *inst)
         return false;
     }
 
-    /* Descriptor pool: one SSBO set per frame-in-flight per window */
+    /* Descriptor pool: one SSBO set per frame-in-flight per window slot
+       (includes reserved internal popup windows). */
     VkDescriptorPoolSize pool_sz = {
         .type            = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC,
-        .descriptorCount = CA_MAX_WINDOWS * CA_FRAMES_IN_FLIGHT,
+        .descriptorCount = CA_MAX_WINDOWS_TOTAL * CA_FRAMES_IN_FLIGHT,
     };
     VkDescriptorPoolCreateInfo pool_ci = {
         .sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
         .flags         = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT,
-        .maxSets       = CA_MAX_WINDOWS * CA_FRAMES_IN_FLIGHT,
+        .maxSets       = CA_MAX_WINDOWS_TOTAL * CA_FRAMES_IN_FLIGHT,
         .poolSizeCount = 1,
         .pPoolSizes    = &pool_sz,
     };

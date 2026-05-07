@@ -750,7 +750,30 @@ struct Ca_Window {
    ====================================================== */
 
 struct Ca_Instance {
-    Ca_Window windows[CA_MAX_WINDOWS];
+    Ca_Window windows[CA_MAX_WINDOWS_TOTAL];
+
+    /* Popup manager (reserved-window control) */
+#define CA_POPUP_TITLE_MAX  128
+#define CA_POPUP_TEXT_MAX   1024
+#define CA_POPUP_QUEUE_MAX  16
+    struct {
+        char             title[CA_POPUP_TITLE_MAX];
+        char             message[CA_POPUP_TEXT_MAX];
+        Ca_PopupButtons  buttons;
+        Ca_PopupResultFn on_result;
+        void            *result_data;
+    } popup_current;
+    struct {
+        char             title[CA_POPUP_TITLE_MAX];
+        char             message[CA_POPUP_TEXT_MAX];
+        Ca_PopupButtons  buttons;
+        Ca_PopupResultFn on_result;
+        void            *result_data;
+    } popup_queue[CA_POPUP_QUEUE_MAX];
+    int         popup_queue_count;
+    bool        popup_active;
+    Ca_Window  *popup_window;
+    Ca_PopupResult popup_pending_result;
 
     /* Vulkan */
     VkInstance               vk_instance;
