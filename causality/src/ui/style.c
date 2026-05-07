@@ -498,8 +498,9 @@ void ca_style_apply_to_node(const Ca_ResolvedStyle *style,
     if (STYLE_SET(CA_CSS_PROP_FONT_WEIGHT))
         nd->font_bold = style->font_bold;
 
-    /* Text align */
-    if (nd->text_align == 0 && STYLE_SET(CA_CSS_PROP_TEXT_ALIGN)) {
+    /* Text align — CSS always wins when explicitly specified, even for widgets
+       that hardcode a default (e.g. buttons default to center = 1). */
+    if (STYLE_SET(CA_CSS_PROP_TEXT_ALIGN)) {
         switch (style->text_align) {
             case CA_CSS_TEXT_ALIGN_LEFT:   nd->text_align = 0; break;
             case CA_CSS_TEXT_ALIGN_CENTER: nd->text_align = 1; break;
