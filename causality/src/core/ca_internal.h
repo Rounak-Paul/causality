@@ -360,6 +360,19 @@ struct Ca_Node {
     bool          dbg_repainted;
 };
 
+/* Returns true if the node itself OR any ancestor in the tree is hidden.
+   Used to suppress dropdown overlays whose host widget is inside a panel
+   hidden via ca_set_hidden() — the select node is not individually hidden,
+   only its parent panel is, so the simple `node->desc.hidden` check misses it. */
+static inline bool node_is_ancestor_hidden(const Ca_Node *n)
+{
+    while (n) {
+        if (n->desc.hidden) return true;
+        n = n->parent;
+    }
+    return false;
+}
+
 /* ======================================================
    UI — Widget structs (full definitions; opaque in public header)
    ====================================================== */

@@ -3081,6 +3081,11 @@ void ca_widget_input_pass(Ca_Window *win)
             for (uint32_t i = 0; i < CA_MAX_SELECTS_PER_WINDOW; ++i) {
                 Ca_Select *sel = &win->select_pool[i];
                 if (!sel->in_use || !sel->node || !sel->open) continue;
+                /* Force-close if the host panel is hidden */
+                if (node_is_ancestor_hidden(sel->node)) {
+                    sel->open = false;
+                    continue;
+                }
                 /* Hit-test the visible dropdown panel */
                 float drop_y = sel->node->y + sel->node->h;
                 int visible = sel->option_count < CA_SELECT_MAX_VISIBLE
@@ -3491,6 +3496,11 @@ void ca_widget_input_pass(Ca_Window *win)
                 Ca_Select *sel = &win->select_pool[i];
                 if (!sel->in_use || !sel->node) continue;
                 if (is_effectively_disabled(sel->node)) continue;
+                /* Force-close and skip selects inside hidden panels */
+                if (node_is_ancestor_hidden(sel->node)) {
+                    sel->open = false;
+                    continue;
+                }
                 if (sel->open) {
                     /* Check if clicked on a visible dropdown option */
                     float opt_y = sel->node->y + sel->node->h;

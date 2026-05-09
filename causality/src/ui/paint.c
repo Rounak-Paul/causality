@@ -1235,7 +1235,13 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
     if (win->select_pool && font) {
         for (uint32_t i = 0; i < CA_MAX_SELECTS_PER_WINDOW; ++i) {
             Ca_Select *sel = &win->select_pool[i];
-            if (!sel->in_use || !sel->node || sel->node->desc.hidden) continue;
+            if (!sel->in_use || !sel->node) continue;
+            /* If the host widget (or any ancestor panel) is hidden, force-close
+               the dropdown so it doesn't ghost-render at stale coordinates. */
+            if (node_is_ancestor_hidden(sel->node)) {
+                sel->open = false;
+                continue;
+            }
             if (!sel->open) continue;
             Ca_Node *n = sel->node;
 
