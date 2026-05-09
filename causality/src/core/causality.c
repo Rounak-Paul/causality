@@ -107,6 +107,16 @@ void ca_instance_set_scale(Ca_Instance *instance, float scale)
     if (scale < 0.25f) scale = 0.25f;
     if (scale > 4.0f)  scale = 4.0f;
     instance->default_ui_scale = scale;
+    /* Apply immediately to every currently open window so a runtime
+       scale change takes effect without needing to reopen windows. */
+    for (int i = 0; i < CA_MAX_WINDOWS_TOTAL; i++) {
+        Ca_Window *w = &instance->windows[i];
+        if (!w->in_use) continue;
+        w->ui_scale = scale;
+        w->titlebar_needs_rebuild = true;
+        if (w->root)
+            w->root->dirty |= CA_DIRTY_LAYOUT | CA_DIRTY_CONTENT;
+    }
 }
 
 float ca_instance_get_scale(const Ca_Instance *instance)
