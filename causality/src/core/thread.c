@@ -3,8 +3,6 @@
 
 #include "thread.h"
 
-#include <stdlib.h>
-
 #ifdef _WIN32
 #include <process.h>
 
@@ -17,20 +15,20 @@ static unsigned __stdcall win32_thread_proc(void *arg)
 {
     Ca_ThreadTrampoline *tramp = (Ca_ThreadTrampoline *)arg;
     tramp->fn(tramp->user_data);
-    free(tramp);
+    CA_FREE(tramp);
     return 0;
 }
 
 Ca_Thread *ca_thread_create(Ca_ThreadFn fn, void *user_data)
 {
-    Ca_Thread *t = (Ca_Thread *)malloc(sizeof(Ca_Thread));
+    Ca_Thread *t = (Ca_Thread *)CA_MALLOC(sizeof(Ca_Thread));
     if (!t) return NULL;
-    Ca_ThreadTrampoline *tramp = (Ca_ThreadTrampoline *)malloc(sizeof(Ca_ThreadTrampoline));
-    if (!tramp) { free(t); return NULL; }
+    Ca_ThreadTrampoline *tramp = (Ca_ThreadTrampoline *)CA_MALLOC(sizeof(Ca_ThreadTrampoline));
+    if (!tramp) { CA_FREE(t); return NULL; }
     tramp->fn = fn;
     tramp->user_data = user_data;
     t->handle = (HANDLE)_beginthreadex(NULL, 0, win32_thread_proc, tramp, 0, NULL);
-    if (!t->handle) { free(tramp); free(t); return NULL; }
+    if (!t->handle) { CA_FREE(tramp); CA_FREE(t); return NULL; }
     return t;
 }
 
@@ -39,19 +37,19 @@ void ca_thread_join(Ca_Thread *thread)
     if (!thread) return;
     WaitForSingleObject(thread->handle, INFINITE);
     CloseHandle(thread->handle);
-    free(thread);
+    CA_FREE(thread);
 }
 
 void ca_thread_detach(Ca_Thread *thread)
 {
     if (!thread) return;
     CloseHandle(thread->handle);
-    free(thread);
+    CA_FREE(thread);
 }
 
 Ca_Mutex *ca_mutex_create(void)
 {
-    Ca_Mutex *m = (Ca_Mutex *)malloc(sizeof(Ca_Mutex));
+    Ca_Mutex *m = (Ca_Mutex *)CA_MALLOC(sizeof(Ca_Mutex));
     if (!m) return NULL;
     InitializeCriticalSection(&m->cs);
     return m;
@@ -61,7 +59,7 @@ void ca_mutex_destroy(Ca_Mutex *mutex)
 {
     if (!mutex) return;
     DeleteCriticalSection(&mutex->cs);
-    free(mutex);
+    CA_FREE(mutex);
 }
 
 void ca_mutex_lock(Ca_Mutex *mutex)
@@ -84,7 +82,7 @@ bool ca_mutex_trylock(Ca_Mutex *mutex)
 
 Ca_CondVar *ca_condvar_create(void)
 {
-    Ca_CondVar *cv = (Ca_CondVar *)malloc(sizeof(Ca_CondVar));
+    Ca_CondVar *cv = (Ca_CondVar *)CA_MALLOC(sizeof(Ca_CondVar));
     if (!cv) return NULL;
     InitializeConditionVariable(&cv->cv);
     return cv;
@@ -93,7 +91,7 @@ Ca_CondVar *ca_condvar_create(void)
 void ca_condvar_destroy(Ca_CondVar *cv)
 {
     if (!cv) return;
-    free(cv);
+    CA_FREE(cv);
 }
 
 void ca_condvar_wait(Ca_CondVar *cv, Ca_Mutex *mutex)
@@ -118,10 +116,10 @@ void ca_condvar_broadcast(Ca_CondVar *cv)
 
 Ca_Thread *ca_thread_create(Ca_ThreadFn fn, void *user_data)
 {
-    Ca_Thread *t = (Ca_Thread *)malloc(sizeof(Ca_Thread));
+    Ca_Thread *t = (Ca_Thread *)CA_MALLOC(sizeof(Ca_Thread));
     if (!t) return NULL;
     if (pthread_create(&t->handle, NULL, fn, user_data) != 0) {
-        free(t);
+        CA_FREE(t);
         return NULL;
     }
     return t;
@@ -131,22 +129,22 @@ void ca_thread_join(Ca_Thread *thread)
 {
     if (!thread) return;
     pthread_join(thread->handle, NULL);
-    free(thread);
+    CA_FREE(thread);
 }
 
 void ca_thread_detach(Ca_Thread *thread)
 {
     if (!thread) return;
     pthread_detach(thread->handle);
-    free(thread);
+    CA_FREE(thread);
 }
 
 Ca_Mutex *ca_mutex_create(void)
 {
-    Ca_Mutex *m = (Ca_Mutex *)malloc(sizeof(Ca_Mutex));
+    Ca_Mutex *m = (Ca_Mutex *)CA_MALLOC(sizeof(Ca_Mutex));
     if (!m) return NULL;
     if (pthread_mutex_init(&m->handle, NULL) != 0) {
-        free(m);
+        CA_FREE(m);
         return NULL;
     }
     return m;
@@ -156,7 +154,7 @@ void ca_mutex_destroy(Ca_Mutex *mutex)
 {
     if (!mutex) return;
     pthread_mutex_destroy(&mutex->handle);
-    free(mutex);
+    CA_FREE(mutex);
 }
 
 void ca_mutex_lock(Ca_Mutex *mutex)
@@ -179,10 +177,10 @@ bool ca_mutex_trylock(Ca_Mutex *mutex)
 
 Ca_CondVar *ca_condvar_create(void)
 {
-    Ca_CondVar *cv = (Ca_CondVar *)malloc(sizeof(Ca_CondVar));
+    Ca_CondVar *cv = (Ca_CondVar *)CA_MALLOC(sizeof(Ca_CondVar));
     if (!cv) return NULL;
     if (pthread_cond_init(&cv->handle, NULL) != 0) {
-        free(cv);
+        CA_FREE(cv);
         return NULL;
     }
     return cv;
@@ -192,7 +190,7 @@ void ca_condvar_destroy(Ca_CondVar *cv)
 {
     if (!cv) return;
     pthread_cond_destroy(&cv->handle);
-    free(cv);
+    CA_FREE(cv);
 }
 
 void ca_condvar_wait(Ca_CondVar *cv, Ca_Mutex *mutex)

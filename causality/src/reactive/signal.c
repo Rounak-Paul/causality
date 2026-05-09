@@ -9,7 +9,6 @@
 
 #include <assert.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 
 /* ============================================================
@@ -96,8 +95,8 @@ static Ca_Reactive *get_reactive(Ca_Instance *inst)
             Ca_Reactive *r = &g_reactive[i];
             memset(r, 0, sizeof(*r));
             r->inst = inst;
-            r->signals = (Ca_Signal *)calloc(CA_MAX_SIGNALS_PER_INSTANCE, sizeof(Ca_Signal));
-            r->effects = (Ca_Effect *)calloc(CA_MAX_EFFECTS_PER_INSTANCE, sizeof(Ca_Effect));
+            r->signals = (Ca_Signal *)CA_CALLOC(CA_MAX_SIGNALS_PER_INSTANCE, sizeof(Ca_Signal));
+            r->effects = (Ca_Effect *)CA_CALLOC(CA_MAX_EFFECTS_PER_INSTANCE, sizeof(Ca_Effect));
             r->track_top = -1;
             r->batch_depth = 0;
             r->untrack_depth = 0;
@@ -116,10 +115,10 @@ static void release_reactive(Ca_Instance *inst)
         if (r->inst != inst) continue;
         if (r->signals) {
             for (uint32_t s = 0; s < CA_MAX_SIGNALS_PER_INSTANCE; ++s)
-                free(r->signals[s].value);
-            free(r->signals);
+                CA_FREE(r->signals[s].value);
+            CA_FREE(r->signals);
         }
-        free(r->effects);
+        CA_FREE(r->effects);
         memset(r, 0, sizeof(*r));
         r->track_top = -1;
         return;
@@ -241,7 +240,7 @@ Ca_Signal *ca_signal_create(Ca_Instance *inst, size_t value_size, const void *in
         memset(s, 0, sizeof(*s));
         s->inst       = inst;
         s->value_size = (uint32_t)value_size;
-        s->value      = (uint8_t *)calloc(1, value_size);
+        s->value      = (uint8_t *)CA_CALLOC(1, value_size);
         s->in_use     = true;
         if (initial) memcpy(s->value, initial, value_size);
         return s;
@@ -266,7 +265,7 @@ void ca_signal_destroy(Ca_Signal *sig)
            clear lazily on next run). */
         sig->sub_count = 0;
     }
-    free(sig->value);
+    CA_FREE(sig->value);
     memset(sig, 0, sizeof(*sig));
 }
 
@@ -436,7 +435,7 @@ Ca_Signal *ca_computed(Ca_Instance *inst,
 {
     Ca_Signal *s = ca_signal_create(inst, value_size, NULL);
     if (!s || !fn) return s;
-    Ca_ComputedCtx *c = (Ca_ComputedCtx *)calloc(1, sizeof(*c));
+    Ca_ComputedCtx *c = (Ca_ComputedCtx *)CA_CALLOC(1, sizeof(*c));
     c->target = s;
     c->fn     = fn;
     c->user   = user_data;

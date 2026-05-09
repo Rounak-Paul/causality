@@ -3,10 +3,10 @@
 
 /* css.c — CSS tokenizer + recursive descent parser */
 #include "css.h"
+#include "causality_config.h"
 
 #include <ctype.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 
 /* ============================================================
@@ -941,7 +941,7 @@ Ca_Stylesheet *ca_css_parse(const char *css_text)
 {
     if (!css_text) return NULL;
 
-    Ca_Stylesheet *ss = (Ca_Stylesheet *)calloc(1, sizeof(Ca_Stylesheet));
+    Ca_Stylesheet *ss = (Ca_Stylesheet *)CA_CALLOC(1, sizeof(Ca_Stylesheet));
     if (!ss) return NULL;
 
     Parser p;
@@ -990,5 +990,5 @@ Ca_Stylesheet *ca_css_parse(const char *css_text)
 
 void ca_css_destroy(Ca_Stylesheet *ss)
 {
-    free(ss);
+    CA_FREE(ss);
 }

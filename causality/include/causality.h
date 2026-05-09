@@ -6,6 +6,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <vulkan/vulkan.h>
+#include "causality_config.h"
 #include "ca_api.h"
 #include "ca_reactive.h"
 
@@ -72,6 +73,12 @@ typedef struct Ca_InstanceDesc {
 
 CA_API Ca_Instance *ca_instance_create(const Ca_InstanceDesc *desc);
 CA_API void         ca_instance_destroy(Ca_Instance *instance);
+
+/* Sets a custom allocator for all Causality internal heap allocations.
+   Must be called before ca_instance_create().  Pass NULL for any function
+   to keep the current binding (defaults to the standard-library equivalents). */
+CA_API void ca_set_allocator(Ca_MallocFn mal, Ca_CallocFn cal,
+                              Ca_ReallocFn ral, Ca_FreeFn fre);
 
 /* Pumps the event loop: processes window events, updates UI, renders one frame.
    Returns false when all windows have been closed. */

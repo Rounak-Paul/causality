@@ -7,7 +7,6 @@
 #include "font.h"
 
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 
 #ifdef _WIN32
@@ -215,7 +214,7 @@ static void bake_style(stbtt_pack_context *ctx,
                        const unsigned char *font_data)
 {
     int cpt = chars_per_style();
-    tier->chardata_block = (stbtt_packedchar *)calloc((size_t)cpt, sizeof(stbtt_packedchar));
+    tier->chardata_block = (stbtt_packedchar *)CA_CALLOC((size_t)cpt, sizeof(stbtt_packedchar));
     if (!tier->chardata_block) return;
 
     int offset = 0;
@@ -317,7 +316,7 @@ static bool font_create_internal(Ca_Instance *inst, GLFWwindow *glfw_win,
     out_font->atlas_w = 4096;
     out_font->atlas_h = 4096;
     size_t bmp_sz = (size_t)out_font->atlas_w * out_font->atlas_h;
-    unsigned char *bitmap = (unsigned char *)calloc(1, bmp_sz);
+    unsigned char *bitmap = (unsigned char *)CA_CALLOC(1, bmp_sz);
     if (!bitmap) return false;
 
     stbtt_pack_context ctx;
@@ -331,10 +330,10 @@ static bool font_create_internal(Ca_Instance *inst, GLFWwindow *glfw_win,
     stbtt_PackEnd(&ctx);
 
     if (!upload_atlas(inst, out_font, bitmap)) {
-        free(bitmap);
+        CA_FREE(bitmap);
         goto fail;
     }
-    free(bitmap);
+    CA_FREE(bitmap);
 
     printf("[font] atlas %dx%d, size=%.0fpx scale=%.1f, regular=%s bold=%s\n",
            out_font->atlas_w, out_font->atlas_h, font_px, cx,
@@ -346,7 +345,7 @@ static bool font_create_internal(Ca_Instance *inst, GLFWwindow *glfw_win,
 
 fail:
     for (int s = 0; s < CA_FONT_STYLE_COUNT; s++)
-        free(out_font->tiers[s].chardata_block);
+        CA_FREE(out_font->tiers[s].chardata_block);
     memset(out_font, 0, sizeof(*out_font));
     return false;
 }
@@ -367,7 +366,7 @@ bool ca_font_create(Ca_Instance *inst, GLFWwindow *glfw_win,
         return false;
     }
     fseek(f, 0, SEEK_END); regular_sz = ftell(f); rewind(f);
-    regular_buf = (unsigned char *)malloc((size_t)regular_sz);
+    regular_buf = (unsigned char *)CA_MALLOC((size_t)regular_sz);
     if (!regular_buf) { fclose(f); return false; }
     fread(regular_buf, 1, (size_t)regular_sz, f);
     fclose(f);
@@ -376,7 +375,7 @@ bool ca_font_create(Ca_Instance *inst, GLFWwindow *glfw_win,
         f = fopen(bold_path, "rb");
         if (f) {
             fseek(f, 0, SEEK_END); bold_sz = ftell(f); rewind(f);
-            bold_buf = (unsigned char *)malloc((size_t)bold_sz);
+            bold_buf = (unsigned char *)CA_MALLOC((size_t)bold_sz);
             if (bold_buf) fread(bold_buf, 1, (size_t)bold_sz, f);
             fclose(f);
         }
@@ -386,8 +385,8 @@ bool ca_font_create(Ca_Instance *inst, GLFWwindow *glfw_win,
                                    regular_buf, (size_t)regular_sz,
                                    bold_buf,    (size_t)bold_sz,
                                    font_px);
-    free(regular_buf);
-    free(bold_buf);
+    CA_FREE(regular_buf);
+    CA_FREE(bold_buf);
     return ok;
 }
 
@@ -470,6 +469,6 @@ void ca_font_destroy(Ca_Instance *inst, Ca_Font *font)
     if (font->memory != VK_NULL_HANDLE)
         vkFreeMemory(inst->vk_device, font->memory, NULL);
     for (int s = 0; s < CA_FONT_STYLE_COUNT; s++)
-        free(font->tiers[s].chardata_block);
+        CA_FREE(font->tiers[s].chardata_block);
     memset(font, 0, sizeof(*font));
 }

@@ -8,8 +8,6 @@
 #include "ui.h"
 #include "css.h"
 
-#include <stdlib.h>
-
 /* Forward decls into the reactive subsystem (src/reactive/signal.c). */
 void ca_reactive_flush(Ca_Instance *inst);
 void ca_reactive_release_instance(Ca_Instance *inst);
@@ -22,7 +20,7 @@ Ca_Instance *ca_instance_create(const Ca_InstanceDesc *desc)
     if (!ca_window_system_init())
         return NULL;
 
-    Ca_Instance *inst = (Ca_Instance *)calloc(1, sizeof(Ca_Instance));
+    Ca_Instance *inst = (Ca_Instance *)CA_CALLOC(1, sizeof(Ca_Instance));
     if (!inst) {
         glfwTerminate();
         return NULL;
@@ -43,7 +41,7 @@ Ca_Instance *ca_instance_create(const Ca_InstanceDesc *desc)
     if (!ca_renderer_init(inst, desc)) {
         ca_ui_shutdown(inst);
         ca_event_shutdown(inst);
-        free(inst);
+        CA_FREE(inst);
         glfwTerminate();
         return NULL;
     }
@@ -64,7 +62,7 @@ void ca_instance_destroy(Ca_Instance *instance)
     ca_ui_shutdown(instance);
     ca_event_shutdown(instance);
     ca_reactive_release_instance(instance);
-    free(instance);
+    CA_FREE(instance);
     printf("[causality] instance destroyed\n");
 }
 

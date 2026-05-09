@@ -5,7 +5,6 @@
 #include "renderer.h"
 #include "pipeline.h"
 #include "viewport.h"
-#include <stdlib.h>
 #include <string.h>
 
 /* ---- Helpers ---- */
@@ -29,7 +28,7 @@ static VkSurfaceFormatKHR choose_surface_format(VkPhysicalDevice gpu,
     uint32_t count = 0;
     vkGetPhysicalDeviceSurfaceFormatsKHR(gpu, surface, &count, NULL);
     VkSurfaceFormatKHR *formats =
-        (VkSurfaceFormatKHR *)malloc(count * sizeof(VkSurfaceFormatKHR));
+        (VkSurfaceFormatKHR *)CA_MALLOC(count * sizeof(VkSurfaceFormatKHR));
     vkGetPhysicalDeviceSurfaceFormatsKHR(gpu, surface, &count, formats);
 
     VkSurfaceFormatKHR chosen = formats[0];
@@ -40,7 +39,7 @@ static VkSurfaceFormatKHR choose_surface_format(VkPhysicalDevice gpu,
             break;
         }
     }
-    free(formats);
+    CA_FREE(formats);
     return chosen;
 }
 
@@ -50,14 +49,14 @@ static VkPresentModeKHR choose_present_mode(VkPhysicalDevice gpu,
     uint32_t count = 0;
     vkGetPhysicalDeviceSurfacePresentModesKHR(gpu, surface, &count, NULL);
     VkPresentModeKHR *modes =
-        (VkPresentModeKHR *)malloc(count * sizeof(VkPresentModeKHR));
+        (VkPresentModeKHR *)CA_MALLOC(count * sizeof(VkPresentModeKHR));
     vkGetPhysicalDeviceSurfacePresentModesKHR(gpu, surface, &count, modes);
 
     VkPresentModeKHR chosen = VK_PRESENT_MODE_FIFO_KHR; /* guaranteed */
     for (uint32_t i = 0; i < count; ++i) {
         if (modes[i] == VK_PRESENT_MODE_MAILBOX_KHR) { chosen = modes[i]; break; }
     }
-    free(modes);
+    CA_FREE(modes);
     return chosen;
 }
 

@@ -1253,10 +1253,10 @@ void ca__set_text(void *widget, const char *text)
         size_t len = strlen(text);
         if (len < CA_LABEL_TEXT_MAX) {
             memcpy(lbl->text, text, len + 1);
-            free(lbl->dyn_text);
+            CA_FREE(lbl->dyn_text);
             lbl->dyn_text = NULL;
         } else {
-            char *buf = (char *)realloc(lbl->dyn_text, len + 1);
+            char *buf = (char *)CA_REALLOC(lbl->dyn_text, len + 1);
             if (buf) { memcpy(buf, text, len + 1); lbl->dyn_text = buf; }
         }
         n->dirty |= CA_DIRTY_CONTENT;

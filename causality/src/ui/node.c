@@ -4,36 +4,35 @@
 /* node.c — node pool, tree building, and subscription wiring */
 #include "node.h"
 
-#include <stdlib.h>
 #include <string.h>
 #include <assert.h>
 
 void ca_node_system_init(Ca_Window *win)
 {
-    win->node_pool      = (Ca_Node *)calloc(CA_MAX_NODES_PER_WINDOW, sizeof(Ca_Node));
-    win->draw_cmds      = (Ca_DrawCmd *)calloc(CA_MAX_DRAW_CMDS_PER_WINDOW, sizeof(Ca_DrawCmd));
-    win->label_pool     = (Ca_Label *)calloc(CA_MAX_LABELS_PER_WINDOW,  sizeof(Ca_Label));
-    win->button_pool    = (Ca_Button *)calloc(CA_MAX_BUTTONS_PER_WINDOW, sizeof(Ca_Button));
-    win->input_pool     = (Ca_TextInput *)calloc(CA_MAX_INPUTS_PER_WINDOW, sizeof(Ca_TextInput));
-    win->checkbox_pool  = (Ca_Checkbox *)calloc(CA_MAX_CHECKBOXES_PER_WINDOW, sizeof(Ca_Checkbox));
-    win->radio_pool     = (Ca_Radio *)calloc(CA_MAX_RADIOS_PER_WINDOW, sizeof(Ca_Radio));
-    win->slider_pool    = (Ca_Slider *)calloc(CA_MAX_SLIDERS_PER_WINDOW, sizeof(Ca_Slider));
-    win->toggle_pool    = (Ca_Toggle *)calloc(CA_MAX_TOGGLES_PER_WINDOW, sizeof(Ca_Toggle));
-    win->progress_pool  = (Ca_Progress *)calloc(CA_MAX_PROGRESS_PER_WINDOW, sizeof(Ca_Progress));
-    win->select_pool    = (Ca_Select *)calloc(CA_MAX_SELECTS_PER_WINDOW, sizeof(Ca_Select));
-    win->tabbar_pool    = (Ca_TabBar *)calloc(CA_MAX_TABBARS_PER_WINDOW, sizeof(Ca_TabBar));
-    win->treenode_pool  = (Ca_TreeNode *)calloc(CA_MAX_TREENODES_PER_WINDOW, sizeof(Ca_TreeNode));
-    win->table_pool     = (Ca_Table *)calloc(CA_MAX_TABLES_PER_WINDOW, sizeof(Ca_Table));
-    win->tooltip_pool   = (Ca_Tooltip *)calloc(CA_MAX_TOOLTIPS_PER_WINDOW, sizeof(Ca_Tooltip));
-    win->ctxmenu_pool   = (Ca_CtxMenu *)calloc(CA_MAX_CTXMENUS_PER_WINDOW, sizeof(Ca_CtxMenu));
-    win->modal_pool     = (Ca_Modal *)calloc(CA_MAX_MODALS_PER_WINDOW, sizeof(Ca_Modal));
-    win->splitter_pool   = (Ca_Splitter *)calloc(CA_MAX_SPLITTERS_PER_WINDOW, sizeof(Ca_Splitter));
-    win->viewport_pool   = (Ca_Viewport *)calloc(CA_MAX_VIEWPORTS_PER_WINDOW, sizeof(Ca_Viewport));
-    win->menubar_pool    = (Ca_MenuBar *)calloc(CA_MAX_MENUBARS_PER_WINDOW, sizeof(Ca_MenuBar));
+    win->node_pool      = (Ca_Node *)CA_CALLOC(CA_MAX_NODES_PER_WINDOW, sizeof(Ca_Node));
+    win->draw_cmds      = (Ca_DrawCmd *)CA_CALLOC(CA_MAX_DRAW_CMDS_PER_WINDOW, sizeof(Ca_DrawCmd));
+    win->label_pool     = (Ca_Label *)CA_CALLOC(CA_MAX_LABELS_PER_WINDOW,  sizeof(Ca_Label));
+    win->button_pool    = (Ca_Button *)CA_CALLOC(CA_MAX_BUTTONS_PER_WINDOW, sizeof(Ca_Button));
+    win->input_pool     = (Ca_TextInput *)CA_CALLOC(CA_MAX_INPUTS_PER_WINDOW, sizeof(Ca_TextInput));
+    win->checkbox_pool  = (Ca_Checkbox *)CA_CALLOC(CA_MAX_CHECKBOXES_PER_WINDOW, sizeof(Ca_Checkbox));
+    win->radio_pool     = (Ca_Radio *)CA_CALLOC(CA_MAX_RADIOS_PER_WINDOW, sizeof(Ca_Radio));
+    win->slider_pool    = (Ca_Slider *)CA_CALLOC(CA_MAX_SLIDERS_PER_WINDOW, sizeof(Ca_Slider));
+    win->toggle_pool    = (Ca_Toggle *)CA_CALLOC(CA_MAX_TOGGLES_PER_WINDOW, sizeof(Ca_Toggle));
+    win->progress_pool  = (Ca_Progress *)CA_CALLOC(CA_MAX_PROGRESS_PER_WINDOW, sizeof(Ca_Progress));
+    win->select_pool    = (Ca_Select *)CA_CALLOC(CA_MAX_SELECTS_PER_WINDOW, sizeof(Ca_Select));
+    win->tabbar_pool    = (Ca_TabBar *)CA_CALLOC(CA_MAX_TABBARS_PER_WINDOW, sizeof(Ca_TabBar));
+    win->treenode_pool  = (Ca_TreeNode *)CA_CALLOC(CA_MAX_TREENODES_PER_WINDOW, sizeof(Ca_TreeNode));
+    win->table_pool     = (Ca_Table *)CA_CALLOC(CA_MAX_TABLES_PER_WINDOW, sizeof(Ca_Table));
+    win->tooltip_pool   = (Ca_Tooltip *)CA_CALLOC(CA_MAX_TOOLTIPS_PER_WINDOW, sizeof(Ca_Tooltip));
+    win->ctxmenu_pool   = (Ca_CtxMenu *)CA_CALLOC(CA_MAX_CTXMENUS_PER_WINDOW, sizeof(Ca_CtxMenu));
+    win->modal_pool     = (Ca_Modal *)CA_CALLOC(CA_MAX_MODALS_PER_WINDOW, sizeof(Ca_Modal));
+    win->splitter_pool   = (Ca_Splitter *)CA_CALLOC(CA_MAX_SPLITTERS_PER_WINDOW, sizeof(Ca_Splitter));
+    win->viewport_pool   = (Ca_Viewport *)CA_CALLOC(CA_MAX_VIEWPORTS_PER_WINDOW, sizeof(Ca_Viewport));
+    win->menubar_pool    = (Ca_MenuBar *)CA_CALLOC(CA_MAX_MENUBARS_PER_WINDOW, sizeof(Ca_MenuBar));
     win->root           = NULL;
     win->draw_cmd_count = 0;
-    win->sorted_idx      = (uint32_t *)calloc(CA_MAX_DRAW_CMDS_PER_WINDOW, sizeof(uint32_t));
-    win->paint_cache     = (Ca_DrawCmd *)calloc(CA_MAX_DRAW_CMDS_PER_WINDOW, sizeof(Ca_DrawCmd));
+    win->sorted_idx      = (uint32_t *)CA_CALLOC(CA_MAX_DRAW_CMDS_PER_WINDOW, sizeof(uint32_t));
+    win->paint_cache     = (Ca_DrawCmd *)CA_CALLOC(CA_MAX_DRAW_CMDS_PER_WINDOW, sizeof(Ca_DrawCmd));
     win->paint_cache_used = 0;
     win->hovered_node   = NULL;
     win->drag_node      = NULL;
@@ -47,30 +46,30 @@ void ca_node_system_shutdown(Ca_Window *win)
 {
     /* Free dynamic text buffers before releasing the label pool */
     for (uint32_t i = 0; i < CA_MAX_LABELS_PER_WINDOW; ++i)
-        free(win->label_pool[i].dyn_text);
+        CA_FREE(win->label_pool[i].dyn_text);
 
-    free(win->node_pool);
-    free(win->draw_cmds);
-    free(win->sorted_idx);
-    free(win->label_pool);
-    free(win->button_pool);
-    free(win->input_pool);
-    free(win->checkbox_pool);
-    free(win->radio_pool);
-    free(win->slider_pool);
-    free(win->toggle_pool);
-    free(win->progress_pool);
-    free(win->select_pool);
-    free(win->tabbar_pool);
-    free(win->treenode_pool);
-    free(win->table_pool);
-    free(win->tooltip_pool);
-    free(win->ctxmenu_pool);
-    free(win->modal_pool);
-    free(win->splitter_pool);
-    free(win->viewport_pool);
-    free(win->menubar_pool);
-    free(win->paint_cache);
+    CA_FREE(win->node_pool);
+    CA_FREE(win->draw_cmds);
+    CA_FREE(win->sorted_idx);
+    CA_FREE(win->label_pool);
+    CA_FREE(win->button_pool);
+    CA_FREE(win->input_pool);
+    CA_FREE(win->checkbox_pool);
+    CA_FREE(win->radio_pool);
+    CA_FREE(win->slider_pool);
+    CA_FREE(win->toggle_pool);
+    CA_FREE(win->progress_pool);
+    CA_FREE(win->select_pool);
+    CA_FREE(win->tabbar_pool);
+    CA_FREE(win->treenode_pool);
+    CA_FREE(win->table_pool);
+    CA_FREE(win->tooltip_pool);
+    CA_FREE(win->ctxmenu_pool);
+    CA_FREE(win->modal_pool);
+    CA_FREE(win->splitter_pool);
+    CA_FREE(win->viewport_pool);
+    CA_FREE(win->menubar_pool);
+    CA_FREE(win->paint_cache);
     win->node_pool      = NULL;
     win->draw_cmds      = NULL;
     win->sorted_idx     = NULL;
@@ -119,7 +118,7 @@ static void release_widget(Ca_Node *node)
     switch (node->widget_type) {
     case CA_WIDGET_LABEL: {
         Ca_Label *lbl = (Ca_Label *)node->widget;
-        free(lbl->dyn_text);
+        CA_FREE(lbl->dyn_text);
         lbl->dyn_text = NULL;
         lbl->in_use = false;
         break;

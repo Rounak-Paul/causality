@@ -38,13 +38,13 @@ static bool create_vk_instance(Ca_Instance *inst, const char *app_name)
     uint32_t avail_ext_count = 0;
     vkEnumerateInstanceExtensionProperties(NULL, &avail_ext_count, NULL);
     VkExtensionProperties *avail_exts =
-        (VkExtensionProperties *)malloc(avail_ext_count * sizeof(VkExtensionProperties));
+        (VkExtensionProperties *)CA_MALLOC(avail_ext_count * sizeof(VkExtensionProperties));
     vkEnumerateInstanceExtensionProperties(NULL, &avail_ext_count, avail_exts);
     for (uint32_t i = 0; i < avail_ext_count; ++i) {
         if (strcmp(avail_exts[i].extensionName, "VK_KHR_portability_enumeration") == 0)
             has_portability = true;
     }
-    free(avail_exts);
+    CA_FREE(avail_exts);
 
     if (has_portability)
         extensions[ext_count++] = "VK_KHR_portability_enumeration";
@@ -112,7 +112,7 @@ static bool select_physical_device(Ca_Instance *inst, bool prefer_dedicated)
     }
 
     VkPhysicalDevice *devs =
-        (VkPhysicalDevice *)malloc(count * sizeof(VkPhysicalDevice));
+        (VkPhysicalDevice *)CA_MALLOC(count * sizeof(VkPhysicalDevice));
     vkEnumeratePhysicalDevices(inst->vk_instance, &count, devs);
 
     VkPhysicalDevice best = VK_NULL_HANDLE;
@@ -121,7 +121,7 @@ static bool select_physical_device(Ca_Instance *inst, bool prefer_dedicated)
         int s = score_device(devs[i], prefer_dedicated);
         if (s > best_score) { best_score = s; best = devs[i]; }
     }
-    free(devs);
+    CA_FREE(devs);
 
     if (best == VK_NULL_HANDLE) {
         fprintf(stderr, "[vk] no suitable device found\n");
