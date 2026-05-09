@@ -234,7 +234,10 @@ static Ca_Window *window_create_in_slot(Ca_Instance *inst, const Ca_WindowDesc *
     slot->glfw     = glfw;
     slot->instance = inst;
     slot->in_use   = true;
-    slot->ui_scale = 1.0f;
+    /* Apply the instance-wide default scale if one has been set,
+       otherwise fall back to 1.0 (no scaling). */
+    slot->ui_scale = (inst->default_ui_scale > 0.0f)
+                     ? inst->default_ui_scale : 1.0f;
 
     glfwSetWindowUserPointer(glfw, slot);
     glfwSetKeyCallback(glfw, glfw_key_cb);

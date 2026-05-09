@@ -69,6 +69,9 @@ typedef struct Ca_InstanceDesc {
     const char *font_path;       /* path to regular .ttf or .otf, or NULL for embedded */
     const char *bold_font_path;  /* path to bold .ttf or .otf, or NULL for embedded bold */
     float       font_size_px;    /* desired size in logical pixels (default: 12) */
+    /* Default UI scale inherited by every window created on this instance.
+       0.0 / 1.0 both mean no scaling.  Clamped to [0.25, 4.0] at init. */
+    float       default_ui_scale;
 } Ca_InstanceDesc;
 
 CA_API Ca_Instance *ca_instance_create(const Ca_InstanceDesc *desc);
@@ -123,6 +126,14 @@ CA_API bool       ca_window_is_open(const Ca_Window *window);
    Affects all widget sizes, paddings, gaps, and text rendering. */
 CA_API void       ca_window_set_scale(Ca_Window *window, float scale);
 CA_API float      ca_window_get_scale(Ca_Window *window);
+
+/* Instance-wide default UI scale.  Every window created after this call
+   inherits the given scale automatically — no need to call
+   ca_window_set_scale() on each individual window.
+   Existing open windows are NOT retroactively rescaled.
+   Same clamping as ca_window_set_scale: [0.25, 4.0]. */
+CA_API void  ca_instance_set_scale(Ca_Instance *instance, float scale);
+CA_API float ca_instance_get_scale(const Ca_Instance *instance);
 
 /* Set the window title displayed in the custom title bar. */
 CA_API void ca_window_set_title(Ca_Window *window, const char *title);

@@ -846,6 +846,10 @@ struct Ca_Instance {
        glfwWaitEvents(), keeping the loop running continuously at full speed.
        Set via ca_instance_set_continuous(). */
     bool continuous;
+
+    /* Default UI scale applied to every new window at creation time.
+       0.0 / 1.0 both mean "no scaling".  Set via ca_instance_set_scale(). */
+    float default_ui_scale;
 };
 
 /* ======================================================

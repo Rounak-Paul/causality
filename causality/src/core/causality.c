@@ -38,6 +38,13 @@ Ca_Instance *ca_instance_create(const Ca_InstanceDesc *desc)
     inst->font_size_px = (desc && desc->font_size_px > 0.0f)
                          ? desc->font_size_px : 12.0f;
 
+    {
+        float s = desc ? desc->default_ui_scale : 0.0f;
+        if (s < 0.25f && s > 0.0f) s = 0.25f;
+        if (s > 4.0f)  s = 4.0f;
+        inst->default_ui_scale = s; /* 0 means "unset" → windows default to 1.0 */
+    }
+
     if (!ca_renderer_init(inst, desc)) {
         ca_ui_shutdown(inst);
         ca_event_shutdown(inst);
@@ -92,5 +99,19 @@ void ca_instance_set_stylesheet(Ca_Instance *instance, Ca_Stylesheet *ss)
 {
     if (!instance) return;
     instance->stylesheet = ss;
+}
+
+void ca_instance_set_scale(Ca_Instance *instance, float scale)
+{
+    if (!instance) return;
+    if (scale < 0.25f) scale = 0.25f;
+    if (scale > 4.0f)  scale = 4.0f;
+    instance->default_ui_scale = scale;
+}
+
+float ca_instance_get_scale(const Ca_Instance *instance)
+{
+    if (!instance) return 1.0f;
+    return (instance->default_ui_scale > 0.0f) ? instance->default_ui_scale : 1.0f;
 }
 
