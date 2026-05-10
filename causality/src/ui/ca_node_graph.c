@@ -408,7 +408,12 @@ void ca_ng_node_begin(Ca_NodeGraph *ng, const Ca_NgNodeDesc *desc)
     uint32_t hdr_col    = desc->header_color ? desc->header_color : NG_COL_HDR_DEFAULT;
     uint32_t border_col = selected ? NG_COL_NODE_SEL : NG_COL_NODE_BORDER;
 
-    /* Node outer — all dimensions scaled by zoom */
+    /* Node outer — all dimensions scaled by zoom.
+     * z_index is intentionally NOT set here: the canvas builder emits the
+     * selected node last in DFS child order so it naturally paints on top
+     * of wires and other nodes without sorting-related child-visibility bugs
+     * (child draw commands always share z_index 0 and would be painted under
+     * a z_index>0 parent background after the sort pass). */
     ca_div_begin(&(Ca_DivDesc){
         .position        = CA_POSITION_ABSOLUTE,
         .pos_x           = nx,
@@ -424,7 +429,6 @@ void ca_ng_node_begin(Ca_NodeGraph *ng, const Ca_NgNodeDesc *desc)
         .shadow_blur     = 8.0f * zs,
         .shadow_color    = ca_color(0.0f, 0.0f, 0.0f, 0.45f),
         .id              = desc->key,
-        .z_index         = selected ? 1 : 0,
         .on_drag_start   = node_drag_start,
         .on_drag         = node_drag,
         .drag_data       = state,
