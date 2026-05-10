@@ -55,8 +55,8 @@ extern "C" {
    LIMITS
    ============================================================ */
 
-#define CA_NG_MAX_NODES  64
-#define CA_NG_KEY_LEN    48
+#define CA_NG_MAX_NODES  256
+#define CA_NG_KEY_LEN     64
 
 /* ============================================================
    PER-NODE PERSISTENT STATE

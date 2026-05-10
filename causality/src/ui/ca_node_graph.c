@@ -28,6 +28,7 @@
 
 #include "ca_node_graph.h"
 #include "ca_components.h"
+#include "../core/ca_internal.h"
 
 #include <string.h>
 #include <math.h>
@@ -127,30 +128,39 @@ static float ng_output_pin_y(const Ca_NgNodeState *state, int pin_idx, float zoo
    WIRE SEGMENT PRIMITIVES
    ============================================================ */
 
-static void emit_wire_h(float x, float y, float w, uint32_t color)
+/* Canvas bounds updated each frame from the host div's computed layout size.
+ * Wire segments outside these bounds are clamped/zeroed. */
+static float s_canvas_w = 0.0f;
+static float s_canvas_h = 0.0f;
+
+/* Always emits exactly one div — even when size is 0 — so the parent
+ * canvas div always has the same child count regardless of routing mode.
+ * This is critical: wires and nodes are siblings in the canvas container
+ * and Causality matches children by sequential index.  If wire segment
+ * count changed between frames, node divs would land on wrong slots and
+ * lose their drag callbacks, causing nodes to stop responding to drag. */
+static void emit_wire_seg(float x, float y, float w, float h, uint32_t color)
 {
-    if (w < 0.5f) return;
+    /* Clamp to canvas bounds — avoids huge divs that inflate layout cost. */
+    if (w >= 0.5f && h >= 0.5f && s_canvas_w > 0.0f) {
+        if (x > s_canvas_w || x + w < 0.0f || y > s_canvas_h || y + h < 0.0f) {
+            w = 0.0f; h = 0.0f; /* fully outside: zero it out */
+        } else {
+            if (x < 0.0f)          { w += x; x = 0.0f; }
+            if (x + w > s_canvas_w)  w = s_canvas_w - x;
+            if (y < 0.0f)          { h += y; y = 0.0f; }
+            if (y + h > s_canvas_h)  h = s_canvas_h - y;
+        }
+    }
+    float cw = (w < 0.5f) ? 0.0f : w;
+    float ch = (h < 0.5f) ? 0.0f : h;
     ca_div_begin(&(Ca_DivDesc){
         .position   = CA_POSITION_ABSOLUTE,
         .pos_x      = x,
-        .pos_y      = y - NG_WIRE_T * 0.5f,
-        .width      = w,
-        .height     = NG_WIRE_T,
-        .background = color,
-    });
-    ca_div_end();
-}
-
-static void emit_wire_v(float x, float y, float h, uint32_t color)
-{
-    if (h < 0.5f) return;
-    ca_div_begin(&(Ca_DivDesc){
-        .position   = CA_POSITION_ABSOLUTE,
-        .pos_x      = x - NG_WIRE_T * 0.5f,
         .pos_y      = y,
-        .width      = NG_WIRE_T,
-        .height     = h,
-        .background = color,
+        .width      = cw,
+        .height     = ch,
+        .background = (cw > 0.0f && ch > 0.0f) ? color : 0u,
     });
     ca_div_end();
 }
@@ -160,9 +170,11 @@ static void emit_wire_v(float x, float y, float h, uint32_t color)
  * Always exits source horizontally (right stub) and enters dest horizontally
  * (left stub).
  *
- * Forward  (lx ≤ rx): 3 segments — H-V-H midpoint between stubs.
- * Backward (lx >  rx): 5 segments — routes ABOVE both nodes to avoid overlap:
- *   out-stub  →  up  →  bridge-across  →  down  →  in-stub
+ * Forward  (lx ≤ rx): 3-segment H-V-H.  Slots [3] and [4] emit zero-size divs.
+ * Backward (lx >  rx): 5-segment route ABOVE both nodes.
+ *
+ * IMPORTANT: exactly 5 emit_wire_seg calls are made unconditionally so the
+ * canvas container's child count never changes between frames.
  */
 static void emit_route(float sx, float sy, float dx, float dy,
                        float stub, float zoom, uint32_t color)
@@ -171,25 +183,33 @@ static void emit_route(float sx, float sy, float dx, float dy,
     float rx = dx - stub;   /* left  end of dest   stub  */
     float wt = NG_WIRE_T;
 
+    /* Segment table: {x, y, w, h} — 5 entries always */
+    float seg[5][4] = {{0}};
+
     if (lx <= rx) {
-        /* ---- Forward: 3-segment H-V-H ---- */
+        /* ---- Forward: slots 0-2 used, 3-4 are zero ---- */
         float mid = (lx + rx) * 0.5f;
-        emit_wire_h(sx,  sy,           mid - sx,             color);
-        if (fabsf(dy - sy) > 0.5f)
-            emit_wire_v(mid, fminf(sy, dy), fabsf(dy - sy) + wt, color);
-        emit_wire_h(mid, dy,           dx  - mid,            color);
+        float vy  = fminf(sy, dy);
+        float vh  = fabsf(dy - sy) + wt;
+        seg[0][0] = sx;           seg[0][1] = sy - wt * 0.5f; seg[0][2] = mid - sx;  seg[0][3] = wt;
+        seg[1][0] = mid - wt*0.5f; seg[1][1] = vy;            seg[1][2] = wt;        seg[1][3] = (vh > wt + 0.5f) ? vh : 0.0f;
+        seg[2][0] = mid;          seg[2][1] = dy - wt * 0.5f; seg[2][2] = dx - mid;  seg[2][3] = wt;
+        /* seg[3], seg[4] stay {0,0,0,0} */
     } else {
-        /* ---- Backward: 5-segment, route above both nodes ---- */
+        /* ---- Backward: 5 segments, route above both nodes ---- */
         float clear = NG_BACK_CLEAR * zoom;
-        float ry    = fminf(sy, dy) - clear;   /* bridge row Y */
-        /* ry is always < min(sy,dy), so sy-ry and dy-ry are always > 0 */
-        emit_wire_h(sx, sy, stub,          color);   /* right stub out */
-        emit_wire_v(lx, ry, sy - ry + wt, color);   /* up to bridge   */
-        emit_wire_h(rx, ry, lx - rx,      color);   /* bridge across  */
-        emit_wire_v(rx, ry, dy - ry + wt, color);   /* down to dest   */
-        emit_wire_h(rx, dy, stub,         color);   /* left stub in   */
+        float ry    = fminf(sy, dy) - clear;
+        seg[0][0] = sx;            seg[0][1] = sy - wt*0.5f; seg[0][2] = stub;    seg[0][3] = wt;
+        seg[1][0] = lx - wt*0.5f; seg[1][1] = ry;           seg[1][2] = wt;      seg[1][3] = sy - ry + wt;
+        seg[2][0] = rx;            seg[2][1] = ry - wt*0.5f; seg[2][2] = lx - rx; seg[2][3] = wt;
+        seg[3][0] = rx - wt*0.5f; seg[3][1] = ry;           seg[3][2] = wt;      seg[3][3] = dy - ry + wt;
+        seg[4][0] = rx;            seg[4][1] = dy - wt*0.5f; seg[4][2] = stub;    seg[4][3] = wt;
     }
+
+    for (int i = 0; i < 5; i++)
+        emit_wire_seg(seg[i][0], seg[i][1], seg[i][2], seg[i][3], color);
 }
+
 
 /* ============================================================
    DRAG CALLBACKS — canvas panning
@@ -284,6 +304,13 @@ void ca_node_graph_begin(Ca_NodeGraph *ng, Ca_Div *host_div,
     ng->_cur_node_idx = -1;
     ng->_cur_in_idx   = 0;
     ng->_cur_out_idx  = 0;
+
+    /* Update canvas clip bounds from the host div's computed layout size
+     * (available from the previous frame's layout pass). */
+    if (host_div && host_div->w > 0.0f) {
+        s_canvas_w = host_div->w;
+        s_canvas_h = host_div->h;
+    }
 
     /* Copy selection callback so node drag_start can invoke it */
     if (desc) {
