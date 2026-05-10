@@ -3200,13 +3200,13 @@ void ca_widget_input_pass(Ca_Window *win)
             Ca_Node *hdr = am->header_node;
             if (!hdr) continue;
             const float sep_h = 8.0f;
-            float item_h = 20.0f;
-            float menu_w = 160.0f;
+            float item_h = 24.0f;
+            float menu_w = 180.0f;
             float drop_x = hdr->x;
             float drop_y = hdr->y + hdr->h;
             int new_sub  = -1;
             /* Hover over a sub-menu-capable item opens it */
-            float iy = drop_y;
+            float iy = drop_y + 3.0f; /* 3px top inset — matches paint pass */
             for (int ii = 0; ii < am->item_count; ++ii) {
                 float this_h = am->items[ii].separator ? sep_h : item_h;
                 if (am->items[ii].sub_item_count > 0 &&
@@ -3220,12 +3220,12 @@ void ca_widget_input_pass(Ca_Window *win)
             /* Keep sub open when mouse is inside the sub-panel */
             if (new_sub < 0 && am->active_sub >= 0) {
                 int   asi   = am->active_sub;
-                float sub_w = 160.0f;
+                float sub_w = 180.0f;
                 float sub_x = drop_x + menu_w;
                 float sub_y = drop_y;
                 for (int jj = 0; jj < asi; ++jj)
                     sub_y += am->items[jj].separator ? sep_h : item_h;
-                float sub_h = 24.0f * (float)am->items[asi].sub_item_count;
+                float sub_h = item_h * (float)am->items[asi].sub_item_count + 6.0f;
                 if (mx >= sub_x && mx <= sub_x + sub_w &&
                     my >= sub_y && my <= sub_y + sub_h)
                     new_sub = asi;
@@ -3248,8 +3248,8 @@ void ca_widget_input_pass(Ca_Window *win)
                 Ca_Node *hdr = am->header_node;
                 if (hdr) {
                     const float sep_h = 8.0f;
-                    float item_h = 20.0f;
-                    float menu_w = 160.0f;
+                    float item_h = 24.0f;
+                    float menu_w = 180.0f;
                     float drop_x = hdr->x;
                     float drop_y = hdr->y + hdr->h;
                     bool item_hit = false;
@@ -3258,10 +3258,10 @@ void ca_widget_input_pass(Ca_Window *win)
                     bool sub_hit = false;
                     if (am->active_sub >= 0) {
                         int   asi        = am->active_sub;
-                        float sub_item_h = 20.0f;
-                        float sub_w      = 160.0f;
+                        float sub_item_h = 24.0f;
+                        float sub_w      = 180.0f;
                         float sub_x      = drop_x + menu_w;
-                        float sub_y      = drop_y;
+                        float sub_y      = drop_y + 3.0f; /* 3px top inset — matches paint pass */
                         for (int jj = 0; jj < asi; ++jj)
                             sub_y += am->items[jj].separator ? sep_h : item_h;
                         for (int si = 0; si < am->items[asi].sub_item_count; ++si) {
@@ -3282,7 +3282,7 @@ void ca_widget_input_pass(Ca_Window *win)
                     }
 
                     if (!sub_hit) {
-                        float iy = drop_y;
+                        float iy = drop_y + 3.0f; /* 3px top inset — matches paint pass */
                         for (int ii = 0; ii < am->item_count; ++ii) {
                             float this_h = am->items[ii].separator ? sep_h : item_h;
                             if (mx >= drop_x && mx <= drop_x + menu_w &&
