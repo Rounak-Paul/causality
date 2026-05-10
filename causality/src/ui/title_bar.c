@@ -466,6 +466,7 @@ void ca_window_set_status_bar(Ca_Window      *window,
     window->status_bar_data   = user_data;
     {
         float sc = window->ui_scale > 0.0f ? window->ui_scale : 1.0f;
+        window->status_bar_raw_height = (height > 0.0f && fn) ? height : 0.0f;
         window->status_bar_height = (height > 0.0f && fn) ? (height * sc) : 0.0f;
     }
 

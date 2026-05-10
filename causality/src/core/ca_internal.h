@@ -680,6 +680,9 @@ struct Ca_Window {
 
     /* UI scale factor (1.0 = default, 2.0 = 200%, like browser zoom) */
     float         ui_scale;
+    /* When non-zero, the static content tree needs to be rescaled by this
+       ratio at the start of the next frame (deferred to avoid mid-drag corruption). */
+    float         pending_scale_ratio;
 
     /* Input state (updated by GLFW callbacks each tick) */
     double        mouse_x, mouse_y;
@@ -734,7 +737,8 @@ struct Ca_Window {
     /* Status bar user builder + config (NULL fn → bar hidden). */
     void         (*status_bar_fn)(Ca_Window *window, void *user_data);
     void          *status_bar_data;
-    float          status_bar_height;
+    float          status_bar_height;     /* pre-scaled: raw_height * ui_scale */
+    float          status_bar_raw_height; /* logical height (unscaled) */
     bool           titlebar_maximized;
     Ca_MenuBarMenu titlebar_menus[CA_MAX_MENUS_PER_BAR];
     int            titlebar_menu_count;

@@ -106,7 +106,10 @@ void ca_instance_set_scale(Ca_Instance *instance, float scale)
     if (!instance) return;
     if (scale < 0.25f) scale = 0.25f;
     if (scale > 4.0f)  scale = 4.0f;
+
+    float old_scale = (instance->default_ui_scale > 0.0f) ? instance->default_ui_scale : 1.0f;
     instance->default_ui_scale = scale;
+
     /* Apply immediately to every currently open window so a runtime
        scale change takes effect without needing to reopen windows. */
     for (int i = 0; i < CA_MAX_WINDOWS_TOTAL; i++) {
@@ -114,6 +117,26 @@ void ca_instance_set_scale(Ca_Instance *instance, float scale)
         if (!w->in_use) continue;
         w->ui_scale = scale;
         w->titlebar_needs_rebuild = true;
+
+        /* Schedule a deferred rescale of the static content tree.
+           Done at the start of the next frame (before input/drag processing)
+           to avoid corrupting layout values mid-slider-drag.
+           pending_scale_ratio accumulates if called multiple times per frame. */
+        if (old_scale > 0.0f && scale != old_scale) {
+            float ratio = scale / old_scale;
+            w->pending_scale_ratio = (w->pending_scale_ratio > 0.0f)
+                ? w->pending_scale_ratio * ratio
+                : ratio;
+        }
+
+        /* Recompute status bar height from the stored raw (unscaled) height. */
+        if (w->status_bar_node && w->status_bar_raw_height > 0.0f) {
+            w->status_bar_height = w->status_bar_raw_height * scale;
+            w->status_bar_node->desc.height = w->status_bar_height;
+            w->status_bar_node->dirty |= CA_DIRTY_LAYOUT | CA_DIRTY_CONTENT;
+            w->statusbar_needs_rebuild = true;
+        }
+
         if (w->root)
             w->root->dirty |= CA_DIRTY_LAYOUT | CA_DIRTY_CONTENT;
     }

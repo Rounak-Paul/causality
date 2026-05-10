@@ -17,6 +17,39 @@
 /* Saved geometry for incremental layout invalidation. */
 typedef struct { float x, y, w, h, cw, ch; } NodeRect;
 
+/* Recursively rescale all dimension values in a node subtree by `ratio`.
+   Applied once per frame at frame-start for deferred scale changes so that
+   static nodes (built once, never reconciled) pick up the new ui_scale. */
+static void rescale_nodes(Ca_Node *node, float ratio)
+{
+    if (!node || !node->in_use) return;
+    Ca_NodeDesc *d = &node->desc;
+    if (!d->width_pct  && d->width  > 0.0f) d->width  *= ratio;
+    if (!d->height_pct && d->height > 0.0f) d->height *= ratio;
+    if (d->min_w   > 0.0f) d->min_w   *= ratio;
+    if (d->max_w   > 0.0f) d->max_w   *= ratio;
+    if (d->min_h   > 0.0f) d->min_h   *= ratio;
+    if (d->max_h   > 0.0f) d->max_h   *= ratio;
+    d->padding_top    *= ratio;
+    d->padding_right  *= ratio;
+    d->padding_bottom *= ratio;
+    d->padding_left   *= ratio;
+    d->margin_top     *= ratio;
+    d->margin_right   *= ratio;
+    d->margin_bottom  *= ratio;
+    d->margin_left    *= ratio;
+    d->gap            *= ratio;
+    d->corner_radius  *= ratio;
+    if (d->font_size > 0.0f) d->font_size *= ratio;
+    d->pos_x        *= ratio;
+    d->pos_y        *= ratio;
+    d->border_width *= ratio;
+    d->shadow_blur  *= ratio;
+    node->dirty |= CA_DIRTY_LAYOUT | CA_DIRTY_CONTENT;
+    for (uint32_t ci = 0; ci < node->child_count; ci++)
+        rescale_nodes(node->children[ci], ratio);
+}
+
 /* Linear interpolation */
 static float lerpf(float a, float b, float t)
 {
@@ -191,6 +224,18 @@ void ca_ui_update(Ca_Instance *inst)
     for (int i = 0; i < CA_MAX_WINDOWS_TOTAL; ++i) {
         Ca_Window *win = &inst->windows[i];
         if (!win->in_use || !win->root || !win->node_pool) continue;
+
+        /* 1. Deferred scale rescale — applied once at frame-start so that
+              static nodes built during ca_ui_begin (never reconciled) pick up
+              the new ui_scale without corrupting layout values mid-slider-drag.
+              Skipped while a drag is active on this window; the accumulated
+              ratio fires on the first frame after the drag ends. */
+        if (win->pending_scale_ratio > 0.0f && !win->drag_node) {
+            float ratio = win->pending_scale_ratio;
+            win->pending_scale_ratio = 0.0f;
+            if (win->content_root)
+                rescale_nodes(win->content_root, ratio);
+        }
 
         /* 2. Transition tick — update animated properties, mark dirty */
         double now = glfwGetTime();
