@@ -26,7 +26,7 @@
 #endif
 
 #ifndef CA_MAX_NODE_CHILDREN
-#  define CA_MAX_NODE_CHILDREN 256
+#  define CA_MAX_NODE_CHILDREN 512
 #endif
 
 #ifndef CA_MAX_DRAW_CMDS_PER_WINDOW

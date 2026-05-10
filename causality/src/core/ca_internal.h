@@ -351,6 +351,9 @@ struct Ca_Node {
     void         *drag_fn_move;     /* Ca_DragFn */
     void         *drag_fn_end;      /* Ca_DragFn */
     void         *drag_data;        /* user_data for drag callbacks */
+    /* Scroll callback */
+    void         *scroll_fn;        /* Ca_ScrollFn */
+    void         *scroll_data;      /* user_data for scroll callback */
     /* Reactive builder — ca_div_set_builder. The effect re-runs the
        builder whenever any signal it read via ca_signal_get changes. */
     void          (*builder_fn)(Ca_Div *div, void *user_data);

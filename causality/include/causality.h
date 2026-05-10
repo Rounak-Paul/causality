@@ -305,6 +305,10 @@ typedef struct Ca_DragEvent {
 
 typedef void (*Ca_DragFn)(const Ca_DragEvent *event, void *user_data);
 
+/* Scroll callback — fired when the scroll wheel / trackpad scrolls over a div.
+   'dx' / 'dy' are the raw GLFW scroll deltas for this frame. */
+typedef void (*Ca_ScrollFn)(double dx, double dy, void *user_data);
+
 /* Layout direction constants */
 #define CA_HORIZONTAL 0
 #define CA_VERTICAL   1
@@ -379,6 +383,9 @@ typedef struct Ca_DivDesc {
     uint32_t shadow_color;         /* ca_color(r,g,b,a)                     */
     /* Z-index */
     int      z_index;              /* draw order (higher = on top)          */
+    /* Scroll interaction callback */
+    Ca_ScrollFn on_scroll;         /* called when scroll wheel moves over div */
+    void       *scroll_data;       /* user_data passed to on_scroll          */
     /* Visibility / interactivity */
     bool     hidden;               /* display: none — removed from layout   */
     bool     disabled;             /* non-interactive, visually dimmed       */

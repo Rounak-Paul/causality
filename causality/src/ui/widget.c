@@ -637,6 +637,8 @@ Ca_Div *ca_div_begin(const Ca_DivDesc *desc)
         node->drag_fn_move  = (void *)desc->on_drag;
         node->drag_fn_end   = (void *)desc->on_drag_end;
         node->drag_data     = desc->drag_data;
+        node->scroll_fn     = (void *)desc->on_scroll;
+        node->scroll_data   = desc->scroll_data;
     }
 
     ctx_push_mode(node, ctx_top_reconcile());
@@ -3113,22 +3115,38 @@ void ca_widget_input_pass(Ca_Window *win)
 
         /* Then: normal scroll container handling (skipped if dropdown consumed scroll) */
         if (!select_scroll_consumed) {
-            Ca_Node *scroll_target = NULL;
+            /* First try custom scroll callbacks (e.g. node graph canvas zoom) */
+            Ca_Node *scroll_cb_node = NULL;
+            float min_area = 1e30f;
             for (uint32_t i = 0; i < CA_MAX_NODES_PER_WINDOW; ++i) {
                 Ca_Node *n = &win->node_pool[i];
-                if (!n->in_use) continue;
-                if (n->desc.overflow_y < 2) continue;
+                if (!n->in_use || !n->scroll_fn) continue;
                 if (!point_in_node(n, mx, my)) continue;
-                if (!scroll_target || (n->w * n->h < scroll_target->w * scroll_target->h))
-                    scroll_target = n;
+                float area = n->w * n->h;
+                if (area < min_area) { min_area = area; scroll_cb_node = n; }
             }
-            if (scroll_target) {
-                scroll_target->scroll_y -= (float)win->scroll_dy * SCROLL_SPEED;
-                float max_scroll = scroll_target->content_h - scroll_target->h;
-                if (max_scroll < 0) max_scroll = 0;
-                if (scroll_target->scroll_y < 0) scroll_target->scroll_y = 0;
-                if (scroll_target->scroll_y > max_scroll) scroll_target->scroll_y = max_scroll;
-                scroll_target->dirty |= CA_DIRTY_LAYOUT | CA_DIRTY_CONTENT;
+            if (scroll_cb_node) {
+                ((Ca_ScrollFn)scroll_cb_node->scroll_fn)(
+                    win->scroll_dx, win->scroll_dy, scroll_cb_node->scroll_data);
+            } else {
+                /* Standard overflow scroll containers */
+                Ca_Node *scroll_target = NULL;
+                for (uint32_t i = 0; i < CA_MAX_NODES_PER_WINDOW; ++i) {
+                    Ca_Node *n = &win->node_pool[i];
+                    if (!n->in_use) continue;
+                    if (n->desc.overflow_y < 2) continue;
+                    if (!point_in_node(n, mx, my)) continue;
+                    if (!scroll_target || (n->w * n->h < scroll_target->w * scroll_target->h))
+                        scroll_target = n;
+                }
+                if (scroll_target) {
+                    scroll_target->scroll_y -= (float)win->scroll_dy * SCROLL_SPEED;
+                    float max_scroll = scroll_target->content_h - scroll_target->h;
+                    if (max_scroll < 0) max_scroll = 0;
+                    if (scroll_target->scroll_y < 0) scroll_target->scroll_y = 0;
+                    if (scroll_target->scroll_y > max_scroll) scroll_target->scroll_y = max_scroll;
+                    scroll_target->dirty |= CA_DIRTY_LAYOUT | CA_DIRTY_CONTENT;
+                }
             }
         }
     }

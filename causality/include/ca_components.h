@@ -250,6 +250,9 @@ CA_API Ca_Modal *ca_modal_begin(const Ca_ModalDesc *desc);
 CA_API void      ca_modal_end(void);
 CA_API void      ca_modal_set_visible(Ca_Modal *modal, bool visible);
 
+/* Node graph canvas (see ca_node_graph.h for full documentation) */
+#include "ca_node_graph.h"
+
 #ifdef __cplusplus
 }
 #endif
