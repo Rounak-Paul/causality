@@ -721,6 +721,8 @@ Ca_Label *ca_text(const Ca_TextDesc *desc)
         if (desc->hidden) lbl->node->desc.hidden = true;
         apply_css(lbl->node, &lbl->node->desc, CA_ELEM_TEXT,
                   desc->style, id, &lbl->color);
+        /* Inline color overrides CSS — lets callers set per-instance colors. */
+        if (desc->color) lbl->color = desc->color;
         /* Default height if neither user nor CSS set it.
            Skip for wrapped labels — their height is computed at layout time
            from the actual wrapped line count. */

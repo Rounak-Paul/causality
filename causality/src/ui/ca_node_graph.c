@@ -413,7 +413,7 @@ void ca_ng_node_begin(Ca_NodeGraph *ng, const Ca_NgNodeDesc *desc)
         .padding    = {0.0f, NG_PIN_PAD_R * zs, 0.0f, NG_PIN_PAD_L * zs},
     });
     if (zs >= NG_ZOOM_HIDE_TEXT)
-        ca_text(&(Ca_TextDesc){ .text = desc->title, .color = 0xFFFFFFFFu });
+        ca_text(&(Ca_TextDesc){ .text = desc->title, .color = 0xFFFFFFFFu, .style = "ng-node-title" });
     ca_div_end(); /* header */
 
     /* Body — scaled padding */
@@ -474,7 +474,7 @@ void ca_ng_input_pin(Ca_NodeGraph *ng, const Ca_NgPinDesc *desc)
             .corner_radius = dotd * 0.5f,
         });
         ca_div_end();
-        ca_text(&(Ca_TextDesc){ .text = lbl, .color = NG_COL_TEXT });
+        ca_text(&(Ca_TextDesc){ .text = lbl, .color = dot_col, .style = "ng-pin-label" });
         ca_div_end();
     } else {
         /* Stub row: thin placeholder line so the body always has flow-children
@@ -537,7 +537,7 @@ void ca_ng_output_pin(Ca_NodeGraph *ng, const Ca_NgPinDesc *desc)
             .padding   = {0.0f, padr, 0.0f, padl},
             .gap       = gap,
         });
-        ca_text(&(Ca_TextDesc){ .text = lbl, .color = NG_COL_TEXT });
+        ca_text(&(Ca_TextDesc){ .text = lbl, .color = dot_col, .style = "ng-pin-label ng-out-label" });
         ca_div_begin(&(Ca_DivDesc){
             .width         = dotd,
             .height        = dotd,
