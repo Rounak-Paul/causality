@@ -3842,7 +3842,95 @@ void ca_widget_input_pass(Ca_Window *win)
 
     /* --- Hover tracking --- */
     win->hovered_node = NULL;
-    if (win->node_pool) {
+
+    /* If the cursor is over an active overlay (select dropdown, context menu,
+       menu-bar dropdown, or modal) do NOT let hover pierce through to background
+       nodes — that would cause tooltips and hover styles to fire on invisible
+       elements sitting behind the overlay. */
+    bool over_overlay = false;
+
+    /* Ca_Select open dropdown */
+    if (!over_overlay && win->select_pool) {
+        for (uint32_t i = 0; i < CA_MAX_SELECTS_PER_WINDOW && !over_overlay; ++i) {
+            Ca_Select *sel = &win->select_pool[i];
+            if (!sel->in_use || !sel->open || !sel->node) continue;
+            Ca_Node *sn = sel->node;
+            int visible = sel->option_count < CA_SELECT_MAX_VISIBLE
+                          ? sel->option_count : CA_SELECT_MAX_VISIBLE;
+            float drop_y = sn->y + sn->h;
+            float drop_h = sn->h * (float)visible;
+            if (mx >= sn->x && mx <= sn->x + sn->w &&
+                my >= drop_y  && my <= drop_y + drop_h)
+                over_overlay = true;
+        }
+    }
+
+    /* Ca_CtxMenu open */
+    if (!over_overlay && win->ctxmenu_pool) {
+        const float cm_item_h = 24.0f;
+        const float cm_sep_h  =  8.0f;
+        const float cm_menu_w = 180.0f;
+        for (uint32_t i = 0; i < CA_MAX_CTXMENUS_PER_WINDOW && !over_overlay; ++i) {
+            Ca_CtxMenu *cm = &win->ctxmenu_pool[i];
+            if (!cm->in_use || !cm->open) continue;
+            float menu_h = 6.0f;
+            for (int mi = 0; mi < cm->item_count; ++mi) {
+                bool is_sep = (cm->items[mi][0] == '-' && cm->items[mi][1] == '\0');
+                menu_h += is_sep ? cm_sep_h : cm_item_h;
+            }
+            float cx = cm->open_x, cy = cm->open_y;
+            if (win->sc.extent.width  > 0 && cx + cm_menu_w > (float)win->sc.extent.width)
+                cx = (float)win->sc.extent.width  - cm_menu_w;
+            if (win->sc.extent.height > 0 && cy + menu_h > (float)win->sc.extent.height)
+                cy = (float)win->sc.extent.height - menu_h;
+            if (cx < 0) cx = 0;
+            if (cy < 0) cy = 0;
+            if (mx >= cx && mx <= cx + cm_menu_w && my >= cy && my <= cy + menu_h)
+                over_overlay = true;
+        }
+    }
+
+    /* Ca_MenuBar active dropdown (and sub-menu) */
+    if (!over_overlay && win->menubar_pool) {
+        const float mb_item_h = 24.0f;
+        const float mb_sep_h  =  8.0f;
+        const float mb_menu_w = 180.0f;
+        for (uint32_t i = 0; i < CA_MAX_MENUBARS_PER_WINDOW && !over_overlay; ++i) {
+            Ca_MenuBar *mb = &win->menubar_pool[i];
+            if (!mb->in_use || mb->active_menu < 0) continue;
+            Ca_MenuBarMenu *am = &mb->menus[mb->active_menu];
+            Ca_Node *hdr = am->header_node;
+            if (!hdr) continue;
+            float drop_x = hdr->x, drop_y = hdr->y + hdr->h;
+            float menu_h = 6.0f;
+            for (int ii = 0; ii < am->item_count; ++ii)
+                menu_h += am->items[ii].separator ? mb_sep_h : mb_item_h;
+            if (mx >= drop_x && mx <= drop_x + mb_menu_w &&
+                my >= drop_y  && my <= drop_y + menu_h)
+                over_overlay = true;
+            /* Sub-menu panel */
+            if (!over_overlay && am->active_sub >= 0 && am->active_sub < am->item_count) {
+                float sub_x = drop_x + mb_menu_w;
+                float sub_y = drop_y;
+                for (int jj = 0; jj < am->active_sub; ++jj)
+                    sub_y += am->items[jj].separator ? mb_sep_h : mb_item_h;
+                float sub_h = mb_item_h * (float)am->items[am->active_sub].sub_item_count + 6.0f;
+                if (mx >= sub_x && mx <= sub_x + mb_menu_w &&
+                    my >= sub_y  && my <= sub_y + sub_h)
+                    over_overlay = true;
+            }
+        }
+    }
+
+    /* Ca_Modal visible — overlay covers the full window */
+    if (!over_overlay && win->modal_pool) {
+        for (uint32_t i = 0; i < CA_MAX_MODALS_PER_WINDOW && !over_overlay; ++i) {
+            Ca_Modal *m = &win->modal_pool[i];
+            if (m->in_use && m->visible) over_overlay = true;
+        }
+    }
+
+    if (!over_overlay && win->node_pool) {
         /* Find the smallest node under the cursor (most specific hit) */
         float best_area = 1e18f;
         for (uint32_t i = 0; i < CA_MAX_NODES_PER_WINDOW; ++i) {
