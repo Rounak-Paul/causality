@@ -65,6 +65,108 @@ static float measure_wrapped_text_height(Ca_Node *node)
     return node->desc.padding_top + line_height * line_count + node->desc.padding_bottom;
 }
 
+static float measure_text_width(Ca_Node *node, const char *txt)
+{
+    if (!txt || txt[0] == '\0') return 0.0f;
+
+    Ca_Window *win = node->window;
+    if (!win || !win->instance || !win->instance->font)
+        return 0.0f;
+    Ca_Font *font = win->instance->font;
+
+    float ui_s = win->ui_scale > 0.0f ? win->ui_scale : 1.0f;
+    float cs   = font->content_scale / ui_s;
+    float desired_size = node->desc.font_size > 0.0f ? node->desc.font_size : font->default_size;
+    Ca_FontTier *tier  = ca_font_select_tier(font, node->desc.font_bold);
+    if (!tier) return 0.0f;
+    float font_scale   = desired_size / tier->logical_px;
+    float cs_eff       = cs / font_scale;
+
+    float line_w = 0.0f;
+    float max_w = 0.0f;
+    const char *p = txt;
+    while (*p) {
+        if (*p == '\n') {
+            if (line_w > max_w) max_w = line_w;
+            line_w = 0.0f;
+            p++;
+            continue;
+        }
+        uint32_t cp = ca_utf8_decode(&p);
+        stbtt_packedchar *pc = ca_font_glyph(tier, cp);
+        if (pc) line_w += pc->xadvance / cs_eff;
+    }
+    if (line_w > max_w) max_w = line_w;
+
+    return max_w;
+}
+
+static float measure_node_text_width(Ca_Node *node)
+{
+    const char *txt = NULL;
+    float extra_w = 0.0f;
+
+    switch (node->widget_type) {
+    case CA_WIDGET_LABEL: {
+        Ca_Label *lbl = (Ca_Label *)node->widget;
+        if (lbl && lbl->in_use) txt = ca_label_get_text(lbl);
+        break;
+    }
+    case CA_WIDGET_BUTTON: {
+        Ca_Button *btn = (Ca_Button *)node->widget;
+        if (btn && btn->in_use) txt = btn->text;
+        break;
+    }
+    case CA_WIDGET_TEXT_INPUT: {
+        Ca_TextInput *inp = (Ca_TextInput *)node->widget;
+        if (inp && inp->in_use)
+            txt = inp->text[0] ? inp->text : inp->placeholder;
+        break;
+    }
+    case CA_WIDGET_CHECKBOX: {
+        Ca_Checkbox *cb = (Ca_Checkbox *)node->widget;
+        if (cb && cb->in_use) {
+            txt = cb->text;
+            float h = node->desc.height > 0.0f ? node->desc.height : 20.0f;
+            extra_w = h * 0.8f + 7.0f;
+        }
+        break;
+    }
+    case CA_WIDGET_RADIO: {
+        Ca_Radio *r = (Ca_Radio *)node->widget;
+        if (r && r->in_use) {
+            txt = r->text;
+            float h = node->desc.height > 0.0f ? node->desc.height : 20.0f;
+            extra_w = h * 0.8f + 7.0f;
+        }
+        break;
+    }
+    case CA_WIDGET_SELECT: {
+        Ca_Select *sel = (Ca_Select *)node->widget;
+        if (sel && sel->in_use && sel->selected >= 0 && sel->selected < sel->option_count) {
+            txt = sel->options[sel->selected];
+            extra_w = 18.0f;
+        }
+        break;
+    }
+    case CA_WIDGET_TREENODE: {
+        Ca_TreeNode *tn = (Ca_TreeNode *)node->widget;
+        if (tn && tn->in_use) {
+            txt = tn->text;
+            float fs = node->desc.font_size > 0.0f ? node->desc.font_size : 12.0f;
+            extra_w = fs;
+            if (tn->icon[0]) extra_w += fs;
+        }
+        break;
+    }
+    default:
+        break;
+    }
+
+    return measure_text_width(node, txt) + extra_w +
+           node->desc.padding_left + node->desc.padding_right;
+}
+
 /* Estimate a node's natural size along a given axis (true=height, false=width).
    Used for auto-sizing children that have no explicit size and no flex-grow. */
 static float content_size(Ca_Node *node, bool want_height)
@@ -82,9 +184,11 @@ static float content_size(Ca_Node *node, bool want_height)
     int ov = want_height ? node->desc.overflow_y : node->desc.overflow_x;
     if (ov > 1) return 0.0f;
 
-    /* Leaf: height ≈ line-height, width = 0 (unknown, distribute remaining) */
-    if (node->child_count == 0)
-        return want_height ? 20.0f : 0.0f;
+    /* Leaf text-bearing widgets have intrinsic width, matching browser-like row sizing. */
+    if (node->child_count == 0) {
+        if (!want_height) return measure_node_text_width(node);
+        return 20.0f;
+    }
 
     /* Container: compute from children */
     bool is_row  = (node->desc.direction == CA_DIR_ROW);
@@ -328,7 +432,6 @@ static void layout_node(Ca_Node *node, float x, float y, float avail_w, float av
 
     /* Pre-compute each child's hypothetical main-axis size (including margins) */
     float child_hypo_main[CA_MAX_NODE_CHILDREN];
-    bool  child_explicit_main[CA_MAX_NODE_CHILDREN];
     float child_margin_before[CA_MAX_NODE_CHILDREN];  /* main-axis leading margin */
     float child_margin_after[CA_MAX_NODE_CHILDREN];   /* main-axis trailing margin */
     float child_margin_cross0[CA_MAX_NODE_CHILDREN];  /* cross-axis start margin */
@@ -337,7 +440,6 @@ static void layout_node(Ca_Node *node, float x, float y, float avail_w, float av
         Ca_Node *child = node->children[i];
         if (child->desc.hidden || child->desc.position != CA_POSITION_RELATIVE) {
             child_hypo_main[i] = 0;
-            child_explicit_main[i] = false;
             child_margin_before[i] = child_margin_after[i] = 0;
             child_margin_cross0[i] = child_margin_cross1[i] = 0;
             continue;
@@ -359,7 +461,6 @@ static void layout_node(Ca_Node *node, float x, float y, float avail_w, float av
             ms = avail_main * child->desc.width / 100.0f;
         else if (!is_row && child->desc.height_pct && child->desc.height > 0.0f)
             ms = avail_main * child->desc.height / 100.0f;
-        child_explicit_main[i] = (ms > 0.0f);
         if (ms > 0.0f) {
             child_hypo_main[i] = ms;
         } else {
@@ -373,20 +474,6 @@ static void layout_node(Ca_Node *node, float x, float y, float avail_w, float av
     /* Build flex lines */
     FlexLine lines[MAX_FLEX_LINES];
     uint32_t line_count = 0;
-
-    /* If any child has explicit flex-grow, only those children grow;
-       children without flex-grow use their natural content size.
-       If NO child has explicit flex-grow, all auto-sized children
-       share remaining space equally. */
-    bool any_explicit_flex_grow = false;
-    for (uint32_t i = 0; i < node->child_count; ++i) {
-        Ca_Node *child = node->children[i];
-        if (!child->desc.hidden && child->desc.position == CA_POSITION_RELATIVE
-            && child->desc.flex_grow > 0.0f) {
-            any_explicit_flex_grow = true;
-            break;
-        }
-    }
 
     if (!do_wrap) {
         /* Single line — all children */
@@ -405,8 +492,6 @@ static void layout_node(Ca_Node *node, float x, float y, float avail_w, float av
             ln->total_fixed += child_hypo_main[i];
             if (child->desc.flex_grow > 0.0f)
                 ln->total_grow += child->desc.flex_grow;
-            else if (!child_explicit_main[i] && !any_explicit_flex_grow)
-                ln->total_grow += 1.0f;
         }
         ln->count = vis;
         ln->total_fixed += (vis > 1) ? gap * (float)(vis - 1) : 0;
@@ -450,8 +535,6 @@ static void layout_node(Ca_Node *node, float x, float y, float avail_w, float av
             ln->total_fixed += hmain;
             if (child->desc.flex_grow > 0.0f)
                 ln->total_grow += child->desc.flex_grow;
-            else if (!child_explicit_main[i] && !any_explicit_flex_grow)
-                ln->total_grow += 1.0f;
         }
         /* Finish last line */
         if (line_vis > 0) {
@@ -498,7 +581,6 @@ static void layout_node(Ca_Node *node, float x, float y, float avail_w, float av
                 cc = avail_cross * child->desc.width / 100.0f;
 
             float grow = child->desc.flex_grow;
-            if (grow <= 0.0f && !child_explicit_main[i] && !any_explicit_flex_grow) grow = 1.0f;
             if (grow > 0.0f && ln->total_grow > 0.0f && remaining > 0.0f)
                 cm += remaining * grow / ln->total_grow;
             if (cc <= 0.0f) cc = line_avail_cross;

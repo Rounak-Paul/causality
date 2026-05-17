@@ -236,8 +236,11 @@ CA_API void ca_table_row_begin(const Ca_DivDesc *desc);
 CA_API void ca_table_row_end(void);
 CA_API void ca_table_cell(const Ca_TextDesc *desc);
 
-/* Tooltip — attach to the previously created element */
-CA_API void ca_tooltip(const Ca_TooltipDesc *desc);
+/* Tooltip — attach to the previously created element. */
+CA_API Ca_Tooltip *ca_tooltip(const Ca_TooltipDesc *desc);
+
+/* Updates an existing tooltip without rebuilding the target widget. */
+CA_API void ca_tooltip_set_text(Ca_Tooltip *tooltip, const char *text);
 
 /* Context menu — attach to the previously created element */
 CA_API void ca_context_menu(const Ca_CtxMenuDesc *desc);

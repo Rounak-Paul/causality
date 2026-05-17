@@ -363,7 +363,7 @@ typedef void (*Ca_ScrollFn)(double dx, double dy, void *user_data);
 
 /* <div> — generic layout container. */
 typedef struct Ca_DivDesc {
-    float    width, height;        /* 0 = fill available space              */
+   float    width, height;        /* 0 = auto; use CSS flex-grow to fill   */
     float    padding[4];           /* top, right, bottom, left              */
     float    gap;                  /* space between children                */
     int      direction;            /* CA_HORIZONTAL (0) or CA_VERTICAL (1)  */

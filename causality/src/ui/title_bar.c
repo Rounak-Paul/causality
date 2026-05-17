@@ -10,7 +10,7 @@
  *   win->root         (vertical flex, fills window, system-managed)
  *   ├── win->title_bar_node  (horizontal, 30 px fixed height)
  *   │   ├── ca_menu_bar(...)     (left-aligned menus, if any)
- *   │   ├── drag div            (flex-grow:1, drag-to-move, title text)
+ *   │   ├── drag div             (flex-grow:1, drag-to-move, title text)
  *   │   └── controls div        (min / max / close buttons)
  *   └── win->content_root  (flex-grow: 1, holds user content)
  */
@@ -155,7 +155,7 @@ void ca_title_bar_init(Ca_Window *win)
     /* ---- Content root: fills remaining space below title bar ---- */
     Ca_NodeDesc cr = {0};
     cr.direction  = CA_VERTICAL;
-    /* width = 0, height = 0 → auto-fill via default flex grow */
+    cr.flex_grow  = 1.0f;
     Ca_Node *crnode = ca_node_add(root, &cr);
     assert(crnode && "ca_title_bar_init: failed to allocate content_root");
     win->content_root = crnode;
@@ -260,7 +260,17 @@ void ca_title_bar_rebuild(Ca_Window *win)
     drag->desc.flex_grow       = 1.0f;
     drag->desc.align_items     = CA_ALIGN_CENTER;
     drag->desc.justify_content = CA_ALIGN_CENTER;
+    drag->desc.overflow_x      = 1;
+    drag->desc.overflow_y      = 1;
     drag->dirty |= CA_DIRTY_LAYOUT;
+
+    Ca_Label *ttl = ca_text(&(Ca_TextDesc){
+        .text  = win->title,
+        .color = COL_TEXT_DIM,
+    });
+    ttl->node->desc.font_size  = 12.0f;
+    ttl->node->desc.text_align = 1;
+    ttl->node->dirty |= CA_DIRTY_CONTENT | CA_DIRTY_LAYOUT;
 
     ca_div_end(); /* drag zone */
 
@@ -312,36 +322,6 @@ void ca_title_bar_rebuild(Ca_Window *win)
     ca_btn_end(); /* close btn */
 
     ca_div_end(); /* controls */
-
-    /* ---- Title overlay: absolutely positioned, inherits the title-bar's
-       full width (width=0 → falls through to parent->w in layout, avoiding
-       a double ui_scale pass that `s(width)` would apply). The label is
-       sized to that same full width and centered via `text_align: center`,
-       so positioning never depends on flex-centering of the wrapping div.
-       The overlay has no interaction callbacks so buttons / menu items
-       (smaller siblings) still win hover and drag hit-tests.        ---- */
-    Ca_Node *overlay = (Ca_Node *)ca_div_begin(&(Ca_DivDesc){
-        .position = CA_POSITION_ABSOLUTE,
-        .pos_x    = 0.0f,
-        .pos_y    = 0.0f,
-        .height   = 22.0f,
-    });
-    overlay->desc.overflow_x   = 1;  /* hidden — long titles don't escape */
-    overlay->desc.align_items  = CA_ALIGN_CENTER; /* vertically center label */
-    overlay->dirty |= CA_DIRTY_LAYOUT;
-
-    Ca_Label *ttl = ca_text(&(Ca_TextDesc){
-        .text  = win->title,
-        .color = COL_TEXT_DIM,
-    });
-    /* width = 0 inherits the overlay's (and thus title-bar's) full width;
-       text_align = 1 centers the rendered glyphs within that width. */
-    ttl->node->desc.width      = 0.0f;
-    ttl->node->desc.text_align = 1;
-    ttl->node->desc.font_size  = 12.0f;
-    ttl->node->dirty |= CA_DIRTY_CONTENT | CA_DIRTY_LAYOUT;
-
-    ca_div_end(); /* title overlay */
 
     ca_div_end(); /* title_bar_node */
 }

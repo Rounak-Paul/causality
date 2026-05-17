@@ -184,7 +184,11 @@ ALLOC_POOL_FN(menubar,   Ca_MenuBar,   menubar_pool,   CA_MAX_MENUBARS_PER_WINDO
         const char *_wt = (new_text) ? (new_text) : "";                        \
         if (!(reused) || strcmp((buf), _wt) != 0) {                            \
             snprintf((buf), (bufsize), "%s", _wt);                             \
-            if (reused) (node)->dirty |= CA_DIRTY_CONTENT;                     \
+            if (reused) {                                                       \
+                (node)->dirty |= CA_DIRTY_CONTENT | CA_DIRTY_LAYOUT;           \
+                if ((node)->parent)                                             \
+                    (node)->parent->dirty |= CA_DIRTY_CONTENT | CA_DIRTY_LAYOUT; \
+            }                                                                   \
         }                                                                       \
     } while (0)
 
@@ -731,18 +735,6 @@ Ca_Label *ca_text(const Ca_TextDesc *desc)
                         + lbl->node->desc.padding_bottom;
             lbl->node->desc.height = s(16.0f) + pad_v;
         }
-        /* Auto-width for padded labels inside row containers (tag-like).
-           Labels in column layouts keep width=0 to stretch. */
-        if (lbl->node->desc.width <= 0.0f && desc->text && lbl->node->parent) {
-            bool parent_is_row = (lbl->node->parent->desc.direction == CA_DIR_ROW);
-            float pad_h = lbl->node->desc.padding_left
-                        + lbl->node->desc.padding_right;
-            if (parent_is_row && pad_h > 0.0f) {
-                float tw = measure_text_px(g_ctx.window, desc->text);
-                if (tw > 0.0f)
-                    lbl->node->desc.width = tw + pad_h;
-            }
-        }
     }
     return lbl;
 }
@@ -1263,14 +1255,18 @@ void ca__set_text(void *widget, const char *text)
             char *buf = (char *)CA_REALLOC(lbl->dyn_text, len + 1);
             if (buf) { memcpy(buf, text, len + 1); lbl->dyn_text = buf; }
         }
-        n->dirty |= CA_DIRTY_CONTENT;
-        if (n->desc.text_wrap) n->dirty |= CA_DIRTY_LAYOUT;
+        n->dirty |= CA_DIRTY_CONTENT | CA_DIRTY_LAYOUT;
+        if (n->parent)
+            n->parent->dirty |= CA_DIRTY_CONTENT | CA_DIRTY_LAYOUT;
         break;
     }
     case CA_WIDGET_BUTTON: {
         Ca_Button *btn = (Ca_Button *)widget;
+        if (strcmp(btn->text, text) == 0) return;
         snprintf(btn->text, CA_BUTTON_TEXT_MAX, "%s", text);
-        n->dirty |= CA_DIRTY_CONTENT;
+        n->dirty |= CA_DIRTY_CONTENT | CA_DIRTY_LAYOUT;
+        if (n->parent)
+            n->parent->dirty |= CA_DIRTY_CONTENT | CA_DIRTY_LAYOUT;
         break;
     }
     case CA_WIDGET_TEXT_INPUT: {
@@ -1279,19 +1275,27 @@ void ca__set_text(void *widget, const char *text)
         snprintf(inp->text, CA_INPUT_TEXT_MAX, "%s", text);
         inp->cursor = (int)strlen(inp->text);
         inp->sel_start = -1;
-        n->dirty |= CA_DIRTY_CONTENT;
+        n->dirty |= CA_DIRTY_CONTENT | CA_DIRTY_LAYOUT;
+        if (n->parent)
+            n->parent->dirty |= CA_DIRTY_CONTENT | CA_DIRTY_LAYOUT;
         break;
     }
     case CA_WIDGET_CHECKBOX: {
         Ca_Checkbox *cb = (Ca_Checkbox *)widget;
+        if (strcmp(cb->text, text) == 0) return;
         snprintf(cb->text, CA_LABEL_TEXT_MAX, "%s", text);
-        n->dirty |= CA_DIRTY_CONTENT;
+        n->dirty |= CA_DIRTY_CONTENT | CA_DIRTY_LAYOUT;
+        if (n->parent)
+            n->parent->dirty |= CA_DIRTY_CONTENT | CA_DIRTY_LAYOUT;
         break;
     }
     case CA_WIDGET_TREENODE: {
         Ca_TreeNode *tn = (Ca_TreeNode *)widget;
+        if (strcmp(tn->text, text) == 0) return;
         snprintf(tn->text, CA_LABEL_TEXT_MAX, "%s", text);
-        n->dirty |= CA_DIRTY_CONTENT;
+        n->dirty |= CA_DIRTY_CONTENT | CA_DIRTY_LAYOUT;
+        if (n->parent)
+            n->parent->dirty |= CA_DIRTY_CONTENT | CA_DIRTY_LAYOUT;
         break;
     }
     default:
@@ -2162,12 +2166,12 @@ void ca_table_cell(const Ca_TextDesc *desc)
    PUBLIC — Tooltip (attach to previously created element)
    ============================================================ */
 
-void ca_tooltip(const Ca_TooltipDesc *desc)
+Ca_Tooltip *ca_tooltip(const Ca_TooltipDesc *desc)
 {
     assert(g_ctx.active && desc);
 
     Ca_Node *parent = ctx_top();
-    if (parent->child_count == 0) return;
+    if (parent->child_count == 0) return NULL;
 
     /* When called inside a ca_tree_node_begin/end block, attach to the header
        row (children[0]) — same convention as ca_context_menu. */
@@ -2188,7 +2192,7 @@ void ca_tooltip(const Ca_TooltipDesc *desc)
         }
     }
     if (!tt) tt = alloc_tooltip(win);
-    if (!tt) return;
+    if (!tt) return NULL;
 
     tt->node = target;
     tt->in_use = true;
@@ -2214,6 +2218,18 @@ void ca_tooltip(const Ca_TooltipDesc *desc)
         ca_style_resolve(ss, &proxy, CA_ELEM_TOOLTIP, proxy.classes, &rs);
         tt->font_size = rs.font_size; /* 0 if no rule matched */
     }
+
+    return tt;
+}
+
+void ca_tooltip_set_text(Ca_Tooltip *tooltip, const char *text)
+{
+    if (!tooltip || !tooltip->in_use) return;
+    const char *next_text = text ? text : "";
+    if (strcmp(tooltip->text, next_text) == 0) return;
+    snprintf(tooltip->text, CA_LABEL_TEXT_MAX, "%s", next_text);
+    if (tooltip->node)
+        tooltip->node->dirty |= CA_DIRTY_CONTENT;
 }
 
 /* ============================================================
@@ -2497,7 +2513,8 @@ Ca_Splitter *ca_split_begin(const Ca_SplitDesc *desc)
 
     Ca_NodeDesc nd = {0};
     nd.direction = dir_from_int(desc->direction);
-    /* The splitter itself fills available space by default (width/height = 0) */
+    nd.flex_grow = 1.0f;
+    /* The splitter itself fills available space by default. */
 
     bool reused = false;
     Ca_Node *node = claim_child(&nd, CA_WIDGET_SPLITTER, CA_ELEM_SPLITTER, id, &reused);
