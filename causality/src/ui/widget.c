@@ -3660,6 +3660,8 @@ void ca_widget_input_pass(Ca_Window *win)
             for (uint32_t i = 0; i < CA_MAX_CTXMENUS_PER_WINDOW; ++i) {
                 Ca_CtxMenu *cm = &win->ctxmenu_pool[i];
                 if (!cm->in_use || !cm->node) continue;
+                if (node_is_ancestor_hidden(cm->node)) continue;
+                if (is_effectively_disabled(cm->node)) continue;
                 if (point_in_node(cm->node, mx, my)) {
                     float area = cm->node->w * cm->node->h;
                     if (area < best_area) { best_area = area; best = cm; }
@@ -3893,6 +3895,7 @@ void ca_widget_input_pass(Ca_Window *win)
         for (uint32_t i = 0; i < CA_MAX_CTXMENUS_PER_WINDOW && !over_overlay; ++i) {
             Ca_CtxMenu *cm = &win->ctxmenu_pool[i];
             if (!cm->in_use || !cm->open) continue;
+            if (cm->node && node_is_ancestor_hidden(cm->node)) continue;
             float menu_h = 6.0f;
             for (int mi = 0; mi < cm->item_count; ++mi) {
                 bool is_sep = (cm->items[mi][0] == '-' && cm->items[mi][1] == '\0');

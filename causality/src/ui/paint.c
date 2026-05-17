@@ -1378,6 +1378,7 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
         for (uint32_t i = 0; i < CA_MAX_CTXMENUS_PER_WINDOW; ++i) {
             Ca_CtxMenu *cm = &win->ctxmenu_pool[i];
             if (!cm->in_use || !cm->open || cm->item_count <= 0) continue;
+            if (cm->node && node_is_ancestor_hidden(cm->node)) continue;
 
             /* Compute total height (items + separators) */
             float menu_h = 6.0f; /* top + bottom inset */

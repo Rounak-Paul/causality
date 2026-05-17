@@ -466,3 +466,15 @@ float ca_window_get_scale(Ca_Window *window)
     return window->ui_scale;
 }
 
+void ca_clipboard_set_text(Ca_Window *window, const char *text)
+{
+    if (!window || !window->glfw) return;
+    glfwSetClipboardString(window->glfw, text ? text : "");
+}
+
+const char *ca_clipboard_get_text(Ca_Window *window)
+{
+    if (!window || !window->glfw) return NULL;
+    return glfwGetClipboardString(window->glfw);
+}
+

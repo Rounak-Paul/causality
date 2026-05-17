@@ -121,6 +121,11 @@ CA_API void       ca_window_close(Ca_Window *window);
 /* Returns true if the window handle is valid and still open. */
 CA_API bool       ca_window_is_open(const Ca_Window *window);
 
+/* Clipboard helpers for text content. Clipboard ownership remains with the
+   platform backend; returned text is valid until the next clipboard update. */
+CA_API void        ca_clipboard_set_text(Ca_Window *window, const char *text);
+CA_API const char *ca_clipboard_get_text(Ca_Window *window);
+
 /* UI scale factor — like browser zoom.
    1.0 = 100% (default), 1.5 = 150%, 2.0 = 200%, etc.
    Affects all widget sizes, paddings, gaps, and text rendering. */
