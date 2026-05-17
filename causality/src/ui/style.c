@@ -347,6 +347,14 @@ void ca_style_resolve(Ca_Stylesheet *ss,
                     if (val->type == CA_CSS_VAL_KEYWORD)
                         out->overflow_y = val->keyword;
                     break;
+                case CA_CSS_PROP_OVERFLOW:
+                    if (val->type == CA_CSS_VAL_KEYWORD) {
+                        out->overflow_x = val->keyword;
+                        out->overflow_y = val->keyword;
+                        out->set_mask |= (1ULL << CA_CSS_PROP_OVERFLOW_X) |
+                                         (1ULL << CA_CSS_PROP_OVERFLOW_Y);
+                    }
+                    break;
                 case CA_CSS_PROP_TRANSITION: {
                     int tprop = val->keyword;
                     float dur = val->number;

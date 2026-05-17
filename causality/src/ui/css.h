@@ -183,7 +183,7 @@ typedef struct {
    CSS STYLESHEET
    ============================================================ */
 
-#define CA_CSS_MAX_RULES 256
+#define CA_CSS_MAX_RULES 1024
 
 typedef struct Ca_Stylesheet {
     Ca_CssRule rules[CA_CSS_MAX_RULES];

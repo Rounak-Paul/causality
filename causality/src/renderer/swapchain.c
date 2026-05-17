@@ -22,6 +22,11 @@ static int cmp_z_cmd(const void *a, const void *b)
     return (ia < ib) ? -1 : (ia > ib) ? 1 : 0; /* stable: by original index */
 }
 
+static bool cmd_in_overlay_phase(const Ca_DrawCmd *cmd)
+{
+    return cmd->overlay || cmd->z_index > 0;
+}
+
 static VkSurfaceFormatKHR choose_surface_format(VkPhysicalDevice gpu,
                                                  VkSurfaceKHR surface)
 {
@@ -424,7 +429,7 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
                 const Ca_DrawCmd *cmd = &win->draw_cmds[idx];
                 if (!cmd->in_use || cmd->type != CA_DRAW_RECT || cmd->a < 0.004f)
                     continue;
-                if (cmd->overlay != want_overlay) continue;
+                if (cmd_in_overlay_phase(cmd) != want_overlay) continue;
 
                 /* Compute scissor for this command */
                 VkRect2D sc_new = full_scissor;
@@ -482,7 +487,7 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
             for (uint32_t d = 0; d < win->draw_cmd_count; ++d) {
                 if (win->draw_cmds[d].in_use &&
                     win->draw_cmds[d].type == CA_DRAW_GLYPH &&
-                    win->draw_cmds[d].overlay == want_overlay) {
+                    cmd_in_overlay_phase(&win->draw_cmds[d]) == want_overlay) {
                     has_glyphs = true;
                     break;
                 }
@@ -512,7 +517,7 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
                     const Ca_DrawCmd *cmd = &win->draw_cmds[idx];
                     if (!cmd->in_use || cmd->type != CA_DRAW_GLYPH || cmd->a < 0.004f)
                         continue;
-                    if (cmd->overlay != want_overlay) continue;
+                    if (cmd_in_overlay_phase(cmd) != want_overlay) continue;
                     if (ti_n >= max_ti) break;
 
                     VkRect2D sc_new = full_scissor;
@@ -565,7 +570,7 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
             for (uint32_t d = 0; d < win->draw_cmd_count; ++d) {
                 if (win->draw_cmds[d].in_use &&
                     win->draw_cmds[d].type == CA_DRAW_IMAGE &&
-                    win->draw_cmds[d].overlay == want_overlay) {
+                    cmd_in_overlay_phase(&win->draw_cmds[d]) == want_overlay) {
                     has_images = true;
                     break;
                 }
@@ -590,7 +595,7 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
                     const Ca_DrawCmd *cmd = &win->draw_cmds[idx];
                     if (!cmd->in_use || cmd->type != CA_DRAW_IMAGE || cmd->a < 0.004f)
                         continue;
-                    if (cmd->overlay != want_overlay) continue;
+                    if (cmd_in_overlay_phase(cmd) != want_overlay) continue;
 
                     int16_t ii = cmd->image_index;
                     if (ii < 0 || ii >= CA_MAX_IMAGES || !inst->images[ii].in_use)
@@ -658,7 +663,7 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
             for (uint32_t d = 0; d < win->draw_cmd_count; ++d) {
                 if (win->draw_cmds[d].in_use &&
                     win->draw_cmds[d].type == CA_DRAW_VIEWPORT &&
-                    win->draw_cmds[d].overlay == want_overlay) {
+                    cmd_in_overlay_phase(&win->draw_cmds[d]) == want_overlay) {
                     has_viewports = true;
                     break;
                 }
@@ -683,7 +688,7 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
                     const Ca_DrawCmd *cmd = &win->draw_cmds[idx];
                     if (!cmd->in_use || cmd->type != CA_DRAW_VIEWPORT || cmd->a < 0.004f)
                         continue;
-                    if (cmd->overlay != want_overlay) continue;
+                    if (cmd_in_overlay_phase(cmd) != want_overlay) continue;
 
                     int16_t vi = cmd->viewport_index;
                     if (vi < 0 || vi >= CA_MAX_VIEWPORTS_PER_WINDOW ||

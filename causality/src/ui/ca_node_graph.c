@@ -60,6 +60,7 @@
 /* Level-of-detail thresholds */
 #define NG_ZOOM_HIDE_TEXT    0.50f  /* below: hide pin labels + title      */
 #define NG_ZOOM_HIDE_PINS    0.28f  /* below: hide all pin rows            */
+#define NG_NODE_SELECTED_Z      10   /* selected node stack level           */
 
 /* ============================================================
    DEFAULT COLOURS
@@ -102,6 +103,20 @@ static Ca_NgNodeState *ng_find_or_create(Ca_NodeGraph *ng,
     state->valid    = true;
     state->_ng      = ng;
     return state;
+}
+
+static void ng_set_node_z(Ca_Node *node, int z)
+{
+    if (!node) return;
+    if (node->desc.z_index == z) return;
+    node->desc.z_index = (int16_t)z;
+    node->dirty |= CA_DIRTY_CONTENT;
+}
+
+static void ng_set_label_z(Ca_Label *label, int z)
+{
+    if (!label) return;
+    ng_set_node_z(label->node, z);
 }
 
 /* Centre-Y of an input pin relative to node top-left, in screen px. */
@@ -293,6 +308,7 @@ void ca_node_graph_init(Ca_NodeGraph *ng)
     memset(ng, 0, sizeof(*ng));
     ng->selected_node  = -1;
     ng->_cur_node_idx  = -1;
+    ng->_cur_node_z    = 0;
     ng->zoom           = 1.0f;
 }
 
@@ -304,6 +320,7 @@ void ca_node_graph_begin(Ca_NodeGraph *ng, Ca_Div *host_div,
     ng->_cur_node_idx = -1;
     ng->_cur_in_idx   = 0;
     ng->_cur_out_idx  = 0;
+    ng->_cur_node_z   = 0;
 
     /* Update canvas clip bounds from the host div's computed layout size
      * (available from the previous frame's layout pass). */
@@ -324,7 +341,7 @@ void ca_node_graph_begin(Ca_NodeGraph *ng, Ca_Div *host_div,
     float    h    = desc ? desc->height : 0.0f;
 
     /* Canvas container — clips overflow, handles pan drag + scroll zoom */
-    ca_div_begin(&(Ca_DivDesc){
+    Ca_Div *canvas = ca_div_begin(&(Ca_DivDesc){
         .width         = w,
         .height        = h,
         .background    = bg,
@@ -336,6 +353,9 @@ void ca_node_graph_begin(Ca_NodeGraph *ng, Ca_Div *host_div,
         .on_scroll     = canvas_scroll,
         .scroll_data   = ng,
     });
+    Ca_Node *canvas_node = (Ca_Node *)canvas;
+    canvas_node->desc.overflow_x = 1;
+    canvas_node->desc.overflow_y = 1;
 
     /* --- Grid lines ---
      * Adapt grid spacing so lines are never closer than NG_GRID_MIN_SCR_PX on
@@ -398,22 +418,22 @@ void ca_ng_node_begin(Ca_NodeGraph *ng, const Ca_NgNodeDesc *desc)
     ng->_cur_out_idx  = 0;
 
     bool selected = (idx == ng->selected_node) || desc->selected;
+    int  node_z   = selected ? NG_NODE_SELECTED_Z : 0;
+    ng->_cur_node_z = node_z;
 
     float zs   = ng->zoom;
     float nw   = NG_NODE_W   * zs;
     float hdrh = NG_HEADER_H * zs;
     float nx   = state->canvas_x * zs + ng->pan_x;
     float ny   = state->canvas_y * zs + ng->pan_y;
+    float radius = 5.0f * zs;
+    float border_w = selected ? 2.0f : 1.0f;
 
     uint32_t hdr_col    = desc->header_color ? desc->header_color : NG_COL_HDR_DEFAULT;
     uint32_t border_col = selected ? NG_COL_NODE_SEL : NG_COL_NODE_BORDER;
 
-    /* Node outer — all dimensions scaled by zoom.
-     * z_index is intentionally NOT set here: the canvas builder emits the
-     * selected node last in DFS child order so it naturally paints on top
-     * of wires and other nodes without sorting-related child-visibility bugs
-     * (child draw commands always share z_index 0 and would be painted under
-     * a z_index>0 parent background after the sort pass). */
+    /* Node outer — all dimensions scaled by zoom.  Selected nodes get a real
+       z-index, and every child emitted below inherits that same stack level. */
     ca_div_begin(&(Ca_DivDesc){
         .position        = CA_POSITION_ABSOLUTE,
         .pos_x           = nx,
@@ -421,30 +441,74 @@ void ca_ng_node_begin(Ca_NodeGraph *ng, const Ca_NgNodeDesc *desc)
         .width           = nw,
         .background      = NG_COL_NODE_BG,
         .direction       = CA_VERTICAL,
-        .corner_radius   = 5.0f * zs,
-        .border_width    = selected ? 2.0f : 1.0f,
+        .corner_radius   = radius,
+        .border_width    = border_w,
         .border_color    = border_col,
         .shadow_offset_x = 2.0f,
         .shadow_offset_y = 3.0f,
         .shadow_blur     = 8.0f * zs,
         .shadow_color    = ca_color(0.0f, 0.0f, 0.0f, 0.45f),
+        .z_index         = node_z,
         .id              = desc->key,
         .on_drag_start   = node_drag_start,
         .on_drag         = node_drag,
         .drag_data       = state,
     });
 
-    /* Header — vertically centred via ng-hdr (align-items:center) */
+    float header_x = border_w;
+    float header_y = border_w;
+    float header_w = fmaxf(0.0f, nw - border_w * 2.0f);
+    float header_h = fmaxf(0.0f, hdrh - border_w);
+    float fill_y   = header_y + fminf(radius, header_h);
+    float fill_h   = fmaxf(0.0f, header_h - fminf(radius, header_h));
+
+    /* Header — rounded top background plus square lower fill. */
     ca_div_begin(&(Ca_DivDesc){
         .width      = nw,
         .height     = hdrh,
-        .background = hdr_col,
         .direction  = CA_HORIZONTAL,
         .style      = "ng-hdr",
-        .padding    = {0.0f, NG_PIN_PAD_R * zs, 0.0f, NG_PIN_PAD_L * zs},
+        .z_index    = node_z,
     });
-    if (zs >= NG_ZOOM_HIDE_TEXT)
-        ca_text(&(Ca_TextDesc){ .text = desc->title, .color = 0xFFFFFFFFu, .style = "ng-node-title" });
+    ca_div_begin(&(Ca_DivDesc){
+        .position      = CA_POSITION_ABSOLUTE,
+        .pos_x         = header_x,
+        .pos_y         = header_y,
+        .width         = header_w,
+        .height        = header_h,
+        .background    = hdr_col,
+        .corner_radius = radius,
+        .z_index       = node_z,
+    });
+    ca_div_end();
+    ca_div_begin(&(Ca_DivDesc){
+        .position   = CA_POSITION_ABSOLUTE,
+        .pos_x      = header_x,
+        .pos_y      = fill_y,
+        .width      = header_w,
+        .height     = fill_h,
+        .background = hdr_col,
+        .z_index    = node_z,
+    });
+    ca_div_end();
+    if (zs >= NG_ZOOM_HIDE_TEXT) {
+        ca_div_begin(&(Ca_DivDesc){
+            .width     = nw,
+            .height    = hdrh,
+            .direction = CA_HORIZONTAL,
+            .style     = "ng-hdr",
+            .padding   = {0.0f, border_w + NG_PIN_PAD_R * zs,
+                          0.0f, border_w + NG_PIN_PAD_L * zs},
+            .z_index   = node_z,
+        });
+        {
+            Ca_Label *title = ca_text(&(Ca_TextDesc){
+                .text = desc->title, .color = 0xFFFFFFFFu, .style = "ng-node-title",
+            });
+            ng_set_label_z(title, node_z);
+        }
+        ca_div_end();
+    }
     ca_div_end(); /* header */
 
     /* Body — scaled padding */
@@ -453,6 +517,7 @@ void ca_ng_node_begin(Ca_NodeGraph *ng, const Ca_NgNodeDesc *desc)
         .width     = nw,
         .padding   = {NG_BODY_PAD_V * zs, 0.0f, NG_BODY_PAD_V * zs, 0.0f},
         .gap       = 0.0f,
+        .z_index   = node_z,
     });
 }
 
@@ -470,6 +535,7 @@ void ca_ng_node_end(Ca_NodeGraph *ng)
     ca_div_end(); /* node outer container */
 
     ng->_cur_node_idx = -1;
+    ng->_cur_node_z   = 0;
 }
 
 void ca_ng_input_pin(Ca_NodeGraph *ng, const Ca_NgPinDesc *desc)
@@ -481,6 +547,7 @@ void ca_ng_input_pin(Ca_NodeGraph *ng, const Ca_NgPinDesc *desc)
     float    nw      = NG_NODE_W * zs;
     float    rowh    = NG_PIN_ROW_H * zs;
     uint32_t dot_col = (desc && desc->color) ? desc->color : NG_COL_PIN_DEFAULT;
+    int      node_z  = ng->_cur_node_z;
 
     if (zs >= NG_ZOOM_HIDE_TEXT) {
         /* Full pin row: ●dot  label */
@@ -497,15 +564,20 @@ void ca_ng_input_pin(Ca_NodeGraph *ng, const Ca_NgPinDesc *desc)
             .style     = "ng-hdr",
             .padding   = {0.0f, padr, 0.0f, padl},
             .gap       = gap,
+            .z_index   = node_z,
         });
         ca_div_begin(&(Ca_DivDesc){
             .width         = dotd,
             .height        = dotd,
             .background    = dot_col,
             .corner_radius = dotd * 0.5f,
+            .z_index       = node_z,
         });
         ca_div_end();
-        ca_text(&(Ca_TextDesc){ .text = lbl, .color = dot_col, .style = "ng-pin-label" });
+        Ca_Label *label = ca_text(&(Ca_TextDesc){
+            .text = lbl, .color = dot_col, .style = "ng-pin-label",
+        });
+        ng_set_label_z(label, node_z);
         ca_div_end();
     } else {
         /* Stub row: thin placeholder line so the body always has flow-children
@@ -518,12 +590,14 @@ void ca_ng_input_pin(Ca_NodeGraph *ng, const Ca_NgPinDesc *desc)
             .width     = nw,
             .style     = "ng-hdr",
             .padding   = {0.0f, 0.0f, 0.0f, padl},
+            .z_index   = node_z,
         });
         ca_div_begin(&(Ca_DivDesc){
             .width         = stubw,
             .height        = 2.0f,
             .background    = dot_col,
             .corner_radius = 1.0f,
+            .z_index       = node_z,
         });
         ca_div_end();
         ca_div_end();
@@ -541,6 +615,7 @@ void ca_ng_output_pin(Ca_NodeGraph *ng, const Ca_NgPinDesc *desc)
     float    nw      = NG_NODE_W * zs;
     float    rowh    = NG_PIN_ROW_H * zs;
     uint32_t dot_col = (desc && desc->color) ? desc->color : NG_COL_PIN_DEFAULT;
+    int      node_z  = ng->_cur_node_z;
 
     /* Separator before first output (always, so it's visible at any zoom) */
     if (ng->_cur_out_idx == 0 && ng->_cur_in_idx > 0) {
@@ -548,6 +623,7 @@ void ca_ng_output_pin(Ca_NodeGraph *ng, const Ca_NgPinDesc *desc)
             .height     = NG_GRID_THICK,
             .width      = nw,
             .background = NG_COL_SEP,
+            .z_index    = node_z,
         });
         ca_div_end();
     }
@@ -567,13 +643,18 @@ void ca_ng_output_pin(Ca_NodeGraph *ng, const Ca_NgPinDesc *desc)
             .style     = "ng-hdr ng-pin-row-out",
             .padding   = {0.0f, padr, 0.0f, padl},
             .gap       = gap,
+            .z_index   = node_z,
         });
-        ca_text(&(Ca_TextDesc){ .text = lbl, .color = dot_col, .style = "ng-pin-label ng-out-label" });
+        Ca_Label *label = ca_text(&(Ca_TextDesc){
+            .text = lbl, .color = dot_col, .style = "ng-pin-label ng-out-label",
+        });
+        ng_set_label_z(label, node_z);
         ca_div_begin(&(Ca_DivDesc){
             .width         = dotd,
             .height        = dotd,
             .background    = dot_col,
             .corner_radius = dotd * 0.5f,
+            .z_index       = node_z,
         });
         ca_div_end();
         ca_div_end();
@@ -587,12 +668,14 @@ void ca_ng_output_pin(Ca_NodeGraph *ng, const Ca_NgPinDesc *desc)
             .width     = nw,
             .style     = "ng-hdr ng-pin-row-out",
             .padding   = {0.0f, padr, 0.0f, 0.0f},
+            .z_index   = node_z,
         });
         ca_div_begin(&(Ca_DivDesc){
             .width         = stubw,
             .height        = 2.0f,
             .background    = dot_col,
             .corner_radius = 1.0f,
+            .z_index       = node_z,
         });
         ca_div_end();
         ca_div_end();

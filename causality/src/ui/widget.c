@@ -2772,6 +2772,55 @@ static bool point_within_clip_ancestors(Ca_Node *n, float px, float py)
     return true;
 }
 
+static int node_depth(Ca_Node *n)
+{
+    int depth = 0;
+    while (n) {
+        depth++;
+        n = n->parent;
+    }
+    return depth;
+}
+
+static bool node_paints_after(Ca_Node *candidate, Ca_Node *current)
+{
+    if (!current) return true;
+    if (!candidate || candidate == current) return false;
+
+    Ca_Node *a = candidate;
+    Ca_Node *b = current;
+    int da = node_depth(a);
+    int db = node_depth(b);
+
+    while (da > db && a) {
+        if (a->parent == current) return true;
+        a = a->parent;
+        da--;
+    }
+    while (db > da && b) {
+        if (b->parent == candidate) return false;
+        b = b->parent;
+        db--;
+    }
+
+    while (a && b && a->parent != b->parent) {
+        a = a->parent;
+        b = b->parent;
+    }
+
+    if (!a || !b || !a->parent) return false;
+
+    Ca_Node *parent = a->parent;
+    int candidate_index = -1;
+    int current_index = -1;
+    for (uint32_t i = 0; i < parent->child_count; ++i) {
+        if (parent->children[i] == a) candidate_index = (int)i;
+        if (parent->children[i] == b) current_index = (int)i;
+    }
+
+    return candidate_index > current_index;
+}
+
 /* Check if a node or any ancestor is disabled (cascading disabled state) */
 static bool is_effectively_disabled(Ca_Node *n)
 {
@@ -3801,20 +3850,23 @@ void ca_widget_input_pass(Ca_Window *win)
 
         /* Start a new user drag */
         if (left_down && win->mouse_click_this_frame && !win->user_drag_node) {
-            /* Find the smallest draggable node under cursor */
-            float best_area = 1e18f;
+            /* Find the topmost draggable node under the cursor. */
             Ca_Node *best = NULL;
+            int best_z = -32768;
             if (win->node_pool) {
                 for (uint32_t i = 0; i < CA_MAX_NODES_PER_WINDOW; ++i) {
                     Ca_Node *n = &win->node_pool[i];
-                    if (!n->in_use || n->desc.hidden) continue;
+                    if (!n->in_use || node_is_ancestor_hidden(n)) continue;
+                    if (is_effectively_disabled(n)) continue;
                     if (!n->drag_fn_start && !n->drag_fn_move && !n->drag_fn_end) continue;
-                    if (point_in_node(n, mx, my)) {
-                        float area = n->w * n->h;
-                        if (area < best_area) {
-                            best_area = area;
-                            best = n;
-                        }
+                    if (!point_within_clip_ancestors(n, mx, my)) continue;
+                    if (!point_in_node(n, mx, my)) continue;
+
+                    int z = n->desc.z_index;
+                    if (!best || z > best_z ||
+                        (z == best_z && node_paints_after(n, best))) {
+                        best_z = z;
+                        best = n;
                     }
                 }
             }

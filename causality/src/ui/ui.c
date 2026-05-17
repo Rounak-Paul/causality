@@ -181,6 +181,8 @@ void ca_ui_window_shutdown(Ca_Window *win)
 /* Snapshot geometry before layout, run layout, then invalidate only
    nodes whose position, size, or content size actually changed.
    Returns true if any node was invalidated (paint pass needed). */
+static void mark_subtree_content_dirty(Ca_Node *node);
+
 static bool layout_and_invalidate(Ca_Window *win)
 {
     static NodeRect prev[CA_MAX_NODES_PER_WINDOW];
@@ -209,11 +211,25 @@ static bool layout_and_invalidate(Ca_Window *win)
             n->dirty |= CA_DIRTY_CONTENT;
             n->cache_count      = 0;
             n->cache_post_count = 0;
+            if (n->desc.overflow_x >= 1 || n->desc.overflow_y >= 1) {
+                for (uint32_t i = 0; i < n->child_count; ++i)
+                    mark_subtree_content_dirty(n->children[i]);
+            }
             any_dirty = true;
         }
     }
 
     return any_dirty;
+}
+
+static void mark_subtree_content_dirty(Ca_Node *node)
+{
+    if (!node || !node->in_use) return;
+    node->dirty |= CA_DIRTY_CONTENT;
+    node->cache_count = 0;
+    node->cache_post_count = 0;
+    for (uint32_t i = 0; i < node->child_count; ++i)
+        mark_subtree_content_dirty(node->children[i]);
 }
 
 void ca_ui_update(Ca_Instance *inst)

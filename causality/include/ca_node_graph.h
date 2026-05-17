@@ -94,10 +94,11 @@ struct Ca_NodeGraph {
     void (*_on_node_select)(Ca_NodeGraph *ng, int node_idx, void *user_data);
     void  *_select_data;
 
-    /* Build-time transients (reset per begin/end cycle) */
-    int _cur_node_idx;
-    int _cur_in_idx;
-    int _cur_out_idx;
+   /* Build-time transients (reset per begin/end cycle) */
+   int _cur_node_idx;
+   int _cur_in_idx;
+   int _cur_out_idx;
+   int _cur_node_z;
 };
 
 /* ============================================================

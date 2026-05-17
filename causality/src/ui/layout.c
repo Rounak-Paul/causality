@@ -74,12 +74,13 @@ static float content_size(Ca_Node *node, bool want_height)
     float sz = want_height ? node->desc.height : node->desc.width;
     if (sz > 0.0f) return sz;
 
-    /* Overflow containers (hidden / scroll / auto) have bounded content;
-       return their explicit size or 0 so the parent flex distribution
-       can assign remaining space via flex-grow instead of inflating
-       to the full scrollable content height. */
+    /* Scroll/auto overflow containers have bounded content: return 0 so the
+       parent flex distribution can assign remaining space via flex-grow
+       instead of inflating to the full scrollable content height.
+       overflow:hidden (1) still sizes to its content — it only clips visually,
+       matching standard CSS behaviour. */
     int ov = want_height ? node->desc.overflow_y : node->desc.overflow_x;
-    if (ov > 0) return 0.0f;
+    if (ov > 1) return 0.0f;
 
     /* Leaf: height ≈ line-height, width = 0 (unknown, distribute remaining) */
     if (node->child_count == 0)
@@ -107,11 +108,11 @@ static float content_size(Ca_Node *node, bool want_height)
         uint32_t line_count = 0;
 
         for (uint32_t i = 0; i < node->child_count; ++i) {
-            Ca_Node *c = node->children[i];
-            if (c->desc.hidden) continue;
-            float cw = c->desc.width > 0.0f ? c->desc.width : content_size(c, false);
+            Ca_Node *child = node->children[i];
+            if (child->desc.hidden || child->desc.position != CA_POSITION_RELATIVE) continue;
+            float cw = child->desc.width > 0.0f ? child->desc.width : content_size(child, false);
             if (cw <= 0.0f) cw = 20.0f;
-            float ch = c->desc.height > 0.0f ? c->desc.height : content_size(c, true);
+            float ch = child->desc.height > 0.0f ? child->desc.height : content_size(child, true);
             if (ch <= 0.0f) ch = 20.0f;
 
             float added = cw + (line_vis > 0 ? gap : 0);
@@ -143,11 +144,11 @@ static float content_size(Ca_Node *node, bool want_height)
         uint32_t line_count = 0;
 
         for (uint32_t i = 0; i < node->child_count; ++i) {
-            Ca_Node *c = node->children[i];
-            if (c->desc.hidden) continue;
-            float ch = c->desc.height > 0.0f ? c->desc.height : content_size(c, true);
+            Ca_Node *child = node->children[i];
+            if (child->desc.hidden || child->desc.position != CA_POSITION_RELATIVE) continue;
+            float ch = child->desc.height > 0.0f ? child->desc.height : content_size(child, true);
             if (ch <= 0.0f) ch = 20.0f;
-            float cw = c->desc.width > 0.0f ? c->desc.width : content_size(c, false);
+            float cw = child->desc.width > 0.0f ? child->desc.width : content_size(child, false);
             if (cw <= 0.0f) cw = 20.0f;
 
             float added = ch + (line_vis > 0 ? gap : 0);
@@ -175,9 +176,9 @@ static float content_size(Ca_Node *node, bool want_height)
     float total = 0.0f, max_val = 0.0f;
     uint32_t vis = 0;
     for (uint32_t i = 0; i < node->child_count; ++i) {
-        Ca_Node *c = node->children[i];
-        if (c->desc.hidden) continue;
-        float csz = content_size(c, want_height);
+        Ca_Node *child = node->children[i];
+        if (child->desc.hidden || child->desc.position != CA_POSITION_RELATIVE) continue;
+        float csz = content_size(child, want_height);
         if (summing) total += csz; else if (csz > max_val) max_val = csz;
         vis++;
     }
