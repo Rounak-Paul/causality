@@ -2753,6 +2753,25 @@ static bool point_in_node(Ca_Node *n, float px, float py)
            py >= n->y && py <= n->y + n->h;
 }
 
+/* Check that a point is not clipped out by any scroll/hidden ancestor.
+   When scroll bakes the offset into child absolute coords, a row scrolled
+   above its container can appear at any y on screen.  This walk rejects
+   such hits by checking the point is inside every clipping ancestor. */
+static bool point_within_clip_ancestors(Ca_Node *n, float px, float py)
+{
+    Ca_Node *p = n->parent;
+    while (p) {
+        bool clips = (p->desc.overflow_x != 0 || p->desc.overflow_y != 0);
+        if (clips) {
+            if (px < p->x || px > p->x + p->w ||
+                py < p->y || py > p->y + p->h)
+                return false;
+        }
+        p = p->parent;
+    }
+    return true;
+}
+
 /* Check if a node or any ancestor is disabled (cascading disabled state) */
 static bool is_effectively_disabled(Ca_Node *n)
 {
@@ -3662,6 +3681,7 @@ void ca_widget_input_pass(Ca_Window *win)
                 if (!cm->in_use || !cm->node) continue;
                 if (node_is_ancestor_hidden(cm->node)) continue;
                 if (is_effectively_disabled(cm->node)) continue;
+                if (!point_within_clip_ancestors(cm->node, mx, my)) continue;
                 if (point_in_node(cm->node, mx, my)) {
                     float area = cm->node->w * cm->node->h;
                     if (area < best_area) { best_area = area; best = cm; }
