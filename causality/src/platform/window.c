@@ -315,6 +315,39 @@ void ca_window_close(Ca_Window *window)
     glfwSetWindowShouldClose(window->glfw, GLFW_TRUE);
 }
 
+void ca_window_maximize(Ca_Window *window)
+{
+    if (!window || !window->in_use || !window->glfw) return;
+    if (window->titlebar_maximized) return;
+
+    /* Mirror the title bar's maximize branch exactly so restore works. */
+    glfwGetWindowPos(window->glfw,
+                     &window->titlebar_pre_max_x, &window->titlebar_pre_max_y);
+    glfwGetWindowSize(window->glfw,
+                      &window->titlebar_pre_max_w, &window->titlebar_pre_max_h);
+
+    int cx = window->titlebar_pre_max_x + window->titlebar_pre_max_w / 2;
+    int cy = window->titlebar_pre_max_y + window->titlebar_pre_max_h / 2;
+    int mon_count = 0;
+    GLFWmonitor **monitors = glfwGetMonitors(&mon_count);
+    GLFWmonitor *target = glfwGetPrimaryMonitor();
+    for (int i = 0; i < mon_count; i++) {
+        int mx, my, mw, mh;
+        glfwGetMonitorWorkarea(monitors[i], &mx, &my, &mw, &mh);
+        if (cx >= mx && cx < mx + mw && cy >= my && cy < my + mh) {
+            target = monitors[i];
+            break;
+        }
+    }
+
+    int wx, wy, ww, wh;
+    glfwGetMonitorWorkarea(target, &wx, &wy, &ww, &wh);
+    glfwSetWindowPos(window->glfw, wx, wy);
+    glfwSetWindowSize(window->glfw, ww, wh);
+    window->titlebar_maximized     = true;
+    window->titlebar_needs_rebuild = true;
+}
+
 Ca_Instance *ca_window_instance(Ca_Window *window)
 {
     return (window && window->in_use) ? window->instance : NULL;

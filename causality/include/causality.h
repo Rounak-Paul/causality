@@ -117,6 +117,7 @@ CA_API Ca_Instance *ca_window_instance(Ca_Window *window);
    Safe to call from button callbacks or any other context.
    The window is fully destroyed by the event loop on the next frame. */
 CA_API void       ca_window_close(Ca_Window *window);
+CA_API void       ca_window_maximize(Ca_Window *window);
 
 /* Returns true if the window handle is valid and still open. */
 CA_API bool       ca_window_is_open(const Ca_Window *window);

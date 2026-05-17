@@ -119,33 +119,7 @@ static void on_maximize_click(Ca_Button *btn, void *ud)
         win->titlebar_maximized     = false;
         win->titlebar_needs_rebuild = true;
     } else {
-        /* Store current geometry, then fill the monitor work area */
-        glfwGetWindowPos(win->glfw,
-                         &win->titlebar_pre_max_x, &win->titlebar_pre_max_y);
-        glfwGetWindowSize(win->glfw,
-                          &win->titlebar_pre_max_w, &win->titlebar_pre_max_h);
-
-        /* Find which monitor the window centre sits on */
-        int cx = win->titlebar_pre_max_x + win->titlebar_pre_max_w / 2;
-        int cy = win->titlebar_pre_max_y + win->titlebar_pre_max_h / 2;
-        int mon_count = 0;
-        GLFWmonitor **monitors = glfwGetMonitors(&mon_count);
-        GLFWmonitor *target = glfwGetPrimaryMonitor();
-        for (int i = 0; i < mon_count; i++) {
-            int mx, my, mw, mh;
-            glfwGetMonitorWorkarea(monitors[i], &mx, &my, &mw, &mh);
-            if (cx >= mx && cx < mx + mw && cy >= my && cy < my + mh) {
-                target = monitors[i];
-                break;
-            }
-        }
-
-        int wx, wy, ww, wh;
-        glfwGetMonitorWorkarea(target, &wx, &wy, &ww, &wh);
-        glfwSetWindowPos(win->glfw, wx, wy);
-        glfwSetWindowSize(win->glfw, ww, wh);
-        win->titlebar_maximized     = true;
-        win->titlebar_needs_rebuild = true;
+        ca_window_maximize(win);
     }
 }
 
