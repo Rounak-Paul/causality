@@ -1306,6 +1306,12 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
         float ui_s = win->ui_scale > 0.0f ? win->ui_scale : 1.0f;
         float cs   = font->content_scale / ui_s;
 
+        /* Logical window size for bounds clamping (same coordinate space as
+           node x/y and mouse_x/y — differs from sc.extent on HiDPI displays). */
+        int tooltip_win_w = 0, tooltip_win_h = 0;
+        if (win->glfw)
+            glfwGetWindowSize(win->glfw, &tooltip_win_w, &tooltip_win_h);
+
         for (uint32_t i = 0; i < CA_MAX_TOOLTIPS_PER_WINDOW; ++i) {
             Ca_Tooltip *tt = &win->tooltip_pool[i];
             if (!tt->in_use || !tt->node || tt->text[0] == '\0') continue;
@@ -1338,9 +1344,17 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
             }
 
             float tip_w = tw + pad * 2.0f;
-            float tip_x = tt->node->x;
-            float tip_y = tt->node->y - tip_h - 4.0f;
-            if (tip_y < 0) tip_y = tt->node->y + tt->node->h + 4.0f;
+
+            /* Follow the cursor (Qt / ImGui style): place below-right by default,
+               flip sides when the tooltip would extend past a window edge. */
+            float tip_x = (float)win->mouse_x + 12.0f;
+            float tip_y = (float)win->mouse_y + 16.0f;
+            if (tooltip_win_w > 0 && tip_x + tip_w > (float)tooltip_win_w)
+                tip_x = (float)win->mouse_x - tip_w - 4.0f;
+            if (tooltip_win_h > 0 && tip_y + tip_h > (float)tooltip_win_h)
+                tip_y = (float)win->mouse_y - tip_h - 4.0f;
+            if (tip_x < 0.0f) tip_x = 0.0f;
+            if (tip_y < 0.0f) tip_y = 0.0f;
 
             if (win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
                 Ca_DrawCmd *c = &win->draw_cmds[win->draw_cmd_count++];
