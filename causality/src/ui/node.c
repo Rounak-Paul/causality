@@ -147,6 +147,15 @@ static void free_subtree(Ca_Node *node)
     if (!node) return;
     for (uint32_t i = 0; i < node->child_count; ++i)
         free_subtree(node->children[i]);
+    /* Clear any window-level pointers that reference this node, otherwise
+       input handlers will dereference a freed slot next frame (UAF). */
+    if (node->window) {
+        Ca_Window *w = node->window;
+        if (w->hovered_node        == node) w->hovered_node        = NULL;
+        if (w->drag_node           == node) w->drag_node           = NULL;
+        if (w->user_drag_node      == node) w->user_drag_node      = NULL;
+        if (w->scrollbar_drag_node == node) w->scrollbar_drag_node = NULL;
+    }
     release_widget(node);
     memset(node, 0, sizeof(*node));
     node->draw_cmd_idx = -1;
