@@ -6,6 +6,8 @@
 #include "font.h"
 #include "ca_theme.h"
 #include <GLFW/glfw3.h>
+#include <stdio.h>
+#include <string.h>
 
 /* Process memory (RSS) for debug overlay */
 #ifdef __APPLE__
@@ -416,19 +418,15 @@ static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, Cli
         float fs = hdr->desc.font_size > 0 ? hdr->desc.font_size : 12.0f;
         float glyph_w = fs;  /* column width for chevron / icon */
 
-        /* Hover highlight on header row */
-        if (win->mouse_x >= hdr->x && win->mouse_x <= hdr->x + hdr->w &&
-            win->mouse_y >= hdr->y && win->mouse_y <= hdr->y + hdr->h) {
-            if (win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
-                Ca_DrawCmd *c = &win->draw_cmds[win->draw_cmd_count++];
-                memset(c, 0, sizeof(*c));
-                c->type = CA_DRAW_RECT;
-                c->x = hdr->x; c->y = hdr->y;
-                c->w = hdr->w; c->h = hdr->h;
-                unpack_color(hdr->desc.background, &c->r, &c->g, &c->b, &c->a);
-                c->corner_radius = hdr->desc.corner_radius;
-            }
-        }
+        /* Note: hover/active highlight on the header row is painted by the
+           header node's own bg rect via paint_node_content(hdr). Pseudo-state
+           CSS (.tree-row:hover, :active) sets hdr_node->desc.background which
+           is then drawn at hdr's full bounds. We intentionally do NOT emit a
+           manual hover rect here — that historical code path produced a
+           draw command with in_use=false (renderer skips it) and additionally
+           polluted the cache slot count, causing intermittent partial-row
+           hover artifacts on tree-node containers that were re-painted while
+           the mouse was over them. */
 
         /* Dim the text color for the chevron indicator */
         uint32_t chevron_color = tn->text_color;

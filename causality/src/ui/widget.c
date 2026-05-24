@@ -4198,6 +4198,17 @@ void ca_widget_input_pass(Ca_Window *win)
             Ca_Node *n = &win->node_pool[i];
             if (!n->in_use || n->desc.hidden) continue;
             if (!point_in_node(n, mx, my)) continue;
+            /* Skip if any ancestor is hidden: tabbed/collapsed panels
+               whose builder doesn't re-run leave stale layout coords on
+               descendants. Without this check, those descendants can
+               spuriously overlap visible widgets and steal hover. */
+            {
+                bool ancestor_hidden = false;
+                for (Ca_Node *p = n->parent; p; p = p->parent) {
+                    if (p->desc.hidden) { ancestor_hidden = true; break; }
+                }
+                if (ancestor_hidden) continue;
+            }
             float area = n->w * n->h;
             if (area < best_area) {
                 best_area = area; best = n;
@@ -4207,6 +4218,22 @@ void ca_widget_input_pass(Ca_Window *win)
                     if (p == best) { best = n; break; }
                 }
             }
+        }
+        /* Tree-node containers wrap their clickable header row as
+           children[0].  The container often auto-sizes to the same
+           bounds as the header, producing an area-tie that the loop
+           above resolves via descendant-preference — but with hidden
+           children participating in layout, scroll baking offsets, or
+           floating-point edge cases the container can still come out
+           on top.  Descend to the header row whenever the deepest hit
+           landed on a tree-node container so .tree-row :hover lights
+           up reliably (and the geometric hover paint in paint.c picks
+           up the resolved CSS background on every frame). */
+        while (best && best->widget_type == CA_WIDGET_TREENODE &&
+               best->child_count > 0 && best->children[0] &&
+               !best->children[0]->desc.hidden &&
+               point_in_node(best->children[0], mx, my)) {
+            best = best->children[0];
         }
         win->hovered_node = best;
     }
