@@ -4185,18 +4185,29 @@ void ca_widget_input_pass(Ca_Window *win)
     }
 
     if (!over_overlay && win->node_pool) {
-        /* Find the smallest node under the cursor (most specific hit) */
-        float best_area = 1e18f;
+        /* Find the deepest / smallest node under the cursor (most specific hit).
+           When two nodes have identical area (common for an auto-sized
+           parent that wraps a single child — e.g. a tree-node container
+           around its header row), prefer the descendant so CSS :hover
+           ancestor-walk semantics still light up classes on the inner
+           node (.tree-row, etc.). Pool insertion order isn't reliable
+           after frees/reuses so we explicitly test ancestry. */
+        Ca_Node *best = NULL;
+        float    best_area = 1e18f;
         for (uint32_t i = 0; i < CA_MAX_NODES_PER_WINDOW; ++i) {
             Ca_Node *n = &win->node_pool[i];
             if (!n->in_use || n->desc.hidden) continue;
-            if (point_in_node(n, mx, my)) {
-                float area = n->w * n->h;
-                if (area < best_area) {
-                    best_area = area;
-                    win->hovered_node = n;
+            if (!point_in_node(n, mx, my)) continue;
+            float area = n->w * n->h;
+            if (area < best_area) {
+                best_area = area; best = n;
+            } else if (best && area == best_area) {
+                /* Tie — prefer n if it's a descendant of best (deeper). */
+                for (Ca_Node *p = n->parent; p; p = p->parent) {
+                    if (p == best) { best = n; break; }
                 }
             }
         }
+        win->hovered_node = best;
     }
 }
