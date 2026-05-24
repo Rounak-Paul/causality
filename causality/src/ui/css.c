@@ -6,6 +6,7 @@
 #include "causality_config.h"
 
 #include <ctype.h>
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -27,9 +28,16 @@ typedef enum {
     TOK_RBRACE,
     TOK_LPAREN,
     TOK_RPAREN,
+    TOK_LBRACKET,
+    TOK_RBRACKET,
     TOK_DOT,
     TOK_STAR,
     TOK_GT,
+    TOK_PLUS,       /* '+' — sibling combinator or sign */
+    TOK_TILDE,      /* '~' — sibling combinator */
+    TOK_BANG,       /* '!' — introduces `important` */
+    TOK_MINUS,      /* '-' — only emitted in selector-context: --vars start with -- */
+    TOK_DBLDASH,    /* '--' — start of a custom-property name */
     TOK_WS,         /* significant whitespace (descendant combinator) */
     TOK_FUNCTION,   /* ident( — e.g. rgb( */
 } TokType;
@@ -125,10 +133,24 @@ static Token next_token(Lexer *lex)
         tok.text[1] = '\0';
         return tok;
     }
-    if (had_ws && (c == '.' || c == '#' || c == '*')) {
+    if (had_ws && (c == '.' || c == '#' || c == '*' || c == ':' ||
+                   c == '[' || c == '+' || c == '~')) {
         tok.type = TOK_WS;
         tok.text[0] = ' ';
         tok.text[1] = '\0';
+        return tok;
+    }
+
+    /* Custom-property name starts with `--` (only treated as such in
+       declaration context — the property-name parser checks for this). */
+    if (c == '-' && lex->pos + 1 < lex->len && lex->src[lex->pos + 1] == '-') {
+        /* Lex as identifier so the parser can use lookup_property() and
+           detect the `--` prefix uniformly. */
+        int i = 0;
+        while (i < 255 && (is_ident_char(peek(lex)) || peek(lex) == '-'))
+            tok.text[i++] = advance(lex);
+        tok.text[i] = '\0';
+        tok.type = TOK_IDENT;
         return tok;
     }
 
@@ -215,9 +237,14 @@ static Token next_token(Lexer *lex)
         case '}': tok.type = TOK_RBRACE;    break;
         case '(': tok.type = TOK_LPAREN;    break;
         case ')': tok.type = TOK_RPAREN;    break;
+        case '[': tok.type = TOK_LBRACKET;  break;
+        case ']': tok.type = TOK_RBRACKET;  break;
         case '.': tok.type = TOK_DOT;       break;
-        case '*': tok.type = TOK_STAR;       break;
+        case '*': tok.type = TOK_STAR;      break;
         case '>': tok.type = TOK_GT;        break;
+        case '+': tok.type = TOK_PLUS;      break;
+        case '~': tok.type = TOK_TILDE;     break;
+        case '!': tok.type = TOK_BANG;      break;
         default:  tok.type = TOK_EOF;       break; /* unexpected char, skip */
     }
     return tok;
@@ -233,12 +260,20 @@ typedef struct {
     Lexer lex;
     Token buffer[TOK_BUF_SIZE];
     int   buf_count;
+    /* Current stylesheet — needed by parse_value to intern var() names
+       and by parse_declarations to hoist :root custom properties. */
+    Ca_Stylesheet *ss;
+    /* True while parsing declarations of a rule whose selector list is
+       exactly `:root`. Custom properties are only hoisted then. */
+    bool           in_root_rule;
 } Parser;
 
 static void parser_init(Parser *p, const char *src)
 {
     lexer_init(&p->lex, src);
-    p->buf_count = 0;
+    p->buf_count    = 0;
+    p->ss           = NULL;
+    p->in_root_rule = false;
 }
 
 static Token parser_next(Parser *p)
@@ -401,6 +436,100 @@ static uint32_t parse_rgb_func(Parser *p, bool has_alpha)
     if (a > 255) a = 255;
 
     return (r << 24) | (g << 16) | (b << 8) | a;
+}
+
+/* HSL -> RGB conversion. h: 0..360 degrees, s/l: 0..1 fractions. */
+static void hsl_to_rgb(float h, float s, float l, float *r, float *g, float *b)
+{
+    /* Normalise hue into [0,360) */
+    h = fmodf(h, 360.0f);
+    if (h < 0) h += 360.0f;
+
+    float c = (1.0f - fabsf(2.0f * l - 1.0f)) * s;
+    float hp = h / 60.0f;
+    float x  = c * (1.0f - fabsf(fmodf(hp, 2.0f) - 1.0f));
+    float r1=0,g1=0,b1=0;
+    if      (hp < 1) { r1 = c; g1 = x; }
+    else if (hp < 2) { r1 = x; g1 = c; }
+    else if (hp < 3) { g1 = c; b1 = x; }
+    else if (hp < 4) { g1 = x; b1 = c; }
+    else if (hp < 5) { r1 = x; b1 = c; }
+    else             { r1 = c; b1 = x; }
+    float m = l - c * 0.5f;
+    *r = r1 + m; *g = g1 + m; *b = b1 + m;
+}
+
+/* Parse hsl(h, s%, l%) or hsla(...). */
+static uint32_t parse_hsl_func(Parser *p, bool has_alpha)
+{
+    float h = 0, s = 0, l = 0, a = 1.0f;
+    int max_args = has_alpha ? 4 : 3;
+    float vals[4] = { 0, 0, 0, 1.0f };
+
+    for (int i = 0; i < max_args; ++i) {
+        skip_ws(p);
+        Token t = parser_next(p);
+        if (t.type == TOK_NUMBER || t.type == TOK_DIMENSION) {
+            vals[i] = t.number;
+            /* Saturation / lightness are typically percentages; if the token
+               carries a % unit it's already a percentage — we'll divide by
+               100 below. Hue may carry `deg` which we treat as degrees. */
+            if (i == 1 || i == 2) {
+                if (t.type == TOK_DIMENSION && strcmp(t.unit, "%") == 0)
+                    vals[i] /= 100.0f;
+            }
+        }
+        skip_ws(p);
+        Token comma = parser_next(p);
+        if (comma.type == TOK_RPAREN) break;
+    }
+    /* Consume trailing ) if still present */
+    Token tt = parser_peek(p);
+    if (tt.type == TOK_RPAREN) parser_next(p);
+
+    h = vals[0]; s = vals[1]; l = vals[2]; a = has_alpha ? vals[3] : 1.0f;
+    if (s < 0) s = 0; if (s > 1) s = 1;
+    if (l < 0) l = 0; if (l > 1) l = 1;
+    if (a < 0) a = 0; if (a > 1) a = 1;
+
+    float rf, gf, bf;
+    hsl_to_rgb(h, s, l, &rf, &gf, &bf);
+    uint32_t r = (uint32_t)(rf * 255.0f + 0.5f); if (r > 255) r = 255;
+    uint32_t g = (uint32_t)(gf * 255.0f + 0.5f); if (g > 255) g = 255;
+    uint32_t b = (uint32_t)(bf * 255.0f + 0.5f); if (b > 255) b = 255;
+    uint32_t ai = (uint32_t)(a * 255.0f + 0.5f); if (ai > 255) ai = 255;
+    return (r << 24) | (g << 16) | (b << 8) | ai;
+}
+
+/* ============================================================
+   STRING POOL (intern var-name strings in stylesheet)
+   ============================================================ */
+
+int ca_css_intern(Ca_Stylesheet *ss, const char *s)
+{
+    if (!ss || !s) return -1;
+    int len = (int)strlen(s);
+    /* Search for an existing copy. */
+    int i = 0;
+    while (i < ss->str_pool_used) {
+        int rem = ss->str_pool_used - i;
+        int sl  = (int)strnlen(ss->str_pool + i, rem);
+        if (sl == len && strcmp(ss->str_pool + i, s) == 0)
+            return i;
+        i += sl + 1;
+        if (sl == rem) break; /* shouldn't happen — pool always NUL-terminated */
+    }
+    if (ss->str_pool_used + len + 1 > CA_CSS_STR_POOL_BYTES) return -1;
+    int offset = ss->str_pool_used;
+    memcpy(ss->str_pool + offset, s, len + 1);
+    ss->str_pool_used += len + 1;
+    return offset;
+}
+
+const char *ca_css_str(const Ca_Stylesheet *ss, int offset)
+{
+    if (!ss || offset < 0 || offset >= ss->str_pool_used) return NULL;
+    return ss->str_pool + offset;
 }
 
 /* ============================================================
@@ -587,6 +716,40 @@ static Ca_CssValue parse_value(Parser *p, Ca_CssPropId prop)
             val.color = parse_rgb_func(p, true);
             return val;
         }
+        if (strcasecmp(t.text, "hsl") == 0) {
+            val.type  = CA_CSS_VAL_COLOR;
+            val.color = parse_hsl_func(p, false);
+            return val;
+        }
+        if (strcasecmp(t.text, "hsla") == 0) {
+            val.type  = CA_CSS_VAL_COLOR;
+            val.color = parse_hsl_func(p, true);
+            return val;
+        }
+        if (strcasecmp(t.text, "var") == 0) {
+            /* var(--name [, fallback]) */
+            skip_ws(p);
+            Token nm = parser_next(p);
+            char varname[CA_CSS_VAR_NAME_MAX];
+            varname[0] = '\0';
+            if (nm.type == TOK_IDENT && nm.text[0] == '-' && nm.text[1] == '-') {
+                snprintf(varname, sizeof(varname), "%s", nm.text);
+            }
+            /* Skip optional fallback (not retained \u2014 v1 returns 0 on miss). */
+            int depth = 1;
+            while (depth > 0) {
+                Token tt = parser_next(p);
+                if (tt.type == TOK_LPAREN || tt.type == TOK_FUNCTION) depth++;
+                else if (tt.type == TOK_RPAREN) depth--;
+                else if (tt.type == TOK_EOF) break;
+            }
+            int offset = -1;
+            if (p->ss && varname[0])
+                offset = ca_css_intern(p->ss, varname);
+            val.type    = CA_CSS_VAL_VAR;
+            val.keyword = offset;
+            return val;
+        }
         /* Unknown function — skip to closing paren */
         int depth = 1;
         while (depth > 0) {
@@ -647,8 +810,33 @@ static void add_decl(Ca_CssRule *rule, Ca_CssPropId prop, Ca_CssValue val)
 {
     if (rule->decl_count >= CA_CSS_MAX_DECLS_PER_RULE) return;
     Ca_CssDecl *d = &rule->decls[rule->decl_count++];
-    d->prop  = prop;
-    d->value = val;
+    d->prop      = prop;
+    d->value     = val;
+    d->important = false;
+    d->var_name[0] = '\0';
+}
+
+static Ca_CssDecl *last_decl(Ca_CssRule *rule)
+{
+    if (rule->decl_count == 0) return NULL;
+    return &rule->decls[rule->decl_count - 1];
+}
+
+/* If the trailing tokens are `! important`, mark recent decls (those added
+   since `from_decl`) as important and return true. */
+static bool consume_important(Parser *p, Ca_CssRule *rule, int from_decl)
+{
+    skip_ws(p);
+    Token t = parser_peek(p);
+    if (t.type != TOK_BANG) return false;
+    parser_next(p);
+    skip_ws(p);
+    Token ident = parser_next(p);
+    if (ident.type != TOK_IDENT || strcasecmp(ident.text, "important") != 0)
+        return false;
+    for (int i = from_decl; i < rule->decl_count; ++i)
+        rule->decls[i].important = true;
+    return true;
 }
 
 static void parse_declarations(Parser *p, Ca_CssRule *rule)
@@ -687,7 +875,52 @@ static void parse_declarations(Parser *p, Ca_CssRule *rule)
             continue;
         }
 
+        /* Custom property: --name : value;
+           Only hoisted to the stylesheet's vars table when inside :root. */
+        if (prop_name[0] == '-' && prop_name[1] == '-' && prop_name[2] != '\0') {
+            Ca_CssValue val = parse_value(p, CA_CSS_PROP_NONE);
+            if (p->in_root_rule && p->ss &&
+                p->ss->var_count < CA_CSS_MAX_VARS) {
+                Ca_CssVar *v = &p->ss->vars[p->ss->var_count++];
+                snprintf(v->name, sizeof(v->name), "%s", prop_name);
+                v->value = val;
+            }
+            skip_ws(p);
+            t = parser_peek(p);
+            if (t.type == TOK_BANG) { /* allow `!important` */ parser_next(p); skip_ws(p); Token ii = parser_next(p); (void)ii; skip_ws(p); t = parser_peek(p); }
+            if (t.type == TOK_SEMICOLON) parser_next(p);
+            continue;
+        }
+
         Ca_CssPropId prop_id = lookup_property(prop_name);
+
+        /* `border` shorthand: border: <width> [<style>] <color>;
+           We retain border-width + border-color (border-style is ignored). */
+        if (strcasecmp(prop_name, "border") == 0) {
+            int from = rule->decl_count;
+            bool got_width = false, got_color = false;
+            while (1) {
+                skip_ws(p);
+                Token pk = parser_peek(p);
+                if (pk.type == TOK_SEMICOLON || pk.type == TOK_RBRACE || pk.type == TOK_EOF || pk.type == TOK_BANG)
+                    break;
+                Ca_CssValue bv = parse_value(p, CA_CSS_PROP_NONE);
+                if (bv.type == CA_CSS_VAL_COLOR ||
+                    (bv.type == CA_CSS_VAL_VAR && !got_color)) {
+                    add_decl(rule, CA_CSS_PROP_BORDER_COLOR, bv);
+                    got_color = true;
+                } else if ((bv.type == CA_CSS_VAL_PX || bv.type == CA_CSS_VAL_NUMBER) && !got_width) {
+                    add_decl(rule, CA_CSS_PROP_BORDER_WIDTH, bv);
+                    got_width = true;
+                }
+                /* Other tokens (style keywords like 'solid') are ignored. */
+            }
+            consume_important(p, rule, from);
+            skip_ws(p);
+            t = parser_peek(p);
+            if (t.type == TOK_SEMICOLON) parser_next(p);
+            continue;
+        }
 
         /* Handle shorthand 'padding' and 'margin' */
         if (strcasecmp(prop_name, "padding") == 0 || strcasecmp(prop_name, "margin") == 0) {
@@ -796,8 +1029,10 @@ static void parse_declarations(Parser *p, Ca_CssRule *rule)
 
         /* Normal property */
         if (prop_id != CA_CSS_PROP_NONE) {
+            int from = rule->decl_count;
             Ca_CssValue val = parse_value(p, prop_id);
             add_decl(rule, prop_id, val);
+            consume_important(p, rule, from);
         } else {
             /* Unknown property — skip value */
             while (1) {
@@ -860,6 +1095,175 @@ static void parse_simple_selector(Parser *p, Ca_CssSimpleSel *sel)
         if (sel->id[0] == '\0')
             snprintf(sel->id, CA_CSS_CLASS_NAME_MAX, "%s", t.text);
     }
+
+    /* Pseudo-classes (:hover, :focus, :nth-child(...), :not(...) ...) */
+    while (parser_peek(p).type == TOK_COLON) {
+        parser_next(p);
+        Token ptok = parser_next(p);
+        if (ptok.type != TOK_IDENT && ptok.type != TOK_FUNCTION) break;
+
+        if (sel->pseudo_count >= CA_CSS_MAX_PSEUDOS_PER_PART) {
+            /* Drop excess */
+            if (ptok.type == TOK_FUNCTION) {
+                int depth = 1;
+                while (depth > 0) {
+                    Token tt = parser_next(p);
+                    if (tt.type == TOK_LPAREN || tt.type == TOK_FUNCTION) depth++;
+                    else if (tt.type == TOK_RPAREN) depth--;
+                    else if (tt.type == TOK_EOF) break;
+                }
+            }
+            continue;
+        }
+
+        Ca_CssPseudo *ps = &sel->pseudos[sel->pseudo_count];
+        memset(ps, 0, sizeof(*ps));
+
+        if (ptok.type == TOK_FUNCTION) {
+            if (strcasecmp(ptok.text, "nth-child") == 0 ||
+                strcasecmp(ptok.text, "nth-last-child") == 0) {
+                ps->kind = (strcasecmp(ptok.text, "nth-child") == 0)
+                            ? CA_CSS_PSEUDO_NTH_CHILD
+                            : CA_CSS_PSEUDO_NTH_LAST_CHILD;
+                /* Parse An+B, odd, even */
+                skip_ws(p);
+                Token arg = parser_next(p);
+                ps->a = 0; ps->b = 0;
+                if (arg.type == TOK_IDENT) {
+                    if (strcasecmp(arg.text, "odd") == 0)       { ps->a = 2; ps->b = 1; }
+                    else if (strcasecmp(arg.text, "even") == 0) { ps->a = 2; ps->b = 0; }
+                    else if (strcasecmp(arg.text, "n") == 0)    { ps->a = 1; ps->b = 0; }
+                    else {
+                        /* Forms like "2n", "2n+1", "-n+3" embedded in ident */
+                        const char *s = arg.text;
+                        int sign = 1;
+                        if (*s == '-') { sign = -1; s++; }
+                        else if (*s == '+') { s++; }
+                        int num = 0; bool has_num = false;
+                        while (*s >= '0' && *s <= '9') { num = num*10 + (*s - '0'); has_num = true; s++; }
+                        if (*s == 'n' || *s == 'N') {
+                            ps->a = sign * (has_num ? num : 1);
+                            s++;
+                            /* optional +/-B */
+                            while (*s == ' ') s++;
+                            int bsign = 1;
+                            if (*s == '+') s++;
+                            else if (*s == '-') { bsign = -1; s++; }
+                            int bnum = 0;
+                            while (*s == ' ') s++;
+                            while (*s >= '0' && *s <= '9') { bnum = bnum*10 + (*s - '0'); s++; }
+                            ps->b = bsign * bnum;
+                        } else if (has_num) {
+                            ps->a = 0;
+                            ps->b = sign * num;
+                        }
+                    }
+                } else if (arg.type == TOK_NUMBER || arg.type == TOK_DIMENSION) {
+                    /* e.g. "3" or "2n" lexed as dimension with unit "n" */
+                    if (arg.type == TOK_DIMENSION &&
+                        (strcasecmp(arg.unit, "n") == 0)) {
+                        ps->a = (int)arg.number;
+                        /* Peek for trailing +B/-B */
+                        skip_ws(p);
+                        Token sgn = parser_peek(p);
+                        if (sgn.type == TOK_PLUS || sgn.type == TOK_MINUS) {
+                            parser_next(p);
+                            int bsign = (sgn.type == TOK_MINUS) ? -1 : 1;
+                            Token bn = parser_next(p);
+                            if (bn.type == TOK_NUMBER || bn.type == TOK_DIMENSION)
+                                ps->b = bsign * (int)bn.number;
+                        }
+                    } else {
+                        ps->a = 0;
+                        ps->b = (int)arg.number;
+                    }
+                }
+                /* Consume rest until ) */
+                int depth = 1;
+                while (depth > 0) {
+                    Token tt = parser_next(p);
+                    if (tt.type == TOK_LPAREN || tt.type == TOK_FUNCTION) depth++;
+                    else if (tt.type == TOK_RPAREN) depth--;
+                    else if (tt.type == TOK_EOF) break;
+                }
+            } else if (strcasecmp(ptok.text, "not") == 0) {
+                ps->kind = CA_CSS_PSEUDO_NOT;
+                /* Parse a single simple selector inside :not(...) */
+                skip_ws(p);
+                Token a = parser_peek(p);
+                /* element */
+                if (a.type == TOK_IDENT) {
+                    parser_next(p);
+                    snprintf(ps->not_element, sizeof(ps->not_element), "%s", a.text);
+                } else if (a.type == TOK_STAR) {
+                    parser_next(p);
+                    ps->not_element[0] = '*'; ps->not_element[1] = '\0';
+                }
+                /* id / classes / inner pseudo (single) */
+                while (1) {
+                    Token b = parser_peek(p);
+                    if (b.type == TOK_HASH) {
+                        parser_next(p);
+                        if (ps->not_id[0] == '\0')
+                            snprintf(ps->not_id, sizeof(ps->not_id), "%s", b.text);
+                    } else if (b.type == TOK_DOT) {
+                        parser_next(p);
+                        Token cls = parser_next(p);
+                        if (cls.type == TOK_IDENT && ps->not_class[0] == '\0')
+                            snprintf(ps->not_class, sizeof(ps->not_class), "%s", cls.text);
+                    } else if (b.type == TOK_COLON) {
+                        parser_next(p);
+                        Token inner = parser_next(p);
+                        if (inner.type == TOK_IDENT) {
+                            if      (strcasecmp(inner.text, "hover")    == 0) ps->not_pseudo = CA_CSS_PSEUDO_HOVER;
+                            else if (strcasecmp(inner.text, "active")   == 0) ps->not_pseudo = CA_CSS_PSEUDO_ACTIVE;
+                            else if (strcasecmp(inner.text, "focus")    == 0) ps->not_pseudo = CA_CSS_PSEUDO_FOCUS;
+                            else if (strcasecmp(inner.text, "disabled") == 0) ps->not_pseudo = CA_CSS_PSEUDO_DISABLED;
+                            else if (strcasecmp(inner.text, "enabled")  == 0) ps->not_pseudo = CA_CSS_PSEUDO_ENABLED;
+                            else if (strcasecmp(inner.text, "checked")  == 0) ps->not_pseudo = CA_CSS_PSEUDO_CHECKED;
+                        }
+                    } else break;
+                }
+                /* Consume rest until ) */
+                int depth = 1;
+                while (depth > 0) {
+                    Token tt = parser_next(p);
+                    if (tt.type == TOK_LPAREN || tt.type == TOK_FUNCTION) depth++;
+                    else if (tt.type == TOK_RPAREN) depth--;
+                    else if (tt.type == TOK_EOF) break;
+                }
+            } else {
+                /* Unknown functional pseudo \u2014 skip */
+                int depth = 1;
+                while (depth > 0) {
+                    Token tt = parser_next(p);
+                    if (tt.type == TOK_LPAREN || tt.type == TOK_FUNCTION) depth++;
+                    else if (tt.type == TOK_RPAREN) depth--;
+                    else if (tt.type == TOK_EOF) break;
+                }
+                continue; /* don't store */
+            }
+            sel->pseudo_count++;
+        } else {
+            /* Simple identifier pseudo */
+            if      (strcasecmp(ptok.text, "hover")        == 0) ps->kind = CA_CSS_PSEUDO_HOVER;
+            else if (strcasecmp(ptok.text, "active")       == 0) ps->kind = CA_CSS_PSEUDO_ACTIVE;
+            else if (strcasecmp(ptok.text, "focus")        == 0) ps->kind = CA_CSS_PSEUDO_FOCUS;
+            else if (strcasecmp(ptok.text, "focus-within") == 0) ps->kind = CA_CSS_PSEUDO_FOCUS_WITHIN;
+            else if (strcasecmp(ptok.text, "disabled")     == 0) ps->kind = CA_CSS_PSEUDO_DISABLED;
+            else if (strcasecmp(ptok.text, "enabled")      == 0) ps->kind = CA_CSS_PSEUDO_ENABLED;
+            else if (strcasecmp(ptok.text, "checked")      == 0) ps->kind = CA_CSS_PSEUDO_CHECKED;
+            else if (strcasecmp(ptok.text, "first-child")  == 0) ps->kind = CA_CSS_PSEUDO_FIRST_CHILD;
+            else if (strcasecmp(ptok.text, "last-child")   == 0) ps->kind = CA_CSS_PSEUDO_LAST_CHILD;
+            else if (strcasecmp(ptok.text, "only-child")   == 0) ps->kind = CA_CSS_PSEUDO_ONLY_CHILD;
+            else if (strcasecmp(ptok.text, "first-of-type")== 0) ps->kind = CA_CSS_PSEUDO_FIRST_OF_TYPE;
+            else if (strcasecmp(ptok.text, "last-of-type") == 0) ps->kind = CA_CSS_PSEUDO_LAST_OF_TYPE;
+            else if (strcasecmp(ptok.text, "root")         == 0) ps->kind = CA_CSS_PSEUDO_ROOT;
+            else if (strcasecmp(ptok.text, "empty")        == 0) ps->kind = CA_CSS_PSEUDO_EMPTY;
+            else continue; /* unknown \u2014 don't store */
+            sel->pseudo_count++;
+        }
+    }
 }
 
 static void parse_selector(Parser *p, Ca_CssSelector *sel)
@@ -880,6 +1284,20 @@ static void parse_selector(Parser *p, Ca_CssSelector *sel)
             parse_simple_selector(p, part);
             part->combinator = CA_CSS_COMB_CHILD;
             sel->part_count++;
+        } else if (t.type == TOK_PLUS) {
+            parser_next(p);
+            skip_ws(p);
+            Ca_CssSimpleSel *part = &sel->parts[sel->part_count];
+            parse_simple_selector(p, part);
+            part->combinator = CA_CSS_COMB_NEXT_SIBLING;
+            sel->part_count++;
+        } else if (t.type == TOK_TILDE) {
+            parser_next(p);
+            skip_ws(p);
+            Ca_CssSimpleSel *part = &sel->parts[sel->part_count];
+            parse_simple_selector(p, part);
+            part->combinator = CA_CSS_COMB_SUBSEQ_SIBLING;
+            sel->part_count++;
         } else if (t.type == TOK_WS) {
             parser_next(p);
             /* Check if next is a combinator or selector start */
@@ -892,8 +1310,21 @@ static void parse_selector(Parser *p, Ca_CssSelector *sel)
                 parse_simple_selector(p, part);
                 part->combinator = CA_CSS_COMB_CHILD;
                 sel->part_count++;
+            } else if (nxt.type == TOK_PLUS) {
+                parser_next(p); skip_ws(p);
+                Ca_CssSimpleSel *part = &sel->parts[sel->part_count];
+                parse_simple_selector(p, part);
+                part->combinator = CA_CSS_COMB_NEXT_SIBLING;
+                sel->part_count++;
+            } else if (nxt.type == TOK_TILDE) {
+                parser_next(p); skip_ws(p);
+                Ca_CssSimpleSel *part = &sel->parts[sel->part_count];
+                parse_simple_selector(p, part);
+                part->combinator = CA_CSS_COMB_SUBSEQ_SIBLING;
+                sel->part_count++;
             } else if (nxt.type == TOK_IDENT || nxt.type == TOK_DOT ||
-                       nxt.type == TOK_STAR || nxt.type == TOK_HASH) {
+                       nxt.type == TOK_STAR || nxt.type == TOK_HASH ||
+                       nxt.type == TOK_COLON) {
                 /* Descendant combinator */
                 Ca_CssSimpleSel *part = &sel->parts[sel->part_count];
                 parse_simple_selector(p, part);
@@ -946,6 +1377,7 @@ Ca_Stylesheet *ca_css_parse(const char *css_text)
 
     Parser p;
     parser_init(&p, css_text);
+    p.ss = ss;
 
     int order = 0;
 
@@ -964,6 +1396,21 @@ Ca_Stylesheet *ca_css_parse(const char *css_text)
 
         /* Parse selector list */
         parse_selector_list(&p, rule);
+
+        /* Detect :root rule (any selector whose only part is :root). */
+        p.in_root_rule = false;
+        for (int si = 0; si < rule->selector_count; ++si) {
+            Ca_CssSelector *s = &rule->selectors[si];
+            if (s->part_count == 1 &&
+                s->parts[0].element[0] == '\0' &&
+                s->parts[0].id[0] == '\0' &&
+                s->parts[0].class_count == 0 &&
+                s->parts[0].pseudo_count == 1 &&
+                s->parts[0].pseudos[0].kind == CA_CSS_PSEUDO_ROOT) {
+                p.in_root_rule = true;
+                break;
+            }
+        }
 
         /* Expect '{' */
         skip_ws(&p);

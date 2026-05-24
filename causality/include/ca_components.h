@@ -123,6 +123,11 @@ typedef struct Ca_TreeNodeDesc {
     bool             is_leaf;        /* suppress disclosure triangle */
     const char      *icon;           /* UTF-8 icon string (single glyph) */
     uint32_t         icon_color;     /* packed RGBA for icon (0 = text_color) */
+    /* Additional class(es) appended to the built-in "tree-row" class on
+       the inner clickable header row. Lets callers attach state-aware
+       styling (e.g. selected/highlighted) directly to the header where
+       :hover / :focus actually fire, instead of the container. */
+    const char      *row_style;
 } Ca_TreeNodeDesc;
 
 typedef struct Ca_TableDesc {

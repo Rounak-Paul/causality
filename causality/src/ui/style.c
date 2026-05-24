@@ -82,11 +82,161 @@ static bool has_class(const char *class_str, const char *cls)
 }
 
 /* ============================================================
+   PSEUDO-CLASS STATE QUERIES
+   ============================================================ */
+
+static bool node_is_hovered(Ca_Node *n)
+{
+    /* CSS spec: :hover matches the hovered element AND all of its ancestors.
+       Walk up from window->hovered_node looking for n. */
+    if (!n || !n->window) return false;
+    Ca_Node *h = n->window->hovered_node;
+    while (h) { if (h == n) return true; h = h->parent; }
+    return false;
+}
+static bool node_is_focused(Ca_Node *n)
+{
+    return n && n->window && n->window->focused_node == n;
+}
+static bool node_is_focus_within(Ca_Node *n)
+{
+    if (!n || !n->window) return false;
+    Ca_Node *f = n->window->focused_node;
+    while (f) { if (f == n) return true; f = f->parent; }
+    return false;
+}
+static bool node_is_active(Ca_Node *n)
+{
+    /* CSS spec: :active matches the activated element and its ancestors.
+       Approximated here as the drag-target chain. */
+    if (!n || !n->window) return false;
+    Ca_Node *d = n->window->drag_node;
+    while (d) { if (d == n) return true; d = d->parent; }
+    return false;
+}
+static bool node_is_disabled(Ca_Node *n)
+{
+    return n && n->desc.disabled;
+}
+
+/* Returns 1-based child index, or 0 if no parent. */
+static int node_child_index(Ca_Node *n)
+{
+    if (!n || !n->parent) return 0;
+    for (uint32_t i = 0; i < n->parent->child_count; ++i) {
+        if (n->parent->children[i] == n) return (int)(i + 1);
+    }
+    return 0;
+}
+static int node_sibling_count(Ca_Node *n)
+{
+    if (!n || !n->parent) return 1;
+    return (int)n->parent->child_count;
+}
+
+/* :nth-child(An+B) match for a 1-based index. */
+static bool nth_matches(int idx, int a, int b)
+{
+    if (idx <= 0) return false;
+    if (a == 0) return idx == b;
+    int diff = idx - b;
+    if ((diff % a) != 0) return false;
+    return (diff / a) >= 0;
+}
+
+/* Forward decl for :not(simple) handling. */
+static bool match_pseudo(const Ca_CssPseudo *ps,
+                         Ca_Node *node,
+                         Ca_ElementType elem_type);
+
+static bool match_pseudo(const Ca_CssPseudo *ps,
+                         Ca_Node *node,
+                         Ca_ElementType elem_type)
+{
+    switch (ps->kind) {
+        case CA_CSS_PSEUDO_NONE:         return true;
+        case CA_CSS_PSEUDO_HOVER:        return node_is_hovered(node);
+        case CA_CSS_PSEUDO_ACTIVE:       return node_is_active(node);
+        case CA_CSS_PSEUDO_FOCUS:        return node_is_focused(node);
+        case CA_CSS_PSEUDO_FOCUS_WITHIN: return node_is_focus_within(node);
+        case CA_CSS_PSEUDO_DISABLED:     return node_is_disabled(node);
+        case CA_CSS_PSEUDO_ENABLED:      return !node_is_disabled(node);
+        case CA_CSS_PSEUDO_CHECKED:
+            /* Widget-specific. Without dragging widget headers into style.c
+               we expose this through a single bit on Ca_NodeDesc later;
+               for now default to false. */
+            return false;
+        case CA_CSS_PSEUDO_FIRST_CHILD:  return node_child_index(node) == 1;
+        case CA_CSS_PSEUDO_LAST_CHILD:
+            return node_child_index(node) == node_sibling_count(node) &&
+                   node_child_index(node) > 0;
+        case CA_CSS_PSEUDO_ONLY_CHILD:   return node_sibling_count(node) == 1 && node->parent;
+        case CA_CSS_PSEUDO_FIRST_OF_TYPE:
+        case CA_CSS_PSEUDO_LAST_OF_TYPE:
+        {
+            /* Walk siblings of the same elem_type. */
+            if (!node || !node->parent) return false;
+            int first = -1, last = -1, my = -1;
+            for (uint32_t i = 0; i < node->parent->child_count; ++i) {
+                Ca_Node *c = node->parent->children[i];
+                if (c && c->elem_type == (int)elem_type) {
+                    if (first < 0) first = (int)i;
+                    last = (int)i;
+                    if (c == node) my = (int)i;
+                }
+            }
+            if (ps->kind == CA_CSS_PSEUDO_FIRST_OF_TYPE) return my == first && my >= 0;
+            return my == last && my >= 0;
+        }
+        case CA_CSS_PSEUDO_NTH_CHILD:
+            return nth_matches(node_child_index(node), ps->a, ps->b);
+        case CA_CSS_PSEUDO_NTH_LAST_CHILD: {
+            int idx = node_child_index(node);
+            int n   = node_sibling_count(node);
+            if (idx <= 0) return false;
+            return nth_matches(n - idx + 1, ps->a, ps->b);
+        }
+        case CA_CSS_PSEUDO_ROOT:  return node && node->parent == NULL;
+        case CA_CSS_PSEUDO_EMPTY: return node && node->child_count == 0;
+        case CA_CSS_PSEUDO_NOT: {
+            /* Inline simple selector against this node. */
+            const char *ename = ca_elem_type_name(elem_type);
+            if (ps->not_element[0] && ps->not_element[0] != '*') {
+                if (strcasecmp(ps->not_element, ename) != 0)
+                    return true; /* doesn't match — :not is true */
+            }
+            if (ps->not_id[0]) {
+                if (node->id[0] == '\0' || strcasecmp(ps->not_id, node->id) != 0)
+                    return true;
+            }
+            if (ps->not_class[0]) {
+                if (!has_class(node->classes, ps->not_class))
+                    return true;
+            }
+            if (ps->not_pseudo != CA_CSS_PSEUDO_NONE) {
+                Ca_CssPseudo inner = {0};
+                inner.kind = ps->not_pseudo;
+                if (!match_pseudo(&inner, node, elem_type))
+                    return true;
+            }
+            /* If we got here, every simple component inside :not() matched
+               — so the negation is false (only if at least one component
+               was specified). */
+            bool had_any = ps->not_element[0] || ps->not_id[0] ||
+                           ps->not_class[0] || ps->not_pseudo != CA_CSS_PSEUDO_NONE;
+            return !had_any ? true : false;
+        }
+    }
+    return false;
+}
+
+/* ============================================================
    SIMPLE SELECTOR MATCHING
    ============================================================ */
 
-/* Match a simple selector against a single node */
+/* Match a simple selector against a single node (including pseudo-classes). */
 static bool match_simple(const Ca_CssSimpleSel *sel,
+                         Ca_Node *node,
                          Ca_ElementType elem_type,
                          const char *classes,
                          const char *id)
@@ -110,8 +260,15 @@ static bool match_simple(const Ca_CssSimpleSel *sel,
             return false;
     }
 
-    /* At least one of element, id, or class must be specified */
-    if (sel->element[0] == '\0' && sel->id[0] == '\0' && sel->class_count == 0)
+    /* All pseudo-classes must match */
+    for (int i = 0; i < sel->pseudo_count; ++i) {
+        if (!match_pseudo(&sel->pseudos[i], node, elem_type))
+            return false;
+    }
+
+    /* At least one of element, id, class, or pseudo must be specified */
+    if (sel->element[0] == '\0' && sel->id[0] == '\0' &&
+        sel->class_count == 0 && sel->pseudo_count == 0)
         return false;
 
     return true;
@@ -133,33 +290,63 @@ static bool match_selector(const Ca_CssSelector *sel,
 
     /* The subject is the last part — must match the current node */
     int idx = sel->part_count - 1;
-    if (!match_simple(&sel->parts[idx], elem_type, classes, node->id))
+    if (!match_simple(&sel->parts[idx], node, elem_type, classes, node->id))
         return false;
 
     if (idx == 0) return true; /* Only one part, no ancestors to check */
 
-    /* Walk backwards through the selector chain, matching against ancestors */
-    Ca_Node *cur = node->parent;
+    /* Walk backwards through the selector chain, matching ancestors/siblings */
+    Ca_Node *cur = node;
     idx--;
 
-    while (idx >= 0 && cur) {
+    while (idx >= 0) {
         Ca_CssCombinator comb = sel->parts[idx + 1].combinator;
 
         if (comb == CA_CSS_COMB_CHILD) {
-            /* Direct parent must match */
-            if (!match_simple(&sel->parts[idx],
+            cur = cur->parent;
+            if (!cur) return false;
+            if (!match_simple(&sel->parts[idx], cur,
                               (Ca_ElementType)cur->elem_type, cur->classes, cur->id))
                 return false;
             idx--;
-            cur = cur->parent;
+        } else if (comb == CA_CSS_COMB_NEXT_SIBLING) {
+            /* Immediately preceding sibling. */
+            if (!cur->parent) return false;
+            Ca_Node *prev = NULL;
+            for (uint32_t i = 0; i < cur->parent->child_count; ++i) {
+                if (cur->parent->children[i] == cur) break;
+                prev = cur->parent->children[i];
+            }
+            if (!prev) return false;
+            if (!match_simple(&sel->parts[idx], prev,
+                              (Ca_ElementType)prev->elem_type, prev->classes, prev->id))
+                return false;
+            cur = prev;
+            idx--;
+        } else if (comb == CA_CSS_COMB_SUBSEQ_SIBLING) {
+            /* Any preceding sibling. */
+            if (!cur->parent) return false;
+            bool found = false;
+            Ca_Node *match = NULL;
+            for (uint32_t i = 0; i < cur->parent->child_count; ++i) {
+                Ca_Node *c = cur->parent->children[i];
+                if (c == cur) break;
+                if (match_simple(&sel->parts[idx], c,
+                                 (Ca_ElementType)c->elem_type, c->classes, c->id)) {
+                    found = true; match = c;
+                }
+            }
+            if (!found) return false;
+            cur = match;
+            idx--;
         } else {
-            /* Descendant combinator — walk up until a match is found */
+            /* Descendant combinator (default) — walk up until a match. */
+            cur = cur->parent;
             bool found = false;
             while (cur) {
-                if (match_simple(&sel->parts[idx],
+                if (match_simple(&sel->parts[idx], cur,
                                  (Ca_ElementType)cur->elem_type, cur->classes, cur->id)) {
                     found = true;
-                    cur = cur->parent;
                     break;
                 }
                 cur = cur->parent;
@@ -177,7 +364,8 @@ static bool match_selector(const Ca_CssSelector *sel,
    ============================================================ */
 
 /* Returns specificity as a single comparable integer.
-   Format: (id_count << 20) | (class_count << 10) | element_count */
+   Format: (id_count << 20) | ((class_count + pseudo_count) << 10) | element_count
+   This is the standard CSS (a,b,c) tuple packed into bits. */
 static int calc_specificity(const Ca_CssSelector *sel)
 {
     int ids      = 0;
@@ -191,6 +379,7 @@ static int calc_specificity(const Ca_CssSelector *sel)
         if (part->id[0] != '\0')
             ids++;
         classes += part->class_count;
+        classes += part->pseudo_count;
     }
 
     return (ids << 20) | (classes << 10) | elements;
@@ -229,6 +418,35 @@ static float css_val_to_px(const Ca_CssValue *v)
     return 0.0f;
 }
 
+/* Resolve a CSS value, substituting var() against the stylesheet's vars. */
+static Ca_CssValue resolve_value(const Ca_Stylesheet *ss, const Ca_CssValue *in)
+{
+    if (in->type != CA_CSS_VAL_VAR) return *in;
+    if (!ss) { Ca_CssValue z = {0}; return z; }
+    const char *name = ca_css_str(ss, in->keyword);
+    if (!name) { Ca_CssValue z = {0}; return z; }
+    for (int i = 0; i < ss->var_count; ++i) {
+        if (strcmp(ss->vars[i].name, name) == 0) {
+            /* The variable's value itself could be a var() — follow one
+               level of indirection to keep things bounded. */
+            const Ca_CssValue *v = &ss->vars[i].value;
+            if (v->type == CA_CSS_VAL_VAR) {
+                const char *n2 = ca_css_str(ss, v->keyword);
+                if (n2) {
+                    for (int j = 0; j < ss->var_count; ++j) {
+                        if (strcmp(ss->vars[j].name, n2) == 0)
+                            return ss->vars[j].value;
+                    }
+                }
+                Ca_CssValue z = {0}; return z;
+            }
+            return *v;
+        }
+    }
+    Ca_CssValue z = {0};
+    return z;
+}
+
 void ca_style_resolve(Ca_Stylesheet *ss,
                       Ca_Node *node,
                       Ca_ElementType elem_type,
@@ -265,12 +483,22 @@ void ca_style_resolve(Ca_Stylesheet *ss,
        Later entries override earlier ones, which is correct CSS cascade. */
     qsort(matched, match_count, sizeof(MatchedRule), compare_matched);
 
-    /* Apply declarations in order (last wins) */
+    /* Two passes:
+       1. Apply non-important declarations.
+       2. Apply important declarations (which override).
+       Within each pass, the matched-rule order (spec asc, source asc) makes
+       later applications win. This matches the CSS cascade rules for
+       non-stratified origin (author-only sheets). */
+    for (int pass = 0; pass < 2; ++pass) {
     for (int m = 0; m < match_count; ++m) {
         for (int d = 0; d < matched[m].decl_count; ++d) {
             const Ca_CssDecl *decl = &matched[m].decls[d];
+            if ((pass == 0 && decl->important) ||
+                (pass == 1 && !decl->important))
+                continue;
             Ca_CssPropId prop = decl->prop;
-            const Ca_CssValue *val = &decl->value;
+            Ca_CssValue resolved = resolve_value(ss, &decl->value);
+            const Ca_CssValue *val = &resolved;
 
             if (val->type == CA_CSS_VAL_NONE) continue;
 
@@ -392,6 +620,7 @@ void ca_style_resolve(Ca_Stylesheet *ss,
             }
         }
     }
+    } /* end pass loop */
 }
 
 /* ============================================================

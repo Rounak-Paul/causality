@@ -76,6 +76,22 @@ static void glfw_cursor_pos_cb(GLFWwindow *glfw, double x, double y)
     ca_event_post(win->instance, &ev);
 }
 
+static void glfw_cursor_enter_cb(GLFWwindow *glfw, int entered)
+{
+    Ca_Window *win = (Ca_Window *)glfwGetWindowUserPointer(glfw);
+    if (!win) return;
+    if (!entered) {
+        /* Move the recorded cursor position out-of-bounds so the next input
+           pass cannot hit any node — this guarantees :hover styles clear
+           when the pointer leaves the window (GLFW does not synthesise a
+           further cursor-pos event on exit). */
+        win->mouse_x = -1.0;
+        win->mouse_y = -1.0;
+        /* Wake the event loop so the UI repaints with the cleared hover. */
+        glfwPostEmptyEvent();
+    }
+}
+
 static void glfw_scroll_cb(GLFWwindow *glfw, double dx, double dy)
 {
     Ca_Window *win = (Ca_Window *)glfwGetWindowUserPointer(glfw);
@@ -244,6 +260,7 @@ static Ca_Window *window_create_in_slot(Ca_Instance *inst, const Ca_WindowDesc *
     glfwSetCharCallback(glfw, glfw_char_cb);
     glfwSetMouseButtonCallback(glfw, glfw_mouse_button_cb);
     glfwSetCursorPosCallback(glfw, glfw_cursor_pos_cb);
+    glfwSetCursorEnterCallback(glfw, glfw_cursor_enter_cb);
     glfwSetScrollCallback(glfw, glfw_scroll_cb);
     glfwSetWindowSizeCallback(glfw, glfw_window_size_cb);
 

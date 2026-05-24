@@ -447,6 +447,15 @@ static void apply_css(Ca_Node *node, Ca_NodeDesc *nd,
     else
         node->id[0] = '\0';
 
+    /* Snapshot the fully-formed sparse pre-CSS desc.  Widgets routinely
+       mutate node->desc between claim_child and this call (setting
+       hidden / disabled / position / etc.), so this is the only place
+       where we know the COMPLETE pre-CSS desc.  ca_widget_reapply_css
+       uses this snapshot to re-resolve CSS in-place on pseudo-state
+       changes without losing those widget-specific writes. */
+    node->base_desc     = *nd;
+    node->has_base_desc = true;
+
     Ca_Stylesheet *ss = g_ctx.window->instance->stylesheet;
     if (!ss) return;
 
@@ -491,6 +500,82 @@ static void apply_css(Ca_Node *node, Ca_NodeDesc *nd,
         if (layout_desc_changed(&s_pre_css_desc, nd))  node->dirty |= CA_DIRTY_LAYOUT;
         s_pre_css_node = NULL;
     }
+}
+
+void ca_widget_reapply_css(Ca_Node *node)
+{
+    if (!node || !node->in_use || !node->window) return;
+    if (!node->has_base_desc) return; /* never ran apply_css — nothing to reapply */
+    Ca_Stylesheet *ss = node->window->instance ? node->window->instance->stylesheet : NULL;
+    if (!ss) return;
+
+    Ca_NodeDesc old = node->desc;
+
+    /* Conservative reset: only zero out the *visual* fields that pseudo-state
+       CSS rules (:hover / :focus / :active) commonly drive.  Layout fields
+       (width / height / padding / margin / font_size / direction / overflow /
+       position / flex_*) are LEFT ALONE because:
+         - apply_css's zero-field-write semantics mean these are already
+           composited from inline + CSS, and
+         - several call sites (title_bar.c, ca_node_graph.c, etc.) mutate
+           layout fields on node->desc AFTER apply_css ran; those writes
+           are not tracked in base_desc and must be preserved.
+       Pseudo-state layout changes (e.g. :hover { padding: 8px } when base
+       had padding: 4px) are NOT supported here — they'd require subtree
+       relayout anyway. That tradeoff is acceptable for a pure-visual hover
+       feedback path. */
+    Ca_NodeDesc *nd = &node->desc;
+    const Ca_NodeDesc *bd = &node->base_desc;
+    nd->background      = bd->background;
+    nd->border_color    = bd->border_color;
+    nd->border_width    = bd->border_width;
+    nd->corner_radius   = bd->corner_radius;
+    nd->shadow_color    = bd->shadow_color;
+    nd->shadow_blur     = bd->shadow_blur;
+    nd->shadow_offset_x = bd->shadow_offset_x;
+    nd->shadow_offset_y = bd->shadow_offset_y;
+    nd->opacity         = bd->opacity;
+
+    Ca_ResolvedStyle rs;
+    ca_style_resolve(ss, node, (Ca_ElementType)node->elem_type,
+                     node->classes, &rs);
+
+    /* Scale CSS-resolved pixel values (matches apply_css). Use the node's
+       own window scale directly since g_ctx may not be active here. */
+    float scale = node->window->ui_scale;
+    if (!rs.width_pct)  rs.width  *= scale;
+    if (!rs.height_pct) rs.height *= scale;
+    rs.min_width  *= scale;  rs.max_width  *= scale;
+    rs.min_height *= scale;  rs.max_height *= scale;
+    rs.padding[0] *= scale;  rs.padding[1] *= scale;
+    rs.padding[2] *= scale;  rs.padding[3] *= scale;
+    rs.gap            *= scale;
+    rs.border_radius  *= scale;
+    rs.margin[0] *= scale;   rs.margin[1] *= scale;
+    rs.margin[2] *= scale;   rs.margin[3] *= scale;
+
+    uint32_t out_color = 0;
+    ca_style_apply_to_node(&rs, nd, &out_color);
+
+    /* Propagate text color for widget types that store it separately. */
+    if (out_color) {
+        switch (node->widget_type) {
+        case CA_WIDGET_LABEL:
+            if (node->widget) ((Ca_Label *)node->widget)->color = out_color;
+            break;
+        case CA_WIDGET_BUTTON:
+            if (node->widget) ((Ca_Button *)node->widget)->text_color = out_color;
+            break;
+        default: break;
+        }
+    }
+
+    /* Diff against pre-reapply desc — only dirty when CSS resolution
+       actually changed a visual field, so a hover-cross between siblings
+       doesn't dirty unrelated ancestors. */
+    if (content_desc_changed(&old, nd)) node->dirty |= CA_DIRTY_CONTENT;
+    /* Note: we intentionally do NOT check layout_desc_changed here because
+       this code path doesn't touch layout fields. */
 }
 
 static Ca_NodeDesc div_to_nd(const Ca_DivDesc *d)
@@ -1391,15 +1476,48 @@ void ca_div_clear(Ca_Div *div)
 
 /* Effect body installed by ca_div_set_builder. Re-runs whenever any
    signal the user's builder reads via ca_signal_get changes, or when
-   the effect is manually invalidated via ca_effect_invalidate. */
+   the effect is manually invalidated via ca_effect_invalidate.
+
+   Uses reconcile mode (not ca_div_clear) so that existing keyed
+   children are *reused* across re-runs instead of being freed and
+   re-allocated. This preserves child Ca_Node pointers, which is
+   critical because:
+     - win->hovered_node / focused_node / drag_node point into the
+       subtree. If the builder is invalidated while a child is hovered
+       (e.g. by the chain dirty-walk in ca_ui_update on hover-state
+       change), freeing the children would NULL those pointers and
+       drop the pseudo-state mid-frame.
+     - apply_css runs for every reused child during the rebuild,
+       picking up the *current* :hover / :focus / :active state — so
+       a builder-driven panel (toolbar, project settings) now responds
+       to pseudo-state changes the same way immediate-mode panels do.
+     - ctx_pop in reconcile mode auto-trims unused children, so the
+       reactive rebuild still drops elements removed by the user's
+       builder logic. */
 static void div_builder_effect_fn(void *user)
 {
     Ca_Node *node = (Ca_Node *)user;
     if (!node || !node->in_use || !node->builder_fn) return;
-    ca_div_clear((Ca_Div *)node);
+
+    /* Auto-enter UI context if not already inside ca_ui_begin /
+       on_frame_fn — the effect may fire outside any context (e.g.
+       from a signal write in a click handler that triggers a flush
+       during the input pass). Mirrors ca_div_clear's auto_ctx path. */
+    bool entered = false;
+    if (!g_ctx.active) {
+        assert(node->window);
+        g_ctx.window      = node->window;
+        g_ctx.depth       = -1;
+        g_ctx.active      = true;
+        g_ctx.auto_ctx    = true;
+        g_ctx.next_key[0] = '\0';
+        entered           = true;
+    }
+    (void)entered;
+
+    ca_reconcile_begin((Ca_Div *)node);
     node->builder_fn((Ca_Div *)node, node->builder_data);
-    ca_div_end();
-    node->dirty |= CA_DIRTY_LAYOUT | CA_DIRTY_CHILDREN;
+    ca_div_end(); /* ctx_pop trims unused children + auto-leaves context */
 }
 
 Ca_Effect *ca_div_set_builder(Ca_Div *div,
@@ -2009,11 +2127,35 @@ Ca_TreeNode *ca_tree_node_begin(const Ca_TreeNodeDesc *desc)
     Ca_Node *hdr_node = NULL;
     if (reused && node->child_count > 0)
         hdr_node = node->children[0];
-    if (hdr_node)
-        ca_node_set_desc(hdr_node, &hdr);
-    else
+    if (!hdr_node)
         hdr_node = ca_node_add(node, &hdr);
-    (void)hdr_node;
+
+    /* Tag the header row with a built-in "tree-row" class so user CSS can
+       give every tree row uniform hover/focus/active feedback without
+       knowing the container's class name. The user may append additional
+       row classes via desc->row_style. Re-resolve CSS on the header so
+       :hover etc. actually paint on the correct (innermost) node. */
+    if (hdr_node) {
+        char row_classes[CA_NODE_CLASS_MAX];
+        if (desc->row_style && desc->row_style[0])
+            snprintf(row_classes, sizeof(row_classes), "tree-row %s", desc->row_style);
+        else
+            snprintf(row_classes, sizeof(row_classes), "tree-row");
+
+        /* Snapshot the OLD CSS-resolved desc (from previous frame), then
+           bare-assign the sparse inline desc.  apply_css resolves CSS for
+           the current frame (including :hover / :focus / :active state)
+           and diffs the post-CSS desc against the snapshot, marking
+           CONTENT/LAYOUT dirty only when visuals actually changed.
+           For newly added nodes the snapshot equals the just-assigned
+           sparse desc, which is fine — new nodes are dirty via
+           ca_node_add. */
+        s_pre_css_desc = hdr_node->desc;
+        s_pre_css_node = hdr_node;
+        hdr_node->desc = hdr;
+        uint32_t dummy = 0;
+        apply_css(hdr_node, &hdr_node->desc, CA_ELEM_DIV, row_classes, NULL, &dummy);
+    }
 
     ctx_push_mode(node, ctx_top_reconcile());
     if (ctx_top_reconcile())

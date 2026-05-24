@@ -322,6 +322,14 @@ struct Ca_Node {
     uint8_t       dirty;           /* Ca_DirtyFlags bits              */
     bool          in_use;
     Ca_NodeDesc   desc;
+    /* Pre-CSS sparse desc — snapshotted at the START of apply_css, after
+       widget-specific post-claim_child mutations (hidden, disabled, position,
+       etc.) have been written.  ca_widget_reapply_css resets desc = base_desc
+       then re-resolves CSS so :hover / :focus / :active rules take effect on
+       builder-pattern panels without destroying the subtree.
+       Valid only when has_base_desc is true (apply_css ran). */
+    Ca_NodeDesc   base_desc;
+    bool          has_base_desc;
     float         x, y, w, h;     /* computed by layout pass         */
     Ca_Window    *window;
     Ca_Node      *parent;

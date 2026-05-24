@@ -20,6 +20,8 @@ typedef enum {
     CA_CSS_VAL_COLOR,
     CA_CSS_VAL_KEYWORD,
     CA_CSS_VAL_NUMBER,
+    CA_CSS_VAL_VAR,        /* unresolved var(--name) — `keyword` is offset into
+                              the stylesheet string pool holding the var name. */
 } Ca_CssValType;
 
 typedef struct {
@@ -27,7 +29,7 @@ typedef struct {
     union {
         float    number;
         uint32_t color;
-        int      keyword;
+        int      keyword;   /* also: string-pool offset when type == CA_CSS_VAL_VAR */
     };
 } Ca_CssValue;
 
@@ -131,6 +133,12 @@ typedef enum {
 typedef struct {
     Ca_CssPropId prop;
     Ca_CssValue  value;
+    bool         important;   /* set when declaration ends with `!important` */
+    /* For custom properties (--foo) we hijack `prop = CA_CSS_PROP_NONE` and
+       store the variable name in `var_name`. These declarations are NOT
+       cascaded onto the node; instead the parser hoists them into the
+       stylesheet's `vars` table when seen inside the `:root` rule. */
+    char         var_name[64];
 } Ca_CssDecl;
 
 /* ============================================================
@@ -142,16 +150,60 @@ typedef struct {
 
 typedef enum {
     CA_CSS_COMB_NONE = 0,
-    CA_CSS_COMB_DESCENDANT,   /* whitespace */
-    CA_CSS_COMB_CHILD,        /* '>'        */
+    CA_CSS_COMB_DESCENDANT,    /* whitespace */
+    CA_CSS_COMB_CHILD,         /* '>'        */
+    CA_CSS_COMB_NEXT_SIBLING,  /* '+'        */
+    CA_CSS_COMB_SUBSEQ_SIBLING,/* '~'        */
 } Ca_CssCombinator;
 
-/* A single simple selector (e.g. div#my-id.foo.bar) */
+/* ============================================================
+   PSEUDO-CLASSES
+   ============================================================ */
+
+typedef enum {
+    CA_CSS_PSEUDO_NONE = 0,
+    CA_CSS_PSEUDO_HOVER,
+    CA_CSS_PSEUDO_ACTIVE,
+    CA_CSS_PSEUDO_FOCUS,
+    CA_CSS_PSEUDO_FOCUS_WITHIN,
+    CA_CSS_PSEUDO_DISABLED,
+    CA_CSS_PSEUDO_ENABLED,
+    CA_CSS_PSEUDO_CHECKED,
+    CA_CSS_PSEUDO_FIRST_CHILD,
+    CA_CSS_PSEUDO_LAST_CHILD,
+    CA_CSS_PSEUDO_ONLY_CHILD,
+    CA_CSS_PSEUDO_FIRST_OF_TYPE,
+    CA_CSS_PSEUDO_LAST_OF_TYPE,
+    CA_CSS_PSEUDO_NTH_CHILD,      /* An+B */
+    CA_CSS_PSEUDO_NTH_LAST_CHILD, /* An+B counted from end */
+    CA_CSS_PSEUDO_NOT,            /* :not(simple) */
+    CA_CSS_PSEUDO_ROOT,           /* :root — node with no parent */
+    CA_CSS_PSEUDO_EMPTY,          /* :empty — no children */
+} Ca_CssPseudoKind;
+
+/* A single pseudo-class entry. For :not() we keep one negated simple selector
+   inline (no recursion, no compound :not). For :nth-child(An+B) we keep the
+   coefficients. */
+typedef struct {
+    Ca_CssPseudoKind kind;
+    int  a, b;                              /* :nth-child(An+B) */
+    /* :not(simple) payload */
+    char not_element[32];
+    char not_id[CA_CSS_CLASS_NAME_MAX];
+    char not_class[CA_CSS_CLASS_NAME_MAX];
+    Ca_CssPseudoKind not_pseudo;            /* e.g. :not(:hover) */
+} Ca_CssPseudo;
+
+#define CA_CSS_MAX_PSEUDOS_PER_PART 4
+
+/* A single simple selector (e.g. div#my-id.foo.bar:hover:not(.disabled)) */
 typedef struct {
     char     element[32];
     char     id[CA_CSS_CLASS_NAME_MAX]; /* e.g. #my-id → "my-id" */
     char     classes[CA_CSS_MAX_CLASSES_SEL][CA_CSS_CLASS_NAME_MAX];
     int      class_count;
+    Ca_CssPseudo pseudos[CA_CSS_MAX_PSEUDOS_PER_PART];
+    int      pseudo_count;
     Ca_CssCombinator combinator;  /* how this relates to PREVIOUS part */
 } Ca_CssSimpleSel;
 
@@ -185,10 +237,32 @@ typedef struct {
 
 #define CA_CSS_MAX_RULES 1024
 
+/* Custom-property storage. Root-scoped only (:root { --name: value; }).
+   Per-element overrides would require per-node resolution tables — out of
+   scope for this revision. */
+#define CA_CSS_MAX_VARS       128
+#define CA_CSS_VAR_NAME_MAX   64
+#define CA_CSS_STR_POOL_BYTES 8192
+
+typedef struct {
+    char        name[CA_CSS_VAR_NAME_MAX];
+    Ca_CssValue value;
+} Ca_CssVar;
+
 typedef struct Ca_Stylesheet {
     Ca_CssRule rules[CA_CSS_MAX_RULES];
     int        rule_count;
+    /* Root-scoped custom properties (var(--name) targets). */
+    Ca_CssVar  vars[CA_CSS_MAX_VARS];
+    int        var_count;
+    /* String pool for var-name references inside Ca_CssValue.keyword. */
+    char       str_pool[CA_CSS_STR_POOL_BYTES];
+    int        str_pool_used;
 } Ca_Stylesheet;
+
+/* Helpers — intern/resolve strings in the stylesheet pool. */
+int         ca_css_intern(Ca_Stylesheet *ss, const char *s); /* returns offset, -1 on overflow */
+const char *ca_css_str(const Ca_Stylesheet *ss, int offset);
 
 /* ============================================================
    API

@@ -15,3 +15,13 @@ void ca_widget_input_pass(Ca_Window *win);
    widget creation functions work inside per-frame callbacks. */
 void ca_widget_ctx_enter(Ca_Window *win);
 void ca_widget_ctx_leave(void);
+
+/* Re-resolve CSS for a single node without rebuilding its subtree.
+   Resets node->desc = node->base_desc, runs ca_style_resolve +
+   ca_style_apply_to_node, then diffs the post-CSS desc against the
+   pre-reapply desc and sets CA_DIRTY_CONTENT / CA_DIRTY_LAYOUT only
+   when the resolved values actually changed. Called from the
+   hover/focus/active chain walk in ca_ui_update so pseudo-state CSS
+   rules (:hover etc.) take effect on builder-pattern panels (whose
+   builders don't re-run every frame). */
+void ca_widget_reapply_css(Ca_Node *node);

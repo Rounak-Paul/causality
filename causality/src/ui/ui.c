@@ -299,22 +299,57 @@ void ca_ui_update(Ca_Instance *inst)
               also trigger widgets underneath.  */
         Ca_Node *prev_hovered = win->hovered_node;
         Ca_Node *prev_focused = win->focused_node;
+        Ca_Node *prev_drag    = win->drag_node;
         if (!win->resize_active)
             ca_widget_input_pass(win);
 
-        /* Mark hover and focus changes so repaint catches them.
-           Browser-style: only dirty nodes with hover-dependent visuals
-           (currently only splitter bars).  Plain containers / labels have
-           no visual change on hover, so repainting them is wasted work. */
+        /* Mark interactive state changes so paint catches them.
+           Any CSS rule may use :hover / :focus / :focus-within / :active
+           on any element, so the safe rule is: when hovered_node /
+           focused_node / drag_node changes, walk the OLD and NEW ancestor
+           chains and (a) re-resolve CSS in-place for every node along
+           them via ca_widget_reapply_css, and (b) the reapply call
+           internally sets CA_DIRTY_CONTENT / CA_DIRTY_LAYOUT only when
+           the resolved desc actually changed.
+
+           Why (a) is required:
+             paint_node_content reads node->desc.background directly — it
+             does NOT re-resolve CSS. The :hover / :focus / :active values
+             are baked into node->desc by apply_css at widget creation
+             time. For panels built with immediate-mode rebuild
+             (ca_reconcile_begin every frame inside on_frame_fn), apply_css
+             re-runs each frame and pseudo-state changes propagate. For
+             panels built with ca_div_set_builder, the builder effect
+             only re-runs when its tracked signals change. Without
+             ca_widget_reapply_css here, apply_css never re-runs when only
+             the hover/focus state changes, so pseudo-state CSS rules
+             (e.g. :hover) appear stuck.
+
+             ca_widget_reapply_css resets node->desc from the saved
+             base_desc, re-runs ca_style_resolve + ca_style_apply_to_node,
+             then diffs to set dirty flags — no subtree rebuild, no node
+             allocation. Chains are short (≤ widget tree depth, typically
+             5–10), so this is cheap and only repaints nodes whose CSS
+             actually changed. */
         if (win->hovered_node != prev_hovered) {
-            if (prev_hovered && prev_hovered->widget_type == CA_WIDGET_SPLITTER)
-                prev_hovered->dirty |= CA_DIRTY_CONTENT;
-            if (win->hovered_node && win->hovered_node->widget_type == CA_WIDGET_SPLITTER)
-                win->hovered_node->dirty |= CA_DIRTY_CONTENT;
+            for (Ca_Node *n = prev_hovered; n; n = n->parent)
+                ca_widget_reapply_css(n);
+            for (Ca_Node *n = win->hovered_node; n; n = n->parent)
+                ca_widget_reapply_css(n);
         }
         if (win->focused_node != prev_focused) {
-            if (prev_focused)       prev_focused->dirty       |= CA_DIRTY_CONTENT;
-            if (win->focused_node)  win->focused_node->dirty  |= CA_DIRTY_CONTENT;
+            /* :focus is exact-match, :focus-within walks ancestors. */
+            for (Ca_Node *n = prev_focused; n; n = n->parent)
+                ca_widget_reapply_css(n);
+            for (Ca_Node *n = win->focused_node; n; n = n->parent)
+                ca_widget_reapply_css(n);
+        }
+        if (win->drag_node != prev_drag) {
+            /* :active matches drag_node and its ancestors. */
+            for (Ca_Node *n = prev_drag; n; n = n->parent)
+                ca_widget_reapply_css(n);
+            for (Ca_Node *n = win->drag_node; n; n = n->parent)
+                ca_widget_reapply_css(n);
         }
 
         /* Re-scan for content dirty after input (widget state changes may
