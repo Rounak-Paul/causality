@@ -554,8 +554,37 @@ void ca_widget_reapply_css(Ca_Node *node)
     rs.margin[0] *= scale;   rs.margin[1] *= scale;
     rs.margin[2] *= scale;   rs.margin[3] *= scale;
 
+    /* ca_style_apply_to_node uses zero-fill semantics — it writes layout
+       fields (width/height/padding/margin/gap) whenever the current value
+       is <= 0.  Several widgets (notably ca_tree_node_begin) deliberately
+       zero out layout fields AFTER initial apply_css to override CSS-
+       driven sizing (e.g. lifting CSS height onto a child header so the
+       container auto-sizes).  On reapply we must preserve those post-CSS
+       layout writes; otherwise pseudo-state CSS reapplication (triggered
+       e.g. by hover) will resurrect the CSS height and collapse the
+       container back to its CSS size, causing siblings to overlap. */
+    float saved_w   = nd->width,   saved_h   = nd->height;
+    uint8_t saved_wp = nd->width_pct, saved_hp = nd->height_pct;
+    float saved_minw = nd->min_w, saved_maxw = nd->max_w;
+    float saved_minh = nd->min_h, saved_maxh = nd->max_h;
+    float saved_pt = nd->padding_top, saved_pr = nd->padding_right;
+    float saved_pb = nd->padding_bottom, saved_pl = nd->padding_left;
+    float saved_mt = nd->margin_top, saved_mr = nd->margin_right;
+    float saved_mb = nd->margin_bottom, saved_ml = nd->margin_left;
+    float saved_gap = nd->gap;
+
     uint32_t out_color = 0;
     ca_style_apply_to_node(&rs, nd, &out_color);
+
+    nd->width = saved_w;   nd->height = saved_h;
+    nd->width_pct = saved_wp; nd->height_pct = saved_hp;
+    nd->min_w = saved_minw; nd->max_w = saved_maxw;
+    nd->min_h = saved_minh; nd->max_h = saved_maxh;
+    nd->padding_top = saved_pt; nd->padding_right = saved_pr;
+    nd->padding_bottom = saved_pb; nd->padding_left = saved_pl;
+    nd->margin_top = saved_mt; nd->margin_right = saved_mr;
+    nd->margin_bottom = saved_mb; nd->margin_left = saved_ml;
+    nd->gap = saved_gap;
 
     /* Propagate text color for widget types that store it separately. */
     if (out_color) {
@@ -2099,6 +2128,23 @@ Ca_TreeNode *ca_tree_node_begin(const Ca_TreeNodeDesc *desc)
     WIDGET_SET(node, reused, tn->icon_color, desc->icon_color);
 
     if (desc->hidden) node->desc.hidden = true;
+
+    /* Inherit hidden state from a collapsed ancestor tree-node.  The click
+       handler updates desc.hidden directly on children for immediate
+       feedback, but claim_child resets node->desc on every rebuild — without
+       this propagation, any builder re-run (reactive flush, hover-induced
+       repaint with rebuild, etc.) would silently un-hide nested rows of a
+       collapsed parent and lay them out on top of sibling rows. */
+    {
+        Ca_Node *pp = node->parent;
+        while (pp) {
+            if (pp->widget_type == CA_WIDGET_TREENODE && pp->widget) {
+                Ca_TreeNode *ptn = (Ca_TreeNode *)pp->widget;
+                if (!ptn->expanded) { node->desc.hidden = true; break; }
+            }
+            pp = pp->parent;
+        }
+    }
 
     /* Compute depth from parent chain (count tree node ancestors) */
     tn->depth = 0;
