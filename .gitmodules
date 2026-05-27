@@ -7,3 +7,6 @@
 [submodule "vendors/vma"]
 	path = vendors/vma
 	url = https://github.com/Rounak-Paul/VulkanMemoryAllocator.git
+[submodule "vendors/freetype"]
+	path = vendors/freetype
+	url = https://github.com/freetype/freetype.git
