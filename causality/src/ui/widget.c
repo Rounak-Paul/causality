@@ -48,7 +48,7 @@ static float measure_text_px(Ca_Window *win, const char *text)
     const char *p = text;
     while (*p) {
         uint32_t cp = ca_utf8_decode(&p);
-        stbtt_packedchar *pc = ca_font_glyph(tier, cp);
+        Ca_Glyph *pc = ca_font_glyph(tier, cp);
         if (pc) w += pc->xadvance / cs_eff;
     }
     return w;
@@ -78,7 +78,7 @@ float ca_measure_text_px(Ca_Window *win, const char *text, float font_size)
     const char *p = text;
     while (*p) {
         uint32_t cp = ca_utf8_decode(&p);
-        stbtt_packedchar *pc = ca_font_glyph(tier, cp);
+        Ca_Glyph *pc = ca_font_glyph(tier, cp);
         if (pc) w += pc->xadvance / cs_eff;
     }
     return w;
@@ -3026,11 +3026,16 @@ static bool node_paints_after(Ca_Node *candidate, Ca_Node *current)
     return candidate_index > current_index;
 }
 
-/* Check if a node or any ancestor is disabled (cascading disabled state) */
+/* Treat a node as input-inert if it (or any ancestor) is disabled or hidden.
+   The hidden check matters because tabbed/collapsed panels whose builder
+   doesn't re-run leave stale layout coords on descendants — without this,
+   click hit-tests find buttons inside hidden panels and fire their
+   callbacks (e.g. clicking the toolbar dispatches asset-row clicks when
+   the Assets tab is hidden behind the Console tab). */
 static bool is_effectively_disabled(Ca_Node *n)
 {
     while (n) {
-        if (n->desc.disabled) return true;
+        if (n->desc.disabled || n->desc.hidden) return true;
         n = n->parent;
     }
     return false;
@@ -3223,7 +3228,7 @@ void ca_widget_input_pass(Ca_Window *win)
 
             for (uint32_t i = 0; i < CA_MAX_NODES_PER_WINDOW; ++i) {
                 Ca_Node *n = &win->node_pool[i];
-                if (!n->in_use || n->desc.hidden) continue;
+                if (!n->in_use || node_is_ancestor_hidden(n)) continue;
 
                 /* Y scrollbar */
                 if (n->desc.overflow_y >= 2 && n->content_h > n->h) {
@@ -3889,6 +3894,7 @@ void ca_widget_input_pass(Ca_Window *win)
             for (uint32_t i = 0; i < CA_MAX_TREENODES_PER_WINDOW; ++i) {
                 Ca_TreeNode *tn = &win->treenode_pool[i];
                 if (!tn->in_use || !tn->node) continue;
+                if (is_effectively_disabled(tn->node)) continue;
                 /* Click on the first child (header row) */
                 if (tn->node->child_count > 0) {
                     Ca_Node *hdr = tn->node->children[0];

@@ -116,7 +116,7 @@ Ca_Image *ca_image_create_impl(Ca_Instance *inst,
     VkImageCreateInfo img_ci = {
         .sType         = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
         .imageType     = VK_IMAGE_TYPE_2D,
-        .format        = VK_FORMAT_R8G8B8A8_UNORM,
+        .format        = VK_FORMAT_R8G8B8A8_SRGB,
         .extent        = { (uint32_t)w, (uint32_t)h, 1 },
         .mipLevels     = 1,
         .arrayLayers   = 1,
@@ -214,7 +214,7 @@ Ca_Image *ca_image_create_impl(Ca_Instance *inst,
         .sType            = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
         .image            = img->vk_image,
         .viewType         = VK_IMAGE_VIEW_TYPE_2D,
-        .format           = VK_FORMAT_R8G8B8A8_UNORM,
+        .format           = VK_FORMAT_R8G8B8A8_SRGB,
         .subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 },
     };
     vkCreateImageView(inst->vk_device, &view_ci, NULL, &img->view);

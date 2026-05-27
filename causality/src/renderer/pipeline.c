@@ -70,7 +70,9 @@ static const char *VERT_GLSL =
     "}\n";
 
 /* Fragment shader: rounded-rectangle SDF with anti-aliased edges.
-   When corner_radius is 0, falls back to plain colour output.         */
+   Output: linear-space color for an sRGB framebuffer.  CSS hex values
+   are sRGB-encoded; we linearise per channel here so blending happens
+   in linear light and the hardware re-encodes on write.               */
 static const char *FRAG_GLSL =
     "#version 450\n"
     "\n"
@@ -82,6 +84,13 @@ static const char *FRAG_GLSL =
     "layout(location = 5) in  vec4  v_border_color;\n"
     "layout(location = 0) out vec4  out_color;\n"
     "\n"
+    "vec3 srgb_to_linear(vec3 c) {\n"
+    "    bvec3 cutoff = lessThan(c, vec3(0.04045));\n"
+    "    vec3 lo = c / 12.92;\n"
+    "    vec3 hi = pow((c + 0.055) / 1.055, vec3(2.4));\n"
+    "    return mix(hi, lo, vec3(cutoff));\n"
+    "}\n"
+    "\n"
     "float roundedBoxSDF(vec2 p, vec2 b, float r) {\n"
     "    vec2 d = abs(p) - b + vec2(r);\n"
     "    return length(max(d, vec2(0.0))) + min(max(d.x, d.y), 0.0) - r;\n"
@@ -91,19 +100,21 @@ static const char *FRAG_GLSL =
     "    vec2 p = v_local - v_size * 0.5;\n"
     "    float d_outer = roundedBoxSDF(p, v_size * 0.5, v_radius);\n"
     "    float aa_outer = 1.0 - smoothstep(-0.5, 0.5, d_outer);\n"
+    "    vec3 fill_rgb_lin   = srgb_to_linear(v_color.rgb);\n"
+    "    vec3 border_rgb_lin = srgb_to_linear(v_border_color.rgb);\n"
     "    if (v_border_w > 0.0) {\n"
     "        float inner_r = max(v_radius - v_border_w, 0.0);\n"
     "        vec2 inner_half = v_size * 0.5 - vec2(v_border_w);\n"
     "        float d_inner = roundedBoxSDF(p, max(inner_half, vec2(0.0)), inner_r);\n"
     "        float aa_inner = 1.0 - smoothstep(-0.5, 0.5, d_inner);\n"
     "        float border_mask = aa_outer - aa_inner;\n"
-    "        vec4 fill = vec4(v_color.rgb, v_color.a * aa_inner);\n"
-    "        vec4 border = vec4(v_border_color.rgb, v_border_color.a * border_mask);\n"
+    "        vec4 fill   = vec4(fill_rgb_lin,   v_color.a       * aa_inner);\n"
+    "        vec4 border = vec4(border_rgb_lin, v_border_color.a * border_mask);\n"
     "        out_color = fill + border * (1.0 - fill.a);\n"
     "    } else if (v_radius > 0.0) {\n"
-    "        out_color = vec4(v_color.rgb, v_color.a * aa_outer);\n"
+    "        out_color = vec4(fill_rgb_lin, v_color.a * aa_outer);\n"
     "    } else {\n"
-    "        out_color = v_color;\n"
+    "        out_color = vec4(fill_rgb_lin, v_color.a);\n"
     "    }\n"
     "}\n";
 
@@ -303,13 +314,25 @@ static const char *TEXT_VERT_GLSL =
     "    v_color = d.color;\n"
     "}\n";
 
-/* Fragment shader: samples the R8 font atlas; coverage = atlas red channel.
-   Gamma-correct alpha: the atlas stores linear coverage values, but a UNORM
-   framebuffer on an sRGB display has ~2.2 gamma applied by the monitor,
-   making antialiased edges appear darker/thinner than the glyph coverage.
-   pow(cov, 1/2.2) pre-compensates so perceived edge brightness matches the
-   actual coverage.  Output is premultiplied alpha (blend src=ONE) to avoid
-   dark fringing where the glyph quad edge falls between physical pixels.   */
+/* Fragment shader: LCD subpixel text rendering with dual-source blending.
+
+   The atlas was rasterised by FreeType in LCD mode + the ClearType
+   [1,4,7,4,1]/17 filter, so each pixel in the atlas stores three
+   independent coverage values (R, G, B subpixels of the destination
+   pixel).  The standard subpixel-blend formula per channel is:
+
+       dst' = src.rgb * cov.rgb + dst * (1 - cov.rgb * src.a)
+
+   That requires a different blend weight per channel — exactly what
+   Vulkan dual-source blending provides.  We output:
+
+       index 0: src.rgb * cov.rgb * src.a   (premultiplied colour contribution)
+       index 1: cov.rgb * src.a              (per-channel coverage used as dst weight)
+
+   with blend factors srcColor=ONE, dstColor=ONE_MINUS_SRC1_COLOR.  The
+   framebuffer is sRGB, so we feed it linear colour; the hardware
+   handles linear→sRGB encoding on store and sRGB→linear decoding on the
+   destination read, giving truly gamma-correct ClearType.            */
 static const char *TEXT_FRAG_GLSL =
     "#version 450\n"
     "\n"
@@ -317,16 +340,26 @@ static const char *TEXT_FRAG_GLSL =
     "\n"
     "layout(location = 0) in  vec2 v_uv;\n"
     "layout(location = 1) in  vec4 v_color;\n"
-    "layout(location = 0) out vec4 out_color;\n"
+    "\n"
+    "layout(location = 0, index = 0) out vec4 out_color;\n"
+    "layout(location = 0, index = 1) out vec4 out_mask;\n"
+    "\n"
+    "vec3 srgb_to_linear(vec3 c) {\n"
+    "    bvec3 cutoff = lessThan(c, vec3(0.04045));\n"
+    "    vec3 lo = c / 12.92;\n"
+    "    vec3 hi = pow((c + 0.055) / 1.055, vec3(2.4));\n"
+    "    return mix(hi, lo, vec3(cutoff));\n"
+    "}\n"
     "\n"
     "void main() {\n"
-    "    float cov = texture(font_atlas, v_uv).r;\n"
-    "    // Compensate for sRGB display gamma so coverage maps perceptually\n"
-    "    // to the correct edge brightness (1/2.2 = 0.45454545).\n"
-    "    float a = pow(clamp(cov, 0.0, 1.0), 0.45454545);\n"
-    "    float alpha = v_color.a * a;\n"
-    "    // Premultiplied-alpha: avoids dark fringe artifacts at glyph edges.\n"
-    "    out_color = vec4(v_color.rgb * alpha, alpha);\n"
+    "    vec4 samp = texture(font_atlas, v_uv);\n"
+    "    vec3 cov  = samp.rgb;\n"
+    "    float a   = v_color.a;\n"
+    "    vec3 col_lin = srgb_to_linear(v_color.rgb);\n"
+    "    /* Luma-weighted single coverage used for the alpha channel  */\n"
+    "    float luma = dot(cov, vec3(0.299, 0.587, 0.114));\n"
+    "    out_color = vec4(col_lin * cov * a, luma * a);\n"
+    "    out_mask  = vec4(cov * a,            luma * a);\n"
     "}\n";
 
 bool ca_text_pipeline_create(Ca_Instance *inst, VkFormat color_format)
@@ -444,17 +477,20 @@ bool ca_text_pipeline_create(Ca_Instance *inst, VkFormat color_format)
         .sType                = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
         .rasterizationSamples = VK_SAMPLE_COUNT_1_BIT };
 
-    /* Premultiplied-alpha blending: shader outputs (color*alpha, alpha),
-       so the src color factor is ONE.  This is mathematically equivalent to
-       straight alpha for fully-opaque text colors and avoids dark fringing
-       at sub-pixel glyph edges.                                            */
+    /* Dual-source LCD subpixel blending.
+       Index 0 = premultiplied linear colour contribution; index 1 = per-
+       channel coverage used as the destination-weight via
+       ONE_MINUS_SRC1_COLOR.  This is the standard ClearType formula:
+         dst' = src*cov + dst*(1 - cov)
+       evaluated independently for R/G/B.  Requires VkPhysicalDeviceFeatures
+       ::dualSrcBlend to be enabled at device creation.                  */
     VkPipelineColorBlendAttachmentState blend_att = {
         .blendEnable         = VK_TRUE,
         .srcColorBlendFactor = VK_BLEND_FACTOR_ONE,
-        .dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
+        .dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC1_COLOR,
         .colorBlendOp        = VK_BLEND_OP_ADD,
         .srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE,
-        .dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
+        .dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC1_ALPHA,
         .alphaBlendOp        = VK_BLEND_OP_ADD,
         .colorWriteMask      = VK_COLOR_COMPONENT_R_BIT |
                                VK_COLOR_COMPONENT_G_BIT |
@@ -569,9 +605,18 @@ static const char *IMAGE_FRAG_GLSL =
     "layout(location = 1) in  vec4 v_color;\n"
     "layout(location = 0) out vec4 out_color;\n"
     "\n"
+    "vec3 srgb_to_linear(vec3 c) {\n"
+    "    bvec3 cutoff = lessThan(c, vec3(0.04045));\n"
+    "    vec3 lo = c / 12.92;\n"
+    "    vec3 hi = pow((c + 0.055) / 1.055, vec3(2.4));\n"
+    "    return mix(hi, lo, vec3(cutoff));\n"
+    "}\n"
+    "\n"
     "void main() {\n"
+    "    /* Texture is bound as R8G8B8A8_SRGB so sampling returns linear RGB. */\n"
     "    vec4 t = texture(tex, v_uv);\n"
-    "    out_color = vec4(t.rgb, t.a * v_color.a);\n"
+    "    vec3 tint_lin = srgb_to_linear(v_color.rgb);\n"
+    "    out_color = vec4(t.rgb * tint_lin, t.a * v_color.a);\n"
     "}\n";
 
 bool ca_image_pipeline_create(Ca_Instance *inst, VkFormat color_format)

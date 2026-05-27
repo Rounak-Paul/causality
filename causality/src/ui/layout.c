@@ -46,10 +46,10 @@ static float measure_wrapped_text_height(Ca_Node *node)
         float word_w = 0.0f;
         while (*p && *p != ' ' && *p != '\n') {
             uint32_t cp = ca_utf8_decode(&p);
-            stbtt_packedchar *pc = ca_font_glyph(tier, cp);
+            Ca_Glyph *pc = ca_font_glyph(tier, cp);
             if (pc) word_w += pc->xadvance / cs_eff;
         }
-        stbtt_packedchar *sp = ca_font_glyph(tier, ' ');
+        Ca_Glyph *sp = ca_font_glyph(tier, ' ');
         float space_adv = sp ? sp->xadvance / cs_eff : 0.0f;
         float with_space = (cur_line_w > 0.0f) ? cur_line_w + space_adv + word_w : word_w;
         if (cur_line_w > 0.0f && with_space > max_w) {
@@ -93,7 +93,7 @@ static float measure_text_width(Ca_Node *node, const char *txt)
             continue;
         }
         uint32_t cp = ca_utf8_decode(&p);
-        stbtt_packedchar *pc = ca_font_glyph(tier, cp);
+        Ca_Glyph *pc = ca_font_glyph(tier, cp);
         if (pc) line_w += pc->xadvance / cs_eff;
     }
     if (line_w > max_w) max_w = line_w;

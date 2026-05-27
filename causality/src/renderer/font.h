@@ -2,13 +2,25 @@
 // Copyright 2026 Sol/Causality contributors.
 
 /* font.h — GPU font atlas with regular and bold styles.
-   Uses stb_truetype pack API for crisp text at the configured font size.
-   Both regular and bold Ubuntu Nerd Font are baked into a single atlas.
-   Nerd Font icon codepoint ranges are baked alongside ASCII. */
+
+   Backend: FreeType with autohinter and the default LCD filter
+   ([1,4,7,4,1]/17) for ClearType-style horizontal subpixel rendering.
+   Each glyph is rasterised at 3x horizontal resolution; the filter
+   averages neighbouring subpixels into per-channel R/G/B coverage so
+   the shader can use the LCD stripe geometry of the monitor for an
+   effective 3x horizontal sharpness boost.
+
+   The atlas is an RGBA8 image: .r/.g/.b hold per-subpixel coverage,
+   .a holds the luma-equivalent coverage used for the fallback alpha
+   channel and dual-source destination weight.  Glyph quads are
+   dual-source-blended in linear light against the sRGB framebuffer
+   for gamma-correct ClearType.
+
+   Both regular and bold tiers are baked into the same atlas, along
+   with the Nerd Font icon ranges.                                   */
 #pragma once
 
 #include "ca_internal.h"
-#include <stb_truetype.h>
 #include <math.h>
 
 #define CA_FONT_RANGE_COUNT    6
@@ -18,21 +30,37 @@
 #define CA_FONT_STYLE_REGULAR  0
 #define CA_FONT_STYLE_BOLD     1
 
+/* Per-glyph atlas record.  Fields mirror what stb_truetype's packedchar
+   exposed, so the layout/paint call-sites translate one-to-one.  All
+   coordinates are in baked-pixel space (i.e. logical_px * content_scale). */
+typedef struct Ca_Glyph {
+    uint16_t x0, y0, x1, y1;  /* atlas rect, in atlas pixels */
+    float    xoff,  yoff;     /* top-left of glyph relative to pen origin */
+    float    xoff2, yoff2;    /* bottom-right of glyph relative to pen origin */
+    float    xadvance;        /* horizontal pen advance after drawing */
+} Ca_Glyph;
+
+/* Emitted quad in screen-space (x0..x1, y0..y1) and atlas UV (s0..t1). */
+typedef struct Ca_GlyphQuad {
+    float x0, y0, x1, y1;
+    float s0, t0, s1, t1;
+} Ca_GlyphQuad;
+
 typedef struct Ca_GlyphRange {
-    int               first_codepoint;
-    int               num_chars;
-    stbtt_packedchar *chardata;
+    int       first_codepoint;
+    int       num_chars;
+    Ca_Glyph *chardata;
 } Ca_GlyphRange;
 
 typedef struct Ca_FontTier {
-    float             logical_px;
-    float             baked_px;
-    Ca_GlyphRange     ranges[CA_FONT_RANGE_COUNT];
-    stbtt_packedchar *chardata_block;
-    float             ascent;
-    float             descent;
-    float             line_gap;
-    bool              packed;
+    float         logical_px;
+    float         baked_px;
+    Ca_GlyphRange ranges[CA_FONT_RANGE_COUNT];
+    Ca_Glyph     *chardata_block;
+    float         ascent;
+    float         descent;
+    float         line_gap;
+    bool          packed;
 } Ca_FontTier;
 
 typedef struct Ca_Font {
@@ -65,7 +93,7 @@ static inline Ca_FontTier *ca_font_select_tier(Ca_Font *font, bool bold)
 }
 
 /* Look up glyph data for a Unicode codepoint within a tier. */
-static inline stbtt_packedchar *ca_font_glyph(Ca_FontTier *tier, uint32_t cp)
+static inline Ca_Glyph *ca_font_glyph(Ca_FontTier *tier, uint32_t cp)
 {
     for (int i = 0; i < CA_FONT_RANGE_COUNT; i++) {
         Ca_GlyphRange *r = &tier->ranges[i];
@@ -76,27 +104,28 @@ static inline stbtt_packedchar *ca_font_glyph(Ca_FontTier *tier, uint32_t cp)
     return NULL;
 }
 
-/* Compute glyph quad from a packedchar.
-   Baseline is snapped once for the whole line; per-glyph offsets
-   are applied without re-rounding so all characters stay aligned. */
-static inline void ca_font_get_quad(const stbtt_packedchar *pc,
+/* Compute a glyph quad from a Ca_Glyph record.
+   Baseline is snapped once for the whole line via the caller-supplied
+   *ypos; per-glyph offsets are applied without re-rounding so all
+   characters on the line stay aligned to the same baseline.            */
+static inline void ca_font_get_quad(const Ca_Glyph *g,
                                      int atlas_w, int atlas_h,
                                      float *xpos, float *ypos,
-                                     stbtt_aligned_quad *q)
+                                     Ca_GlyphQuad *q)
 {
     float ipw = 1.0f / (float)atlas_w;
     float iph = 1.0f / (float)atlas_h;
-    float x = *xpos + pc->xoff;
+    float x = *xpos + g->xoff;
     float y_base = (float)(int)(*ypos + 0.5f);
     q->x0 = x;
-    q->y0 = y_base + pc->yoff;
-    q->x1 = x + pc->xoff2 - pc->xoff;
-    q->y1 = y_base + pc->yoff2;
-    q->s0 = (float)pc->x0 * ipw;
-    q->t0 = (float)pc->y0 * iph;
-    q->s1 = (float)pc->x1 * ipw;
-    q->t1 = (float)pc->y1 * iph;
-    *xpos += pc->xadvance;
+    q->y0 = y_base + g->yoff;
+    q->x1 = x + g->xoff2 - g->xoff;
+    q->y1 = y_base + g->yoff2;
+    q->s0 = (float)g->x0 * ipw;
+    q->t0 = (float)g->y0 * iph;
+    q->s1 = (float)g->x1 * ipw;
+    q->t1 = (float)g->y1 * iph;
+    *xpos += g->xadvance;
 }
 
 /* Decode one UTF-8 codepoint, advancing the pointer. */

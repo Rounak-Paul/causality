@@ -37,11 +37,26 @@ static VkSurfaceFormatKHR choose_surface_format(VkPhysicalDevice gpu,
     vkGetPhysicalDeviceSurfaceFormatsKHR(gpu, surface, &count, formats);
 
     VkSurfaceFormatKHR chosen = formats[0];
+    /* Prefer sRGB framebuffer: hardware linearises destination samples
+       before blending and re-encodes on store, which gives gamma-correct
+       blending — required by the LCD text path and the rect/image
+       shaders that output linear colours.                              */
+    bool found = false;
     for (uint32_t i = 0; i < count; ++i) {
-        if (formats[i].format     == VK_FORMAT_B8G8R8A8_UNORM &&
+        if (formats[i].format     == VK_FORMAT_B8G8R8A8_SRGB &&
             formats[i].colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
             chosen = formats[i];
+            found = true;
             break;
+        }
+    }
+    if (!found) {
+        for (uint32_t i = 0; i < count; ++i) {
+            if (formats[i].format     == VK_FORMAT_R8G8B8A8_SRGB &&
+                formats[i].colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
+                chosen = formats[i];
+                break;
+            }
         }
     }
     CA_FREE(formats);

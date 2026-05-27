@@ -61,6 +61,7 @@ target_link_libraries(causality
         glm-header-only    # internal math — not in public headers
         Threads::Threads   # internal threading — not in public headers
         ${SHADERC_LIB}     # internal shader compilation — not in public headers
+        freetype           # internal glyph rasterization — not in public headers
 )
 
 # Platform-specific link libraries

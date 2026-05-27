@@ -667,7 +667,7 @@ static void paint_scrollbars(Ca_Window *win, Ca_Node *node, ClipRect clip)
 /* Helper: glyph advance for a codepoint */
 static inline float glyph_adv(Ca_FontTier *tier, uint32_t cp, float cs_eff)
 {
-    stbtt_packedchar *g = ca_font_glyph(tier, cp);
+    Ca_Glyph *g = ca_font_glyph(tier, cp);
     return g ? g->xadvance / cs_eff : 0.0f;
 }
 
@@ -729,9 +729,9 @@ static void paint_text_wrapped(Ca_Window *win, Ca_Font *font,
     cur_line_w = 0.0f;
     int cur_line = 0;
 
-    /* Keep xpos fractional so the 4x-oversampled atlas can provide sub-pixel
-       glyph positioning via bilinear UV interpolation.  Snap y for a stable
-       pixel-aligned baseline.                                               */
+    /* Keep xpos fractional for sub-pixel glyph positioning via the LCD
+       atlas's bilinear UV sampling. Snap y for a stable pixel-aligned
+       baseline.                                                            */
     float xpos = left_x * cs_eff;
     float ypos = floorf(start_y * cs_eff + 0.5f);
 
@@ -765,11 +765,11 @@ static void paint_text_wrapped(Ca_Window *win, Ca_Font *font,
         /* Emit glyphs for this word */
         while (p < wp) {
             uint32_t cp = ca_utf8_decode(&p);
-            stbtt_packedchar *pc = ca_font_glyph(tier, cp);
+            Ca_Glyph *pc = ca_font_glyph(tier, cp);
             if (!pc) continue;
             if (win->draw_cmd_count >= CA_MAX_DRAW_CMDS_PER_WINDOW) goto done;
 
-            stbtt_aligned_quad q;
+            Ca_GlyphQuad q;
             ca_font_get_quad(pc, font->atlas_w, font->atlas_h, &xpos, &ypos, &q);
             float gw = (q.x1 - q.x0) / cs_eff;
             float gh = (q.y1 - q.y0) / cs_eff;
@@ -833,7 +833,7 @@ static void paint_text(Ca_Window *win, Ca_Font *font,
         const char *p = text;
         while (*p) {
             uint32_t cp = ca_utf8_decode(&p);
-            stbtt_packedchar *pc = ca_font_glyph(tier, cp);
+            Ca_Glyph *pc = ca_font_glyph(tier, cp);
             if (pc) text_w += pc->xadvance / cs_eff;
         }
     }
@@ -852,9 +852,8 @@ static void paint_text(Ca_Window *win, Ca_Font *font,
         }
     }
 
-    /* Keep xpos fractional: the 4x-oversampled atlas provides sub-pixel
-       glyph positioning through bilinear UV sampling.  Snap y for a
-       pixel-aligned baseline.                                          */
+    /* Keep xpos fractional for sub-pixel glyph positioning via the LCD
+       atlas's bilinear UV sampling. Snap y for a pixel-aligned baseline. */
     float xpos = left_logical * cs_eff;
     float ypos = floorf(baseline_logical * cs_eff + 0.5f);
 
@@ -864,11 +863,11 @@ static void paint_text(Ca_Window *win, Ca_Font *font,
     const char *p = text;
     while (*p) {
         uint32_t cp = ca_utf8_decode(&p);
-        stbtt_packedchar *pc = ca_font_glyph(tier, cp);
+        Ca_Glyph *pc = ca_font_glyph(tier, cp);
         if (!pc) continue;
         if (win->draw_cmd_count >= CA_MAX_DRAW_CMDS_PER_WINDOW) break;
 
-        stbtt_aligned_quad q;
+        Ca_GlyphQuad q;
         ca_font_get_quad(pc, font->atlas_w, font->atlas_h, &xpos, &ypos, &q);
 
         float gw = (q.x1 - q.x0) / cs_eff;
@@ -926,11 +925,11 @@ static void paint_text_left(Ca_Window *win, Ca_Font *font,
     const char *p = text;
     while (*p) {
         uint32_t cp = ca_utf8_decode(&p);
-        stbtt_packedchar *pc = ca_font_glyph(tier, cp);
+        Ca_Glyph *pc = ca_font_glyph(tier, cp);
         if (!pc) continue;
         if (win->draw_cmd_count >= CA_MAX_DRAW_CMDS_PER_WINDOW) break;
 
-        stbtt_aligned_quad q;
+        Ca_GlyphQuad q;
         ca_font_get_quad(pc, font->atlas_w, font->atlas_h, &xpos, &ypos, &q);
 
         float gw = (q.x1 - q.x0) / cs_eff;
@@ -966,7 +965,7 @@ static float measure_text_advance(Ca_Font *font, const char *text, int byte_coun
     const char *end = text + byte_count;
     while (*p && p < end) {
         uint32_t cp = ca_utf8_decode(&p);
-        stbtt_packedchar *pc = ca_font_glyph(tier, cp);
+        Ca_Glyph *pc = ca_font_glyph(tier, cp);
         if (pc) w += pc->xadvance / cs_eff;
     }
     return w;
@@ -1336,7 +1335,7 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
                 const char *tp = tt->text;
                 while (*tp) {
                     uint32_t cp = ca_utf8_decode(&tp);
-                    stbtt_packedchar *pc = ca_font_glyph(tier, cp);
+                    Ca_Glyph *pc = ca_font_glyph(tier, cp);
                     if (pc) tw += pc->xadvance / cs_eff;
                 }
             }

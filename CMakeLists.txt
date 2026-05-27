@@ -52,6 +52,16 @@ set(GLM_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(GLM_BUILD_INSTALL OFF CACHE BOOL "" FORCE)
 add_subdirectory(vendors/glm)
 
+# FreeType — high-quality glyph rasterization with LCD subpixel filter and autohinting.
+# Disable all optional codec deps to keep the vendor build self-contained.
+set(FT_DISABLE_HARFBUZZ ON CACHE BOOL "" FORCE)
+set(FT_DISABLE_PNG      ON CACHE BOOL "" FORCE)
+set(FT_DISABLE_BZIP2    ON CACHE BOOL "" FORCE)
+set(FT_DISABLE_ZLIB     ON CACHE BOOL "" FORCE)
+set(FT_DISABLE_BROTLI   ON CACHE BOOL "" FORCE)
+set(FT_ENABLE_ERROR_STRINGS OFF CACHE BOOL "" FORCE)
+add_subdirectory(vendors/freetype)
+
 # Library
 add_subdirectory(causality)
 
