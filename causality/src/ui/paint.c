@@ -91,6 +91,66 @@ static ClipRect find_clip_for_node(Ca_Node *node)
     return clip;
 }
 
+/* Compute the clip rect for text glyphs of a node.
+ *
+ * Single-line glyphs are positioned around a baseline derived from
+ * (ascent + descent) of the font tier; with tight rows (e.g. a 16 px
+ * label rendering a 12 px font) the descender of letters like 'g' lands
+ * a fraction of a pixel below node->y + node->h.  Intersecting the clip
+ * with the node's own bounds would slice that descender off, even though
+ * the parent container has plenty of room.  This mirrors the CSS rule
+ * that a line-box does not vertically clip its own glyphs — only an
+ * ancestor `overflow:hidden` should do so.
+ *
+ * Horizontally we still clip to the node so overflowing text does not
+ * bleed into sibling widgets.  Vertically we honour the node's bounds
+ * only if it explicitly opts in via overflow_y >= 1; otherwise we
+ * inherit from the closest scrolling/clipping ancestor (if any). */
+static ClipRect text_clip_for_node(Ca_Node *node)
+{
+    ClipRect ancestor = find_clip_for_node(node);
+
+    ClipRect r;
+    r.active = true;
+
+    /* Horizontal: clamp to node width, then intersect with ancestor. */
+    float x0 = node->x;
+    float x1 = node->x + node->w;
+    if (ancestor.active) {
+        if (ancestor.x > x0)            x0 = ancestor.x;
+        if (ancestor.x + ancestor.w < x1) x1 = ancestor.x + ancestor.w;
+    }
+    r.x = x0;
+    r.w = (x1 > x0) ? x1 - x0 : 0.0f;
+
+    /* Vertical: inherit ancestor unless the node itself requests clipping. */
+    bool clip_self_v = node->desc.overflow_y >= 1;
+    if (clip_self_v && ancestor.active) {
+        float y0 = node->y > ancestor.y ? node->y : ancestor.y;
+        float y1_a = node->y + node->h;
+        float y1_b = ancestor.y + ancestor.h;
+        float y1 = y1_a < y1_b ? y1_a : y1_b;
+        r.y = y0;
+        r.h = (y1 > y0) ? y1 - y0 : 0.0f;
+    } else if (clip_self_v) {
+        r.y = node->y;
+        r.h = node->h;
+    } else if (ancestor.active) {
+        r.y = ancestor.y;
+        r.h = ancestor.h;
+    } else {
+        r.active = (r.w > 0.0f); /* no vertical clip needed */
+        r.y = 0.0f;
+        r.h = 0.0f;
+        if (!r.active) return r;
+        /* Width-only clip: encode with effectively unbounded y range so
+           the GPU scissor test never rejects on vertical bounds. */
+        r.y = -1.0e6f;
+        r.h =  2.0e6f;
+    }
+    return r;
+}
+
 /* Walk ancestors to check if any node in the chain is disabled. */
 static bool is_node_effectively_disabled(Ca_Node *n)
 {
@@ -735,8 +795,7 @@ static void paint_text_wrapped(Ca_Window *win, Ca_Font *font,
     float xpos = left_x * cs_eff;
     float ypos = floorf(start_y * cs_eff + 0.5f);
 
-    ClipRect clip = find_clip_for_node(node);
-    ClipRect node_clip = clip_intersect(clip, node->x, node->y, node->w, node->h);
+    ClipRect node_clip = text_clip_for_node(node);
 
     p = text;
     while (*p) {
@@ -857,8 +916,7 @@ static void paint_text(Ca_Window *win, Ca_Font *font,
     float xpos = left_logical * cs_eff;
     float ypos = floorf(baseline_logical * cs_eff + 0.5f);
 
-    ClipRect clip      = find_clip_for_node(node);
-    ClipRect node_clip = clip_intersect(clip, node->x, node->y, node->w, node->h);
+    ClipRect node_clip = text_clip_for_node(node);
 
     const char *p = text;
     while (*p) {
@@ -919,8 +977,7 @@ static void paint_text_left(Ca_Window *win, Ca_Font *font,
     float xpos = left_logical * cs_eff;
     float ypos = floorf(baseline_logical * cs_eff + 0.5f);
 
-    ClipRect clip       = find_clip_for_node(node);
-    ClipRect input_clip = clip_intersect(clip, node->x, node->y, node->w, node->h);
+    ClipRect input_clip = text_clip_for_node(node);
 
     const char *p = text;
     while (*p) {
