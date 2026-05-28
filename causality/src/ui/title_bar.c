@@ -142,12 +142,16 @@ void ca_title_bar_init(Ca_Window *win)
     /* ---- Title bar node: horizontal strip, height scales with ui_scale ---- */
     float sc_init = win->ui_scale > 0.0f ? win->ui_scale : 1.0f;
     Ca_NodeDesc tb = {0};
-    tb.direction   = CA_HORIZONTAL;
-    tb.height      = 22.0f * sc_init;
-    tb.align_items = CA_ALIGN_CENTER;
-    tb.background  = ca_color(0x16 / 255.0f, 0x16 / 255.0f, 0x1a / 255.0f, 1.0f);
-    tb.overflow_x  = 1; /* hidden */
-    tb.overflow_y  = 1;
+    tb.direction     = CA_HORIZONTAL;
+    tb.height        = 22.0f * sc_init;
+    tb.align_items   = CA_ALIGN_CENTER;
+    /* Inset the menu bar on the left and the window controls on the
+       right so neither group is flush against the window chrome. */
+    tb.padding_left  = 2.0f * sc_init;
+    tb.padding_right = 2.0f * sc_init;
+    tb.background    = ca_color(0x16 / 255.0f, 0x16 / 255.0f, 0x1a / 255.0f, 1.0f);
+    tb.overflow_x    = 1; /* hidden */
+    tb.overflow_y    = 1;
     Ca_Node *tbnode = ca_node_add(root, &tb);
     assert(tbnode && "ca_title_bar_init: failed to allocate title_bar_node");
     win->title_bar_node = tbnode;
@@ -192,7 +196,11 @@ void ca_title_bar_rebuild(Ca_Window *win)
     float sc = win->ui_scale > 0.0f ? win->ui_scale : 1.0f;
 
     /* Keep the container's own height in sync with the current scale */
-    win->title_bar_node->desc.height = 22.0f * sc;
+    win->title_bar_node->desc.height        = 22.0f * sc;
+    /* Keep horizontal padding in lockstep with scale so a DPI change
+       at runtime doesn't push the menu/controls back against the edge. */
+    win->title_bar_node->desc.padding_left  = 8.0f * sc;
+    win->title_bar_node->desc.padding_right = 8.0f * sc;
     win->title_bar_node->dirty |= CA_DIRTY_LAYOUT;
 
     /* ---- Colours (self-contained — no CSS classes needed) ---- */
