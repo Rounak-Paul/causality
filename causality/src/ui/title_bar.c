@@ -34,6 +34,8 @@
 #define ICON_RESTORE  "\xEF\x8B\x92"   /* U+F2D2  fa-window-restore  */
 #define ICON_TIMES    "\xEF\x80\x8D"   /* U+F00D  fa-times        */
 
+#define TITLE_BAR_SIDE_PADDING_PX 2.0f
+
 /* ------------------------------------------------------------------ */
 /* Window-drag callbacks                                               */
 /* ------------------------------------------------------------------ */
@@ -147,8 +149,8 @@ void ca_title_bar_init(Ca_Window *win)
     tb.align_items   = CA_ALIGN_CENTER;
     /* Inset the menu bar on the left and the window controls on the
        right so neither group is flush against the window chrome. */
-    tb.padding_left  = 2.0f * sc_init;
-    tb.padding_right = 2.0f * sc_init;
+     tb.padding_left  = TITLE_BAR_SIDE_PADDING_PX * sc_init;
+     tb.padding_right = TITLE_BAR_SIDE_PADDING_PX * sc_init;
     tb.background    = ca_color(0x16 / 255.0f, 0x16 / 255.0f, 0x1a / 255.0f, 1.0f);
     tb.overflow_x    = 1; /* hidden */
     tb.overflow_y    = 1;
@@ -199,8 +201,8 @@ void ca_title_bar_rebuild(Ca_Window *win)
     win->title_bar_node->desc.height        = 22.0f * sc;
     /* Keep horizontal padding in lockstep with scale so a DPI change
        at runtime doesn't push the menu/controls back against the edge. */
-    win->title_bar_node->desc.padding_left  = 8.0f * sc;
-    win->title_bar_node->desc.padding_right = 8.0f * sc;
+     win->title_bar_node->desc.padding_left  = TITLE_BAR_SIDE_PADDING_PX * sc;
+     win->title_bar_node->desc.padding_right = TITLE_BAR_SIDE_PADDING_PX * sc;
     win->title_bar_node->dirty |= CA_DIRTY_LAYOUT;
 
     /* ---- Colours (self-contained — no CSS classes needed) ---- */
