@@ -1209,8 +1209,20 @@ static bool node_outside_clip(const Ca_Node *node, ClipRect clip)
             node->y            >= clip.y + clip.h);
 }
 
+/* Apply effective_z to freshly-emitted or replayed draw commands in the
+   range [start, start+count).  Only commands with z_index==0 are updated
+   so that any explicitly-set positive z on a child is always preserved. */
+static void apply_inherited_z(Ca_Window *win, uint32_t start, uint32_t count,
+                              int16_t effective_z)
+{
+    if (effective_z == 0) return;
+    for (uint32_t ci = start; ci < start + count; ++ci)
+        if (win->draw_cmds[ci].z_index == 0)
+            win->draw_cmds[ci].z_index = effective_z;
+}
+
 static void paint_tree_cached(Ca_Instance *inst, Ca_Window *win,
-                              Ca_Node *node, ClipRect clip)
+                              Ca_Node *node, ClipRect clip, int16_t inherited_z)
 {
     if (!node || !node->in_use) return;
 
@@ -1231,6 +1243,13 @@ static void paint_tree_cached(Ca_Instance *inst, Ca_Window *win,
         return;
     }
 
+    /* Effective z: use this node's own z_index if set, otherwise inherit
+       from the parent.  This ensures all draw commands inside a z>0 subtree
+       (e.g. sticky-header buttons and their text children) are placed in the
+       correct overlay phase rather than rendering behind normal-phase content. */
+    int16_t effective_z = (node->desc.z_index != 0) ? node->desc.z_index
+                                                     : inherited_z;
+
     bool was_dirty = (node->dirty & CA_DIRTY_CONTENT) != 0;
 
     /* ---- Pre-children: background + widget visuals ---- */
@@ -1238,6 +1257,7 @@ static void paint_tree_cached(Ca_Instance *inst, Ca_Window *win,
         uint32_t start = win->draw_cmd_count;
         paint_node_content(win, inst->font, node, clip);
         uint32_t count = win->draw_cmd_count - start;
+        apply_inherited_z(win, start, count, effective_z);
         cache_commands(win, node, start, count, false);
         node->dirty &= ~CA_DIRTY_CONTENT;
         if (win->debug_overlay && !win->dbg_force_repaint)
@@ -1245,11 +1265,13 @@ static void paint_tree_cached(Ca_Instance *inst, Ca_Window *win,
     } else if (node->cache_count > 0 &&
                win->draw_cmd_count + node->cache_count <= CA_MAX_DRAW_CMDS_PER_WINDOW)
     {
+        uint32_t replay_start = win->draw_cmd_count;
         memcpy(&win->draw_cmds[win->draw_cmd_count],
                &win->paint_cache[node->cache_start],
                node->cache_count * sizeof(Ca_DrawCmd));
         node->draw_cmd_idx = (int32_t)win->draw_cmd_count;
         win->draw_cmd_count += node->cache_count;
+        apply_inherited_z(win, replay_start, node->cache_count, effective_z);
     }
 
     /* ---- Child clip ---- */
@@ -1257,23 +1279,26 @@ static void paint_tree_cached(Ca_Instance *inst, Ca_Window *win,
     if (node->desc.overflow_x >= 1 || node->desc.overflow_y >= 1)
         child_clip = clip_intersect(clip, node->x, node->y, node->w, node->h);
 
-    /* ---- Recurse children ---- */
+    /* ---- Recurse children (propagate effective_z down) ---- */
     for (uint32_t i = 0; i < node->child_count; ++i)
-        paint_tree_cached(inst, win, node->children[i], child_clip);
+        paint_tree_cached(inst, win, node->children[i], child_clip, effective_z);
 
     /* ---- Post-children: scrollbars ---- */
     if (was_dirty) {
         uint32_t sb_start = win->draw_cmd_count;
         paint_scrollbars(win, node, clip);
         uint32_t sb_count = win->draw_cmd_count - sb_start;
+        apply_inherited_z(win, sb_start, sb_count, effective_z);
         cache_commands(win, node, sb_start, sb_count, true);
     } else if (node->cache_post_count > 0 &&
                win->draw_cmd_count + node->cache_post_count <= CA_MAX_DRAW_CMDS_PER_WINDOW)
     {
+        uint32_t sb_replay = win->draw_cmd_count;
         memcpy(&win->draw_cmds[win->draw_cmd_count],
                &win->paint_cache[node->cache_post_start],
                node->cache_post_count * sizeof(Ca_DrawCmd));
         win->draw_cmd_count += node->cache_post_count;
+        apply_inherited_z(win, sb_replay, node->cache_post_count, effective_z);
     }
 }
 
@@ -2021,7 +2046,7 @@ void ca_paint_pass(Ca_Instance *inst, Ca_Window *win)
 
     /* 2. Incremental tree walk: only dirty nodes repaint, clean reuse cache */
     ClipRect no_clip = { .active = false };
-    paint_tree_cached(inst, win, win->root, no_clip);
+    paint_tree_cached(inst, win, win->root, no_clip, 0);
 
     /* 3. Decorations — always fresh, never cached (depend on global focus state) */
     Ca_Font *font = inst->font;

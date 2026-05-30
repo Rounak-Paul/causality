@@ -633,6 +633,7 @@ static Ca_NodeDesc div_to_nd(const Ca_DivDesc *d)
     nd.z_index        = (int16_t)d->z_index;
     nd.hidden         = d->hidden;
     nd.disabled       = d->disabled;
+    nd.no_hover       = d->no_hover;
     return nd;
 }
 
@@ -1604,6 +1605,24 @@ void ca_scroll_to_bottom(Ca_Window *window, const char *id)
     if (max_scroll < 0.0f) max_scroll = 0.0f;
     n->scroll_y = max_scroll;
     n->dirty |= CA_DIRTY_LAYOUT;
+}
+
+float ca_get_scroll_y(Ca_Window *window, const char *id)
+{
+    Ca_Node *n = find_node_by_id(window, id);
+    return n ? n->scroll_y : 0.0f;
+}
+
+void ca_set_scroll_y(Ca_Window *window, const char *id, float y)
+{
+    Ca_Node *n = find_node_by_id(window, id);
+    if (!n) return;
+    float max_scroll = n->content_h - n->h;
+    if (max_scroll < 0.0f) max_scroll = 0.0f;
+    if (y < 0.0f)          y = 0.0f;
+    if (y > max_scroll)    y = max_scroll;
+    n->scroll_y    = y;
+    n->dirty      |= CA_DIRTY_LAYOUT;
 }
 
 void ca_window_set_on_frame(Ca_Window *window, void (*fn)(void *), void *user_data)
@@ -2987,6 +3006,17 @@ static int node_depth(Ca_Node *n)
     return depth;
 }
 
+/* Return the effective rendering z-index for a node: the first non-zero
+   z_index found by walking up the ancestor chain (matching how paint.c
+   propagates z_index to draw commands via apply_inherited_z). */
+static int16_t node_effective_z(Ca_Node *n)
+{
+    for (Ca_Node *cur = n; cur; cur = cur->parent)
+        if (cur->desc.z_index != 0)
+            return cur->desc.z_index;
+    return 0;
+}
+
 static bool node_paints_after(Ca_Node *candidate, Ca_Node *current)
 {
     if (!current) return true;
@@ -3722,12 +3752,26 @@ void ca_widget_input_pass(Ca_Window *win)
             if (win->focused_node) win->focused_node->dirty |= CA_DIRTY_CONTENT;
         }
 
-        /* Fire button callbacks */
+        /* Fire button callbacks — z-aware: when buttons overlap, only fire
+           the one(s) at the highest z_index so overlay widgets don't leak
+           clicks through to content rendered beneath them. */
         if (win->button_pool) {
+            /* Pass 1: find the maximum z_index among matching buttons. */
+            int16_t top_z = INT16_MIN;
             for (uint32_t i = 0; i < CA_MAX_BUTTONS_PER_WINDOW; ++i) {
                 Ca_Button *btn = &win->button_pool[i];
                 if (!btn->in_use || !btn->on_click || !btn->node) continue;
                 if (is_effectively_disabled(btn->node)) continue;
+                if (!point_in_node(btn->node, mx, my)) continue;
+                if (btn->node->desc.z_index > top_z)
+                    top_z = btn->node->desc.z_index;
+            }
+            /* Pass 2: fire only buttons at the winning z_index. */
+            for (uint32_t i = 0; i < CA_MAX_BUTTONS_PER_WINDOW; ++i) {
+                Ca_Button *btn = &win->button_pool[i];
+                if (!btn->in_use || !btn->on_click || !btn->node) continue;
+                if (is_effectively_disabled(btn->node)) continue;
+                if (btn->node->desc.z_index != top_z) continue;
                 if (point_in_node(btn->node, mx, my)) {
                     btn->last_click_x     = mx - btn->node->x;
                     btn->last_click_y     = my - btn->node->y;
@@ -4246,21 +4290,36 @@ void ca_widget_input_pass(Ca_Window *win)
            after frees/reuses so we explicitly test ancestry. */
         Ca_Node *best = NULL;
         float    best_area = 1e18f;
+
+        /* Shared helper: returns true when node n should be considered as a
+           hover candidate at (mx, my).  Nodes flagged no_hover are treated
+           as transparent to hit-testing (their descendants still qualify). */
+#define HOVER_CANDIDATE(n) \
+            ((n)->in_use && !(n)->desc.hidden && !(n)->desc.no_hover && \
+             point_in_node((n), mx, my) && !node_is_ancestor_hidden(n))
+
+        /* Pass 1 — find the highest effective z-index among all hit nodes
+           that are hover-eligible.  This implements CSS stacking-context
+           semantics: every node in a z>0 subtree (e.g. the sticky overlay,
+           z=5) renders visually above all z=0 content, so it must also win
+           hover priority over any z=0 node regardless of area.
+           Nodes marked no_hover (e.g. the full-window popup_host overlay)
+           are excluded so they cannot inflate max_ez and block everything
+           else when no popup is active. */
+        int16_t max_ez = 0;
         for (uint32_t i = 0; i < CA_MAX_NODES_PER_WINDOW; ++i) {
             Ca_Node *n = &win->node_pool[i];
-            if (!n->in_use || n->desc.hidden) continue;
-            if (!point_in_node(n, mx, my)) continue;
-            /* Skip if any ancestor is hidden: tabbed/collapsed panels
-               whose builder doesn't re-run leave stale layout coords on
-               descendants. Without this check, those descendants can
-               spuriously overlap visible widgets and steal hover. */
-            {
-                bool ancestor_hidden = false;
-                for (Ca_Node *p = n->parent; p; p = p->parent) {
-                    if (p->desc.hidden) { ancestor_hidden = true; break; }
-                }
-                if (ancestor_hidden) continue;
-            }
+            if (!HOVER_CANDIDATE(n)) continue;
+            int16_t ez = node_effective_z(n);
+            if (ez > max_ez) max_ez = ez;
+        }
+
+        /* Pass 2 — among nodes whose effective z matches max_ez, pick the
+           most-specific one using the original area + descendant logic. */
+        for (uint32_t i = 0; i < CA_MAX_NODES_PER_WINDOW; ++i) {
+            Ca_Node *n = &win->node_pool[i];
+            if (!HOVER_CANDIDATE(n)) continue;
+            if (node_effective_z(n) != max_ez) continue;
             float area = n->w * n->h;
             if (area < best_area) {
                 best_area = area; best = n;
@@ -4271,6 +4330,8 @@ void ca_widget_input_pass(Ca_Window *win)
                 }
             }
         }
+
+#undef HOVER_CANDIDATE
         /* Tree-node containers wrap their clickable header row as
            children[0].  The container often auto-sizes to the same
            bounds as the header, producing an area-tie that the loop

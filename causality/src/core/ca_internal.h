@@ -198,6 +198,10 @@ typedef struct {
     uint8_t      overflow_y;
     bool         hidden;       /* display: none */
     bool         disabled;     /* non-interactive, visually dimmed */
+    bool         no_hover;     /* transparent to hover detection — node is
+                                  skipped in the hit-test loop so it can never
+                                  become win->hovered_node.  Its descendants
+                                  still participate normally. */
     /* Positioning */
     uint8_t      position;     /* Ca_Position: 0=relative, 1=absolute, 2=fixed */
     float        pos_x, pos_y; /* used when position != relative */

@@ -395,6 +395,8 @@ typedef struct Ca_DivDesc {
     /* Visibility / interactivity */
     bool     hidden;               /* display: none — removed from layout   */
     bool     disabled;             /* non-interactive, visually dimmed       */
+    bool     no_hover;             /* invisible to hover hit-testing; children
+                                      still participate normally               */
 } Ca_DivDesc;
 
 /* <p> / text — leaf text element. */
@@ -545,6 +547,14 @@ CA_API void ca_scroll_to_top(Ca_Window *window, const char *id);
 
 /// Scrolls a scroll container to the bottom of its content.
 CA_API void ca_scroll_to_bottom(Ca_Window *window, const char *id);
+
+/// Returns the current vertical scroll offset of a scroll container (in px).
+/// Returns 0 if no container with the given id exists.
+CA_API float ca_get_scroll_y(Ca_Window *window, const char *id);
+
+/// Sets the vertical scroll offset of a scroll container, clamped to
+/// [0, content_h - h].  No-op if no container with the given id exists.
+CA_API void  ca_set_scroll_y(Ca_Window *window, const char *id, float y);
 
 /* ---- Window callbacks ---- */
 
