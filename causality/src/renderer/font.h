@@ -29,6 +29,11 @@
 #define CA_FONT_STYLE_COUNT    2    /* regular=0, bold=1 */
 #define CA_FONT_STYLE_REGULAR  0
 #define CA_FONT_STYLE_BOLD     1
+#define CA_FONT_MAX_SIZES     12    /* maximum distinct baked sizes in one atlas */
+#define CA_FONT_DEFAULT_SIZE_PX 12.0f /* default logical size; also the ONE size
+                                         at which all icon/Nerd-Font ranges are
+                                         baked — text-only tiers fall back to this
+                                         tier for icon glyph lookups. */
 
 /* Per-glyph atlas record.  Fields mirror what stb_truetype's packedchar
    exposed, so the layout/paint call-sites translate one-to-one.  All
@@ -61,10 +66,17 @@ typedef struct Ca_FontTier {
     float         descent;
     float         line_gap;
     bool          packed;
+    /* For text-only tiers (all sizes except CA_FONT_DEFAULT_SIZE_PX): points to
+       the full-range icon tier so ca_font_glyph can fall back when a codepoint
+       outside the baked text range is requested.  NULL on the icon tier itself. */
+    struct Ca_FontTier *icon_fallback;
 } Ca_FontTier;
 
 typedef struct Ca_Font {
-    Ca_FontTier tiers[CA_FONT_STYLE_COUNT];  /* [0]=regular, [1]=bold */
+    /* size_tiers[size_slot][style]: style 0=regular, 1=bold.           */
+    Ca_FontTier  size_tiers[CA_FONT_MAX_SIZES][CA_FONT_STYLE_COUNT];
+    int          baked_size_count;               /* how many size slots are populated */
+    float        baked_logicals[CA_FONT_MAX_SIZES]; /* logical_px for each slot         */
 
     VkImage        image;
     VkDeviceMemory memory;
@@ -76,30 +88,66 @@ typedef struct Ca_Font {
     float default_size;
 } Ca_Font;
 
-/* Return the regular font tier. */
+/* Select the tier whose baked size is nearest to desired_px, for the
+   given style.  Falls back to regular when bold is not packed at that
+   size.  This is the primary tier-selection call; all text rendering
+   paths should call this so glyphs are rasterised at the closest
+   available baked size rather than being scaled from a mismatched one. */
+static inline Ca_FontTier *ca_font_select_tier_for_size(Ca_Font *font,
+                                                        float desired_px,
+                                                        bool bold)
+{
+    int best = 0;
+    float best_diff = fabsf(font->baked_logicals[0] - desired_px);
+    for (int i = 1; i < font->baked_size_count; i++) {
+        float diff = fabsf(font->baked_logicals[i] - desired_px);
+        if (diff < best_diff) { best_diff = diff; best = i; }
+    }
+    if (bold && font->size_tiers[best][CA_FONT_STYLE_BOLD].packed)
+        return &font->size_tiers[best][CA_FONT_STYLE_BOLD];
+    return &font->size_tiers[best][CA_FONT_STYLE_REGULAR];
+}
+
+/* Return the regular tier nearest to desired_px. */
 static inline Ca_FontTier *ca_font_tier(Ca_Font *font, float desired_px)
 {
-    (void)desired_px;
-    return &font->tiers[CA_FONT_STYLE_REGULAR];
+    return ca_font_select_tier_for_size(font, desired_px, false);
 }
 
-/* Select regular or bold tier based on a boolean flag. Falls back to regular
-   if bold was not baked (bold_data was NULL at creation time). */
+/* Select regular or bold tier at the default size.  Kept for backward
+   compatibility; call-sites that already know desired_px should prefer
+   ca_font_select_tier_for_size(). */
 static inline Ca_FontTier *ca_font_select_tier(Ca_Font *font, bool bold)
 {
-    if (bold && font->tiers[CA_FONT_STYLE_BOLD].packed)
-        return &font->tiers[CA_FONT_STYLE_BOLD];
-    return &font->tiers[CA_FONT_STYLE_REGULAR];
+    return ca_font_select_tier_for_size(font, font->default_size, bold);
 }
 
-/* Look up glyph data for a Unicode codepoint within a tier. */
+/* Look up glyph data for a Unicode codepoint within a tier.  If the codepoint
+   is not found in this tier (e.g. an icon in a text-only tier), the lookup
+   transparently retries on icon_fallback so callers never need to know which
+   size has the full icon ranges baked. */
 static inline Ca_Glyph *ca_font_glyph(Ca_FontTier *tier, uint32_t cp)
 {
     for (int i = 0; i < CA_FONT_RANGE_COUNT; i++) {
         Ca_GlyphRange *r = &tier->ranges[i];
-        if (cp >= (uint32_t)r->first_codepoint &&
+        if (r->num_chars > 0 &&
+            cp >= (uint32_t)r->first_codepoint &&
             cp <  (uint32_t)(r->first_codepoint + r->num_chars))
             return &r->chardata[cp - r->first_codepoint];
+    }
+    /* Not found — try the icon fallback tier (covers icon codepoints not
+       baked into this text-only tier).  The glyph's baked-pixel coordinates
+       are from CA_FONT_DEFAULT_SIZE_PX, but the caller's font_scale
+       (desired/tier->logical_px) scales it to the correct visual size. */
+    if (tier->icon_fallback) {
+        Ca_FontTier *fb = tier->icon_fallback;
+        for (int i = 0; i < CA_FONT_RANGE_COUNT; i++) {
+            Ca_GlyphRange *r = &fb->ranges[i];
+            if (r->num_chars > 0 &&
+                cp >= (uint32_t)r->first_codepoint &&
+                cp <  (uint32_t)(r->first_codepoint + r->num_chars))
+                return &r->chardata[cp - r->first_codepoint];
+        }
     }
     return NULL;
 }
@@ -157,17 +205,17 @@ static inline uint32_t ca_utf8_decode(const char **pp)
 
 bool ca_font_create(Ca_Instance *inst, GLFWwindow *glfw_win,
                     Ca_Font *out_font,
-                    const char *regular_path, const char *bold_path,
-                    float font_px);
+                    const char *regular_path, const char *bold_path);
 
 /** Create a font atlas from in-memory font data.
     regular_data/regular_size: required — Ubuntu Nerd Font Regular (text + icons).
-    bold_data/bold_size: optional (pass NULL/0 to skip bold tier). */
+    bold_data/bold_size: optional (pass NULL/0 to skip bold tier).
+    The default logical size and icon-baking size are fixed at
+    CA_FONT_DEFAULT_SIZE_PX; the full standard size set is baked automatically. */
 bool ca_font_create_from_memory(Ca_Instance *inst, GLFWwindow *glfw_win,
                                 Ca_Font *out_font,
                                 const unsigned char *regular_data, unsigned int regular_size,
-                                const unsigned char *bold_data,    unsigned int bold_size,
-                                float font_px);
+                                const unsigned char *bold_data,    unsigned int bold_size);
 
 /** Detect the platform's default proportional UI font.
     Returns true and writes the path into out_path on success. */

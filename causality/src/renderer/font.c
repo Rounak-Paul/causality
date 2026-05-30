@@ -54,10 +54,20 @@ static const struct { int first; int count; } g_range_defs[CA_FONT_RANGE_COUNT] 
     { 0xF000, 737 },   /* Font Awesome                (F000-F2E0) */
 };
 
-static int chars_per_style(void)
+/* Standard set of logical pixel sizes baked into the atlas at startup.
+   Sizes <= CA_FONT_ICON_THRESHOLD_PX get all 6 Nerd-Font ranges;
+   larger sizes get the text-only range (ASCII+Latin-1) to keep atlas
+   consumption bounded even on 2× HiDPI displays.                     */
+static const float g_std_sizes[] = {
+    10.0f, 12.0f, 14.0f, 16.0f, 18.0f, 20.0f, 22.0f, 24.0f, 28.0f
+};
+static const int g_std_sizes_count =
+    (int)(sizeof(g_std_sizes) / sizeof(g_std_sizes[0]));
+
+static int chars_for_ranges(int num_ranges)
 {
     int n = 0;
-    for (int i = 0; i < CA_FONT_RANGE_COUNT; i++)
+    for (int i = 0; i < num_ranges; i++)
         n += g_range_defs[i].count;
     return n;
 }
@@ -332,7 +342,8 @@ static void blit_gray(unsigned char *atlas, int atlas_w,
 static bool bake_style(FT_Library lib, ShelfPacker *packer,
                        Ca_FontTier *tier,
                        const unsigned char *font_data, size_t font_size,
-                       float baked_px)
+                       float baked_px,
+                       int num_ranges)  /* CA_FONT_RANGE_COUNT or CA_FONT_TEXT_RANGES */
 {
     FT_Face face = NULL;
     FT_Error err = FT_New_Memory_Face(lib, font_data, (FT_Long)font_size, 0, &face);
@@ -356,7 +367,7 @@ static bool bake_style(FT_Library lib, ShelfPacker *packer,
     tier->descent  =  descent;
     tier->line_gap =  height - (ascent - descent);
 
-    int cpt = chars_per_style();
+    int cpt = chars_for_ranges(num_ranges);
     tier->chardata_block = (Ca_Glyph *)CA_CALLOC((size_t)cpt, sizeof(Ca_Glyph));
     if (!tier->chardata_block) {
         FT_Done_Face(face);
@@ -364,15 +375,22 @@ static bool bake_style(FT_Library lib, ShelfPacker *packer,
     }
 
     int offset = 0;
-    for (int r = 0; r < CA_FONT_RANGE_COUNT; r++) {
+    for (int r = 0; r < num_ranges; r++) {
         tier->ranges[r].first_codepoint = g_range_defs[r].first;
         tier->ranges[r].num_chars       = g_range_defs[r].count;
         tier->ranges[r].chardata        = tier->chardata_block + offset;
         offset += g_range_defs[r].count;
     }
+    /* Ranges beyond num_ranges are not baked — zero them so ca_font_glyph
+       skips them cleanly in the lookup loop.                               */
+    for (int r = num_ranges; r < CA_FONT_RANGE_COUNT; r++) {
+        tier->ranges[r].first_codepoint = 0;
+        tier->ranges[r].num_chars       = 0;
+        tier->ranges[r].chardata        = NULL;
+    }
 
     int packed_count = 0;
-    for (int ri = 0; ri < CA_FONT_RANGE_COUNT; ri++) {
+    for (int ri = 0; ri < num_ranges; ri++) {
         Ca_GlyphRange *range = &tier->ranges[ri];
         bool is_icon_range = (ri >= CA_FONT_TEXT_RANGES);
 
@@ -467,18 +485,14 @@ static bool font_create_internal(Ca_Instance *inst, GLFWwindow *glfw_win,
                                  const unsigned char *regular_data,
                                  size_t               regular_size,
                                  const unsigned char *bold_data,
-                                 size_t               bold_size,
-                                 float font_px)
+                                 size_t               bold_size)
 {
     memset(out_font, 0, sizeof(*out_font));
 
     float cx = 1.0f;
     glfwGetWindowContentScale(glfw_win, &cx, NULL);
     out_font->content_scale = cx;
-    out_font->default_size  = font_px;
-
-    float baked_px_f = (float)(int)(font_px * cx + 0.5f);
-    if (baked_px_f < 8.0f) baked_px_f = 8.0f;
+    out_font->default_size  = CA_FONT_DEFAULT_SIZE_PX;
 
     FT_Library lib = NULL;
     if (FT_Init_FreeType(&lib) != 0) {
@@ -489,8 +503,10 @@ static bool font_create_internal(Ca_Instance *inst, GLFWwindow *glfw_win,
        coverage [1,4,7,4,1]/17 to suppress most color fringing.        */
     FT_Library_SetLcdFilter(lib, FT_LCD_FILTER_DEFAULT);
 
-    /* Atlas: 4096x4096 RGBA8 holds both tiers + Nerd Font icon ranges
-       at HiDPI baking sizes (up to ~56px on a 2x display).            */
+    /* Atlas: 4096x4096 RGBA8 holds all baked size tiers.  Icons (Nerd-Font
+       ranges) are baked only at CA_FONT_DEFAULT_SIZE_PX; all other sizes
+       carry text-only (ASCII+Latin-1) and fall back to the icon tier via
+       Ca_FontTier::icon_fallback for codepoints outside their ranges.   */
     out_font->atlas_w = 4096;
     out_font->atlas_h = 4096;
     size_t atlas_bytes = (size_t)out_font->atlas_w * out_font->atlas_h * 4;
@@ -509,68 +525,119 @@ static bool font_create_internal(Ca_Instance *inst, GLFWwindow *glfw_win,
         .atlas_rgba = atlas,
     };
 
-    /* logical_px is the *unscaled* size that callers reason about;
-       baked_px is the rasterisation size in atlas pixels.            */
-    out_font->tiers[CA_FONT_STYLE_REGULAR].logical_px = font_px;
-    out_font->tiers[CA_FONT_STYLE_REGULAR].baked_px   = baked_px_f;
-    out_font->tiers[CA_FONT_STYLE_BOLD   ].logical_px = font_px;
-    out_font->tiers[CA_FONT_STYLE_BOLD   ].baked_px   = baked_px_f;
-
-    bool reg_ok = bake_style(lib, &packer,
-                              &out_font->tiers[CA_FONT_STYLE_REGULAR],
-                              regular_data, regular_size, baked_px_f);
-    bool bold_ok = false;
-    if (bold_data && bold_size > 0) {
-        bold_ok = bake_style(lib, &packer,
-                              &out_font->tiers[CA_FONT_STYLE_BOLD],
-                              bold_data, bold_size, baked_px_f);
+    /* Collect the size set: always include CA_FONT_DEFAULT_SIZE_PX (the icon
+       tier), then fill from the standard list until we reach CA_FONT_MAX_SIZES.
+       Sort ascending so the log output is tidy.                              */
+    float size_list[CA_FONT_MAX_SIZES];
+    int   size_count = 0;
+    size_list[size_count++] = CA_FONT_DEFAULT_SIZE_PX;
+    for (int i = 0; i < g_std_sizes_count && size_count < CA_FONT_MAX_SIZES; i++) {
+        float s = g_std_sizes[i];
+        bool already = false;
+        for (int j = 0; j < size_count; j++)
+            if (fabsf(size_list[j] - s) < 0.5f) { already = true; break; }
+        if (!already) size_list[size_count++] = s;
     }
+    /* Bubble-sort ascending (tiny array). */
+    for (int i = 0; i < size_count - 1; i++)
+        for (int j = i + 1; j < size_count; j++)
+            if (size_list[i] > size_list[j]) {
+                float tmp = size_list[i]; size_list[i] = size_list[j]; size_list[j] = tmp;
+            }
 
-    /* Metrics are reported in baked-pixel units; layout code divides
-       by font_scale = desired_size / logical_px, so we must store
-       them so that (ascent - descent + line_gap) * font_scale yields
-       the correct logical line height for any desired size.         */
-    for (int s = 0; s < CA_FONT_STYLE_COUNT; s++) {
-        Ca_FontTier *t = &out_font->tiers[s];
-        /* Convert metrics from baked-pixel units → logical-px units. */
-        float to_logical = font_px / baked_px_f;
-        t->ascent   *= to_logical;
-        t->descent  *= to_logical;
-        t->line_gap *= to_logical;
+    /* Bake every size in the list into the shared atlas. */
+    bool any_reg_ok = false;
+    for (int si = 0; si < size_count; si++) {
+        float logical = size_list[si];
+        float baked   = (float)(int)(logical * cx + 0.5f);
+        if (baked < 8.0f) baked = 8.0f;
+
+        /* Only CA_FONT_DEFAULT_SIZE_PX gets all icon/Nerd-Font ranges.
+           All other sizes bake text-only (ASCII+Latin-1, range 0);
+           icon lookups fall back via Ca_FontTier::icon_fallback.     */
+        int num_ranges = (fabsf(logical - CA_FONT_DEFAULT_SIZE_PX) < 0.5f)
+                         ? CA_FONT_RANGE_COUNT : CA_FONT_TEXT_RANGES;
+
+        Ca_FontTier *reg  = &out_font->size_tiers[si][CA_FONT_STYLE_REGULAR];
+        Ca_FontTier *bold = &out_font->size_tiers[si][CA_FONT_STYLE_BOLD];
+
+        reg->logical_px = logical;
+        reg->baked_px   = baked;
+        bool reg_ok = bake_style(lib, &packer, reg,
+                                 regular_data, regular_size, baked, num_ranges);
+        if (reg_ok) {
+            float to_logical = logical / baked;
+            reg->ascent   *= to_logical;
+            reg->descent  *= to_logical;
+            reg->line_gap *= to_logical;
+            any_reg_ok = true;
+        }
+
+        if (bold_data && bold_size > 0) {
+            bold->logical_px = logical;
+            bold->baked_px   = baked;
+            bool bold_ok = bake_style(lib, &packer, bold,
+                                      bold_data, bold_size, baked, num_ranges);
+            if (bold_ok) {
+                float to_logical = logical / baked;
+                bold->ascent   *= to_logical;
+                bold->descent  *= to_logical;
+                bold->line_gap *= to_logical;
+            }
+        }
+
+        out_font->baked_logicals[si] = logical;
+    }
+    out_font->baked_size_count = size_count;
+
+    /* Wire icon_fallback: find the icon tier slot (CA_FONT_DEFAULT_SIZE_PX)
+       then point every text-only tier at it so ca_font_glyph can fall back
+       for icon codepoints without knowing which tier has them.             */
+    int icon_si = 0;
+    for (int si = 0; si < size_count; si++) {
+        if (fabsf(size_list[si] - CA_FONT_DEFAULT_SIZE_PX) < 0.5f) {
+            icon_si = si; break;
+        }
+    }
+    for (int si = 0; si < size_count; si++) {
+        if (si == icon_si) continue;
+        for (int s = 0; s < CA_FONT_STYLE_COUNT; s++)
+            out_font->size_tiers[si][s].icon_fallback =
+                &out_font->size_tiers[icon_si][s];
     }
 
     FT_Done_FreeType(lib);
 
-    if (!reg_ok) {
-        fprintf(stderr, "[font] regular tier failed to bake\n");
+    if (!any_reg_ok) {
+        fprintf(stderr, "[font] no regular tier succeeded in baking\n");
         CA_FREE(atlas);
-        for (int s = 0; s < CA_FONT_STYLE_COUNT; s++)
-            CA_FREE(out_font->tiers[s].chardata_block);
+        for (int si = 0; si < size_count; si++)
+            for (int s = 0; s < CA_FONT_STYLE_COUNT; s++)
+                CA_FREE(out_font->size_tiers[si][s].chardata_block);
         memset(out_font, 0, sizeof(*out_font));
         return false;
     }
 
     if (!upload_atlas(inst, out_font, atlas)) {
         CA_FREE(atlas);
-        for (int s = 0; s < CA_FONT_STYLE_COUNT; s++)
-            CA_FREE(out_font->tiers[s].chardata_block);
+        for (int si = 0; si < size_count; si++)
+            for (int s = 0; s < CA_FONT_STYLE_COUNT; s++)
+                CA_FREE(out_font->size_tiers[si][s].chardata_block);
         memset(out_font, 0, sizeof(*out_font));
         return false;
     }
     CA_FREE(atlas);
 
-    printf("[font] FreeType+LCD atlas %dx%d, size=%.0fpx scale=%.1f, "
-           "regular=%s bold=%s\n",
-           out_font->atlas_w, out_font->atlas_h, font_px, cx,
-           reg_ok ? "ok" : "FAIL",
-           bold_data ? (bold_ok ? "ok" : "FAIL") : "n/a");
+    printf("[font] FreeType+LCD atlas %dx%d, %d sizes (%.0f..%.0fpx) "
+           "scale=%.1fx\n",
+           out_font->atlas_w, out_font->atlas_h, size_count,
+           size_list[0], size_list[size_count - 1], cx);
     return true;
 }
 
 bool ca_font_create(Ca_Instance *inst, GLFWwindow *glfw_win,
                     Ca_Font *out_font,
-                    const char *regular_path, const char *bold_path,
-                    float font_px)
+                    const char *regular_path, const char *bold_path)
 {
     unsigned char *regular_buf = NULL;
     unsigned char *bold_buf    = NULL;
@@ -600,8 +667,7 @@ bool ca_font_create(Ca_Instance *inst, GLFWwindow *glfw_win,
 
     bool ok = font_create_internal(inst, glfw_win, out_font,
                                    regular_buf, (size_t)regular_sz,
-                                   bold_buf,    (size_t)bold_sz,
-                                   font_px);
+                                   bold_buf,    (size_t)bold_sz);
     CA_FREE(regular_buf);
     CA_FREE(bold_buf);
     return ok;
@@ -610,13 +676,11 @@ bool ca_font_create(Ca_Instance *inst, GLFWwindow *glfw_win,
 bool ca_font_create_from_memory(Ca_Instance *inst, GLFWwindow *glfw_win,
                                 Ca_Font *out_font,
                                 const unsigned char *regular_data, unsigned int regular_size,
-                                const unsigned char *bold_data,    unsigned int bold_size,
-                                float font_px)
+                                const unsigned char *bold_data,    unsigned int bold_size)
 {
     return font_create_internal(inst, glfw_win, out_font,
                                 regular_data, (size_t)regular_size,
-                                bold_data,    (size_t)bold_size,
-                                font_px);
+                                bold_data,    (size_t)bold_size);
 }
 
 /* ============================================================
@@ -687,7 +751,8 @@ void ca_font_destroy(Ca_Instance *inst, Ca_Font *font)
         vkDestroyImage(inst->vk_device, font->image, NULL);
     if (font->memory != VK_NULL_HANDLE)
         vkFreeMemory(inst->vk_device, font->memory, NULL);
-    for (int s = 0; s < CA_FONT_STYLE_COUNT; s++)
-        CA_FREE(font->tiers[s].chardata_block);
+    for (int si = 0; si < font->baked_size_count; si++)
+        for (int s = 0; s < CA_FONT_STYLE_COUNT; s++)
+            CA_FREE(font->size_tiers[si][s].chardata_block);
     memset(font, 0, sizeof(*font));
 }

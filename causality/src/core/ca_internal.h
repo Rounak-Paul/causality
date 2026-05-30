@@ -837,7 +837,6 @@ struct Ca_Instance {
     /* Font config (copied from Ca_InstanceDesc, used on first window init) */
     char  font_path[512];
     char  bold_font_path[512];
-    float font_size_px;
 
     /* CSS stylesheet (owned by instance; NULL if none loaded) */
     struct Ca_Stylesheet *stylesheet;

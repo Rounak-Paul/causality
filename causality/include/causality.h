@@ -68,7 +68,6 @@ typedef struct Ca_InstanceDesc {
        Set font_path to override with a custom .ttf or .otf file. */
     const char *font_path;       /* path to regular .ttf or .otf, or NULL for embedded */
     const char *bold_font_path;  /* path to bold .ttf or .otf, or NULL for embedded bold */
-    float       font_size_px;    /* desired size in logical pixels (default: 12) */
     /* Default UI scale inherited by every window created on this instance.
        0.0 / 1.0 both mean no scaling.  Clamped to [0.25, 4.0] at init. */
     float       default_ui_scale;

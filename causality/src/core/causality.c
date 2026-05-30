@@ -35,9 +35,6 @@ Ca_Instance *ca_instance_create(const Ca_InstanceDesc *desc)
         snprintf(inst->font_path, sizeof(inst->font_path), "%s", desc->font_path);
     if (desc && desc->bold_font_path)
         snprintf(inst->bold_font_path, sizeof(inst->bold_font_path), "%s", desc->bold_font_path);
-    inst->font_size_px = (desc && desc->font_size_px > 0.0f)
-                         ? desc->font_size_px : 12.0f;
-
     {
         float s = desc ? desc->default_ui_scale : 0.0f;
         if (s < 0.25f && s > 0.0f) s = 0.25f;

@@ -747,7 +747,7 @@ static void paint_text_wrapped(Ca_Window *win, Ca_Font *font,
     float ui_s = win->ui_scale > 0.0f ? win->ui_scale : 1.0f;
     float cs   = font->content_scale / ui_s;
     float desired_size = node->desc.font_size > 0.0f ? node->desc.font_size : font->default_size;
-    Ca_FontTier *tier  = ca_font_select_tier(font, node->desc.font_bold);
+    Ca_FontTier *tier  = ca_font_select_tier_for_size(font, desired_size, node->desc.font_bold);
     float font_scale   = desired_size / tier->logical_px;
     float cs_eff       = cs / font_scale;
 
@@ -882,7 +882,7 @@ static void paint_text(Ca_Window *win, Ca_Font *font,
     float ui_s = win->ui_scale > 0.0f ? win->ui_scale : 1.0f;
     float cs   = font->content_scale / ui_s;
     float desired_size = node->desc.font_size > 0.0f ? node->desc.font_size : font->default_size;
-    Ca_FontTier *tier  = ca_font_select_tier(font, node->desc.font_bold);
+    Ca_FontTier *tier  = ca_font_select_tier_for_size(font, desired_size, node->desc.font_bold);
     float font_scale   = desired_size / tier->logical_px;
     float cs_eff       = cs / font_scale;
 
@@ -965,7 +965,7 @@ static void paint_text_left(Ca_Window *win, Ca_Font *font,
     float ui_s = win->ui_scale > 0.0f ? win->ui_scale : 1.0f;
     float cs   = font->content_scale / ui_s;
     float desired_size = node->desc.font_size > 0.0f ? node->desc.font_size : font->default_size;
-    Ca_FontTier *tier  = ca_font_select_tier(font, node->desc.font_bold);
+    Ca_FontTier *tier  = ca_font_select_tier_for_size(font, desired_size, node->desc.font_bold);
     float font_scale   = desired_size / tier->logical_px;
     float cs_eff       = cs / font_scale;
 
@@ -1014,7 +1014,7 @@ static float measure_text_advance(Ca_Font *font, const char *text, int byte_coun
     float ui_s = ui_scale > 0.0f ? ui_scale : 1.0f;
     float cs   = content_scale / ui_s;
     float desired = font_size > 0.0f ? font_size : font->default_size;
-    Ca_FontTier *tier = ca_font_select_tier(font, bold);
+    Ca_FontTier *tier = ca_font_select_tier_for_size(font, desired, bold);
     float fs     = desired / tier->logical_px;
     float cs_eff = cs / fs;
     float w = 0.0f;
@@ -1403,8 +1403,8 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
             if (!match) continue;
 
             /* Font size resolved at widget-build time and cached in the slot */
-            Ca_FontTier *tier = ca_font_select_tier(font, false);
             float tooltip_fs  = tt->font_size > 0.0f ? tt->font_size : font->default_size;
+            Ca_FontTier *tier = ca_font_select_tier_for_size(font, tooltip_fs, false);
             float font_scale  = tooltip_fs / tier->logical_px;
             float cs_eff      = cs / font_scale;
             float pad         = 5.0f;

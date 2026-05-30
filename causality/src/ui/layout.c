@@ -28,7 +28,7 @@ static float measure_wrapped_text_height(Ca_Node *node)
     float ui_s = win->ui_scale > 0.0f ? win->ui_scale : 1.0f;
     float cs   = font->content_scale / ui_s;
     float desired_size = node->desc.font_size > 0.0f ? node->desc.font_size : font->default_size;
-    Ca_FontTier *tier  = ca_font_select_tier(font, node->desc.font_bold);
+    Ca_FontTier *tier  = ca_font_select_tier_for_size(font, desired_size, node->desc.font_bold);
     if (!tier) return 0.0f;
     float font_scale   = desired_size / tier->logical_px;
     float cs_eff       = cs / font_scale;
@@ -77,7 +77,7 @@ static float measure_text_width(Ca_Node *node, const char *txt)
     float ui_s = win->ui_scale > 0.0f ? win->ui_scale : 1.0f;
     float cs   = font->content_scale / ui_s;
     float desired_size = node->desc.font_size > 0.0f ? node->desc.font_size : font->default_size;
-    Ca_FontTier *tier  = ca_font_select_tier(font, node->desc.font_bold);
+    Ca_FontTier *tier  = ca_font_select_tier_for_size(font, desired_size, node->desc.font_bold);
     if (!tier) return 0.0f;
     float font_scale   = desired_size / tier->logical_px;
     float cs_eff       = cs / font_scale;

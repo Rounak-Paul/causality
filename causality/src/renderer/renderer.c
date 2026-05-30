@@ -405,8 +405,7 @@ bool ca_renderer_window_init(Ca_Instance *inst, Ca_Window *win)
         font_ok = ca_font_create_from_memory(
                     inst, win->glfw, inst->font,
                     regular_data, regular_size,
-                    bold_data,    bold_size,
-                    inst->font_size_px);
+                    bold_data,    bold_size);
 
         free(regular_buf);
         free(bold_buf);
