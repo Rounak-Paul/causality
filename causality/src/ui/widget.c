@@ -93,6 +93,21 @@ bool ca_button_get_click_pos(const Ca_Button *button,
     return true;
 }
 
+bool ca_font_line_metrics(Ca_Window *win, float font_size,
+                          float *out_ascent, float *out_descent)
+{
+    if (!win) return false;
+    Ca_Font *font = win->instance->font;
+    if (!font) return false;
+    float desired = font_size > 0.0f ? font_size : font->default_size;
+    Ca_FontTier *tier = ca_font_tier(font, desired);
+    if (!tier) return false;
+    float font_scale = desired / tier->logical_px;
+    if (out_ascent)  *out_ascent  = tier->ascent  * font_scale;
+    if (out_descent) *out_descent = tier->descent * font_scale;
+    return true;
+}
+
 /* ============================================================
    INTERNAL — convert descriptors to Ca_NodeDesc (scaled)
    ============================================================ */

@@ -516,6 +516,14 @@ CA_API float ca_measure_text_px(Ca_Window *window,
                                 const char *text,
                                 float font_size);
 
+/* Retrieve vertical font metrics in logical pixels for the given size.
+   out_ascent  — distance from baseline to the top of the tallest glyph (>0).
+   out_descent — distance from baseline to the bottom of deepest descender (<0).
+   Both are in the same logical-pixel coordinate space as node positions.
+   Returns false if no font is loaded on this window. */
+CA_API bool ca_font_line_metrics(Ca_Window *window, float font_size,
+                                 float *out_ascent, float *out_descent);
+
 CA_API void ca_list_begin(const Ca_DivDesc *desc); /* vertical, gap 4 */
 CA_API void ca_list_end(void);
 
