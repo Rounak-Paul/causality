@@ -40,7 +40,10 @@ static void rescale_nodes(Ca_Node *node, float ratio)
     d->margin_left    *= ratio;
     d->gap            *= ratio;
     d->corner_radius  *= ratio;
-    if (d->font_size > 0.0f) d->font_size *= ratio;
+    /* font_size is NOT rescaled here: paint.c / layout.c already multiply
+       node->desc.font_size by ui_scale for tier selection, so rescaling it
+       here would double-count the scale factor and cause wrong tier selection
+       and cursor misalignment for one frame until reactive builders re-run. */
     d->pos_x        *= ratio;
     d->pos_y        *= ratio;
     d->border_width *= ratio;

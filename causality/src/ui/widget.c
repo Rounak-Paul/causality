@@ -41,7 +41,7 @@ static float measure_text_px(Ca_Window *win, const char *text)
     if (!font) return 0.0f;
     float ui_s = win->ui_scale > 0.0f ? win->ui_scale : 1.0f;
     float cs   = font->content_scale / ui_s;
-    Ca_FontTier *tier = ca_font_tier(font, font->default_size);
+    Ca_FontTier *tier = ca_font_tier(font, font->default_size * ui_s);
     float fs     = font->default_size / tier->logical_px;
     float cs_eff = cs / fs;
     float w = 0.0f;
@@ -71,7 +71,7 @@ float ca_measure_text_px(Ca_Window *win, const char *text, float font_size)
     float ui_s = win->ui_scale > 0.0f ? win->ui_scale : 1.0f;
     float cs   = font->content_scale / ui_s;
     float desired = font_size > 0.0f ? font_size : font->default_size;
-    Ca_FontTier *tier = ca_font_tier(font, desired);
+    Ca_FontTier *tier = ca_font_tier(font, desired * ui_s);
     float font_scale = desired / tier->logical_px;
     float cs_eff = cs / font_scale;
     float w = 0.0f;
@@ -99,12 +99,16 @@ bool ca_font_line_metrics(Ca_Window *win, float font_size,
     if (!win) return false;
     Ca_Font *font = win->instance->font;
     if (!font) return false;
+    float ui_s = win->ui_scale > 0.0f ? win->ui_scale : 1.0f;
     float desired = font_size > 0.0f ? font_size : font->default_size;
-    Ca_FontTier *tier = ca_font_tier(font, desired);
+    /* Select the best atlas tier for the visual size, return metrics in
+       layout space (CSS px * ui_scale) so callers can use them directly
+       as Ca_DivDesc positional values. */
+    Ca_FontTier *tier = ca_font_tier(font, desired * ui_s);
     if (!tier) return false;
     float font_scale = desired / tier->logical_px;
-    if (out_ascent)  *out_ascent  = tier->ascent  * font_scale;
-    if (out_descent) *out_descent = tier->descent * font_scale;
+    if (out_ascent)  *out_ascent  = tier->ascent  * font_scale * ui_s;
+    if (out_descent) *out_descent = tier->descent * font_scale * ui_s;
     return true;
 }
 
