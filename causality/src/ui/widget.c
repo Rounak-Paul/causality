@@ -2783,7 +2783,11 @@ Ca_Splitter *ca_split_begin(const Ca_SplitDesc *desc)
     sp->bar_hover_color = desc->bar_hover_color ? desc->bar_hover_color : CA_THEME_ACCENT;
     sp->on_resize = desc->on_resize;
     sp->user_data = desc->user_data;
-    sp->dragging  = false;
+    /* Do NOT reset sp->dragging here — ca_widget_input_pass owns the
+       dragging lifecycle.  ca_split_begin runs every frame (builders
+       re-run on blink ticks etc.), so unconditionally clearing dragging
+       kills an in-progress drag one frame after it starts.  New splitters
+       get dragging=false via memset; reused ones must preserve it. */
 
     uint32_t dummy = 0;
     apply_css(node, &node->desc, CA_ELEM_SPLITTER,
