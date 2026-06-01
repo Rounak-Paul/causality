@@ -389,7 +389,12 @@ static bool node_kind_match(const Ca_Node *node, uint8_t widget_type,
 {
     if (widget_type != CA_WIDGET_NONE && node->widget_type != widget_type)
         return false;
-    if (elem_type != 0 && node->elem_type != (uint8_t)elem_type)
+    /* CA_ELEM_DIV == 0, so the old "!= 0" shortcut incorrectly skipped
+       the elem_type check for divs, letting a SPLITTER node be claimed
+       in place of a div when the split layout is replaced by a plain
+       buffer area.  Always check elem_type — no caller uses 0 as a
+       "don't care" sentinel. */
+    if (node->elem_type != (uint8_t)elem_type)
         return false;
     return true;
 }
