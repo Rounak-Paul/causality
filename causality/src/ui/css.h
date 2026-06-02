@@ -81,9 +81,18 @@ typedef enum {
     CA_CSS_PROP_OVERFLOW_Y,
     /* Transitions */
     CA_CSS_PROP_TRANSITION,
-    /* Border */
+    /* Border — uniform */
     CA_CSS_PROP_BORDER_WIDTH,
     CA_CSS_PROP_BORDER_COLOR,
+    /* Border — per-side (top / right / bottom / left) */
+    CA_CSS_PROP_BORDER_TOP_WIDTH,
+    CA_CSS_PROP_BORDER_TOP_COLOR,
+    CA_CSS_PROP_BORDER_RIGHT_WIDTH,
+    CA_CSS_PROP_BORDER_RIGHT_COLOR,
+    CA_CSS_PROP_BORDER_BOTTOM_WIDTH,
+    CA_CSS_PROP_BORDER_BOTTOM_COLOR,
+    CA_CSS_PROP_BORDER_LEFT_WIDTH,
+    CA_CSS_PROP_BORDER_LEFT_COLOR,
     /* Box shadow (shorthand parsed into individual values) */
     CA_CSS_PROP_BOX_SHADOW,
     /* Z-index */

@@ -205,9 +205,13 @@ typedef struct {
     /* Positioning */
     uint8_t      position;     /* Ca_Position: 0=relative, 1=absolute, 2=fixed */
     float        pos_x, pos_y; /* used when position != relative */
-    /* Border */
+    /* Border — uniform */
     float        border_width;
     uint32_t     border_color;
+    /* Border — per-side (0 width = not set; these supplement the uniform
+       border, drawn as separate edge rects so the shader is unchanged). */
+    float        border_top_w,   border_right_w,   border_bottom_w,   border_left_w;
+    uint32_t     border_top_c,   border_right_c,   border_bottom_c,   border_left_c;
     /* Box shadow */
     float        shadow_offset_x, shadow_offset_y;
     float        shadow_blur;

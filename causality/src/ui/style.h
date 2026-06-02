@@ -87,9 +87,12 @@ typedef struct {
     float    transition_duration;     /* seconds */
     uint64_t transition_props;        /* bitmask of Ca_CssPropId to animate */
 
-    /* Border */
+    /* Border — uniform */
     float    border_width;
     uint32_t border_color;
+    /* Border — per-side */
+    float    border_top_w,   border_right_w,   border_bottom_w,   border_left_w;
+    uint32_t border_top_c,   border_right_c,   border_bottom_c,   border_left_c;
     /* Box shadow */
     float    shadow_offset_x, shadow_offset_y;
     float    shadow_blur;

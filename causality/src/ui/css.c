@@ -572,9 +572,17 @@ static Ca_CssPropId lookup_property(const char *name)
         { "overflow",         CA_CSS_PROP_OVERFLOW },
         { "overflow-x",       CA_CSS_PROP_OVERFLOW_X },
         { "overflow-y",       CA_CSS_PROP_OVERFLOW_Y },
-        { "border-width",     CA_CSS_PROP_BORDER_WIDTH },
-        { "border-color",     CA_CSS_PROP_BORDER_COLOR },
-        { "box-shadow",       CA_CSS_PROP_BOX_SHADOW },
+        { "border-width",        CA_CSS_PROP_BORDER_WIDTH },
+        { "border-color",        CA_CSS_PROP_BORDER_COLOR },
+        { "border-top-width",    CA_CSS_PROP_BORDER_TOP_WIDTH },
+        { "border-top-color",    CA_CSS_PROP_BORDER_TOP_COLOR },
+        { "border-right-width",  CA_CSS_PROP_BORDER_RIGHT_WIDTH },
+        { "border-right-color",  CA_CSS_PROP_BORDER_RIGHT_COLOR },
+        { "border-bottom-width", CA_CSS_PROP_BORDER_BOTTOM_WIDTH },
+        { "border-bottom-color", CA_CSS_PROP_BORDER_BOTTOM_COLOR },
+        { "border-left-width",   CA_CSS_PROP_BORDER_LEFT_WIDTH },
+        { "border-left-color",   CA_CSS_PROP_BORDER_LEFT_COLOR },
+        { "box-shadow",          CA_CSS_PROP_BOX_SHADOW },
         { "z-index",          CA_CSS_PROP_Z_INDEX },
         { "text-wrap",        CA_CSS_PROP_TEXT_WRAP },
     };
@@ -920,6 +928,36 @@ static void parse_declarations(Parser *p, Ca_CssRule *rule)
             t = parser_peek(p);
             if (t.type == TOK_SEMICOLON) parser_next(p);
             continue;
+        }
+
+        /* Per-side border shorthands: border-{top|right|bottom|left}: <width> <color> */
+        {
+            Ca_CssPropId side_w = CA_CSS_PROP_NONE, side_c = CA_CSS_PROP_NONE;
+            if      (strcasecmp(prop_name, "border-top")    == 0) { side_w = CA_CSS_PROP_BORDER_TOP_WIDTH;    side_c = CA_CSS_PROP_BORDER_TOP_COLOR;    }
+            else if (strcasecmp(prop_name, "border-right")  == 0) { side_w = CA_CSS_PROP_BORDER_RIGHT_WIDTH;  side_c = CA_CSS_PROP_BORDER_RIGHT_COLOR;  }
+            else if (strcasecmp(prop_name, "border-bottom") == 0) { side_w = CA_CSS_PROP_BORDER_BOTTOM_WIDTH; side_c = CA_CSS_PROP_BORDER_BOTTOM_COLOR; }
+            else if (strcasecmp(prop_name, "border-left")   == 0) { side_w = CA_CSS_PROP_BORDER_LEFT_WIDTH;   side_c = CA_CSS_PROP_BORDER_LEFT_COLOR;   }
+            if (side_w != CA_CSS_PROP_NONE) {
+                int from = rule->decl_count;
+                bool got_width = false, got_color = false;
+                while (1) {
+                    skip_ws(p);
+                    Token pk = parser_peek(p);
+                    if (pk.type == TOK_SEMICOLON || pk.type == TOK_RBRACE || pk.type == TOK_EOF || pk.type == TOK_BANG)
+                        break;
+                    Ca_CssValue bv = parse_value(p, CA_CSS_PROP_NONE);
+                    if ((bv.type == CA_CSS_VAL_COLOR) && !got_color) {
+                        add_decl(rule, side_c, bv); got_color = true;
+                    } else if ((bv.type == CA_CSS_VAL_PX || bv.type == CA_CSS_VAL_NUMBER) && !got_width) {
+                        add_decl(rule, side_w, bv); got_width = true;
+                    }
+                }
+                consume_important(p, rule, from);
+                skip_ws(p);
+                t = parser_peek(p);
+                if (t.type == TOK_SEMICOLON) parser_next(p);
+                continue;
+            }
         }
 
         /* Handle shorthand 'padding' and 'margin' */

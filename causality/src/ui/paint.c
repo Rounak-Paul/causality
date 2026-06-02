@@ -216,6 +216,36 @@ static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, Cli
         set_clip(cmd, clip);
     }
 
+    /* ---- Per-side border rects (top / right / bottom / left) ---- */
+    {
+        struct { float w; uint32_t c; int side; } edges[4] = {
+            { node->desc.border_top_w,    node->desc.border_top_c,    0 },
+            { node->desc.border_right_w,  node->desc.border_right_c,  1 },
+            { node->desc.border_bottom_w, node->desc.border_bottom_c, 2 },
+            { node->desc.border_left_w,   node->desc.border_left_c,   3 },
+        };
+        for (int ei = 0; ei < 4; ei++) {
+            float ew = edges[ei].w;
+            if (ew <= 0.0f || edges[ei].c == 0) continue;
+            if (win->draw_cmd_count >= CA_MAX_DRAW_CMDS_PER_WINDOW) break;
+            float er, eg, eb, ea;
+            unpack_color(edges[ei].c, &er, &eg, &eb, &ea);
+            Ca_DrawCmd *ec = &win->draw_cmds[win->draw_cmd_count++];
+            memset(ec, 0, sizeof(*ec));
+            ec->type = CA_DRAW_RECT;
+            ec->r = er; ec->g = eg; ec->b = eb; ec->a = ea;
+            ec->z_index = node->desc.z_index;
+            ec->in_use  = true;
+            switch (edges[ei].side) {
+                case 0: ec->x = node->x;                  ec->y = node->y;                  ec->w = node->w;  ec->h = ew;       break; /* top    */
+                case 1: ec->x = node->x + node->w - ew;   ec->y = node->y;                  ec->w = ew;       ec->h = node->h;  break; /* right  */
+                case 2: ec->x = node->x;                  ec->y = node->y + node->h - ew;   ec->w = node->w;  ec->h = ew;       break; /* bottom */
+                case 3: ec->x = node->x;                  ec->y = node->y;                  ec->w = ew;       ec->h = node->h;  break; /* left   */
+            }
+            set_clip(ec, clip);
+        }
+    }
+
     /* ---- Widget-specific content ---- */
     if (!font) return;
 

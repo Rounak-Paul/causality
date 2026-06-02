@@ -599,6 +599,26 @@ void ca_style_resolve(Ca_Stylesheet *ss,
                     if (val->type == CA_CSS_VAL_COLOR)
                         out->border_color = val->color;
                     break;
+                case CA_CSS_PROP_BORDER_TOP_WIDTH:
+                    out->border_top_w = css_val_to_px(val); break;
+                case CA_CSS_PROP_BORDER_TOP_COLOR:
+                    if (val->type == CA_CSS_VAL_COLOR) out->border_top_c = val->color;
+                    break;
+                case CA_CSS_PROP_BORDER_RIGHT_WIDTH:
+                    out->border_right_w = css_val_to_px(val); break;
+                case CA_CSS_PROP_BORDER_RIGHT_COLOR:
+                    if (val->type == CA_CSS_VAL_COLOR) out->border_right_c = val->color;
+                    break;
+                case CA_CSS_PROP_BORDER_BOTTOM_WIDTH:
+                    out->border_bottom_w = css_val_to_px(val); break;
+                case CA_CSS_PROP_BORDER_BOTTOM_COLOR:
+                    if (val->type == CA_CSS_VAL_COLOR) out->border_bottom_c = val->color;
+                    break;
+                case CA_CSS_PROP_BORDER_LEFT_WIDTH:
+                    out->border_left_w = css_val_to_px(val); break;
+                case CA_CSS_PROP_BORDER_LEFT_COLOR:
+                    if (val->type == CA_CSS_VAL_COLOR) out->border_left_c = val->color;
+                    break;
                 case CA_CSS_PROP_BOX_SHADOW:
                     /* box-shadow stored as: number=blur, color=shadow color.
                        Offsets default to (2,2) if not parsed separately. */
@@ -749,11 +769,20 @@ void ca_style_apply_to_node(const Ca_ResolvedStyle *style,
     if (out_color && *out_color == 0 && STYLE_SET(CA_CSS_PROP_COLOR))
         *out_color = style->color;
 
-    /* Border */
+    /* Border — uniform */
     if (nd->border_width <= 0.0f && STYLE_SET(CA_CSS_PROP_BORDER_WIDTH))
         nd->border_width = style->border_width;
     if (nd->border_color == 0 && STYLE_SET(CA_CSS_PROP_BORDER_COLOR))
         nd->border_color = style->border_color;
+    /* Border — per-side */
+    if (nd->border_top_w   <= 0.0f && STYLE_SET(CA_CSS_PROP_BORDER_TOP_WIDTH))    nd->border_top_w   = style->border_top_w;
+    if (nd->border_top_c   == 0    && STYLE_SET(CA_CSS_PROP_BORDER_TOP_COLOR))    nd->border_top_c   = style->border_top_c;
+    if (nd->border_right_w <= 0.0f && STYLE_SET(CA_CSS_PROP_BORDER_RIGHT_WIDTH))  nd->border_right_w = style->border_right_w;
+    if (nd->border_right_c == 0    && STYLE_SET(CA_CSS_PROP_BORDER_RIGHT_COLOR))  nd->border_right_c = style->border_right_c;
+    if (nd->border_bottom_w<= 0.0f && STYLE_SET(CA_CSS_PROP_BORDER_BOTTOM_WIDTH)) nd->border_bottom_w= style->border_bottom_w;
+    if (nd->border_bottom_c== 0    && STYLE_SET(CA_CSS_PROP_BORDER_BOTTOM_COLOR)) nd->border_bottom_c= style->border_bottom_c;
+    if (nd->border_left_w  <= 0.0f && STYLE_SET(CA_CSS_PROP_BORDER_LEFT_WIDTH))   nd->border_left_w  = style->border_left_w;
+    if (nd->border_left_c  == 0    && STYLE_SET(CA_CSS_PROP_BORDER_LEFT_COLOR))   nd->border_left_c  = style->border_left_c;
 
     /* Box shadow */
     if (nd->shadow_color == 0 && STYLE_SET(CA_CSS_PROP_BOX_SHADOW)) {
