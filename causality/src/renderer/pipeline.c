@@ -341,8 +341,7 @@ static const char *TEXT_FRAG_GLSL =
     "layout(location = 0) in  vec2 v_uv;\n"
     "layout(location = 1) in  vec4 v_color;\n"
     "\n"
-    "layout(location = 0, index = 0) out vec4 out_color;\n"
-    "layout(location = 0, index = 1) out vec4 out_mask;\n"
+    "layout(location = 0) out vec4 out_color;\n"
     "\n"
     "vec3 srgb_to_linear(vec3 c) {\n"
     "    bvec3 cutoff = lessThan(c, vec3(0.04045));\n"
@@ -352,14 +351,12 @@ static const char *TEXT_FRAG_GLSL =
     "}\n"
     "\n"
     "void main() {\n"
-    "    vec4 samp = texture(font_atlas, v_uv);\n"
-    "    vec3 cov  = samp.rgb;\n"
-    "    float a   = v_color.a;\n"
+    "    /* Grayscale atlas: coverage is identical in R/G/B/A.           */\n"
+    "    float cov = texture(font_atlas, v_uv).r;\n"
+    "    float a   = cov * v_color.a;\n"
     "    vec3 col_lin = srgb_to_linear(v_color.rgb);\n"
-    "    /* Luma-weighted single coverage used for the alpha channel  */\n"
-    "    float luma = dot(cov, vec3(0.299, 0.587, 0.114));\n"
-    "    out_color = vec4(col_lin * cov * a, luma * a);\n"
-    "    out_mask  = vec4(cov * a,            luma * a);\n"
+    "    /* Premultiplied-alpha output for ONE + ONE_MINUS_SRC_ALPHA blend */\n"
+    "    out_color = vec4(col_lin * a, a);\n"
     "}\n";
 
 bool ca_text_pipeline_create(Ca_Instance *inst, VkFormat color_format)
@@ -477,20 +474,16 @@ bool ca_text_pipeline_create(Ca_Instance *inst, VkFormat color_format)
         .sType                = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
         .rasterizationSamples = VK_SAMPLE_COUNT_1_BIT };
 
-    /* Dual-source LCD subpixel blending.
-       Index 0 = premultiplied linear colour contribution; index 1 = per-
-       channel coverage used as the destination-weight via
-       ONE_MINUS_SRC1_COLOR.  This is the standard ClearType formula:
-         dst' = src*cov + dst*(1 - cov)
-       evaluated independently for R/G/B.  Requires VkPhysicalDeviceFeatures
-       ::dualSrcBlend to be enabled at device creation.                  */
+    /* Premultiplied-alpha grayscale blend.
+       src = premultiplied (col_lin * a, a); blend: src*1 + dst*(1-src_a).
+       Works correctly under compositing — no dual-source blend needed.  */
     VkPipelineColorBlendAttachmentState blend_att = {
         .blendEnable         = VK_TRUE,
         .srcColorBlendFactor = VK_BLEND_FACTOR_ONE,
-        .dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC1_COLOR,
+        .dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
         .colorBlendOp        = VK_BLEND_OP_ADD,
         .srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE,
-        .dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC1_ALPHA,
+        .dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
         .alphaBlendOp        = VK_BLEND_OP_ADD,
         .colorWriteMask      = VK_COLOR_COMPONENT_R_BIT |
                                VK_COLOR_COMPONENT_G_BIT |

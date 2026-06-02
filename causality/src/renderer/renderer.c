@@ -238,13 +238,12 @@ static bool create_logical_device(Ca_Instance *inst)
         .sType            = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_FEATURES,
         .dynamicRendering = VK_TRUE,
     };
-    /* dualSrcBlend is needed by the LCD subpixel text pipeline
-       (ONE_MINUS_SRC1_COLOR).  All desktop GPUs from the last decade
-       support it; we don't fall back if it's missing.                  */
+    /* dualSrcBlend is no longer required: the text pipeline uses grayscale
+       antialiasing with standard premultiplied-alpha blending.          */
     VkPhysicalDeviceFeatures2 features2 = {
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
         .pNext = &dyn_feat,
-        .features = { .dualSrcBlend = VK_TRUE },
+        .features = { 0 },
     };
 
     VkDeviceCreateInfo ci = {

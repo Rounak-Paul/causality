@@ -394,16 +394,14 @@ static bool bake_style(FT_Library lib, ShelfPacker *packer,
         Ca_GlyphRange *range = &tier->ranges[ri];
         bool is_icon_range = (ri >= CA_FONT_TEXT_RANGES);
 
-        /* Use grayscale rendering for icons: they're large enough that
-           LCD subpixel artifacts (color fringing on coloured backgrounds)
-           outweigh the sharpness benefit, and FreeType's LCD output also
-           looks wrong for symbol fonts whose stems align with subpixels. */
+        /* Grayscale antialiasing for all glyph ranges.  Icons skip hinting
+           because large symbolic glyphs look better unhinted; text uses
+           FreeType's auto-hinter which produces consistent stems across
+           platforms without depending on embedded TrueType hint programs. */
         int32_t load_flags = is_icon_range
             ? (FT_LOAD_DEFAULT | FT_LOAD_NO_HINTING | FT_LOAD_RENDER)
-            : (FT_LOAD_TARGET_LCD | FT_LOAD_RENDER | FT_LOAD_FORCE_AUTOHINT);
-        FT_Render_Mode render_mode = is_icon_range
-            ? FT_RENDER_MODE_NORMAL
-            : FT_RENDER_MODE_LCD;
+            : (FT_LOAD_DEFAULT | FT_LOAD_RENDER | FT_LOAD_FORCE_AUTOHINT);
+        FT_Render_Mode render_mode = FT_RENDER_MODE_NORMAL;
 
         for (int i = 0; i < range->num_chars; i++) {
             uint32_t cp = (uint32_t)(range->first_codepoint + i);
@@ -499,9 +497,10 @@ static bool font_create_internal(Ca_Instance *inst, GLFWwindow *glfw_win,
         fprintf(stderr, "[font] FT_Init_FreeType failed\n");
         return false;
     }
-    /* Default ClearType-style 5-tap horizontal filter: blends subpixel
-       coverage [1,4,7,4,1]/17 to suppress most color fringing.        */
-    FT_Library_SetLcdFilter(lib, FT_LCD_FILTER_DEFAULT);
+    /* Grayscale antialiasing — no LCD filter needed.  Subpixel rendering
+       produces color fringing under composited window managers (Wayland,
+       X11 compositors) and depends on display subpixel order, so grayscale
+       is used for portability and correctness on all platforms.         */
 
     /* Atlas: 4096x4096 RGBA8 holds all baked size tiers.  Icons (Nerd-Font
        ranges) are baked only at CA_FONT_DEFAULT_SIZE_PX; all other sizes
