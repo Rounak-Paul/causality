@@ -1510,6 +1510,22 @@ void ca__set_background_node(Ca_Div *div, uint32_t color)
     node_set_background((Ca_Node *)div, color);
 }
 
+void ca_div_set_width(Ca_Div *div, float width)
+{
+    assert(div);
+    Ca_Node *n = (Ca_Node *)div;
+    if (n->desc.width != width) {
+        n->desc.width = width;
+        n->dirty |= CA_DIRTY_LAYOUT;
+    }
+}
+
+float ca_div_get_layout_width(const Ca_Div *div)
+{
+    assert(div);
+    return ((const Ca_Node *)div)->w;
+}
+
 void ca__set_background_widget(void *widget, uint32_t color)
 {
     Ca_Node *n = *(Ca_Node **)widget;
@@ -3273,17 +3289,16 @@ void ca_widget_input_pass(Ca_Window *win)
        using the same geometry as paint_scrollbars, and drive scroll_x/scroll_y
        directly.  Scrollbar drag takes priority over wheel scroll and other drags.
 
-       Geometry (Y scrollbar):
-         bar_w=6, margin=2
-         bar_x = node->x + node->w - bar_w - margin    (right edge)
-         track spans [node->y+margin .. node->y+margin+track_h]
-         thumb: size proportional to viewport/content, min 16px
-                thumb_y = node->y + margin + scroll_pct * (track_h - thumb_h)
+       Geometry (Y scrollbar, retro chunky style):
+         bar_w=14, no margin — flush to right/bottom edge
+         bar_x = node->x + node->w - bar_w
+         track spans full node height
+         thumb: size proportional to viewport/content, min 20px
     */
     if (win->node_pool) {
-        static const float SB_BAR_W  = 6.0f;
-        static const float SB_MARGIN = 2.0f;
-        static const float SB_HIT_EXPAND = 4.0f; /* wider hit zone than visual */
+        static const float SB_BAR_W  = 14.0f;
+        static const float SB_MARGIN = 0.0f;
+        static const float SB_HIT_EXPAND = 2.0f;
 
         /* --- Start drag on mouse-click in a scrollbar region --- */
         if (left_down && win->mouse_click_this_frame && !win->scrollbar_drag_node) {
@@ -3298,7 +3313,7 @@ void ca_widget_input_pass(Ca_Window *win)
 
                 /* Y scrollbar */
                 if (n->desc.overflow_y >= 2 && n->content_h > n->h) {
-                    float bar_x = n->x + n->w - SB_BAR_W - SB_MARGIN;
+                    float bar_x = n->x + n->w - SB_BAR_W;
                     if (mx >= bar_x - SB_HIT_EXPAND &&
                         mx <= bar_x + SB_BAR_W + SB_HIT_EXPAND &&
                         my >= n->y && my <= n->y + n->h) {
@@ -3313,7 +3328,7 @@ void ca_widget_input_pass(Ca_Window *win)
 
                 /* X scrollbar */
                 if (n->desc.overflow_x >= 2 && n->content_w > n->w) {
-                    float bar_y = n->y + n->h - SB_BAR_W - SB_MARGIN;
+                    float bar_y = n->y + n->h - SB_BAR_W;
                     if (my >= bar_y - SB_HIT_EXPAND &&
                         my <= bar_y + SB_BAR_W + SB_HIT_EXPAND &&
                         mx >= n->x && mx <= n->x + n->w) {
@@ -3334,14 +3349,14 @@ void ca_widget_input_pass(Ca_Window *win)
 
                 if (best_y) {
                     /* Compute grab offset from thumb top to mouse click */
-                    float track_h  = best->h - SB_MARGIN * 2;
+                    float track_h  = best->h;
                     float ratio    = best->h / best->content_h;
                     float thumb_h  = track_h * ratio;
-                    if (thumb_h < 16.0f) thumb_h = 16.0f;
+                    if (thumb_h < 20.0f) thumb_h = 20.0f;
                     if (thumb_h > track_h) thumb_h = track_h;
                     float max_s    = best->content_h - best->h;
                     float pct      = (max_s > 0.0f) ? best->scroll_y / max_s : 0.0f;
-                    float thumb_y  = best->y + SB_MARGIN + pct * (track_h - thumb_h);
+                    float thumb_y  = best->y + pct * (track_h - thumb_h);
                     /* If click is on the thumb, grab relative to its top.
                        If click is on the track, center the thumb on the mouse. */
                     if (my >= thumb_y && my <= thumb_y + thumb_h)
@@ -3349,14 +3364,14 @@ void ca_widget_input_pass(Ca_Window *win)
                     else
                         win->scrollbar_drag_grab = thumb_h * 0.5f;
                 } else {
-                    float track_w  = best->w - SB_MARGIN * 2;
+                    float track_w  = best->w;
                     float ratio    = best->w / best->content_w;
                     float thumb_w  = track_w * ratio;
-                    if (thumb_w < 16.0f) thumb_w = 16.0f;
+                    if (thumb_w < 20.0f) thumb_w = 20.0f;
                     if (thumb_w > track_w) thumb_w = track_w;
                     float max_s    = best->content_w - best->w;
                     float pct      = (max_s > 0.0f) ? best->scroll_x / max_s : 0.0f;
-                    float thumb_x  = best->x + SB_MARGIN + pct * (track_w - thumb_w);
+                    float thumb_x  = best->x + pct * (track_w - thumb_w);
                     if (mx >= thumb_x && mx <= thumb_x + thumb_w)
                         win->scrollbar_drag_grab = mx - thumb_x;
                     else
@@ -3369,14 +3384,14 @@ void ca_widget_input_pass(Ca_Window *win)
         if (win->scrollbar_drag_node && left_down) {
             Ca_Node *n = win->scrollbar_drag_node;
             if (win->scrollbar_drag_y) {
-                float track_h = n->h - SB_MARGIN * 2;
+                float track_h = n->h;
                 float ratio   = n->h / n->content_h;
                 float thumb_h = track_h * ratio;
-                if (thumb_h < 16.0f) thumb_h = 16.0f;
+                if (thumb_h < 20.0f) thumb_h = 20.0f;
                 if (thumb_h > track_h) thumb_h = track_h;
                 float travel  = track_h - thumb_h;
                 float thumb_y = my - win->scrollbar_drag_grab;
-                float pct     = (travel > 0.0f) ? (thumb_y - (n->y + SB_MARGIN)) / travel
+                float pct     = (travel > 0.0f) ? (thumb_y - n->y) / travel
                                                  : 0.0f;
                 if (pct < 0.0f) pct = 0.0f;
                 if (pct > 1.0f) pct = 1.0f;
@@ -3388,14 +3403,14 @@ void ca_widget_input_pass(Ca_Window *win)
                     n->dirty |= CA_DIRTY_LAYOUT | CA_DIRTY_CONTENT;
                 }
             } else {
-                float track_w = n->w - SB_MARGIN * 2;
+                float track_w = n->w;
                 float ratio   = n->w / n->content_w;
                 float thumb_w = track_w * ratio;
-                if (thumb_w < 16.0f) thumb_w = 16.0f;
+                if (thumb_w < 20.0f) thumb_w = 20.0f;
                 if (thumb_w > track_w) thumb_w = track_w;
                 float travel  = track_w - thumb_w;
                 float thumb_x = mx - win->scrollbar_drag_grab;
-                float pct     = (travel > 0.0f) ? (thumb_x - (n->x + SB_MARGIN)) / travel
+                float pct     = (travel > 0.0f) ? (thumb_x - n->x) / travel
                                                  : 0.0f;
                 if (pct < 0.0f) pct = 0.0f;
                 if (pct > 1.0f) pct = 1.0f;

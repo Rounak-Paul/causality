@@ -882,6 +882,13 @@ CA_API void ca__set_color(void *widget, uint32_t color);
 CA_API void ca__set_background_node(Ca_Div *div, uint32_t color);
 CA_API void ca__set_background_widget(void *widget, uint32_t color);
 
+/* Directly set a div's layout width (pixels). Triggers a layout pass.
+   Use this for absolute-positioned overlays whose width must track a
+   dynamically-computed value that CSS cannot express. */
+CA_API void  ca_div_set_width(Ca_Div *div, float width);
+/* Returns the div's computed (laid-out) pixel width from the last layout pass. */
+CA_API float ca_div_get_layout_width(const Ca_Div *div);
+
 #define ca_set_style(widget, style) \
     _Generic((widget),              \
         Ca_Div *: ca__set_style_node,  \

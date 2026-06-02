@@ -656,52 +656,72 @@ static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, Cli
 /* Paint scrollbar overlays for a node (post-children, so they draw on top). */
 static void paint_scrollbars(Ca_Window *win, Ca_Node *node, ClipRect clip)
 {
-    /* ---- Y scrollbar ---- */
+    /* ---- Y scrollbar (retro chunky style) ---- */
     if (node->desc.overflow_y >= 2 && node->content_h > node->h) {
-        float bar_w   = 6.0f;
-        float margin  = 2.0f;
-        float track_h = node->h - margin * 2;
+        float bar_w   = 14.0f;
+        float track_h = node->h;
         float ratio   = node->h / node->content_h;
         float thumb_h = track_h * ratio;
-        if (thumb_h < 16.0f) thumb_h = 16.0f;
+        if (thumb_h < 20.0f) thumb_h = 20.0f;
         if (thumb_h > track_h) thumb_h = track_h;
 
         float max_scroll = node->content_h - node->h;
         float scroll_pct = (max_scroll > 0.0f) ? node->scroll_y / max_scroll : 0.0f;
-        float thumb_y    = node->y + margin + scroll_pct * (track_h - thumb_h);
-        float bar_x      = node->x + node->w - bar_w - margin;
+        float thumb_y    = node->y + scroll_pct * (track_h - thumb_h);
+        float bar_x      = node->x + node->w - bar_w;
 
         bool dragging_y = (win->scrollbar_drag_node == node && win->scrollbar_drag_y);
-        uint32_t thumb_col = dragging_y ? CA_THEME_SCROLLBAR_THUMB_ACTIVE
-                                        : CA_THEME_SCROLLBAR_THUMB;
 
-        /* Track */
+        /* Track — dark inset fill */
         if (win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
             Ca_DrawCmd *cmd = &win->draw_cmds[win->draw_cmd_count++];
             memset(cmd, 0, sizeof(*cmd));
-            cmd->type          = CA_DRAW_RECT;
-            cmd->x             = bar_x;
-            cmd->y             = node->y + margin;
-            cmd->w             = bar_w;
-            cmd->h             = track_h;
+            cmd->type = CA_DRAW_RECT;
+            cmd->x = bar_x; cmd->y = node->y;
+            cmd->w = bar_w; cmd->h = track_h;
             unpack_color(CA_THEME_SCROLLBAR_TRACK, &cmd->r, &cmd->g, &cmd->b, &cmd->a);
-            cmd->corner_radius = bar_w * 0.5f;
-            cmd->in_use        = true;
+            cmd->corner_radius = 0.0f;
+            /* inset bevel: shadow top+left, highlight bottom+right */
+            cmd->border_width = 0.0f;
+            cmd->in_use = true;
             set_clip(cmd, clip);
         }
-        /* Thumb */
+        /* Thumb — raised bevel */
         if (win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
             Ca_DrawCmd *cmd = &win->draw_cmds[win->draw_cmd_count++];
             memset(cmd, 0, sizeof(*cmd));
-            cmd->type          = CA_DRAW_RECT;
-            cmd->x             = bar_x;
-            cmd->y             = thumb_y;
-            cmd->w             = bar_w;
-            cmd->h             = thumb_h;
-            unpack_color(thumb_col, &cmd->r, &cmd->g, &cmd->b, &cmd->a);
-            cmd->corner_radius = bar_w * 0.5f;
-            cmd->in_use        = true;
+            cmd->type = CA_DRAW_RECT;
+            cmd->x = bar_x; cmd->y = thumb_y;
+            cmd->w = bar_w; cmd->h = thumb_h;
+            unpack_color(dragging_y ? CA_THEME_SCROLLBAR_THUMB_ACTIVE
+                                    : CA_THEME_SCROLLBAR_THUMB,
+                         &cmd->r, &cmd->g, &cmd->b, &cmd->a);
+            cmd->corner_radius = 0.0f;
+            cmd->in_use = true;
             set_clip(cmd, clip);
+        }
+        /* Per-side bevel borders on the thumb */
+        /* top+left highlight */
+        if (win->draw_cmd_count + 4 <= CA_MAX_DRAW_CMDS_PER_WINDOW) {
+            float bw = 2.0f;
+            uint32_t hi = ca_color(0x4c/255.f, 0x4c/255.f, 0x58/255.f, 1.0f);
+            uint32_t sh = ca_color(0x07/255.f, 0x07/255.f, 0x09/255.f, 1.0f);
+            /* top */
+            { Ca_DrawCmd *c = &win->draw_cmds[win->draw_cmd_count++]; memset(c,0,sizeof(*c));
+              c->type=CA_DRAW_RECT; c->x=bar_x; c->y=thumb_y; c->w=bar_w; c->h=bw;
+              unpack_color(hi,&c->r,&c->g,&c->b,&c->a); c->in_use=true; set_clip(c,clip); }
+            /* left */
+            { Ca_DrawCmd *c = &win->draw_cmds[win->draw_cmd_count++]; memset(c,0,sizeof(*c));
+              c->type=CA_DRAW_RECT; c->x=bar_x; c->y=thumb_y; c->w=bw; c->h=thumb_h;
+              unpack_color(hi,&c->r,&c->g,&c->b,&c->a); c->in_use=true; set_clip(c,clip); }
+            /* bottom */
+            { Ca_DrawCmd *c = &win->draw_cmds[win->draw_cmd_count++]; memset(c,0,sizeof(*c));
+              c->type=CA_DRAW_RECT; c->x=bar_x; c->y=thumb_y+thumb_h-bw; c->w=bar_w; c->h=bw;
+              unpack_color(sh,&c->r,&c->g,&c->b,&c->a); c->in_use=true; set_clip(c,clip); }
+            /* right */
+            { Ca_DrawCmd *c = &win->draw_cmds[win->draw_cmd_count++]; memset(c,0,sizeof(*c));
+              c->type=CA_DRAW_RECT; c->x=bar_x+bar_w-bw; c->y=thumb_y; c->w=bw; c->h=thumb_h;
+              unpack_color(sh,&c->r,&c->g,&c->b,&c->a); c->in_use=true; set_clip(c,clip); }
         }
     }
     /* ---- X scrollbar ---- */
