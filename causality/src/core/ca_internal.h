@@ -341,7 +341,8 @@ struct Ca_Node {
     float         x, y, w, h;     /* computed by layout pass         */
     Ca_Window    *window;
     Ca_Node      *parent;
-    Ca_Node      *children[CA_MAX_NODE_CHILDREN];
+    Ca_Node     **children;        /* heap-allocated, grown on demand */
+    uint32_t      child_capacity;  /* allocated slots in children[]   */
     uint32_t      child_count;
     int32_t       draw_cmd_idx;    /* -1 = no slot assigned           */
     uint8_t       widget_type;     /* Ca_WidgetType — for unified per-node paint */

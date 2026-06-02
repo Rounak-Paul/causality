@@ -48,6 +48,13 @@ void ca_node_system_shutdown(Ca_Window *win)
     for (uint32_t i = 0; i < CA_MAX_LABELS_PER_WINDOW; ++i)
         CA_FREE(win->label_pool[i].dyn_text);
 
+    /* Free heap-allocated children arrays before releasing the node pool.
+       ca_node_clear keeps arrays alive for reuse, so they are NOT freed
+       by free_subtree and must be cleaned up here at shutdown. */
+    if (win->node_pool) {
+        for (uint32_t i = 0; i < CA_MAX_NODES_PER_WINDOW; ++i)
+            CA_FREE(win->node_pool[i].children);
+    }
     CA_FREE(win->node_pool);
     CA_FREE(win->draw_cmds);
     CA_FREE(win->sorted_idx);
@@ -98,12 +105,31 @@ void ca_node_system_shutdown(Ca_Window *win)
 
 /* ---- Helpers ---- */
 
+/* Grow a node's children array to fit at least `needed` entries.
+   Starts at 8 and doubles, capped by CA_MAX_NODE_CHILDREN.
+   Returns false on OOM. */
+static bool node_grow_children(Ca_Node *parent, uint32_t needed)
+{
+    if (needed <= parent->child_capacity) return true;
+    uint32_t cap = parent->child_capacity ? parent->child_capacity * 2u : 8u;
+    while (cap < needed) cap *= 2u;
+    if (cap > CA_MAX_NODE_CHILDREN) cap = CA_MAX_NODE_CHILDREN;
+    if (needed > cap) return false; /* hard cap exceeded */
+    Ca_Node **nc = (Ca_Node **)realloc(parent->children, cap * sizeof(Ca_Node *));
+    if (!nc) return false;
+    parent->children = nc;
+    parent->child_capacity = cap;
+    return true;
+}
+
 static Ca_Node *alloc_node(Ca_Window *win)
 {
     for (uint32_t i = 0; i < CA_MAX_NODES_PER_WINDOW; ++i) {
         Ca_Node *n = &win->node_pool[i];
         if (!n->in_use) {
             memset(n, 0, sizeof(*n));
+            /* children and child_capacity are zero-initialised by the
+               memset; the array is allocated lazily in node_grow_children. */
             n->draw_cmd_idx = -1;
             return n;
         }
@@ -157,6 +183,9 @@ static void free_subtree(Ca_Node *node)
         if (w->scrollbar_drag_node == node) w->scrollbar_drag_node = NULL;
     }
     release_widget(node);
+    /* Free the heap-allocated children pointer array (the child nodes
+       themselves were already freed by the recursive calls above). */
+    CA_FREE(node->children);
     memset(node, 0, sizeof(*node));
     node->draw_cmd_idx = -1;
 }
@@ -265,6 +294,11 @@ Ca_Node *ca_node_add(Ca_Node *parent, const Ca_NodeDesc *desc)
 
     if (parent->child_count >= CA_MAX_NODE_CHILDREN) {
         fprintf(stderr, "[causality] ca_node_add: child limit reached (%d)\n", CA_MAX_NODE_CHILDREN);
+        return NULL;
+    }
+
+    if (!node_grow_children(parent, parent->child_count + 1u)) {
+        fprintf(stderr, "[causality] ca_node_add: OOM growing children\n");
         return NULL;
     }
 
