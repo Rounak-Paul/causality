@@ -151,7 +151,12 @@ void ca_title_bar_init(Ca_Window *win)
        right so neither group is flush against the window chrome. */
      tb.padding_left  = TITLE_BAR_SIDE_PADDING_PX * sc_init;
      tb.padding_right = TITLE_BAR_SIDE_PADDING_PX * sc_init;
-    tb.background    = ca_color(0x16 / 255.0f, 0x16 / 255.0f, 0x1a / 255.0f, 1.0f);
+    /* Retro theme: raised panel face with top-light / bottom-shadow bevel */
+    tb.background       = ca_color(0x2a / 255.0f, 0x2a / 255.0f, 0x32 / 255.0f, 1.0f);
+    tb.border_top_w     = 2.0f * sc_init;
+    tb.border_top_c     = ca_color(0x4c / 255.0f, 0x4c / 255.0f, 0x58 / 255.0f, 1.0f);
+    tb.border_bottom_w  = 2.0f * sc_init;
+    tb.border_bottom_c  = ca_color(0x07 / 255.0f, 0x07 / 255.0f, 0x09 / 255.0f, 1.0f);
     tb.overflow_x    = 1; /* hidden */
     tb.overflow_y    = 1;
     Ca_Node *tbnode = ca_node_add(root, &tb);
@@ -206,9 +211,18 @@ void ca_title_bar_rebuild(Ca_Window *win)
     win->title_bar_node->dirty |= CA_DIRTY_LAYOUT;
 
     /* ---- Colours (self-contained — no CSS classes needed) ---- */
-    const uint32_t COL_TEXT_DIM = ca_color(0x4a/255.f, 0x4e/255.f, 0x6a/255.f, 1.0f);
-    const uint32_t COL_BTN      = ca_color(0x88/255.f, 0x90/255.f, 0xb0/255.f, 1.0f);
-    const uint32_t COL_CLOSE    = ca_color(0xff/255.f, 0x6b/255.f, 0x6b/255.f, 1.0f);
+    /* Retro palette: muted title text, mid-tone icons, soft-red close */
+    const uint32_t COL_TEXT_DIM  = ca_color(0x74/255.f, 0x74/255.f, 0x80/255.f, 1.0f);
+    const uint32_t COL_BTN       = ca_color(0xa0/255.f, 0xa0/255.f, 0xb0/255.f, 1.0f);
+    const uint32_t COL_CLOSE     = ca_color(0xc8/255.f, 0x60/255.f, 0x60/255.f, 1.0f);
+    /* Bevel system: raised face, highlight edge, shadow edge */
+    const uint32_t COL_FACE      = ca_color(0x2a/255.f, 0x2a/255.f, 0x32/255.f, 1.0f);
+    const uint32_t COL_BEVEL_HI  = ca_color(0x4c/255.f, 0x4c/255.f, 0x58/255.f, 1.0f);
+    const uint32_t COL_BEVEL_SH  = ca_color(0x07/255.f, 0x07/255.f, 0x09/255.f, 1.0f);
+    /* Menu dropdown theme */
+    const uint32_t COL_DROP_BG   = ca_color(0x22/255.f, 0x22/255.f, 0x28/255.f, 1.0f);
+    const uint32_t COL_DROP_SEL  = ca_color(0x18/255.f, 0x2e/255.f, 0x50/255.f, 1.0f);
+    const uint32_t COL_DROP_TEXT = ca_color(0xc8/255.f, 0xc8/255.f, 0xcc/255.f, 1.0f);
 
     /* ---- Left: optional menu bar ---- */
     if (win->titlebar_menu_count > 0) {
@@ -249,14 +263,17 @@ void ca_title_bar_rebuild(Ca_Window *win)
         }
 
         ca_menu_bar(&(Ca_MenuBarDesc){
-            .menus           = menu_descs,
-            .menu_count      = win->titlebar_menu_count,
-            .text_color      = COL_BTN,
-            .bar_height      = 22.0f * sc,
-            .item_padding_lr = 4.0f  * sc,
-            .item_font_size  = 12.0f,
-            /* dropdown_bg/border/hover/text intentionally omitted — defaults
-               from widget.c match the context-menu popup style. */
+            .menus            = menu_descs,
+            .menu_count       = win->titlebar_menu_count,
+            .text_color       = COL_BTN,
+            .header_highlight = COL_DROP_SEL,
+            .dropdown_bg      = COL_DROP_BG,
+            .dropdown_border  = COL_BEVEL_HI,
+            .dropdown_hover   = COL_DROP_SEL,
+            .dropdown_text    = COL_DROP_TEXT,
+            .bar_height       = 22.0f * sc,
+            .item_padding_lr  = 4.0f  * sc,
+            .item_font_size   = 12.0f,
         });
     }
 
@@ -289,47 +306,65 @@ void ca_title_bar_rebuild(Ca_Window *win)
     ctrl->desc.align_items = CA_ALIGN_CENTER;
     ctrl->dirty |= CA_DIRTY_LAYOUT;
 
+    /* Convenience macro: apply raised bevel to a button node */
+#define RETRO_BTN_BEVEL(btn_node) do { \
+    (btn_node)->desc.border_top_w    = 2.0f; \
+    (btn_node)->desc.border_top_c    = COL_BEVEL_HI; \
+    (btn_node)->desc.border_left_w   = 2.0f; \
+    (btn_node)->desc.border_left_c   = COL_BEVEL_HI; \
+    (btn_node)->desc.border_bottom_w = 2.0f; \
+    (btn_node)->desc.border_bottom_c = COL_BEVEL_SH; \
+    (btn_node)->desc.border_right_w  = 2.0f; \
+    (btn_node)->desc.border_right_c  = COL_BEVEL_SH; \
+    (btn_node)->dirty |= CA_DIRTY_LAYOUT; \
+} while(0)
+
     Ca_Button *min_btn = ca_btn_begin(&(Ca_BtnDesc){
         .text       = ICON_MINUS,
-        .width      = 22.0f,
-        .height     = 22.0f,
-        .background = 0,
+        .width      = 18.0f,
+        .height     = 16.0f,
+        .background = COL_FACE,
         .text_color = COL_BTN,
         .on_click   = on_minimize_click,
         .click_data = win,
     });
-    min_btn->node->desc.font_size  = 14.0f;
-    min_btn->node->desc.text_align = 1; /* center */
+    min_btn->node->desc.font_size  = 11.0f;
+    min_btn->node->desc.text_align = 1;
+    RETRO_BTN_BEVEL(min_btn->node);
     min_btn->node->dirty |= CA_DIRTY_CONTENT;
     ca_btn_end(); /* min btn */
 
     Ca_Button *max_btn = ca_btn_begin(&(Ca_BtnDesc){
         .text       = win->titlebar_maximized ? ICON_RESTORE : ICON_MAXIMIZE,
-        .width      = 22.0f,
-        .height     = 22.0f,
-        .background = 0,
+        .width      = 18.0f,
+        .height     = 16.0f,
+        .background = COL_FACE,
         .text_color = COL_BTN,
         .on_click   = on_maximize_click,
         .click_data = win,
     });
-    max_btn->node->desc.font_size  = 14.0f;
+    max_btn->node->desc.font_size  = 11.0f;
     max_btn->node->desc.text_align = 1;
+    RETRO_BTN_BEVEL(max_btn->node);
     max_btn->node->dirty |= CA_DIRTY_CONTENT;
     ca_btn_end(); /* max btn */
 
     Ca_Button *cls_btn = ca_btn_begin(&(Ca_BtnDesc){
         .text       = ICON_TIMES,
-        .width      = 22.0f,
-        .height     = 22.0f,
-        .background = 0,
+        .width      = 18.0f,
+        .height     = 16.0f,
+        .background = COL_FACE,
         .text_color = COL_CLOSE,
         .on_click   = on_close_click,
         .click_data = win,
     });
-    cls_btn->node->desc.font_size  = 14.0f;
+    cls_btn->node->desc.font_size  = 11.0f;
     cls_btn->node->desc.text_align = 1;
+    RETRO_BTN_BEVEL(cls_btn->node);
     cls_btn->node->dirty |= CA_DIRTY_CONTENT;
     ca_btn_end(); /* close btn */
+
+#undef RETRO_BTN_BEVEL
 
     ca_div_end(); /* controls */
 
