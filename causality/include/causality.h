@@ -132,10 +132,9 @@ CA_API const char *ca_clipboard_get_text(Ca_Window *window);
 CA_API void       ca_window_set_scale(Ca_Window *window, float scale);
 CA_API float      ca_window_get_scale(Ca_Window *window);
 
-/* Instance-wide default UI scale.  Every window created after this call
-   inherits the given scale automatically — no need to call
-   ca_window_set_scale() on each individual window.
-   Existing open windows are NOT retroactively rescaled.
+/* Instance-wide UI scale.  Every window created after this call inherits
+   the given scale automatically, and all existing open windows are rescaled.
+   There is no need to call ca_window_set_scale() on each individual window.
    Same clamping as ca_window_set_scale: [0.25, 4.0]. */
 CA_API void  ca_instance_set_scale(Ca_Instance *instance, float scale);
 CA_API float ca_instance_get_scale(const Ca_Instance *instance);
@@ -930,4 +929,3 @@ CA_API void ca_window_set_title_bar_menus(Ca_Window        *window,
 #ifdef __cplusplus
 }
 #endif
-

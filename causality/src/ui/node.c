@@ -52,8 +52,11 @@ void ca_node_system_shutdown(Ca_Window *win)
        ca_node_clear keeps arrays alive for reuse, so they are NOT freed
        by free_subtree and must be cleaned up here at shutdown. */
     if (win->node_pool) {
-        for (uint32_t i = 0; i < CA_MAX_NODES_PER_WINDOW; ++i)
+        for (uint32_t i = 0; i < CA_MAX_NODES_PER_WINDOW; ++i) {
+            if (win->node_pool[i].builder_effect)
+                ca_effect_destroy(win->node_pool[i].builder_effect);
             CA_FREE(win->node_pool[i].children);
+        }
     }
     CA_FREE(win->node_pool);
     CA_FREE(win->draw_cmds);
@@ -115,7 +118,7 @@ static bool node_grow_children(Ca_Node *parent, uint32_t needed)
     while (cap < needed) cap *= 2u;
     if (cap > CA_MAX_NODE_CHILDREN) cap = CA_MAX_NODE_CHILDREN;
     if (needed > cap) return false; /* hard cap exceeded */
-    Ca_Node **nc = (Ca_Node **)realloc(parent->children, cap * sizeof(Ca_Node *));
+    Ca_Node **nc = (Ca_Node **)CA_REALLOC(parent->children, cap * sizeof(Ca_Node *));
     if (!nc) return false;
     parent->children = nc;
     parent->child_capacity = cap;
@@ -173,6 +176,10 @@ static void free_subtree(Ca_Node *node)
     if (!node) return;
     for (uint32_t i = 0; i < node->child_count; ++i)
         free_subtree(node->children[i]);
+    if (node->builder_effect) {
+        ca_effect_destroy(node->builder_effect);
+        node->builder_effect = NULL;
+    }
     /* Clear any window-level pointers that reference this node, otherwise
        input handlers will dereference a freed slot next frame (UAF). */
     if (node->window) {
