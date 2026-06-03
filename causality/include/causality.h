@@ -640,7 +640,7 @@ CA_API void         ca_split_set_ratio(Ca_Splitter *s, float ratio);
      Ca_Image *img = ca_image_create(instance, pixels, 64, 64);
      ca_image(&(Ca_ImageDesc){ .image = img, .width = 64, .height = 64 });
 
-   Images are displayed as textured quads using the text pipeline.
+   Images are displayed as textured quads using the image pipeline.
    ============================================================ */
 
 typedef struct Ca_ImageDesc {
@@ -671,7 +671,7 @@ CA_API void ca_image(const Ca_ImageDesc *desc);
    for style resolution.
 
    Supported selectors:
-     - Type:       div, button, text, h1-h6, hr, spacer, list, li
+     - Type:       div, button, text, image, h1-h6, hr, spacer, list, li
      - Class:      .classname
      - Compound:   div.foo, .a.b
      - Descendant: .parent .child

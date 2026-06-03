@@ -2856,9 +2856,6 @@ void ca_image(const Ca_ImageDesc *desc)
     assert(g_ctx.active);
     if (!desc || !desc->image) return;
 
-    Ca_Node *parent = ctx_top();
-    if (!parent) return;
-
     Ca_Image *img = desc->image;
     float w = desc->width  > 0 ? s(desc->width)  : (float)img->width;
     float h = desc->height > 0 ? s(desc->height) : (float)img->height;
@@ -2868,14 +2865,19 @@ void ca_image(const Ca_ImageDesc *desc)
     nd.height = h;
     nd.corner_radius = s(desc->corner_radius);
 
-    Ca_Node *node = ca_node_add(parent, &nd);
+    const char *next_key = consume_next_key();
+    const char *id = next_key ? next_key : desc->id;
+    bool reused = false;
+    Ca_Node *node = claim_child(&nd, CA_WIDGET_IMAGE, CA_ELEM_IMAGE, id, &reused);
     if (!node) return;
 
+    if (reused && node->widget != (void *)img)
+        node->dirty |= CA_DIRTY_CONTENT;
     node->widget_type = CA_WIDGET_IMAGE;
     node->widget      = (void *)img;
 
-    if (desc->id)    snprintf(node->id, CA_NODE_ID_MAX, "%s", desc->id);
-    if (desc->style) snprintf(node->classes, CA_NODE_CLASS_MAX, "%s", desc->style);
+    uint32_t dummy = 0;
+    apply_css(node, &node->desc, CA_ELEM_IMAGE, desc->style, id, &dummy);
 }
 
 /* ============================================================
