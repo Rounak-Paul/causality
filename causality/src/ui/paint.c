@@ -656,7 +656,12 @@ static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, Cli
 /* Paint scrollbar overlays for a node (post-children, so they draw on top). */
 static void paint_scrollbars(Ca_Window *win, Ca_Node *node, ClipRect clip)
 {
-    /* ---- Y scrollbar (retro chunky style) ---- */
+    /* Scrollbars are painted as overlay so they appear on top of child
+       text glyphs.  The renderer draws all rects before all glyphs within
+       each phase; using phase 0 for the scrollbar rects would let every
+       glyph in the scroll container render over them.  Marking them
+       overlay = true puts them in phase 1, after all phase-0 glyphs. */
+    uint32_t sb_first = win->draw_cmd_count;
     if (node->desc.overflow_y >= 2 && node->content_h > node->h) {
         float bar_w   = 14.0f;
         float track_h = node->h;
@@ -772,6 +777,13 @@ static void paint_scrollbars(Ca_Window *win, Ca_Node *node, ClipRect clip)
             set_clip(cmd, clip);
         }
     }
+
+    /* Mark every scrollbar command as overlay so they render in phase 1,
+       after all phase-0 text glyphs that belong to the scroll container's
+       children.  Without this the renderer draws all rects (incl. scrollbar)
+       first and then all glyphs last, so child text paints over the bar. */
+    for (uint32_t si = sb_first; si < win->draw_cmd_count; ++si)
+        win->draw_cmds[si].overlay = true;
 }
 
 /* Helper: glyph advance for a codepoint */
