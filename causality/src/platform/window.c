@@ -109,15 +109,33 @@ static void glfw_scroll_cb(GLFWwindow *glfw, double dx, double dy)
 static void glfw_window_size_cb(GLFWwindow *glfw, int width, int height)
 {
     Ca_Window *win = (Ca_Window *)glfwGetWindowUserPointer(glfw);
+    if (!win) return;
+
     Ca_Event ev;
     ev.type          = CA_EVENT_WINDOW_RESIZE;
     ev.window        = win;
     ev.resize.width  = width;
     ev.resize.height = height;
     ca_event_post(win->instance, &ev);
-    /* Immediately rebuild swapchain so it's ready for the next frame */
-    ca_renderer_window_resize(win->instance, win, width, height);
+
+    /* GLFW window size is in logical screen coordinates. Vulkan swapchains
+       must track framebuffer pixels, otherwise maximized/HiDPI windows can
+       be compositor-scaled and the UI appears blurred. */
+    int fb_w = 0, fb_h = 0;
+    glfwGetFramebufferSize(glfw, &fb_w, &fb_h);
+    ca_renderer_window_resize(win->instance, win, fb_w, fb_h);
+
     /* Mark the root layout-dirty so ui_update re-flows and repaints */
+    if (win->root)
+        win->root->dirty |= CA_DIRTY_LAYOUT | CA_DIRTY_CONTENT;
+}
+
+static void glfw_framebuffer_size_cb(GLFWwindow *glfw, int width, int height)
+{
+    Ca_Window *win = (Ca_Window *)glfwGetWindowUserPointer(glfw);
+    if (!win) return;
+
+    ca_renderer_window_resize(win->instance, win, width, height);
     if (win->root)
         win->root->dirty |= CA_DIRTY_LAYOUT | CA_DIRTY_CONTENT;
 }
@@ -263,6 +281,7 @@ static Ca_Window *window_create_in_slot(Ca_Instance *inst, const Ca_WindowDesc *
     glfwSetCursorEnterCallback(glfw, glfw_cursor_enter_cb);
     glfwSetScrollCallback(glfw, glfw_scroll_cb);
     glfwSetWindowSizeCallback(glfw, glfw_window_size_cb);
+    glfwSetFramebufferSizeCallback(glfw, glfw_framebuffer_size_cb);
 
     /* Boot surface + swapchain (renderer must already be initialised) */
     if (inst->vk_device != VK_NULL_HANDLE) {
@@ -527,4 +546,3 @@ const char *ca_clipboard_get_text(Ca_Window *window)
     if (!window || !window->glfw) return NULL;
     return glfwGetClipboardString(window->glfw);
 }
-

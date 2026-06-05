@@ -459,6 +459,12 @@ void ca_renderer_window_shutdown(Ca_Instance *inst, Ca_Window *win)
 bool ca_renderer_window_resize(Ca_Instance *inst, Ca_Window *win, int w, int h)
 {
     if (w == 0 || h == 0) return true; /* minimised */
+    if (!inst || !win) return false;
+    if (win->sc.swapchain != VK_NULL_HANDLE &&
+        win->sc.extent.width  == (uint32_t)w &&
+        win->sc.extent.height == (uint32_t)h) {
+        return true;
+    }
     vkDeviceWaitIdle(inst->vk_device);
     ca_swapchain_destroy(inst, win);
     return ca_swapchain_create(inst, win, (uint32_t)w, (uint32_t)h);
