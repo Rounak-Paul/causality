@@ -29,7 +29,7 @@
 #define CA_FONT_STYLE_COUNT    2    /* regular=0, bold=1 */
 #define CA_FONT_STYLE_REGULAR  0
 #define CA_FONT_STYLE_BOLD     1
-#define CA_FONT_MAX_SIZES     12    /* maximum distinct baked sizes in one atlas */
+#define CA_FONT_MAX_SIZES     20    /* maximum distinct baked sizes in one atlas */
 #define CA_FONT_DEFAULT_SIZE_PX 12.0f /* default logical size; also the ONE size
                                          at which all icon/Nerd-Font ranges are
                                          baked — text-only tiers fall back to this
@@ -126,30 +126,48 @@ static inline Ca_FontTier *ca_font_select_tier(Ca_Font *font, bool bold)
    is not found in this tier (e.g. an icon in a text-only tier), the lookup
    transparently retries on icon_fallback so callers never need to know which
    size has the full icon ranges baked. */
-static inline Ca_Glyph *ca_font_glyph(Ca_FontTier *tier, uint32_t cp)
+static inline Ca_Glyph *ca_font_glyph_from_tier(Ca_FontTier *tier, uint32_t cp,
+                                                Ca_FontTier **out_tier)
 {
     for (int i = 0; i < CA_FONT_RANGE_COUNT; i++) {
         Ca_GlyphRange *r = &tier->ranges[i];
         if (r->num_chars > 0 &&
             cp >= (uint32_t)r->first_codepoint &&
-            cp <  (uint32_t)(r->first_codepoint + r->num_chars))
+            cp <  (uint32_t)(r->first_codepoint + r->num_chars)) {
+            if (out_tier) *out_tier = tier;
             return &r->chardata[cp - r->first_codepoint];
+        }
     }
     /* Not found — try the icon fallback tier (covers icon codepoints not
-       baked into this text-only tier).  The glyph's baked-pixel coordinates
-       are from CA_FONT_DEFAULT_SIZE_PX, but the caller's font_scale
-       (desired/tier->logical_px) scales it to the correct visual size. */
+       baked into this text-only tier).  Callers that scale glyphs must use
+       out_tier: fallback glyph metrics come from CA_FONT_DEFAULT_SIZE_PX, not
+       from the originally selected text tier. */
     if (tier->icon_fallback) {
         Ca_FontTier *fb = tier->icon_fallback;
         for (int i = 0; i < CA_FONT_RANGE_COUNT; i++) {
             Ca_GlyphRange *r = &fb->ranges[i];
             if (r->num_chars > 0 &&
                 cp >= (uint32_t)r->first_codepoint &&
-                cp <  (uint32_t)(r->first_codepoint + r->num_chars))
+                cp <  (uint32_t)(r->first_codepoint + r->num_chars)) {
+                if (out_tier) *out_tier = fb;
                 return &r->chardata[cp - r->first_codepoint];
+            }
         }
     }
     return NULL;
+}
+
+static inline Ca_Glyph *ca_font_glyph(Ca_FontTier *tier, uint32_t cp)
+{
+    return ca_font_glyph_from_tier(tier, cp, NULL);
+}
+
+static inline float ca_font_glyph_cs_eff(Ca_FontTier *glyph_tier,
+                                         float desired_size,
+                                         float content_scale_over_ui_scale)
+{
+    float font_scale = desired_size / glyph_tier->logical_px;
+    return content_scale_over_ui_scale / font_scale;
 }
 
 /* Compute a glyph quad from a Ca_Glyph record.

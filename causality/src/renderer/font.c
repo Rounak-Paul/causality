@@ -54,12 +54,16 @@ static const struct { int first; int count; } g_range_defs[CA_FONT_RANGE_COUNT] 
     { 0xF000, 737 },   /* Font Awesome                (F000-F2E0) */
 };
 
-/* Standard set of logical pixel sizes baked into the atlas at startup.
-   Sizes <= CA_FONT_ICON_THRESHOLD_PX get all 6 Nerd-Font ranges;
-   larger sizes get the text-only range (ASCII+Latin-1) to keep atlas
-   consumption bounded even on 2× HiDPI displays.                     */
+/* Standard set of visual pixel sizes baked into the atlas at startup.
+   Rendering asks for css_font_size * ui_scale, so this list deliberately
+   includes larger zoom targets instead of forcing a 2x/3x UI scale to
+   magnify a small glyph bitmap.  Only the default tier gets the full icon
+   ranges; larger tiers are text-only and fall back for icons.          */
 static const float g_std_sizes[] = {
-    10.0f, 12.0f, 14.0f, 16.0f, 18.0f, 20.0f, 22.0f, 24.0f, 28.0f
+     8.0f, 10.0f, 12.0f, 14.0f, 16.0f,
+    18.0f, 20.0f, 22.0f, 24.0f, 28.0f,
+    32.0f, 36.0f, 40.0f, 48.0f, 56.0f,
+    64.0f, 72.0f, 84.0f, 96.0f, 112.0f
 };
 static const int g_std_sizes_count =
     (int)(sizeof(g_std_sizes) / sizeof(g_std_sizes[0]));

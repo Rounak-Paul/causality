@@ -32,6 +32,16 @@
 
 #include <GLFW/glfw3.h>
 
+static float glyph_adv(Ca_FontTier *tier, uint32_t cp,
+                       float cs, float desired_size)
+{
+    Ca_FontTier *glyph_tier = tier;
+    Ca_Glyph *g = ca_font_glyph_from_tier(tier, cp, &glyph_tier);
+    if (!g) return 0.0f;
+    float cs_eff = ca_font_glyph_cs_eff(glyph_tier, desired_size, cs);
+    return g->xadvance / cs_eff;
+}
+
 /* Measure the pixel width of a text string using the instance font.
    Returns 0 if no font is available. */
 static float measure_text_px(Ca_Window *win, const char *text)
@@ -42,14 +52,11 @@ static float measure_text_px(Ca_Window *win, const char *text)
     float ui_s = win->ui_scale > 0.0f ? win->ui_scale : 1.0f;
     float cs   = font->content_scale / ui_s;
     Ca_FontTier *tier = ca_font_tier(font, font->default_size * ui_s);
-    float fs     = font->default_size / tier->logical_px;
-    float cs_eff = cs / fs;
     float w = 0.0f;
     const char *p = text;
     while (*p) {
         uint32_t cp = ca_utf8_decode(&p);
-        Ca_Glyph *pc = ca_font_glyph(tier, cp);
-        if (pc) w += pc->xadvance / cs_eff;
+        w += glyph_adv(tier, cp, cs, font->default_size);
     }
     return w;
 }
@@ -59,10 +66,8 @@ static float measure_text_px(Ca_Window *win, const char *text)
    point size (e.g. a 12 px editor buffer when the UI default is 14) can
    still get an accurate pixel width.
 
-   Math derivation: paint_text scales advances by `cs / font_scale`,
-   where font_scale = desired_size / tier->logical_px. So the on-screen
-   advance per logical glyph is `pc->xadvance * desired_size / (cs *
-   tier->logical_px)`. We sum that across the string. */
+   Icon glyphs may come from the default-size fallback tier, so each glyph
+   computes its advance from the tier that actually supplied it. */
 float ca_measure_text_px(Ca_Window *win, const char *text, float font_size)
 {
     if (!win || !text || text[0] == '\0') return 0.0f;
@@ -72,14 +77,11 @@ float ca_measure_text_px(Ca_Window *win, const char *text, float font_size)
     float cs   = font->content_scale / ui_s;
     float desired = font_size > 0.0f ? font_size : font->default_size;
     Ca_FontTier *tier = ca_font_tier(font, desired * ui_s);
-    float font_scale = desired / tier->logical_px;
-    float cs_eff = cs / font_scale;
     float w = 0.0f;
     const char *p = text;
     while (*p) {
         uint32_t cp = ca_utf8_decode(&p);
-        Ca_Glyph *pc = ca_font_glyph(tier, cp);
-        if (pc) w += pc->xadvance / cs_eff;
+        w += glyph_adv(tier, cp, cs, desired);
     }
     return w;
 }
@@ -3284,6 +3286,7 @@ void ca_widget_input_pass(Ca_Window *win)
 {
     float mx = (float)win->mouse_x;
     float my = (float)win->mouse_y;
+    float ui_s = win->ui_scale > 0.0f ? win->ui_scale : 1.0f;
     bool left_down = win->mouse_buttons[0];
 
     /* --- Scrollbar drag handling ---
@@ -3298,9 +3301,9 @@ void ca_widget_input_pass(Ca_Window *win)
          thumb: size proportional to viewport/content, min 20px
     */
     if (win->node_pool) {
-        static const float SB_BAR_W  = 14.0f;
-        static const float SB_MARGIN = 0.0f;
-        static const float SB_HIT_EXPAND = 2.0f;
+        const float SB_BAR_W  = 14.0f * ui_s;
+        const float SB_MARGIN = 0.0f;
+        const float SB_HIT_EXPAND = 2.0f * ui_s;
 
         /* --- Start drag on mouse-click in a scrollbar region --- */
         if (left_down && win->mouse_click_this_frame && !win->scrollbar_drag_node) {
@@ -3354,7 +3357,7 @@ void ca_widget_input_pass(Ca_Window *win)
                     float track_h  = best->h;
                     float ratio    = best->h / best->content_h;
                     float thumb_h  = track_h * ratio;
-                    if (thumb_h < 20.0f) thumb_h = 20.0f;
+                    if (thumb_h < 20.0f * ui_s) thumb_h = 20.0f * ui_s;
                     if (thumb_h > track_h) thumb_h = track_h;
                     float max_s    = best->content_h - best->h;
                     float pct      = (max_s > 0.0f) ? best->scroll_y / max_s : 0.0f;
@@ -3369,7 +3372,7 @@ void ca_widget_input_pass(Ca_Window *win)
                     float track_w  = best->w;
                     float ratio    = best->w / best->content_w;
                     float thumb_w  = track_w * ratio;
-                    if (thumb_w < 20.0f) thumb_w = 20.0f;
+                    if (thumb_w < 20.0f * ui_s) thumb_w = 20.0f * ui_s;
                     if (thumb_w > track_w) thumb_w = track_w;
                     float max_s    = best->content_w - best->w;
                     float pct      = (max_s > 0.0f) ? best->scroll_x / max_s : 0.0f;
@@ -3389,7 +3392,7 @@ void ca_widget_input_pass(Ca_Window *win)
                 float track_h = n->h;
                 float ratio   = n->h / n->content_h;
                 float thumb_h = track_h * ratio;
-                if (thumb_h < 20.0f) thumb_h = 20.0f;
+                if (thumb_h < 20.0f * ui_s) thumb_h = 20.0f * ui_s;
                 if (thumb_h > track_h) thumb_h = track_h;
                 float travel  = track_h - thumb_h;
                 float thumb_y = my - win->scrollbar_drag_grab;
@@ -3408,7 +3411,7 @@ void ca_widget_input_pass(Ca_Window *win)
                 float track_w = n->w;
                 float ratio   = n->w / n->content_w;
                 float thumb_w = track_w * ratio;
-                if (thumb_w < 20.0f) thumb_w = 20.0f;
+                if (thumb_w < 20.0f * ui_s) thumb_w = 20.0f * ui_s;
                 if (thumb_w > track_w) thumb_w = track_w;
                 float travel  = track_w - thumb_w;
                 float thumb_x = mx - win->scrollbar_drag_grab;
@@ -3438,7 +3441,7 @@ void ca_widget_input_pass(Ca_Window *win)
 
     /* --- Scroll wheel handling (skipped if dragging scrollbar) --- */
     if (win->scroll_this_frame && win->node_pool && !win->scrollbar_drag_node) {
-        static const float SCROLL_SPEED = 30.0f;
+        const float SCROLL_SPEED = 30.0f * ui_s;
 
         /* First: if any select dropdown is open and the cursor is over it, scroll its list */
         bool select_scroll_consumed = false;
@@ -3580,14 +3583,14 @@ void ca_widget_input_pass(Ca_Window *win)
             Ca_MenuBarMenu *am = &mb->menus[mb->active_menu];
             Ca_Node *hdr = am->header_node;
             if (!hdr) continue;
-            const float sep_h = 8.0f;
-            float item_h = 24.0f;
-            float menu_w = 180.0f;
+            const float sep_h = 8.0f * ui_s;
+            float item_h = 24.0f * ui_s;
+            float menu_w = 180.0f * ui_s;
             float drop_x = hdr->x;
             float drop_y = hdr->y + hdr->h;
             int new_sub  = -1;
             /* Hover over a sub-menu-capable item opens it */
-            float iy = drop_y + 3.0f; /* 3px top inset — matches paint pass */
+            float iy = drop_y + 3.0f * ui_s; /* 3px top inset — matches paint pass */
             for (int ii = 0; ii < am->item_count; ++ii) {
                 float this_h = am->items[ii].separator ? sep_h : item_h;
                 if (am->items[ii].sub_item_count > 0 &&
@@ -3601,12 +3604,12 @@ void ca_widget_input_pass(Ca_Window *win)
             /* Keep sub open when mouse is inside the sub-panel */
             if (new_sub < 0 && am->active_sub >= 0) {
                 int   asi   = am->active_sub;
-                float sub_w = 180.0f;
+                float sub_w = 180.0f * ui_s;
                 float sub_x = drop_x + menu_w;
                 float sub_y = drop_y;
                 for (int jj = 0; jj < asi; ++jj)
                     sub_y += am->items[jj].separator ? sep_h : item_h;
-                float sub_h = item_h * (float)am->items[asi].sub_item_count + 6.0f;
+                float sub_h = item_h * (float)am->items[asi].sub_item_count + 6.0f * ui_s;
                 if (mx >= sub_x && mx <= sub_x + sub_w &&
                     my >= sub_y && my <= sub_y + sub_h)
                     new_sub = asi;
@@ -3628,9 +3631,9 @@ void ca_widget_input_pass(Ca_Window *win)
                 Ca_MenuBarMenu *am = &mb->menus[mb->active_menu];
                 Ca_Node *hdr = am->header_node;
                 if (hdr) {
-                    const float sep_h = 8.0f;
-                    float item_h = 24.0f;
-                    float menu_w = 180.0f;
+                    const float sep_h = 8.0f * ui_s;
+                    float item_h = 24.0f * ui_s;
+                    float menu_w = 180.0f * ui_s;
                     float drop_x = hdr->x;
                     float drop_y = hdr->y + hdr->h;
                     bool item_hit = false;
@@ -3639,10 +3642,10 @@ void ca_widget_input_pass(Ca_Window *win)
                     bool sub_hit = false;
                     if (am->active_sub >= 0) {
                         int   asi        = am->active_sub;
-                        float sub_item_h = 24.0f;
-                        float sub_w      = 180.0f;
+                        float sub_item_h = 24.0f * ui_s;
+                        float sub_w      = 180.0f * ui_s;
                         float sub_x      = drop_x + menu_w;
-                        float sub_y      = drop_y + 3.0f; /* 3px top inset — matches paint pass */
+                        float sub_y      = drop_y + 3.0f * ui_s; /* 3px top inset — matches paint pass */
                         for (int jj = 0; jj < asi; ++jj)
                             sub_y += am->items[jj].separator ? sep_h : item_h;
                         for (int si = 0; si < am->items[asi].sub_item_count; ++si) {
@@ -3663,7 +3666,7 @@ void ca_widget_input_pass(Ca_Window *win)
                     }
 
                     if (!sub_hit) {
-                        float iy = drop_y + 3.0f; /* 3px top inset — matches paint pass */
+                        float iy = drop_y + 3.0f * ui_s; /* 3px top inset — matches paint pass */
                         for (int ii = 0; ii < am->item_count; ++ii) {
                             float this_h = am->items[ii].separator ? sep_h : item_h;
                             if (mx >= drop_x && mx <= drop_x + menu_w &&
@@ -3721,15 +3724,15 @@ void ca_widget_input_pass(Ca_Window *win)
                item we fire the callback and consume the event; if it lands
                outside we just close the menu without consuming, so the click
                can still reach the tree node / button underneath. */
-            static const float CTX_ITEM_H = 24.0f;
-            static const float CTX_SEP_H  =  8.0f;
-            static const float CTX_MENU_W = 180.0f;
+            const float CTX_ITEM_H = 24.0f * ui_s;
+            const float CTX_SEP_H  =  8.0f * ui_s;
+            const float CTX_MENU_W = 180.0f * ui_s;
             for (uint32_t i = 0; i < CA_MAX_CTXMENUS_PER_WINDOW; ++i) {
                 Ca_CtxMenu *cm = &win->ctxmenu_pool[i];
                 if (!cm->in_use || !cm->open) continue;
 
                 /* Compute menu height (mirrors paint.c logic) */
-                float menu_h = 6.0f; /* top + bottom inset */
+                float menu_h = 6.0f * ui_s; /* top + bottom inset */
                 for (int mi = 0; mi < cm->item_count; ++mi) {
                     bool is_sep = (cm->items[mi][0] == '-' && cm->items[mi][1] == '\0');
                     menu_h += is_sep ? CTX_SEP_H : CTX_ITEM_H;
@@ -3752,7 +3755,7 @@ void ca_widget_input_pass(Ca_Window *win)
                 if (cm->node) cm->node->dirty |= CA_DIRTY_CONTENT;
 
                 if (inside_menu) {
-                    float iy = my_pos + 3.0f; /* top inset (mirrors paint) */
+                    float iy = my_pos + 3.0f * ui_s; /* top inset (mirrors paint) */
                     for (int mi = 0; mi < cm->item_count; ++mi) {
                         bool is_sep = (cm->items[mi][0] == '-' && cm->items[mi][1] == '\0');
                         float this_h = is_sep ? CTX_SEP_H : CTX_ITEM_H;
@@ -4269,14 +4272,14 @@ void ca_widget_input_pass(Ca_Window *win)
 
     /* Ca_CtxMenu open */
     if (!over_overlay && win->ctxmenu_pool) {
-        const float cm_item_h = 24.0f;
-        const float cm_sep_h  =  8.0f;
-        const float cm_menu_w = 180.0f;
+        const float cm_item_h = 24.0f * ui_s;
+        const float cm_sep_h  =  8.0f * ui_s;
+        const float cm_menu_w = 180.0f * ui_s;
         for (uint32_t i = 0; i < CA_MAX_CTXMENUS_PER_WINDOW && !over_overlay; ++i) {
             Ca_CtxMenu *cm = &win->ctxmenu_pool[i];
             if (!cm->in_use || !cm->open) continue;
             if (cm->node && node_is_ancestor_hidden(cm->node)) continue;
-            float menu_h = 6.0f;
+            float menu_h = 6.0f * ui_s;
             for (int mi = 0; mi < cm->item_count; ++mi) {
                 bool is_sep = (cm->items[mi][0] == '-' && cm->items[mi][1] == '\0');
                 menu_h += is_sep ? cm_sep_h : cm_item_h;
@@ -4295,9 +4298,9 @@ void ca_widget_input_pass(Ca_Window *win)
 
     /* Ca_MenuBar active dropdown (and sub-menu) */
     if (!over_overlay && win->menubar_pool) {
-        const float mb_item_h = 24.0f;
-        const float mb_sep_h  =  8.0f;
-        const float mb_menu_w = 180.0f;
+        const float mb_item_h = 24.0f * ui_s;
+        const float mb_sep_h  =  8.0f * ui_s;
+        const float mb_menu_w = 180.0f * ui_s;
         for (uint32_t i = 0; i < CA_MAX_MENUBARS_PER_WINDOW && !over_overlay; ++i) {
             Ca_MenuBar *mb = &win->menubar_pool[i];
             if (!mb->in_use || mb->active_menu < 0) continue;
@@ -4305,7 +4308,7 @@ void ca_widget_input_pass(Ca_Window *win)
             Ca_Node *hdr = am->header_node;
             if (!hdr) continue;
             float drop_x = hdr->x, drop_y = hdr->y + hdr->h;
-            float menu_h = 6.0f;
+            float menu_h = 6.0f * ui_s;
             for (int ii = 0; ii < am->item_count; ++ii)
                 menu_h += am->items[ii].separator ? mb_sep_h : mb_item_h;
             if (mx >= drop_x && mx <= drop_x + mb_menu_w &&
@@ -4317,7 +4320,7 @@ void ca_widget_input_pass(Ca_Window *win)
                 float sub_y = drop_y;
                 for (int jj = 0; jj < am->active_sub; ++jj)
                     sub_y += am->items[jj].separator ? mb_sep_h : mb_item_h;
-                float sub_h = mb_item_h * (float)am->items[am->active_sub].sub_item_count + 6.0f;
+                float sub_h = mb_item_h * (float)am->items[am->active_sub].sub_item_count + 6.0f * ui_s;
                 if (mx >= sub_x && mx <= sub_x + mb_menu_w &&
                     my >= sub_y  && my <= sub_y + sub_h)
                     over_overlay = true;

@@ -126,16 +126,17 @@ CA_API bool       ca_window_is_open(const Ca_Window *window);
 CA_API void        ca_clipboard_set_text(Ca_Window *window, const char *text);
 CA_API const char *ca_clipboard_get_text(Ca_Window *window);
 
-/* UI scale factor — like browser zoom.
-   1.0 = 100% (default), 1.5 = 150%, 2.0 = 200%, etc.
-   Affects all widget sizes, paddings, gaps, and text rendering. */
+/* Compatibility aliases for instance-wide UI scale.  Causality intentionally
+   has one global UI scale per instance; calling this on any window updates
+   every open window and the scale inherited by future windows. */
 CA_API void       ca_window_set_scale(Ca_Window *window, float scale);
 CA_API float      ca_window_get_scale(Ca_Window *window);
 
-/* Instance-wide UI scale.  Every window created after this call inherits
-   the given scale automatically, and all existing open windows are rescaled.
-   There is no need to call ca_window_set_scale() on each individual window.
-   Same clamping as ca_window_set_scale: [0.25, 4.0]. */
+/* Instance-wide UI scale — like browser zoom.
+   1.0 = 100% (default), 1.5 = 150%, 2.0 = 200%, etc.
+   Affects all widget sizes, paddings, gaps, and text rendering.
+   Every existing open window is rescaled, and every future window inherits
+   the same value.  Clamped to [0.25, 4.0]. */
 CA_API void  ca_instance_set_scale(Ca_Instance *instance, float scale);
 CA_API float ca_instance_get_scale(const Ca_Instance *instance);
 

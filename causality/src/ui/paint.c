@@ -165,6 +165,7 @@ static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, Cli
 {
     if (!node->in_use) return;
     if (node->desc.hidden) return;
+    float ui_s = win->ui_scale > 0.0f ? win->ui_scale : 1.0f;
 
     /* Record starting draw cmd index so we can apply disabled dim after. */
     uint32_t cmd_start = win->draw_cmd_count;
@@ -285,7 +286,7 @@ static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, Cli
         Ca_Checkbox *cb = (Ca_Checkbox *)node->widget;
         if (!cb || !cb->in_use) break;
         float bs = node->h * 0.8f;
-        float bx = node->x + 1.0f;
+        float bx = node->x + 1.0f * ui_s;
         float by = node->y + (node->h - bs) * 0.5f;
         /* Box background */
         if (win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
@@ -293,7 +294,7 @@ static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, Cli
             memset(c, 0, sizeof(*c));
             c->type = CA_DRAW_RECT;
             c->x = bx; c->y = by; c->w = bs; c->h = bs;
-            c->corner_radius = 3.0f;
+            c->corner_radius = 3.0f * ui_s;
             if (cb->checked) { float _r, _g, _b, _a; unpack_color(CA_THEME_ACCENT,     &_r, &_g, &_b, &_a); c->r = _r; c->g = _g; c->b = _b; c->a = _a; }
             else             { float _r, _g, _b, _a; unpack_color(CA_THEME_BG_OVERLAY, &_r, &_g, &_b, &_a); c->r = _r; c->g = _g; c->b = _b; c->a = _a; }
             c->in_use = true;
@@ -318,8 +319,8 @@ static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, Cli
         /* Label text */
         if (cb->text[0]) {
             Ca_Node tn = *node;
-            tn.x = bx + bs + 6.0f;
-            tn.w = node->w - bs - 6.0f;
+            tn.x = bx + bs + 6.0f * ui_s;
+            tn.w = node->w - bs - 6.0f * ui_s;
             paint_text(win, font, &tn, cb->text, cb->text_color);
         }
         break;
@@ -328,7 +329,7 @@ static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, Cli
         Ca_Radio *r = (Ca_Radio *)node->widget;
         if (!r || !r->in_use) break;
         float bs = node->h * 0.8f;
-        float bx = node->x + 1.0f;
+        float bx = node->x + 1.0f * ui_s;
         float by = node->y + (node->h - bs) * 0.5f;
         /* Outer circle */
         if (win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
@@ -356,8 +357,8 @@ static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, Cli
         /* Label text */
         if (r->text[0]) {
             Ca_Node tn = *node;
-            tn.x = bx + bs + 6.0f;
-            tn.w = node->w - bs - 6.0f;
+            tn.x = bx + bs + 6.0f * ui_s;
+            tn.w = node->w - bs - 6.0f * ui_s;
             paint_text(win, font, &tn, r->text, r->text_color);
         }
         break;
@@ -365,7 +366,7 @@ static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, Cli
     case CA_WIDGET_SLIDER: {
         Ca_Slider *sl = (Ca_Slider *)node->widget;
         if (!sl || !sl->in_use) break;
-        float track_h = 4.0f;
+        float track_h = 4.0f * ui_s;
         float track_y = node->y + (node->h - track_h) * 0.5f;
         float pct = (sl->max_val > sl->min_val)
             ? (sl->value - sl->min_val) / (sl->max_val - sl->min_val) : 0;
@@ -375,7 +376,7 @@ static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, Cli
             memset(c, 0, sizeof(*c));
             c->type = CA_DRAW_RECT;
             c->x = node->x; c->y = track_y; c->w = node->w; c->h = track_h;
-            c->corner_radius = 2.0f;
+            c->corner_radius = 2.0f * ui_s;
             { float _r, _g, _b, _a; unpack_color(CA_THEME_BG_SURFACE, &_r, &_g, &_b, &_a); c->r = _r; c->g = _g; c->b = _b; c->a = _a; }
             c->in_use = true;
         }
@@ -386,13 +387,13 @@ static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, Cli
             memset(c, 0, sizeof(*c));
             c->type = CA_DRAW_RECT;
             c->x = node->x; c->y = track_y; c->w = fill_w; c->h = track_h;
-            c->corner_radius = 2.0f;
+            c->corner_radius = 2.0f * ui_s;
             { float _r, _g, _b, _a; unpack_color(CA_THEME_ACCENT, &_r, &_g, &_b, &_a); c->r = _r; c->g = _g; c->b = _b; c->a = _a; }
             c->in_use = true;
         }
         /* Thumb */
         if (win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
-            float thumb_sz = 14.0f;
+            float thumb_sz = 14.0f * ui_s;
             float tx = node->x + fill_w - thumb_sz * 0.5f;
             float ty = node->y + (node->h - thumb_sz) * 0.5f;
             Ca_DrawCmd *c = &win->draw_cmds[win->draw_cmd_count++];
@@ -421,7 +422,7 @@ static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, Cli
         }
         /* Thumb */
         if (win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
-            float inset = 2.0f;
+            float inset = 2.0f * ui_s;
             float thumb_d = node->h - inset * 2;
             float tx = t->on ? (node->x + node->w - thumb_d - inset) : (node->x + inset);
             Ca_DrawCmd *c = &win->draw_cmds[win->draw_cmd_count++];
@@ -662,12 +663,13 @@ static void paint_scrollbars(Ca_Window *win, Ca_Node *node, ClipRect clip)
        glyph in the scroll container render over them.  Marking them
        overlay = true puts them in phase 1, after all phase-0 glyphs. */
     uint32_t sb_first = win->draw_cmd_count;
+    float ui_s = win->ui_scale > 0.0f ? win->ui_scale : 1.0f;
     if (node->desc.overflow_y >= 2 && node->content_h > node->h) {
-        float bar_w   = 14.0f;
+        float bar_w   = 14.0f * ui_s;
         float track_h = node->h;
         float ratio   = node->h / node->content_h;
         float thumb_h = track_h * ratio;
-        if (thumb_h < 20.0f) thumb_h = 20.0f;
+        if (thumb_h < 20.0f * ui_s) thumb_h = 20.0f * ui_s;
         if (thumb_h > track_h) thumb_h = track_h;
 
         float max_scroll = node->content_h - node->h;
@@ -708,7 +710,7 @@ static void paint_scrollbars(Ca_Window *win, Ca_Node *node, ClipRect clip)
         /* Per-side bevel borders on the thumb */
         /* top+left highlight */
         if (win->draw_cmd_count + 4 <= CA_MAX_DRAW_CMDS_PER_WINDOW) {
-            float bw = 2.0f;
+            float bw = 2.0f * ui_s;
             uint32_t hi = ca_color(0x4c/255.f, 0x4c/255.f, 0x58/255.f, 1.0f);
             uint32_t sh = ca_color(0x07/255.f, 0x07/255.f, 0x09/255.f, 1.0f);
             /* top */
@@ -731,12 +733,12 @@ static void paint_scrollbars(Ca_Window *win, Ca_Node *node, ClipRect clip)
     }
     /* ---- X scrollbar ---- */
     if (node->desc.overflow_x >= 2 && node->content_w > node->w) {
-        float bar_h   = 6.0f;
-        float margin  = 2.0f;
+        float bar_h   = 6.0f * ui_s;
+        float margin  = 2.0f * ui_s;
         float track_w = node->w - margin * 2;
         float ratio   = node->w / node->content_w;
         float thumb_w = track_w * ratio;
-        if (thumb_w < 16.0f) thumb_w = 16.0f;
+        if (thumb_w < 16.0f * ui_s) thumb_w = 16.0f * ui_s;
         if (thumb_w > track_w) thumb_w = track_w;
 
         float max_scroll = node->content_w - node->w;
@@ -787,10 +789,14 @@ static void paint_scrollbars(Ca_Window *win, Ca_Node *node, ClipRect clip)
 }
 
 /* Helper: glyph advance for a codepoint */
-static inline float glyph_adv(Ca_FontTier *tier, uint32_t cp, float cs_eff)
+static inline float glyph_adv(Ca_FontTier *tier, uint32_t cp,
+                              float cs, float desired_size)
 {
-    Ca_Glyph *g = ca_font_glyph(tier, cp);
-    return g ? g->xadvance / cs_eff : 0.0f;
+    Ca_FontTier *glyph_tier = tier;
+    Ca_Glyph *g = ca_font_glyph_from_tier(tier, cp, &glyph_tier);
+    if (!g) return 0.0f;
+    float cs_eff = ca_font_glyph_cs_eff(glyph_tier, desired_size, cs);
+    return g->xadvance / cs_eff;
 }
 
 /* Emit glyph draw commands for a multi-line word-wrapped text string. */
@@ -813,15 +819,15 @@ static void paint_text_wrapped(Ca_Window *win, Ca_Font *font,
        uses the CSS desired_size so glyph advances stay in layout space.  */
     Ca_FontTier *tier  = ca_font_select_tier_for_size(font, desired_size * ui_s, node->desc.font_bold);
     float font_scale   = desired_size / tier->logical_px;
-    float cs_eff       = cs / font_scale;
+    float metric_scale = font_scale * ui_s;
 
-    float line_height = (tier->ascent - tier->descent + tier->line_gap) * font_scale;
-    if (line_height < 1.0f) line_height = desired_size * 1.3f;
+    float line_height = (tier->ascent - tier->descent + tier->line_gap) * metric_scale;
+    if (line_height < 1.0f) line_height = desired_size * ui_s * 1.3f;
 
     float max_w = node->w - node->desc.padding_left - node->desc.padding_right;
     if (max_w < 1.0f) return;
 
-    float space_adv = glyph_adv(tier, ' ', cs_eff);
+    float space_adv = glyph_adv(tier, ' ', cs, desired_size);
 
     /* First pass: determine line breaks (word wrap). */
     float cur_line_w = 0.0f;
@@ -832,7 +838,7 @@ static void paint_text_wrapped(Ca_Window *win, Ca_Font *font,
         float word_w = 0.0f;
         while (*p && *p != ' ' && *p != '\n') {
             uint32_t cp = ca_utf8_decode(&p);
-            word_w += glyph_adv(tier, cp, cs_eff);
+            word_w += glyph_adv(tier, cp, cs, desired_size);
         }
         float with_space = (cur_line_w > 0.0f) ? cur_line_w + space_adv + word_w : word_w;
         if (cur_line_w > 0.0f && with_space > max_w) {
@@ -847,7 +853,7 @@ static void paint_text_wrapped(Ca_Window *win, Ca_Font *font,
 
     /* Second pass: emit glyphs line by line */
     float start_y = node->y + node->desc.padding_top
-                    + (tier->ascent * font_scale + tier->descent * font_scale) * 0.5f
+                    + (tier->ascent * metric_scale + tier->descent * metric_scale) * 0.5f
                     + line_height * 0.5f;
     float left_x  = node->x + node->desc.padding_left;
     cur_line_w = 0.0f;
@@ -856,8 +862,8 @@ static void paint_text_wrapped(Ca_Window *win, Ca_Font *font,
     /* Keep xpos fractional for sub-pixel glyph positioning via the LCD
        atlas's bilinear UV sampling. Snap y for a stable pixel-aligned
        baseline.                                                            */
-    float xpos = left_x * cs_eff;
-    float ypos = floorf(start_y * cs_eff + 0.5f);
+    float xpos = left_x;
+    float baseline_y = start_y;
 
     ClipRect node_clip = text_clip_for_node(node);
 
@@ -867,19 +873,18 @@ static void paint_text_wrapped(Ca_Window *win, Ca_Font *font,
         const char *wp = p;
         float word_w = 0.0f;
         while (*wp && *wp != ' ' && *wp != '\n') {
-            const char *prev = wp;
             uint32_t cp = ca_utf8_decode(&wp);
-            word_w += glyph_adv(tier, cp, cs_eff);
+            word_w += glyph_adv(tier, cp, cs, desired_size);
         }
         float with_space = (cur_line_w > 0.0f) ? cur_line_w + space_adv + word_w : word_w;
         if (cur_line_w > 0.0f && with_space > max_w) {
             cur_line++;
             cur_line_w = word_w;
-            xpos = left_x * cs_eff;
-            ypos = floorf((start_y + line_height * cur_line) * cs_eff + 0.5f);
+            xpos = left_x;
+            baseline_y = start_y + line_height * cur_line;
         } else {
             if (cur_line_w > 0.0f) {
-                xpos += space_adv * cs_eff;
+                xpos += space_adv;
                 cur_line_w += space_adv;
             }
             cur_line_w += word_w;
@@ -888,20 +893,25 @@ static void paint_text_wrapped(Ca_Window *win, Ca_Font *font,
         /* Emit glyphs for this word */
         while (p < wp) {
             uint32_t cp = ca_utf8_decode(&p);
-            Ca_Glyph *pc = ca_font_glyph(tier, cp);
+            Ca_FontTier *glyph_tier = tier;
+            Ca_Glyph *pc = ca_font_glyph_from_tier(tier, cp, &glyph_tier);
             if (!pc) continue;
             if (win->draw_cmd_count >= CA_MAX_DRAW_CMDS_PER_WINDOW) goto done;
 
             Ca_GlyphQuad q;
-            ca_font_get_quad(pc, font->atlas_w, font->atlas_h, &xpos, &ypos, &q);
-            float gw = (q.x1 - q.x0) / cs_eff;
-            float gh = (q.y1 - q.y0) / cs_eff;
+            float glyph_cs_eff = ca_font_glyph_cs_eff(glyph_tier, desired_size, cs);
+            float glyph_xpos = xpos * glyph_cs_eff;
+            float glyph_ypos = floorf(baseline_y * glyph_cs_eff + 0.5f);
+            ca_font_get_quad(pc, font->atlas_w, font->atlas_h,
+                             &glyph_xpos, &glyph_ypos, &q);
+            float gw = (q.x1 - q.x0) / glyph_cs_eff;
+            float gh = (q.y1 - q.y0) / glyph_cs_eff;
             if (gw < 0.5f || gh < 0.5f) continue;
 
             Ca_DrawCmd *cmd = &win->draw_cmds[win->draw_cmd_count++];
             memset(cmd, 0, sizeof(*cmd));
             cmd->type = CA_DRAW_GLYPH;
-            cmd->x = q.x0 / cs_eff; cmd->y = q.y0 / cs_eff;
+            cmd->x = q.x0 / glyph_cs_eff; cmd->y = q.y0 / glyph_cs_eff;
             cmd->w = gw; cmd->h = gh;
             cmd->r = r; cmd->g = g; cmd->b = b; cmd->a = a;
             cmd->u0 = q.s0; cmd->v0 = q.t0;
@@ -909,12 +919,13 @@ static void paint_text_wrapped(Ca_Window *win, Ca_Font *font,
             cmd->z_index = node->desc.z_index;
             cmd->in_use = true;
             set_clip(cmd, node_clip);
+            xpos += pc->xadvance / glyph_cs_eff;
         }
         if (*p == '\n') {
             cur_line++;
             cur_line_w = 0;
-            xpos = left_x * cs_eff;
-            ypos = floorf((start_y + line_height * cur_line) * cs_eff + 0.5f);
+            xpos = left_x;
+            baseline_y = start_y + line_height * cur_line;
             p++;
         } else if (*p == ' ') {
             p++;
@@ -948,7 +959,7 @@ static void paint_text(Ca_Window *win, Ca_Font *font,
     float desired_size = node->desc.font_size > 0.0f ? node->desc.font_size : font->default_size;
     Ca_FontTier *tier  = ca_font_select_tier_for_size(font, desired_size * ui_s, node->desc.font_bold);
     float font_scale   = desired_size / tier->logical_px;
-    float cs_eff       = cs / font_scale;
+    float metric_scale = font_scale * ui_s;
 
     /* Measure total advance width in logical pixels */
     float text_w = 0.0f;
@@ -956,14 +967,13 @@ static void paint_text(Ca_Window *win, Ca_Font *font,
         const char *p = text;
         while (*p) {
             uint32_t cp = ca_utf8_decode(&p);
-            Ca_Glyph *pc = ca_font_glyph(tier, cp);
-            if (pc) text_w += pc->xadvance / cs_eff;
+            text_w += glyph_adv(tier, cp, cs, desired_size);
         }
     }
 
     float baseline_logical =
         node->y + node->h * 0.5f
-        + (tier->ascent * font_scale + tier->descent * font_scale) * 0.5f;
+        + (tier->ascent * metric_scale + tier->descent * metric_scale) * 0.5f;
     float left_logical;
     if (text_w > node->w) {
         left_logical = node->x + node->desc.padding_left;
@@ -975,31 +985,33 @@ static void paint_text(Ca_Window *win, Ca_Font *font,
         }
     }
 
-    /* Keep xpos fractional for sub-pixel glyph positioning via the LCD
-       atlas's bilinear UV sampling. Snap y for a pixel-aligned baseline. */
-    float xpos = left_logical * cs_eff;
-    float ypos = floorf(baseline_logical * cs_eff + 0.5f);
+    float xpos = left_logical;
 
     ClipRect node_clip = text_clip_for_node(node);
 
     const char *p = text;
     while (*p) {
         uint32_t cp = ca_utf8_decode(&p);
-        Ca_Glyph *pc = ca_font_glyph(tier, cp);
+        Ca_FontTier *glyph_tier = tier;
+        Ca_Glyph *pc = ca_font_glyph_from_tier(tier, cp, &glyph_tier);
         if (!pc) continue;
         if (win->draw_cmd_count >= CA_MAX_DRAW_CMDS_PER_WINDOW) break;
 
         Ca_GlyphQuad q;
-        ca_font_get_quad(pc, font->atlas_w, font->atlas_h, &xpos, &ypos, &q);
+        float glyph_cs_eff = ca_font_glyph_cs_eff(glyph_tier, desired_size, cs);
+        float glyph_xpos = xpos * glyph_cs_eff;
+        float glyph_ypos = floorf(baseline_logical * glyph_cs_eff + 0.5f);
+        ca_font_get_quad(pc, font->atlas_w, font->atlas_h,
+                         &glyph_xpos, &glyph_ypos, &q);
 
-        float gw = (q.x1 - q.x0) / cs_eff;
-        float gh = (q.y1 - q.y0) / cs_eff;
+        float gw = (q.x1 - q.x0) / glyph_cs_eff;
+        float gh = (q.y1 - q.y0) / glyph_cs_eff;
         if (gw < 0.5f || gh < 0.5f) continue;
 
         Ca_DrawCmd *cmd = &win->draw_cmds[win->draw_cmd_count++];
         memset(cmd, 0, sizeof(*cmd));
         cmd->type   = CA_DRAW_GLYPH;
-        cmd->x = q.x0 / cs_eff;  cmd->y = q.y0 / cs_eff;
+        cmd->x = q.x0 / glyph_cs_eff;  cmd->y = q.y0 / glyph_cs_eff;
         cmd->w = gw;          cmd->h = gh;
         cmd->r = r;  cmd->g = g;  cmd->b = b;  cmd->a = a;
         cmd->u0 = q.s0;  cmd->v0 = q.t0;
@@ -1007,6 +1019,7 @@ static void paint_text(Ca_Window *win, Ca_Font *font,
         cmd->z_index = node->desc.z_index;
         cmd->in_use = true;
         set_clip(cmd, node_clip);
+        xpos += pc->xadvance / glyph_cs_eff;
     }
 }
 
@@ -1031,42 +1044,47 @@ static void paint_text_left(Ca_Window *win, Ca_Font *font,
     float desired_size = node->desc.font_size > 0.0f ? node->desc.font_size : font->default_size;
     Ca_FontTier *tier  = ca_font_select_tier_for_size(font, desired_size * ui_s, node->desc.font_bold);
     float font_scale   = desired_size / tier->logical_px;
-    float cs_eff       = cs / font_scale;
+    float metric_scale = font_scale * ui_s;
 
     float baseline_logical =
         node->y + node->h * 0.5f
-        + (tier->ascent * font_scale + tier->descent * font_scale) * 0.5f;
+        + (tier->ascent * metric_scale + tier->descent * metric_scale) * 0.5f;
     float left_logical = node->x + node->desc.padding_left;
 
-    float xpos = left_logical * cs_eff;
-    float ypos = floorf(baseline_logical * cs_eff + 0.5f);
+    float xpos = left_logical;
 
     ClipRect input_clip = text_clip_for_node(node);
 
     const char *p = text;
     while (*p) {
         uint32_t cp = ca_utf8_decode(&p);
-        Ca_Glyph *pc = ca_font_glyph(tier, cp);
+        Ca_FontTier *glyph_tier = tier;
+        Ca_Glyph *pc = ca_font_glyph_from_tier(tier, cp, &glyph_tier);
         if (!pc) continue;
         if (win->draw_cmd_count >= CA_MAX_DRAW_CMDS_PER_WINDOW) break;
 
         Ca_GlyphQuad q;
-        ca_font_get_quad(pc, font->atlas_w, font->atlas_h, &xpos, &ypos, &q);
+        float glyph_cs_eff = ca_font_glyph_cs_eff(glyph_tier, desired_size, cs);
+        float glyph_xpos = xpos * glyph_cs_eff;
+        float glyph_ypos = floorf(baseline_logical * glyph_cs_eff + 0.5f);
+        ca_font_get_quad(pc, font->atlas_w, font->atlas_h,
+                         &glyph_xpos, &glyph_ypos, &q);
 
-        float gw = (q.x1 - q.x0) / cs_eff;
-        float gh = (q.y1 - q.y0) / cs_eff;
+        float gw = (q.x1 - q.x0) / glyph_cs_eff;
+        float gh = (q.y1 - q.y0) / glyph_cs_eff;
         if (gw < 0.5f || gh < 0.5f) continue;
 
         Ca_DrawCmd *cmd = &win->draw_cmds[win->draw_cmd_count++];
         memset(cmd, 0, sizeof(*cmd));
         cmd->type   = CA_DRAW_GLYPH;
-        cmd->x = q.x0 / cs_eff;  cmd->y = q.y0 / cs_eff;
+        cmd->x = q.x0 / glyph_cs_eff;  cmd->y = q.y0 / glyph_cs_eff;
         cmd->w = gw;          cmd->h = gh;
         cmd->r = r;  cmd->g = g;  cmd->b = b;  cmd->a = a;
         cmd->u0 = q.s0;  cmd->v0 = q.t0;
         cmd->u1 = q.s1;  cmd->v1 = q.t1;
         cmd->in_use = true;
         set_clip(cmd, input_clip);
+        xpos += pc->xadvance / glyph_cs_eff;
     }
 }
 
@@ -1079,15 +1097,12 @@ static float measure_text_advance(Ca_Font *font, const char *text, int byte_coun
     float cs   = content_scale / ui_s;
     float desired = font_size > 0.0f ? font_size : font->default_size;
     Ca_FontTier *tier = ca_font_select_tier_for_size(font, desired * ui_s, bold);
-    float fs     = desired / tier->logical_px;
-    float cs_eff = cs / fs;
     float w = 0.0f;
     const char *p   = text;
     const char *end = text + byte_count;
     while (*p && p < end) {
         uint32_t cp = ca_utf8_decode(&p);
-        Ca_Glyph *pc = ca_font_glyph(tier, cp);
-        if (pc) w += pc->xadvance / cs_eff;
+        w += glyph_adv(tier, cp, cs, desired);
     }
     return w;
 }
@@ -1111,7 +1126,7 @@ static void paint_cursor(Ca_Window *win, Ca_Font *font,
     cmd->type   = CA_DRAW_RECT;
     cmd->x      = cursor_x;
     cmd->y      = cursor_y;
-    cmd->w      = 1.5f;
+    cmd->w      = 1.5f * (win->ui_scale > 0.0f ? win->ui_scale : 1.0f);
     cmd->h      = cursor_h;
     cmd->r = 1.0f; cmd->g = 1.0f; cmd->b = 1.0f; cmd->a = 0.9f;
     cmd->in_use = true;
@@ -1373,6 +1388,7 @@ static void paint_tree_cached(Ca_Instance *inst, Ca_Window *win,
 static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
 {
     Ca_Font *font = inst->font;
+    float ui_s = win->ui_scale > 0.0f ? win->ui_scale : 1.0f;
 
     /* ---- Select dropdown overlays ---- */
     if (win->select_pool && font) {
@@ -1405,10 +1421,10 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
                 c->type = CA_DRAW_RECT;
                 c->x = n->x; c->y = drop_y;
                 c->w = n->w; c->h = opt_h * (float)visible;
-                c->corner_radius = 4.0f;
+                c->corner_radius = 4.0f * ui_s;
                 { float _r, _g, _b, _a; unpack_color(CA_THEME_POPUP_BG, &_r, &_g, &_b, &_a); c->r = _r; c->g = _g; c->b = _b; c->a = 1.0f; }
                 /* Visible border so the popup is distinguishable from adjacent panels */
-                c->border_width   = 1.0f;
+                c->border_width   = 1.0f * ui_s;
                 c->border_r = 0.200f; c->border_g = 0.200f; c->border_b = 0.267f; c->border_a = 1.0f;
                 c->in_use = true;
                 c->overlay = true;
@@ -1446,7 +1462,6 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
 
     /* ---- Tooltips ---- */
     if (win->tooltip_pool && font && win->hovered_node) {
-        float ui_s = win->ui_scale > 0.0f ? win->ui_scale : 1.0f;
         float cs   = font->content_scale / ui_s;
 
         /* Logical window size for bounds clamping (same coordinate space as
@@ -1468,11 +1483,11 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
 
             /* Font size resolved at widget-build time and cached in the slot */
             float tooltip_fs  = tt->font_size > 0.0f ? tt->font_size : font->default_size;
-            Ca_FontTier *tier = ca_font_select_tier_for_size(font, tooltip_fs, false);
+            Ca_FontTier *tier = ca_font_select_tier_for_size(font, tooltip_fs * ui_s, false);
             float font_scale  = tooltip_fs / tier->logical_px;
-            float cs_eff      = cs / font_scale;
-            float pad         = 5.0f;
-            float text_h      = (tier->ascent - tier->descent) * font_scale;
+            float metric_scale = font_scale * ui_s;
+            float pad         = 5.0f * ui_s;
+            float text_h      = (tier->ascent - tier->descent) * metric_scale;
             float tip_h       = text_h + pad * 2.0f;
 
             /* Measure text width at the resolved font scale */
@@ -1481,8 +1496,7 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
                 const char *tp = tt->text;
                 while (*tp) {
                     uint32_t cp = ca_utf8_decode(&tp);
-                    Ca_Glyph *pc = ca_font_glyph(tier, cp);
-                    if (pc) tw += pc->xadvance / cs_eff;
+                    tw += glyph_adv(tier, cp, cs, tooltip_fs);
                 }
             }
 
@@ -1490,12 +1504,12 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
 
             /* Follow the cursor (Qt / ImGui style): place below-right by default,
                flip sides when the tooltip would extend past a window edge. */
-            float tip_x = (float)win->mouse_x + 12.0f;
-            float tip_y = (float)win->mouse_y + 16.0f;
+            float tip_x = (float)win->mouse_x + 12.0f * ui_s;
+            float tip_y = (float)win->mouse_y + 16.0f * ui_s;
             if (tooltip_win_w > 0 && tip_x + tip_w > (float)tooltip_win_w)
-                tip_x = (float)win->mouse_x - tip_w - 4.0f;
+                tip_x = (float)win->mouse_x - tip_w - 4.0f * ui_s;
             if (tooltip_win_h > 0 && tip_y + tip_h > (float)tooltip_win_h)
-                tip_y = (float)win->mouse_y - tip_h - 4.0f;
+                tip_y = (float)win->mouse_y - tip_h - 4.0f * ui_s;
             if (tip_x < 0.0f) tip_x = 0.0f;
             if (tip_y < 0.0f) tip_y = 0.0f;
 
@@ -1504,9 +1518,9 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
                 memset(c, 0, sizeof(*c));
                 c->type = CA_DRAW_RECT;
                 c->x = tip_x; c->y = tip_y; c->w = tip_w; c->h = tip_h;
-                c->corner_radius = 3.0f;
+                c->corner_radius = 3.0f * ui_s;
                 { float _r, _g, _b, _a; unpack_color(CA_THEME_POPUP_BG, &_r, &_g, &_b, &_a); c->r = _r; c->g = _g; c->b = _b; c->a = _a; }
-                c->border_width   = 1.0f;
+                c->border_width   = 1.0f * ui_s;
                 c->border_r = 0.200f; c->border_g = 0.200f; c->border_b = 0.267f; c->border_a = 1.0f;
                 c->in_use = true;
                 c->overlay = true;
@@ -1527,10 +1541,10 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
 
     /* ---- Context menus ---- */
     if (win->ctxmenu_pool && font) {
-        const float item_h  = 24.0f;
-        const float sep_h   =  8.0f;
-        const float pad_x   = 12.0f;
-        const float menu_w  = 180.0f;
+        const float item_h  = 24.0f * ui_s;
+        const float sep_h   =  8.0f * ui_s;
+        const float pad_x   = 12.0f * ui_s;
+        const float menu_w  = 180.0f * ui_s;
 
         for (uint32_t i = 0; i < CA_MAX_CTXMENUS_PER_WINDOW; ++i) {
             Ca_CtxMenu *cm = &win->ctxmenu_pool[i];
@@ -1538,7 +1552,7 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
             if (cm->node && node_is_ancestor_hidden(cm->node)) continue;
 
             /* Compute total height (items + separators) */
-            float menu_h = 6.0f; /* top + bottom inset */
+            float menu_h = 6.0f * ui_s; /* top + bottom inset */
             for (int mi = 0; mi < cm->item_count; ++mi) {
                 bool is_sep = (cm->items[mi][0] == '-' && cm->items[mi][1] == '\0');
                 menu_h += is_sep ? sep_h : item_h;
@@ -1561,16 +1575,16 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
                 c->type = CA_DRAW_RECT;
                 c->x = mx_pos; c->y = my_pos;
                 c->w = menu_w; c->h = menu_h;
-                c->corner_radius = 4.0f;
+                c->corner_radius = 4.0f * ui_s;
                 { float _r, _g, _b, _a; unpack_color(CA_THEME_POPUP_BG, &_r, &_g, &_b, &_a); c->r = _r; c->g = _g; c->b = _b; c->a = 1.0f; }
-                c->border_width   = 1.0f;
+                c->border_width   = 1.0f * ui_s;
                 c->border_r = 0.200f; c->border_g = 0.200f; c->border_b = 0.267f; c->border_a = 1.0f;
                 c->in_use = true;
                 c->overlay = true;
             }
 
             /* Items */
-            float iy = my_pos + 3.0f; /* top inset */
+            float iy = my_pos + 3.0f * ui_s; /* top inset */
             for (int mi = 0; mi < cm->item_count; ++mi) {
                 bool is_sep = (cm->items[mi][0] == '-' && cm->items[mi][1] == '\0');
                 if (is_sep) {
@@ -1579,8 +1593,8 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
                         Ca_DrawCmd *c = &win->draw_cmds[win->draw_cmd_count++];
                         memset(c, 0, sizeof(*c));
                         c->type = CA_DRAW_RECT;
-                        c->x = mx_pos + 8.0f; c->y = iy + sep_h * 0.5f - 0.5f;
-                        c->w = menu_w - 16.0f; c->h = 1.0f;
+                        c->x = mx_pos + 8.0f * ui_s; c->y = iy + sep_h * 0.5f - 0.5f * ui_s;
+                        c->w = menu_w - 16.0f * ui_s; c->h = 1.0f * ui_s;
                         { float _r, _g, _b, _a; unpack_color(CA_THEME_POPUP_BORDER, &_r, &_g, &_b, &_a); c->r = _r; c->g = _g; c->b = _b; c->a = _a; }
                         c->in_use = true;
                         c->overlay = true;
@@ -1598,9 +1612,9 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
                     Ca_DrawCmd *c = &win->draw_cmds[win->draw_cmd_count++];
                     memset(c, 0, sizeof(*c));
                     c->type = CA_DRAW_RECT;
-                    c->x = mx_pos + 2.0f; c->y = iy;
-                    c->w = menu_w - 4.0f; c->h = item_h;
-                    c->corner_radius = 3.0f;
+                    c->x = mx_pos + 2.0f * ui_s; c->y = iy;
+                    c->w = menu_w - 4.0f * ui_s; c->h = item_h;
+                    c->corner_radius = 3.0f * ui_s;
                     { float _r, _g, _b, _a; unpack_color(CA_THEME_BG_OVERLAY, &_r, &_g, &_b, &_a); c->r = _r; c->g = _g; c->b = _b; c->a = _a; }
                     c->in_use = true;
                     c->overlay = true;
@@ -1664,15 +1678,15 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
                     win->draw_cmds[gi].overlay = true;
             }
 
-            const float sep_h = 8.0f;
-            float item_h = 24.0f;
-            float menu_w = 180.0f;
+            const float sep_h = 8.0f * ui_s;
+            float item_h = 24.0f * ui_s;
+            float menu_w = 180.0f * ui_s;
             float drop_item_fs = mb->item_font_size > 0.0f ? mb->item_font_size : 12.0f;
             float drop_x = hdr->x;
             float drop_y = hdr->y + hdr->h;
 
             /* Compute total menu height (6px top+bottom inset, same as ctx menus) */
-            float menu_h = 6.0f;
+            float menu_h = 6.0f * ui_s;
             for (int ii = 0; ii < am->item_count; ++ii)
                 menu_h += am->items[ii].separator ? sep_h : item_h;
 
@@ -1687,14 +1701,14 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
                 unpack_color(mb->dropdown_bg, &c->r, &c->g, &c->b, &c->a);
                 c->in_use = true;
                 c->overlay = true;
-                c->border_width = 1.0f;
+                c->border_width = 1.0f * ui_s;
                 unpack_color(mb->dropdown_border,
                              &c->border_r, &c->border_g,
                              &c->border_b, &c->border_a);
             }
 
             /* Dropdown items */
-            float iy = drop_y + 3.0f; /* 3px top inset, same as ctx menus */
+            float iy = drop_y + 3.0f * ui_s; /* 3px top inset, same as ctx menus */
             for (int ii = 0; ii < am->item_count; ++ii) {
                 float this_h = am->items[ii].separator ? sep_h : item_h;
 
@@ -1704,10 +1718,10 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
                         Ca_DrawCmd *c = &win->draw_cmds[win->draw_cmd_count++];
                         memset(c, 0, sizeof(*c));
                         c->type = CA_DRAW_RECT;
-                        c->x    = drop_x + 8.0f;
-                        c->y    = iy + this_h * 0.5f - 0.5f;
-                        c->w    = menu_w - 16.0f;
-                        c->h    = 1.0f;
+                        c->x    = drop_x + 8.0f * ui_s;
+                        c->y    = iy + this_h * 0.5f - 0.5f * ui_s;
+                        c->w    = menu_w - 16.0f * ui_s;
+                        c->h    = 1.0f * ui_s;
                         unpack_color(mb->dropdown_border, &c->r, &c->g, &c->b, &c->a);
                         c->in_use  = true;
                         c->overlay = true;
@@ -1724,8 +1738,8 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
                         Ca_DrawCmd *c = &win->draw_cmds[win->draw_cmd_count++];
                         memset(c, 0, sizeof(*c));
                         c->type = CA_DRAW_RECT;
-                        c->x = drop_x + 2.0f; c->y = iy;
-                        c->w = menu_w - 4.0f; c->h = this_h;
+                        c->x = drop_x + 2.0f * ui_s; c->y = iy;
+                        c->w = menu_w - 4.0f * ui_s; c->h = this_h;
                         c->corner_radius = 0.0f;
                         unpack_color(mb->dropdown_hover, &c->r, &c->g, &c->b, &c->a);
                         c->in_use  = true;
@@ -1737,9 +1751,9 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
                 Ca_Node tmp;
                 memset(&tmp, 0, sizeof(tmp));
                 tmp.in_use = true;
-                tmp.x = drop_x + 12.0f;
+                tmp.x = drop_x + 12.0f * ui_s;
                 tmp.y = iy;
-                tmp.w = menu_w - 24.0f;
+                tmp.w = menu_w - 24.0f * ui_s;
                 tmp.h = this_h;
                 tmp.window = win;
                 tmp.desc.text_align = 0; /* left-align */
@@ -1755,9 +1769,9 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
                     Ca_Node tmp2;
                     memset(&tmp2, 0, sizeof(tmp2));
                     tmp2.in_use = true;
-                    tmp2.x = drop_x + menu_w - 20.0f;
+                    tmp2.x = drop_x + menu_w - 20.0f * ui_s;
                     tmp2.y = iy;
-                    tmp2.w = 16.0f;
+                    tmp2.w = 16.0f * ui_s;
                     tmp2.h = this_h;
                     tmp2.window = win;
                     tmp2.desc.text_align = 0;
@@ -1773,13 +1787,13 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
             /* Sub-menu panel (shown when active_sub >= 0) */
             if (am->active_sub >= 0 && am->active_sub < am->item_count) {
                 int   asi        = am->active_sub;
-                float sub_item_h = 24.0f;
-                float sub_menu_w = 180.0f;
+                float sub_item_h = 24.0f * ui_s;
+                float sub_menu_w = 180.0f * ui_s;
                 float sub_x      = drop_x + menu_w;
                 float sub_y      = drop_y;
                 for (int jj = 0; jj < asi; ++jj)
                     sub_y += am->items[jj].separator ? sep_h : item_h;
-                float sub_h      = sub_item_h * (float)am->items[asi].sub_item_count + 6.0f;
+                float sub_h      = sub_item_h * (float)am->items[asi].sub_item_count + 6.0f * ui_s;
 
                 /* Sub-menu background — sharp corners (retro) */
                 if (win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
@@ -1792,13 +1806,13 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
                     unpack_color(mb->dropdown_bg, &c->r, &c->g, &c->b, &c->a);
                     c->in_use      = true;
                     c->overlay     = true;
-                    c->border_width = 1.0f;
+                    c->border_width = 1.0f * ui_s;
                     unpack_color(mb->dropdown_border,
                                  &c->border_r, &c->border_g,
                                  &c->border_b, &c->border_a);
                 }
 
-                float sub_iy = sub_y + 3.0f; /* 3px top inset */
+                float sub_iy = sub_y + 3.0f * ui_s; /* 3px top inset */
                 for (int si = 0; si < am->items[asi].sub_item_count; ++si) {
                     float siy = sub_iy + sub_item_h * (float)si;
 
@@ -1809,8 +1823,8 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
                             Ca_DrawCmd *c = &win->draw_cmds[win->draw_cmd_count++];
                             memset(c, 0, sizeof(*c));
                             c->type = CA_DRAW_RECT;
-                            c->x = sub_x + 2.0f; c->y = siy;
-                            c->w = sub_menu_w - 4.0f; c->h = sub_item_h;
+                            c->x = sub_x + 2.0f * ui_s; c->y = siy;
+                            c->w = sub_menu_w - 4.0f * ui_s; c->h = sub_item_h;
                             c->corner_radius = 0.0f;
                             unpack_color(mb->dropdown_hover, &c->r, &c->g, &c->b, &c->a);
                             c->in_use  = true;
@@ -1823,9 +1837,9 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
                     Ca_Node stmp;
                     memset(&stmp, 0, sizeof(stmp));
                     stmp.in_use = true;
-                    stmp.x = sub_x + 12.0f;
+                    stmp.x = sub_x + 12.0f * ui_s;
                     stmp.y = siy;
-                    stmp.w = sub_menu_w - 24.0f;
+                    stmp.w = sub_menu_w - 24.0f * ui_s;
                     stmp.h = sub_item_h;
                     stmp.window = win;
                     stmp.desc.text_align = 0;

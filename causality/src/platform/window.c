@@ -521,18 +521,13 @@ void ca_window_resize_pass(Ca_Window *win)
 void ca_window_set_scale(Ca_Window *window, float scale)
 {
     if (!window || !window->in_use) return;
-    if (scale < 0.25f) scale = 0.25f;
-    if (scale > 4.0f)  scale = 4.0f;
-    window->ui_scale = scale;
-    window->titlebar_needs_rebuild = true;
-    if (window->root)
-        window->root->dirty |= CA_DIRTY_LAYOUT | CA_DIRTY_CONTENT;
+    ca_instance_set_scale(window->instance, scale);
 }
 
 float ca_window_get_scale(Ca_Window *window)
 {
     if (!window || !window->in_use) return 1.0f;
-    return window->ui_scale;
+    return ca_instance_get_scale(window->instance);
 }
 
 void ca_clipboard_set_text(Ca_Window *window, const char *text)

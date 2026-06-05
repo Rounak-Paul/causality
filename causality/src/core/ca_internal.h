@@ -698,7 +698,8 @@ struct Ca_Window {
     bool          scrollbar_drag_y;    /* true = Y-axis, false = X-axis */
     float         scrollbar_drag_grab; /* offset from thumb origin to mouse at drag start */
 
-    /* UI scale factor (1.0 = default, 2.0 = 200%, like browser zoom) */
+    /* Cached copy of the instance-wide UI scale for fast per-window rendering.
+       Do not treat this as independently configurable per window. */
     float         ui_scale;
     /* When non-zero, the static content tree needs to be rescaled by this
        ratio at the start of the next frame (deferred to avoid mid-drag corruption). */
@@ -870,7 +871,7 @@ struct Ca_Instance {
        Set via ca_instance_set_continuous(). */
     bool continuous;
 
-    /* Default UI scale applied to every new window at creation time.
+    /* Instance-wide UI scale applied to every open and future window.
        0.0 / 1.0 both mean "no scaling".  Set via ca_instance_set_scale(). */
     float default_ui_scale;
 };
@@ -902,4 +903,3 @@ struct Ca_CondVar {
     pthread_cond_t     handle;
 #endif
 };
-

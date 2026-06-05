@@ -6,6 +6,23 @@
 #include "css.h"
 #include "font.h"
 
+static float node_ui_scale(const Ca_Node *node)
+{
+    return (node && node->window && node->window->ui_scale > 0.0f)
+        ? node->window->ui_scale
+        : 1.0f;
+}
+
+static float glyph_adv(Ca_FontTier *tier, uint32_t cp,
+                       float cs, float desired_size)
+{
+    Ca_FontTier *glyph_tier = tier;
+    Ca_Glyph *g = ca_font_glyph_from_tier(tier, cp, &glyph_tier);
+    if (!g) return 0.0f;
+    float cs_eff = ca_font_glyph_cs_eff(glyph_tier, desired_size, cs);
+    return g->xadvance / cs_eff;
+}
+
 /* Measure the height a wrapped text label will occupy given its laid-out width.
    Mirrors the first pass of paint_text_wrapped() in paint.c but returns early
    with just the line count × line height.  Returns 0 if not applicable. */
@@ -31,10 +48,10 @@ static float measure_wrapped_text_height(Ca_Node *node)
     Ca_FontTier *tier  = ca_font_select_tier_for_size(font, desired_size * ui_s, node->desc.font_bold);
     if (!tier) return 0.0f;
     float font_scale   = desired_size / tier->logical_px;
-    float cs_eff       = cs / font_scale;
+    float metric_scale = font_scale * ui_s;
 
-    float line_height = (tier->ascent - tier->descent + tier->line_gap) * font_scale;
-    if (line_height < 1.0f) line_height = desired_size * 1.3f;
+    float line_height = (tier->ascent - tier->descent + tier->line_gap) * metric_scale;
+    if (line_height < 1.0f) line_height = desired_size * ui_s * 1.3f;
 
     float max_w = node->w - node->desc.padding_left - node->desc.padding_right;
     if (max_w < 1.0f) return 0.0f;
@@ -46,11 +63,9 @@ static float measure_wrapped_text_height(Ca_Node *node)
         float word_w = 0.0f;
         while (*p && *p != ' ' && *p != '\n') {
             uint32_t cp = ca_utf8_decode(&p);
-            Ca_Glyph *pc = ca_font_glyph(tier, cp);
-            if (pc) word_w += pc->xadvance / cs_eff;
+            word_w += glyph_adv(tier, cp, cs, desired_size);
         }
-        Ca_Glyph *sp = ca_font_glyph(tier, ' ');
-        float space_adv = sp ? sp->xadvance / cs_eff : 0.0f;
+        float space_adv = glyph_adv(tier, ' ', cs, desired_size);
         float with_space = (cur_line_w > 0.0f) ? cur_line_w + space_adv + word_w : word_w;
         if (cur_line_w > 0.0f && with_space > max_w) {
             line_count++;
@@ -79,8 +94,6 @@ static float measure_text_width(Ca_Node *node, const char *txt)
     float desired_size = node->desc.font_size > 0.0f ? node->desc.font_size : font->default_size;
     Ca_FontTier *tier  = ca_font_select_tier_for_size(font, desired_size * ui_s, node->desc.font_bold);
     if (!tier) return 0.0f;
-    float font_scale   = desired_size / tier->logical_px;
-    float cs_eff       = cs / font_scale;
 
     float line_w = 0.0f;
     float max_w = 0.0f;
@@ -93,8 +106,7 @@ static float measure_text_width(Ca_Node *node, const char *txt)
             continue;
         }
         uint32_t cp = ca_utf8_decode(&p);
-        Ca_Glyph *pc = ca_font_glyph(tier, cp);
-        if (pc) line_w += pc->xadvance / cs_eff;
+        line_w += glyph_adv(tier, cp, cs, desired_size);
     }
     if (line_w > max_w) max_w = line_w;
 
@@ -105,6 +117,7 @@ static float measure_node_text_width(Ca_Node *node)
 {
     const char *txt = NULL;
     float extra_w = 0.0f;
+    float ui_s = node_ui_scale(node);
 
     switch (node->widget_type) {
     case CA_WIDGET_LABEL: {
@@ -127,8 +140,8 @@ static float measure_node_text_width(Ca_Node *node)
         Ca_Checkbox *cb = (Ca_Checkbox *)node->widget;
         if (cb && cb->in_use) {
             txt = cb->text;
-            float h = node->desc.height > 0.0f ? node->desc.height : 20.0f;
-            extra_w = h * 0.8f + 7.0f;
+            float h = node->desc.height > 0.0f ? node->desc.height : 20.0f * ui_s;
+            extra_w = h * 0.8f + 7.0f * ui_s;
         }
         break;
     }
@@ -136,8 +149,8 @@ static float measure_node_text_width(Ca_Node *node)
         Ca_Radio *r = (Ca_Radio *)node->widget;
         if (r && r->in_use) {
             txt = r->text;
-            float h = node->desc.height > 0.0f ? node->desc.height : 20.0f;
-            extra_w = h * 0.8f + 7.0f;
+            float h = node->desc.height > 0.0f ? node->desc.height : 20.0f * ui_s;
+            extra_w = h * 0.8f + 7.0f * ui_s;
         }
         break;
     }
@@ -145,7 +158,7 @@ static float measure_node_text_width(Ca_Node *node)
         Ca_Select *sel = (Ca_Select *)node->widget;
         if (sel && sel->in_use && sel->selected >= 0 && sel->selected < sel->option_count) {
             txt = sel->options[sel->selected];
-            extra_w = 18.0f;
+            extra_w = 18.0f * ui_s;
         }
         break;
     }
@@ -154,8 +167,8 @@ static float measure_node_text_width(Ca_Node *node)
         if (tn && tn->in_use) {
             txt = tn->text;
             float fs = node->desc.font_size > 0.0f ? node->desc.font_size : 12.0f;
-            extra_w = fs;
-            if (tn->icon[0]) extra_w += fs;
+            extra_w = fs * ui_s;
+            if (tn->icon[0]) extra_w += fs * ui_s;
         }
         break;
     }
@@ -187,7 +200,7 @@ static float content_size(Ca_Node *node, bool want_height)
     /* Leaf text-bearing widgets have intrinsic width, matching browser-like row sizing. */
     if (node->child_count == 0) {
         if (!want_height) return measure_node_text_width(node);
-        return 20.0f;
+        return 20.0f * node_ui_scale(node);
     }
 
     /* Container: compute from children */
@@ -215,9 +228,9 @@ static float content_size(Ca_Node *node, bool want_height)
             Ca_Node *child = node->children[i];
             if (child->desc.hidden || child->desc.position != CA_POSITION_RELATIVE) continue;
             float cw = child->desc.width > 0.0f ? child->desc.width : content_size(child, false);
-            if (cw <= 0.0f) cw = 20.0f;
+            if (cw <= 0.0f) cw = 20.0f * node_ui_scale(child);
             float ch = child->desc.height > 0.0f ? child->desc.height : content_size(child, true);
-            if (ch <= 0.0f) ch = 20.0f;
+            if (ch <= 0.0f) ch = 20.0f * node_ui_scale(child);
 
             float added = cw + (line_vis > 0 ? gap : 0);
             if (line_vis > 0 && line_used + added > inner_w) {
@@ -251,9 +264,9 @@ static float content_size(Ca_Node *node, bool want_height)
             Ca_Node *child = node->children[i];
             if (child->desc.hidden || child->desc.position != CA_POSITION_RELATIVE) continue;
             float ch = child->desc.height > 0.0f ? child->desc.height : content_size(child, true);
-            if (ch <= 0.0f) ch = 20.0f;
+            if (ch <= 0.0f) ch = 20.0f * node_ui_scale(child);
             float cw = child->desc.width > 0.0f ? child->desc.width : content_size(child, false);
-            if (cw <= 0.0f) cw = 20.0f;
+            if (cw <= 0.0f) cw = 20.0f * node_ui_scale(child);
 
             float added = ch + (line_vis > 0 ? gap : 0);
             if (line_vis > 0 && line_used + added > inner_h) {
@@ -509,7 +522,7 @@ static void layout_node(Ca_Node *node, float x, float y, float avail_w, float av
             if (child->desc.hidden || child->desc.position != CA_POSITION_RELATIVE) continue;
 
             float ms = child_hypo_main[i];
-            if (ms <= 0.0f) ms = 20.0f; /* minimum for wrapping purposes */
+            if (ms <= 0.0f) ms = 20.0f * node_ui_scale(child); /* minimum for wrapping purposes */
 
             float added = ms + (line_vis > 0 ? gap : 0);
             if (line_vis > 0 && line_used + added > avail_main && line_count + 1 < MAX_FLEX_LINES) {
@@ -528,7 +541,7 @@ static void layout_node(Ca_Node *node, float x, float y, float avail_w, float av
 
             float cs_val = is_row ? child->desc.height : child->desc.width;
             if (cs_val <= 0) cs_val = content_size(child, is_row);
-            if (cs_val <= 0) cs_val = 20.0f;
+            if (cs_val <= 0) cs_val = 20.0f * node_ui_scale(child);
             if (cs_val > ln->cross_size) ln->cross_size = cs_val;
 
             float hmain = child_hypo_main[i];

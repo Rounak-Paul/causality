@@ -17,13 +17,12 @@
 /* Saved geometry for incremental layout invalidation. */
 typedef struct { float x, y, w, h, cw, ch; } NodeRect;
 
-/* Recursively rescale all dimension values in a node subtree by `ratio`.
-   Applied once per frame at frame-start for deferred scale changes so that
-   static nodes (built once, never reconciled) pick up the new ui_scale. */
-static void rescale_nodes(Ca_Node *node, float ratio)
+/* Scale every already-resolved pixel field in a descriptor.  `font_size` is
+   intentionally author-space: paint/layout use ui_scale when selecting the
+   atlas tier, so scaling it here would double-count zoom. */
+static void rescale_desc(Ca_NodeDesc *d, float ratio)
 {
-    if (!node || !node->in_use) return;
-    Ca_NodeDesc *d = &node->desc;
+    if (!d) return;
     if (!d->width_pct  && d->width  > 0.0f) d->width  *= ratio;
     if (!d->height_pct && d->height > 0.0f) d->height *= ratio;
     if (d->min_w   > 0.0f) d->min_w   *= ratio;
@@ -40,14 +39,27 @@ static void rescale_nodes(Ca_Node *node, float ratio)
     d->margin_left    *= ratio;
     d->gap            *= ratio;
     d->corner_radius  *= ratio;
-    /* font_size is NOT rescaled here: paint.c / layout.c already multiply
-       node->desc.font_size by ui_scale for tier selection, so rescaling it
-       here would double-count the scale factor and cause wrong tier selection
-       and cursor misalignment for one frame until reactive builders re-run. */
-    d->pos_x        *= ratio;
-    d->pos_y        *= ratio;
-    d->border_width *= ratio;
-    d->shadow_blur  *= ratio;
+    d->pos_x          *= ratio;
+    d->pos_y          *= ratio;
+    d->border_width   *= ratio;
+    d->border_top_w   *= ratio;
+    d->border_right_w *= ratio;
+    d->border_bottom_w *= ratio;
+    d->border_left_w  *= ratio;
+    d->shadow_offset_x *= ratio;
+    d->shadow_offset_y *= ratio;
+    d->shadow_blur    *= ratio;
+}
+
+/* Recursively rescale all resolved dimension values in a node subtree by
+   `ratio`.  Applied once per frame at frame-start for deferred scale changes
+   so static nodes (built once, never reconciled) pick up the new ui_scale. */
+static void rescale_nodes(Ca_Node *node, float ratio)
+{
+    if (!node || !node->in_use) return;
+    rescale_desc(&node->desc, ratio);
+    if (node->has_base_desc)
+        rescale_desc(&node->base_desc, ratio);
     node->dirty |= CA_DIRTY_LAYOUT | CA_DIRTY_CONTENT;
     for (uint32_t ci = 0; ci < node->child_count; ci++)
         rescale_nodes(node->children[ci], ratio);
