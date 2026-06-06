@@ -662,6 +662,11 @@ struct Ca_Window {
     /* Incremental paint cache — mirrors draw_cmds for per-node caching */
     Ca_DrawCmd   *paint_cache;
     uint32_t      paint_cache_used;
+    /* Reusable flex-layout scratch.  One logical slot holds the seven
+       per-child float arrays used by layout.c. */
+    float         *layout_scratch;
+    uint32_t       layout_scratch_capacity;
+    uint32_t       layout_scratch_used;
 
     /* Widget pools */
     Ca_Label     *label_pool;

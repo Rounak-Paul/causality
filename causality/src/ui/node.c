@@ -34,6 +34,9 @@ void ca_node_system_init(Ca_Window *win)
     win->sorted_idx      = (uint32_t *)CA_CALLOC(CA_MAX_DRAW_CMDS_PER_WINDOW, sizeof(uint32_t));
     win->paint_cache     = (Ca_DrawCmd *)CA_CALLOC(CA_MAX_DRAW_CMDS_PER_WINDOW, sizeof(Ca_DrawCmd));
     win->paint_cache_used = 0;
+    win->layout_scratch  = (float *)CA_CALLOC((size_t)CA_MAX_NODES_PER_WINDOW * 7u, sizeof(float));
+    win->layout_scratch_capacity = CA_MAX_NODES_PER_WINDOW;
+    win->layout_scratch_used = 0;
     win->hovered_node   = NULL;
     win->drag_node      = NULL;
 
@@ -80,10 +83,14 @@ void ca_node_system_shutdown(Ca_Window *win)
     CA_FREE(win->viewport_pool);
     CA_FREE(win->menubar_pool);
     CA_FREE(win->paint_cache);
+    CA_FREE(win->layout_scratch);
     win->node_pool      = NULL;
     win->draw_cmds      = NULL;
     win->sorted_idx     = NULL;
     win->paint_cache    = NULL;
+    win->layout_scratch = NULL;
+    win->layout_scratch_capacity = 0;
+    win->layout_scratch_used = 0;
     win->label_pool     = NULL;
     win->button_pool    = NULL;
     win->input_pool     = NULL;

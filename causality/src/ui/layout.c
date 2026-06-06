@@ -328,7 +328,7 @@ typedef struct {
 #define MAX_FLEX_LINES 64
 
 typedef struct {
-    float *storage;
+    uint32_t mark;
     float *child_hypo_main;
     float *child_margin_before;
     float *child_margin_after;
@@ -338,16 +338,19 @@ typedef struct {
     float *cc_arr;
 } LayoutScratch;
 
-static bool layout_scratch_init(LayoutScratch *scratch, size_t child_count)
+static bool layout_scratch_init(Ca_Window *win, LayoutScratch *scratch, uint32_t child_count)
 {
     float *cursor;
-    const size_t array_count = 7u;
+    uint32_t next_used;
 
-    scratch->storage = (float *)CA_CALLOC(child_count * array_count, sizeof(float));
-    if (!scratch->storage)
+    if (!win || !win->layout_scratch)
+        return false;
+    if (child_count > win->layout_scratch_capacity - win->layout_scratch_used)
         return false;
 
-    cursor = scratch->storage;
+    scratch->mark = win->layout_scratch_used;
+    next_used = win->layout_scratch_used + child_count;
+    cursor = win->layout_scratch + (size_t)scratch->mark * 7u;
     scratch->child_hypo_main = cursor; cursor += child_count;
     scratch->child_margin_before = cursor; cursor += child_count;
     scratch->child_margin_after = cursor; cursor += child_count;
@@ -355,12 +358,14 @@ static bool layout_scratch_init(LayoutScratch *scratch, size_t child_count)
     scratch->child_margin_cross1 = cursor; cursor += child_count;
     scratch->cm_arr = cursor; cursor += child_count;
     scratch->cc_arr = cursor;
+    win->layout_scratch_used = next_used;
     return true;
 }
 
-static void layout_scratch_destroy(LayoutScratch *scratch)
+static void layout_scratch_destroy(Ca_Window *win, const LayoutScratch *scratch)
 {
-    CA_FREE(scratch->storage);
+    if (win)
+        win->layout_scratch_used = scratch->mark;
 }
 
 static void layout_node(Ca_Node *node, float x, float y, float avail_w, float avail_h)
@@ -482,7 +487,7 @@ static void layout_node(Ca_Node *node, float x, float y, float avail_w, float av
     /* Per-child flex scratch lives off the call stack; layout_node recurses and
        the node child cap is intentionally large enough to overflow small stacks. */
     LayoutScratch scratch;
-    if (!layout_scratch_init(&scratch, (size_t)node->child_count))
+    if (!layout_scratch_init(node->window, &scratch, node->child_count))
         goto out_of_flow;
     float *child_hypo_main = scratch.child_hypo_main;
     float *child_margin_before = scratch.child_margin_before;
@@ -779,7 +784,7 @@ static void layout_node(Ca_Node *node, float x, float y, float avail_w, float av
             node->w = node->content_w;
     }
 
-    layout_scratch_destroy(&scratch);
+    layout_scratch_destroy(node->window, &scratch);
 
 out_of_flow:
     /* Position absolute/fixed children (they are out of the flex flow) */
@@ -813,6 +818,7 @@ out_of_flow:
 void ca_layout_pass(Ca_Window *win)
 {
     if (!win->root) return;
+    win->layout_scratch_used = 0;
 
     /* Use logical (window) size so widget coordinates stay in the same
        pixel space as user-specified sizes (padding, width, height).
