@@ -272,6 +272,8 @@ typedef struct {
     int16_t     image_index;
     /* CA_DRAW_VIEWPORT: index into Ca_Window.viewport_pool[] */
     int16_t     viewport_index;
+    /* CA_DRAW_GLYPH: dynamic font atlas page referenced by u/v coordinates */
+    int16_t     font_page_index;
 } Ca_DrawCmd;
 
 /* ======================================================

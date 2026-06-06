@@ -66,8 +66,8 @@ static float measure_text_px(Ca_Window *win, const char *text)
    point size (e.g. a 12 px editor buffer when the UI default is 14) can
    still get an accurate pixel width.
 
-   Icon glyphs may come from the default-size fallback tier, so each glyph
-   computes its advance from the tier that actually supplied it. */
+   Icons and text use the same dynamic font page, so each glyph computes its
+   advance from the tier that actually supplied it. */
 float ca_measure_text_px(Ca_Window *win, const char *text, float font_size)
 {
     if (!win || !text || text[0] == '\0') return 0.0f;

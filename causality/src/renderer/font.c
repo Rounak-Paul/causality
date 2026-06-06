@@ -1,34 +1,19 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Sol/Causality contributors.
 
-/* font.c — high-quality glyph atlas baked with FreeType.
+/* font.c — high-quality dynamic glyph atlas backed by FreeType.
 
-   Rendering recipe (per glyph):
-     1. FT_Load_Glyph(face, gid, FT_LOAD_TARGET_LCD | FT_LOAD_RENDER)
-        - autohinter on (FT_LOAD_FORCE_AUTOHINT) for consistent
-          rendering across faces that may lack good native hints.
-        - FT_LOAD_TARGET_LCD picks the LCD-tuned hinting algorithm.
-     2. FT_Render_Glyph(slot, FT_RENDER_MODE_LCD)
-        - rasterises at 3x horizontal resolution.
-        - applies the library's lcd_filter (we set FT_LCD_FILTER_DEFAULT)
-          which is the [1,4,7,4,1]/17 ClearType-style filter.
-        - output bitmap has pixel_mode = FT_PIXEL_MODE_LCD; width is
-          glyph_pixels*3, each consecutive 3 bytes are R,G,B coverage.
-     3. Pack into a 4096x4096 RGBA8 shelf-packed atlas:
-          R = red subpixel coverage
-          G = green subpixel coverage
-          B = blue subpixel coverage
-          A = luma-weighted coverage (used as fallback / dual-source alpha)
-
-   The shader samples this atlas as plain RGBA, treats .rgb as per-channel
-   coverage, and uses dual-source blending so the framebuffer receives
-   per-subpixel blending in linear light against an sRGB target.         */
+   Text and Nerd Font icons are rasterised on demand at their final
+   device-pixel size, packed into 1024x1024 pages inside one 4096x4096
+   Vulkan atlas, and evicted with an LRU policy.  UI layout stays in logical
+   pixels; the glyph cache key stores the scaled visual size so runtime UI
+   scale changes produce native-resolution glyphs instead of stretched
+   bitmaps.                                                             */
 
 #include "font.h"
 
 #include <ft2build.h>
 #include FT_FREETYPE_H
-#include FT_LCD_FILTER_H
 #include FT_MODULE_H
 
 #include <stdio.h>
@@ -42,9 +27,8 @@
   #include <windows.h>
 #endif
 
-/* Codepoint ranges baked at startup.  Layout mirrors the previous
-   stb-based packer so the atlas can hold ASCII/Latin-1 plus the
-   Nerd-Font icon ranges used by the editor.                       */
+/* Codepoint ranges supported by the on-demand cache: ASCII/Latin-1 plus
+   the Nerd-Font private-use ranges used by the editor.                 */
 static const struct { int first; int count; } g_range_defs[CA_FONT_RANGE_COUNT] = {
     { 32,     224 },   /* ASCII + Latin-1 Supplement  (32-255)     */
     { 0xE0A0,  56 },   /* Powerline + extras          (E0A0-E0D7) */
@@ -53,20 +37,6 @@ static const struct { int first; int count; } g_range_defs[CA_FONT_RANGE_COUNT] 
     { 0xEA60, 447 },   /* Codicons                    (EA60-EC1E) */
     { 0xF000, 737 },   /* Font Awesome                (F000-F2E0) */
 };
-
-/* Standard set of visual pixel sizes baked into the atlas at startup.
-   Rendering asks for css_font_size * ui_scale, so this list deliberately
-   includes larger zoom targets instead of forcing a 2x/3x UI scale to
-   magnify a small glyph bitmap.  Only the default tier gets the full icon
-   ranges; larger tiers are text-only and fall back for icons.          */
-static const float g_std_sizes[] = {
-     8.0f, 10.0f, 12.0f, 14.0f, 16.0f,
-    18.0f, 20.0f, 22.0f, 24.0f, 28.0f,
-    32.0f, 36.0f, 40.0f, 48.0f, 56.0f,
-    64.0f, 72.0f, 84.0f, 96.0f, 112.0f
-};
-static const int g_std_sizes_count =
-    (int)(sizeof(g_std_sizes) / sizeof(g_std_sizes[0]));
 
 static int chars_for_ranges(int num_ranges)
 {
@@ -130,6 +100,7 @@ static bool upload_atlas(Ca_Instance *inst, Ca_Font *font,
                           const unsigned char *bitmap_rgba)
 {
     VkDeviceSize atlas_sz = (VkDeviceSize)font->atlas_w * font->atlas_h * 4;
+    VkResult vr;
 
     VkImageCreateInfo img_ci = {
         .sType         = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
@@ -144,18 +115,35 @@ static bool upload_atlas(Ca_Instance *inst, Ca_Font *font,
         .sharingMode   = VK_SHARING_MODE_EXCLUSIVE,
         .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
     };
-    vkCreateImage(inst->vk_device, &img_ci, NULL, &font->image);
+    vr = vkCreateImage(inst->vk_device, &img_ci, NULL, &font->image);
+    if (vr != VK_SUCCESS) {
+        fprintf(stderr, "[font] vkCreateImage failed for atlas (%d)\n", vr);
+        return false;
+    }
 
     VkMemoryRequirements img_req;
     vkGetImageMemoryRequirements(inst->vk_device, font->image, &img_req);
+    uint32_t img_mem_type = find_memory_type(inst->vk_gpu, img_req.memoryTypeBits,
+                                             VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    if (img_mem_type == UINT32_MAX) {
+        fprintf(stderr, "[font] no device-local memory for atlas image\n");
+        return false;
+    }
     VkMemoryAllocateInfo img_mem_ai = {
         .sType           = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
         .allocationSize  = img_req.size,
-        .memoryTypeIndex = find_memory_type(inst->vk_gpu, img_req.memoryTypeBits,
-                                            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT),
+        .memoryTypeIndex = img_mem_type,
     };
-    vkAllocateMemory(inst->vk_device, &img_mem_ai, NULL, &font->memory);
-    vkBindImageMemory(inst->vk_device, font->image, font->memory, 0);
+    vr = vkAllocateMemory(inst->vk_device, &img_mem_ai, NULL, &font->memory);
+    if (vr != VK_SUCCESS) {
+        fprintf(stderr, "[font] vkAllocateMemory failed for atlas image (%d)\n", vr);
+        return false;
+    }
+    vr = vkBindImageMemory(inst->vk_device, font->image, font->memory, 0);
+    if (vr != VK_SUCCESS) {
+        fprintf(stderr, "[font] vkBindImageMemory failed for atlas image (%d)\n", vr);
+        return false;
+    }
 
     VkBufferCreateInfo buf_ci = {
         .sType       = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
@@ -163,25 +151,51 @@ static bool upload_atlas(Ca_Instance *inst, Ca_Font *font,
         .usage       = VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
         .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
     };
-    VkBuffer       staging_buf;
-    VkDeviceMemory staging_mem;
-    vkCreateBuffer(inst->vk_device, &buf_ci, NULL, &staging_buf);
+    VkBuffer       staging_buf = VK_NULL_HANDLE;
+    VkDeviceMemory staging_mem = VK_NULL_HANDLE;
+    vr = vkCreateBuffer(inst->vk_device, &buf_ci, NULL, &staging_buf);
+    if (vr != VK_SUCCESS) {
+        fprintf(stderr, "[font] vkCreateBuffer failed for initial atlas upload (%d)\n", vr);
+        return false;
+    }
 
     VkMemoryRequirements buf_req;
     vkGetBufferMemoryRequirements(inst->vk_device, staging_buf, &buf_req);
+    uint32_t buf_mem_type = find_memory_type(inst->vk_gpu, buf_req.memoryTypeBits,
+                                             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                                             VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    if (buf_mem_type == UINT32_MAX) {
+        fprintf(stderr, "[font] no host-visible memory for initial atlas upload\n");
+        vkDestroyBuffer(inst->vk_device, staging_buf, NULL);
+        return false;
+    }
     VkMemoryAllocateInfo buf_mem_ai = {
         .sType           = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
         .allocationSize  = buf_req.size,
-        .memoryTypeIndex =
-            find_memory_type(inst->vk_gpu, buf_req.memoryTypeBits,
-                             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-                             VK_MEMORY_PROPERTY_HOST_COHERENT_BIT),
+        .memoryTypeIndex = buf_mem_type,
     };
-    vkAllocateMemory(inst->vk_device, &buf_mem_ai, NULL, &staging_mem);
-    vkBindBufferMemory(inst->vk_device, staging_buf, staging_mem, 0);
+    vr = vkAllocateMemory(inst->vk_device, &buf_mem_ai, NULL, &staging_mem);
+    if (vr != VK_SUCCESS) {
+        fprintf(stderr, "[font] vkAllocateMemory failed for initial atlas upload (%d)\n", vr);
+        vkDestroyBuffer(inst->vk_device, staging_buf, NULL);
+        return false;
+    }
+    vr = vkBindBufferMemory(inst->vk_device, staging_buf, staging_mem, 0);
+    if (vr != VK_SUCCESS) {
+        fprintf(stderr, "[font] vkBindBufferMemory failed for initial atlas upload (%d)\n", vr);
+        vkDestroyBuffer(inst->vk_device, staging_buf, NULL);
+        vkFreeMemory(inst->vk_device, staging_mem, NULL);
+        return false;
+    }
 
-    void *mapped;
-    vkMapMemory(inst->vk_device, staging_mem, 0, atlas_sz, 0, &mapped);
+    void *mapped = NULL;
+    vr = vkMapMemory(inst->vk_device, staging_mem, 0, atlas_sz, 0, &mapped);
+    if (vr != VK_SUCCESS || !mapped) {
+        fprintf(stderr, "[font] vkMapMemory failed for initial atlas upload (%d)\n", vr);
+        vkDestroyBuffer(inst->vk_device, staging_buf, NULL);
+        vkFreeMemory(inst->vk_device, staging_mem, NULL);
+        return false;
+    }
     memcpy(mapped, bitmap_rgba, (size_t)atlas_sz);
     vkUnmapMemory(inst->vk_device, staging_mem);
 
@@ -229,11 +243,14 @@ static bool upload_atlas(Ca_Instance *inst, Ca_Font *font,
         .format           = VK_FORMAT_R8G8B8A8_UNORM,
         .subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 },
     };
-    vkCreateImageView(inst->vk_device, &view_ci, NULL, &font->view);
+    vr = vkCreateImageView(inst->vk_device, &view_ci, NULL, &font->view);
+    if (vr != VK_SUCCESS) {
+        fprintf(stderr, "[font] vkCreateImageView failed for atlas (%d)\n", vr);
+        return false;
+    }
 
-    /* LINEAR filtering on the atlas gives bilinear interpolation of the
-       LCD coverage values when glyphs are positioned at fractional pen
-       offsets — essential for crisp sub-pixel text positioning.        */
+    /* LINEAR filtering interpolates glyph coverage when quads land on
+       fractional positions, avoiding shimmer during animated/layout motion. */
     VkSamplerCreateInfo samp_ci = {
         .sType        = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
         .magFilter    = VK_FILTER_LINEAR,
@@ -244,47 +261,17 @@ static bool upload_atlas(Ca_Instance *inst, Ca_Font *font,
         .addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
         .maxLod       = VK_LOD_CLAMP_NONE,
     };
-    vkCreateSampler(inst->vk_device, &samp_ci, NULL, &font->sampler);
-    return true;
-}
-
-/* ============================================================
-   Shelf packer
-   ============================================================ */
-
-typedef struct ShelfPacker {
-    int           width, height;
-    int           shelf_y;       /* top of the active shelf */
-    int           shelf_h;       /* height of the active shelf */
-    int           shelf_x;       /* pen x within the active shelf */
-    unsigned char *atlas_rgba;   /* width * height * 4 */
-} ShelfPacker;
-
-static bool shelf_alloc(ShelfPacker *p, int w, int h, int *out_x, int *out_y)
-{
-    if (w <= 0 || h <= 0)      return false;
-    if (w > p->width)          return false;
-    if (h > p->height)         return false;
-
-    /* Open a new shelf if the current one is full or too short. */
-    if (p->shelf_x + w > p->width || h > p->shelf_h) {
-        int new_top = p->shelf_y + p->shelf_h;
-        if (new_top + h > p->height) return false;
-        p->shelf_y = new_top;
-        p->shelf_h = h;
-        p->shelf_x = 0;
+    vr = vkCreateSampler(inst->vk_device, &samp_ci, NULL, &font->sampler);
+    if (vr != VK_SUCCESS) {
+        fprintf(stderr, "[font] vkCreateSampler failed for atlas (%d)\n", vr);
+        return false;
     }
-    *out_x = p->shelf_x;
-    *out_y = p->shelf_y;
-    p->shelf_x += w;
     return true;
 }
 
-/* Copy a FreeType LCD bitmap into the atlas at (dst_x, dst_y) with a
-   1-pixel transparent gutter on all sides (already accounted for by the
-   caller's width/height reservation).  Source pixel_mode is LCD: each
-   atlas pixel consumes 3 source bytes (R,G,B subpixel coverage).
-   For RGBA: .r/.g/.b = subpixel coverage, .a = luma weight.            */
+/* Copy a FreeType LCD bitmap into the atlas at (dst_x, dst_y).  This is kept
+   for compatibility if a platform path ever requests LCD bitmaps; the default
+   Causality path below uses grayscale for predictable cross-display output. */
 static void blit_lcd(unsigned char *atlas, int atlas_w,
                       int dst_x, int dst_y,
                       const FT_Bitmap *src)
@@ -315,9 +302,9 @@ static void blit_lcd(unsigned char *atlas, int atlas_w,
     }
 }
 
-/* Blit a normal grayscale FreeType bitmap (icons rendered without LCD)
-   into all RGB channels of the atlas so the LCD shader still produces
-   sensible output for those glyphs.                                    */
+/* Blit a normal grayscale FreeType bitmap into all RGB channels of the atlas
+   so the existing text shader receives identical per-channel coverage.  This
+   is the normal path for both text and icons.                            */
 static void blit_gray(unsigned char *atlas, int atlas_w,
                        int dst_x, int dst_y,
                        const FT_Bitmap *src)
@@ -340,142 +327,650 @@ static void blit_gray(unsigned char *atlas, int atlas_w,
 }
 
 /* ============================================================
-   Per-style baking
+   Dynamic page cache
    ============================================================ */
 
-static bool bake_style(FT_Library lib, ShelfPacker *packer,
-                       Ca_FontTier *tier,
-                       const unsigned char *font_data, size_t font_size,
-                       float baked_px,
-                       int num_ranges)  /* CA_FONT_RANGE_COUNT or CA_FONT_TEXT_RANGES */
+static uint32_t font_size_key(float desired_px)
 {
-    FT_Face face = NULL;
-    FT_Error err = FT_New_Memory_Face(lib, font_data, (FT_Long)font_size, 0, &face);
-    if (err) {
-        fprintf(stderr, "[font] FT_New_Memory_Face failed: %d\n", err);
-        return false;
-    }
-    err = FT_Set_Pixel_Sizes(face, 0, (FT_UInt)baked_px);
-    if (err) {
-        fprintf(stderr, "[font] FT_Set_Pixel_Sizes(%u) failed: %d\n",
-                (unsigned)baked_px, err);
-        FT_Done_Face(face);
-        return false;
-    }
+    if (!(desired_px > 0.0f)) desired_px = CA_FONT_DEFAULT_SIZE_PX;
+    if (desired_px < 1.0f) desired_px = 1.0f;
+    if (desired_px > 512.0f) desired_px = 512.0f;
+    return (uint32_t)(desired_px * 64.0f + 0.5f);
+}
 
-    /* Vertical metrics from the face (already in 26.6 pixel units). */
-    float ascent   = (float)face->size->metrics.ascender   / 64.0f;
-    float descent  = (float)face->size->metrics.descender  / 64.0f;
-    float height   = (float)face->size->metrics.height     / 64.0f;
-    tier->ascent   =  ascent;
-    tier->descent  =  descent;
-    tier->line_gap =  height - (ascent - descent);
+static int font_range_index_for_cp(uint32_t cp)
+{
+    for (int i = 0; i < CA_FONT_RANGE_COUNT; i++) {
+        uint32_t first = (uint32_t)g_range_defs[i].first;
+        uint32_t last  = first + (uint32_t)g_range_defs[i].count;
+        if (cp >= first && cp < last) return i;
+    }
+    return -1;
+}
 
-    int cpt = chars_for_ranges(num_ranges);
+static bool font_codepoint_is_icon(uint32_t cp, int range_index)
+{
+    if (range_index >= CA_FONT_TEXT_RANGES)
+        return true;
+    /* Nerd Fonts also use supplementary private-use planes beyond the legacy
+       BMP ranges above.  Treat all Unicode private-use blocks as icons so
+       they resolve through the regular Nerd-Font face. */
+    return (cp >= 0xE000u  && cp <= 0xF8FFu)  ||
+           (cp >= 0xF0000u && cp <= 0xFFFFDu) ||
+           (cp >= 0x100000u && cp <= 0x10FFFDu);
+}
+
+static void font_mark_dirty(Ca_Font *font, uint16_t x, uint16_t y,
+                            uint16_t w, uint16_t h)
+{
+    if (!font || w == 0 || h == 0) return;
+    if (font->dirty_full) return;
+    if (font->dirty_rect_count >= CA_FONT_MAX_DIRTY_RECTS) {
+        font->dirty_full = true;
+        font->dirty_rect_count = 0;
+        return;
+    }
+    font->dirty_rects[font->dirty_rect_count++] =
+        (Ca_FontDirtyRect){ x, y, w, h };
+}
+
+static void font_invalidate_paint_caches(Ca_Font *font)
+{
+    Ca_Instance *inst = font ? font->owner : NULL;
+    if (!inst) return;
+    for (int wi = 0; wi < CA_MAX_WINDOWS_TOTAL; wi++) {
+        Ca_Window *win = &inst->windows[wi];
+        if (!win->in_use || !win->node_pool) continue;
+        win->paint_cache_used = 0;
+        for (uint32_t ni = 0; ni < CA_MAX_NODES_PER_WINDOW; ni++) {
+            Ca_Node *node = &win->node_pool[ni];
+            if (!node->in_use) continue;
+            node->dirty |= CA_DIRTY_CONTENT;
+            node->cache_count = 0;
+            node->cache_post_count = 0;
+        }
+        win->needs_render = true;
+    }
+}
+
+static void font_init_ranges(Ca_FontTier *tier)
+{
+    int cpt = chars_for_ranges(CA_FONT_RANGE_COUNT);
     tier->chardata_block = (Ca_Glyph *)CA_CALLOC((size_t)cpt, sizeof(Ca_Glyph));
-    if (!tier->chardata_block) {
-        FT_Done_Face(face);
-        return false;
-    }
-
+    if (!tier->chardata_block) return;
     int offset = 0;
-    for (int r = 0; r < num_ranges; r++) {
+    for (int r = 0; r < CA_FONT_RANGE_COUNT; r++) {
         tier->ranges[r].first_codepoint = g_range_defs[r].first;
         tier->ranges[r].num_chars       = g_range_defs[r].count;
         tier->ranges[r].chardata        = tier->chardata_block + offset;
         offset += g_range_defs[r].count;
     }
-    /* Ranges beyond num_ranges are not baked — zero them so ca_font_glyph
-       skips them cleanly in the lookup loop.                               */
-    for (int r = num_ranges; r < CA_FONT_RANGE_COUNT; r++) {
-        tier->ranges[r].first_codepoint = 0;
-        tier->ranges[r].num_chars       = 0;
-        tier->ranges[r].chardata        = NULL;
+    tier->extra_capacity = CA_FONT_EXTRA_GLYPHS_PER_PAGE;
+    tier->extra_lookup_capacity = CA_FONT_EXTRA_LOOKUP_CAPACITY;
+    tier->extra_glyphs = (Ca_FontExtraGlyph *)CA_CALLOC(
+        tier->extra_capacity, sizeof(Ca_FontExtraGlyph));
+    tier->extra_lookup = (uint16_t *)CA_CALLOC(
+        tier->extra_lookup_capacity, sizeof(uint16_t));
+}
+
+static void font_clear_page(Ca_Font *font, Ca_FontTier *tier, bool clear_pixels)
+{
+    if (!font || !tier || !tier->dynamic_page) return;
+    if (clear_pixels && font->atlas_rgba) {
+        for (uint16_t y = 0; y < CA_FONT_PAGE_SIZE; y++) {
+            unsigned char *row = font->atlas_rgba +
+                (((uint32_t)tier->origin_y + y) * (uint32_t)font->atlas_w +
+                 (uint32_t)tier->origin_x) * 4u;
+            memset(row, 0, (size_t)CA_FONT_PAGE_SIZE * 4u);
+        }
+        font_mark_dirty(font, tier->origin_x, tier->origin_y,
+                        CA_FONT_PAGE_SIZE, CA_FONT_PAGE_SIZE);
     }
+    if (tier->chardata_block) {
+        int cpt = chars_for_ranges(CA_FONT_RANGE_COUNT);
+        memset(tier->chardata_block, 0, (size_t)cpt * sizeof(Ca_Glyph));
+    }
+    if (tier->extra_glyphs)
+        memset(tier->extra_glyphs, 0,
+               (size_t)tier->extra_capacity * sizeof(Ca_FontExtraGlyph));
+    if (tier->extra_lookup)
+        memset(tier->extra_lookup, 0,
+               (size_t)tier->extra_lookup_capacity * sizeof(uint16_t));
+    tier->extra_count = 0;
+    tier->shelf_x = tier->shelf_y = tier->shelf_h = 0;
+    tier->packed = false;
+}
 
-    int packed_count = 0;
-    for (int ri = 0; ri < num_ranges; ri++) {
-        Ca_GlyphRange *range = &tier->ranges[ri];
-        bool is_icon_range = (ri >= CA_FONT_TEXT_RANGES);
+static bool font_set_page_metrics(Ca_Font *font, Ca_FontTier *tier)
+{
+    FT_Face face = (tier->style == CA_FONT_STYLE_BOLD && font->bold_face)
+        ? (FT_Face)font->bold_face
+        : (FT_Face)font->regular_face;
+    if (!face) return false;
+    FT_Error err = FT_Set_Pixel_Sizes(face, 0, (FT_UInt)(tier->baked_px + 0.5f));
+    if (err) return false;
 
-        /* Grayscale antialiasing for all glyph ranges.  Icons skip hinting
-           because large symbolic glyphs look better unhinted; text uses
-           FreeType's auto-hinter which produces consistent stems across
-           platforms without depending on embedded TrueType hint programs. */
-        int32_t load_flags = is_icon_range
-            ? (FT_LOAD_DEFAULT | FT_LOAD_NO_HINTING | FT_LOAD_RENDER)
-            : (FT_LOAD_DEFAULT | FT_LOAD_RENDER | FT_LOAD_FORCE_AUTOHINT);
-        FT_Render_Mode render_mode = FT_RENDER_MODE_NORMAL;
+    float to_logical = tier->logical_px / tier->baked_px;
+    float ascent  = (float)face->size->metrics.ascender  / 64.0f;
+    float descent = (float)face->size->metrics.descender / 64.0f;
+    float height  = (float)face->size->metrics.height    / 64.0f;
+    tier->ascent   = ascent * to_logical;
+    tier->descent  = descent * to_logical;
+    tier->line_gap = (height - (ascent - descent)) * to_logical;
+    return true;
+}
 
-        for (int i = 0; i < range->num_chars; i++) {
-            uint32_t cp = (uint32_t)(range->first_codepoint + i);
-            FT_UInt gi = FT_Get_Char_Index(face, cp);
-            if (gi == 0) continue;
+static bool font_init_page(Ca_Font *font, Ca_FontTier *tier,
+                           uint32_t size_key, uint8_t style,
+                           uint16_t page_index, bool clear_pixels)
+{
+    uint16_t cols = (uint16_t)(CA_FONT_ATLAS_W / CA_FONT_PAGE_SIZE);
+    memset(tier, 0, sizeof(*tier));
+    tier->owner        = font;
+    tier->dynamic_page = true;
+    tier->style        = style;
+    tier->page_index   = page_index;
+    tier->origin_x     = (uint16_t)((page_index % cols) * CA_FONT_PAGE_SIZE);
+    tier->origin_y     = (uint16_t)((page_index / cols) * CA_FONT_PAGE_SIZE);
+    tier->size_key     = size_key;
+    tier->logical_px   = (float)size_key / 64.0f;
+    tier->baked_px     = tier->logical_px * font->content_scale;
+    if (tier->baked_px < 1.0f) tier->baked_px = 1.0f;
+    tier->baked_px     = (float)(int)(tier->baked_px + 0.5f);
+    tier->last_used_frame = font->frame_counter;
+    font_init_ranges(tier);
+    if (!tier->chardata_block || !tier->extra_glyphs || !tier->extra_lookup) {
+        CA_FREE(tier->chardata_block);
+        CA_FREE(tier->extra_glyphs);
+        CA_FREE(tier->extra_lookup);
+        memset(tier, 0, sizeof(*tier));
+        return false;
+    }
+    if (!font_set_page_metrics(font, tier)) {
+        CA_FREE(tier->chardata_block);
+        CA_FREE(tier->extra_glyphs);
+        CA_FREE(tier->extra_lookup);
+        memset(tier, 0, sizeof(*tier));
+        return false;
+    }
+    font_clear_page(font, tier, clear_pixels);
+    tier->packed = true;
+    return true;
+}
 
-            if (FT_Load_Glyph(face, gi, load_flags) != 0) continue;
-            FT_GlyphSlot slot = face->glyph;
-            if (slot->format != FT_GLYPH_FORMAT_BITMAP) {
-                if (FT_Render_Glyph(slot, render_mode) != 0) continue;
-            }
+static Ca_FontTier *font_find_page(Ca_Font *font, uint32_t key, uint8_t style)
+{
+    for (int i = 0; i < CA_FONT_MAX_PAGES; i++) {
+        Ca_FontTier *tier = &font->pages[i];
+        if (tier->dynamic_page && tier->packed &&
+            tier->size_key == key && tier->style == style) {
+            ca_font_touch_page(font, i);
+            return tier;
+        }
+    }
+    return NULL;
+}
 
-            const FT_Bitmap *bmp = &slot->bitmap;
-            int pixel_w, pixel_h;
-            if (bmp->pixel_mode == FT_PIXEL_MODE_LCD) {
-                pixel_w = (int)bmp->width / 3;
-                pixel_h = (int)bmp->rows;
-            } else {
-                pixel_w = (int)bmp->width;
-                pixel_h = (int)bmp->rows;
-            }
+static Ca_FontTier *font_alloc_page(Ca_Font *font, uint32_t key, uint8_t style)
+{
+    int victim = -1;
+    uint64_t oldest = UINT64_MAX;
 
-            Ca_Glyph *g = &range->chardata[i];
-            /* Empty glyph (e.g. space): no atlas entry, but advance is set. */
-            if (pixel_w <= 0 || pixel_h <= 0) {
-                g->x0 = g->y0 = g->x1 = g->y1 = 0;
-                g->xoff = g->yoff = g->xoff2 = g->yoff2 = 0.0f;
-                g->xadvance = (float)slot->advance.x / 64.0f;
-                packed_count++;
-                continue;
-            }
-
-            /* Reserve atlas slot with 1px transparent gutter all around
-               so bilinear sampling never picks up a neighbour's pixels. */
-            int rx, ry;
-            if (!shelf_alloc(packer, pixel_w + 2, pixel_h + 2, &rx, &ry)) {
-                fprintf(stderr, "[font] atlas overflow at cp=U+%04X\n", cp);
-                continue;
-            }
-            rx += 1; ry += 1;
-
-            if (bmp->pixel_mode == FT_PIXEL_MODE_LCD)
-                blit_lcd (packer->atlas_rgba, packer->width, rx, ry, bmp);
-            else
-                blit_gray(packer->atlas_rgba, packer->width, rx, ry, bmp);
-
-            g->x0 = (uint16_t)rx;
-            g->y0 = (uint16_t)ry;
-            g->x1 = (uint16_t)(rx + pixel_w);
-            g->y1 = (uint16_t)(ry + pixel_h);
-            g->xoff  = (float)slot->bitmap_left;
-            g->yoff  = (float)(-slot->bitmap_top);
-            g->xoff2 = g->xoff + (float)pixel_w;
-            g->yoff2 = g->yoff + (float)pixel_h;
-            g->xadvance = (float)slot->advance.x / 64.0f;
-            packed_count++;
+    for (int i = 0; i < CA_FONT_MAX_PAGES; i++) {
+        if (!font->pages[i].dynamic_page) {
+            victim = i;
+            break;
+        }
+        if (font->pages[i].last_used_frame == font->frame_counter)
+            continue;
+        if (font->pages[i].last_used_frame < oldest) {
+            oldest = font->pages[i].last_used_frame;
+            victim = i;
         }
     }
 
-    /* Validation: a sample of ASCII glyphs must have produced atlas entries. */
-    bool ok = true;
-    const char test_chars[] = "AaMmWw.,:;";
-    for (int i = 0; test_chars[i]; i++) {
-        Ca_Glyph *g = &tier->ranges[0].chardata[test_chars[i] - 32];
-        if (g->x1 <= g->x0) { ok = false; break; }
+    if (victim < 0) {
+        /* All pages are referenced this frame.  Keep rendering stable rather
+           than evicting live UVs; the missing glyph will retry next frame. */
+        return NULL;
     }
-    tier->packed = ok && packed_count > 0;
 
-    FT_Done_Face(face);
-    return tier->packed;
+    Ca_FontTier *tier = &font->pages[victim];
+    bool was_dynamic = tier->dynamic_page;
+    if (was_dynamic)
+        font_invalidate_paint_caches(font);
+    CA_FREE(tier->chardata_block);
+    CA_FREE(tier->extra_glyphs);
+    CA_FREE(tier->extra_lookup);
+    return font_init_page(font, tier, key, style, (uint16_t)victim, was_dynamic)
+        ? tier : NULL;
+}
+
+static Ca_FontTier *font_any_live_page(Ca_Font *font)
+{
+    if (!font) return NULL;
+    for (int i = 0; i < CA_FONT_MAX_PAGES; i++) {
+        Ca_FontTier *tier = &font->pages[i];
+        if (tier->dynamic_page && tier->packed &&
+            tier->style == CA_FONT_STYLE_REGULAR) {
+            ca_font_touch_page(font, i);
+            return tier;
+        }
+    }
+    for (int i = 0; i < CA_FONT_MAX_PAGES; i++) {
+        Ca_FontTier *tier = &font->pages[i];
+        if (tier->dynamic_page && tier->packed) {
+            ca_font_touch_page(font, i);
+            return tier;
+        }
+    }
+    return NULL;
+}
+
+static FT_Face font_primary_face_for_range(Ca_Font *font,
+                                           uint8_t style,
+                                           bool is_icon_range)
+{
+    if (!font) return NULL;
+    /* Icon glyphs live in the regular Nerd Font bundle.  Some bold faces omit
+       private-use icon ranges, so icons deliberately avoid bold-face lookup. */
+    if (is_icon_range)
+        return (FT_Face)font->regular_face;
+    if (style == CA_FONT_STYLE_BOLD && font->bold_face)
+        return (FT_Face)font->bold_face;
+    return (FT_Face)font->regular_face;
+}
+
+static bool font_set_face_size(FT_Face face, float baked_px)
+{
+    return face &&
+           FT_Set_Pixel_Sizes(face, 0, (FT_UInt)(baked_px + 0.5f)) == 0;
+}
+
+static bool font_page_alloc(Ca_FontTier *tier, int w, int h, int *out_x, int *out_y)
+{
+    if (w <= 0 || h <= 0) return false;
+    if (w > CA_FONT_PAGE_SIZE || h > CA_FONT_PAGE_SIZE) return false;
+    if (tier->shelf_x + w > CA_FONT_PAGE_SIZE || h > tier->shelf_h) {
+        uint16_t new_top = (uint16_t)(tier->shelf_y + tier->shelf_h);
+        if ((int)new_top + h > CA_FONT_PAGE_SIZE) return false;
+        tier->shelf_y = new_top;
+        tier->shelf_h = (uint16_t)h;
+        tier->shelf_x = 0;
+    }
+    *out_x = (int)tier->origin_x + tier->shelf_x;
+    *out_y = (int)tier->origin_y + tier->shelf_y;
+    tier->shelf_x = (uint16_t)(tier->shelf_x + w);
+    return true;
+}
+
+static bool font_render_glyph(Ca_FontTier *tier, uint32_t cp, Ca_Glyph *g);
+
+static Ca_Glyph *font_extra_glyph(Ca_FontTier *tier, uint32_t cp, bool create)
+{
+    if (!tier || !tier->extra_glyphs || !tier->extra_lookup ||
+        tier->extra_lookup_capacity == 0u)
+        return NULL;
+
+    uint32_t pos = (cp * 2654435761u) % tier->extra_lookup_capacity;
+    for (uint16_t probe = 0; probe < tier->extra_lookup_capacity; probe++) {
+        uint16_t entry = tier->extra_lookup[pos];
+        if (entry != 0u) {
+            Ca_FontExtraGlyph *slot = &tier->extra_glyphs[entry - 1u];
+            if (slot->codepoint == cp)
+                return &slot->glyph;
+        } else {
+            if (!create || tier->extra_count >= tier->extra_capacity)
+                return NULL;
+            uint16_t new_entry = (uint16_t)(tier->extra_count + 1u);
+            Ca_FontExtraGlyph *slot = &tier->extra_glyphs[tier->extra_count++];
+            memset(slot, 0, sizeof(*slot));
+            slot->codepoint = cp;
+            tier->extra_lookup[pos] = new_entry;
+            return &slot->glyph;
+        }
+        pos++;
+        if (pos >= tier->extra_lookup_capacity) pos = 0u;
+    }
+    return NULL;
+}
+
+static Ca_Glyph *font_glyph_slot(Ca_FontTier *tier, uint32_t cp, bool create)
+{
+    if (!tier) return NULL;
+    int range_index = font_range_index_for_cp(cp);
+    if (range_index >= 0) {
+        Ca_GlyphRange *r = &tier->ranges[range_index];
+        if (!r->chardata) return NULL;
+        return &r->chardata[cp - (uint32_t)r->first_codepoint];
+    }
+    return font_extra_glyph(tier, cp, create);
+}
+
+static bool font_page_matches(const Ca_FontTier *tier,
+                              uint32_t key, uint8_t style)
+{
+    return tier && tier->dynamic_page && tier->packed &&
+           tier->size_key == key && tier->style == style;
+}
+
+static Ca_Glyph *font_find_rendered_glyph(Ca_Font *font,
+                                          uint32_t key, uint8_t style,
+                                          uint32_t cp,
+                                          Ca_FontTier **out_tier)
+{
+    for (int i = 0; i < CA_FONT_MAX_PAGES; i++) {
+        Ca_FontTier *page = &font->pages[i];
+        if (!font_page_matches(page, key, style)) continue;
+        Ca_Glyph *g = font_glyph_slot(page, cp, false);
+        if (g && g->valid) {
+            ca_font_touch_page(font, i);
+            if (out_tier) *out_tier = page;
+            return g;
+        }
+    }
+    return NULL;
+}
+
+static Ca_Glyph *font_render_glyph_on_page(Ca_FontTier *page,
+                                           uint32_t cp,
+                                           Ca_FontTier **out_tier)
+{
+    Ca_Glyph *g = font_glyph_slot(page, cp, true);
+    if (!g) return NULL;
+    if (g->valid || font_render_glyph(page, cp, g)) {
+        if (out_tier) *out_tier = page;
+        return g;
+    }
+    return NULL;
+}
+
+static bool font_render_glyph(Ca_FontTier *tier, uint32_t cp, Ca_Glyph *g)
+{
+    Ca_Font *font = tier ? tier->owner : NULL;
+    if (!font || !g) return false;
+    memset(g, 0, sizeof(*g));
+
+    int range_index = font_range_index_for_cp(cp);
+    bool is_icon_range = font_codepoint_is_icon(cp, range_index);
+    FT_Face face = font_primary_face_for_range(font, tier->style, is_icon_range);
+    if (!font_set_face_size(face, tier->baked_px))
+        return false;
+
+    if (cp < 32u || cp == 0x7Fu) {
+        if (cp == '\t') {
+            FT_UInt space_gi = FT_Get_Char_Index(face, ' ');
+            if (space_gi != 0 && FT_Load_Glyph(face, space_gi, FT_LOAD_DEFAULT) == 0)
+                g->xadvance = ((float)face->glyph->advance.x / 64.0f) * 4.0f;
+            else
+                g->xadvance = tier->baked_px * 2.0f;
+        }
+        g->valid = 1;
+        return true;
+    }
+
+    FT_UInt gi = FT_Get_Char_Index(face, cp);
+    if (gi == 0 && face != (FT_Face)font->regular_face) {
+        FT_Face regular = (FT_Face)font->regular_face;
+        if (font_set_face_size(regular, tier->baked_px)) {
+            FT_UInt regular_gi = FT_Get_Char_Index(regular, cp);
+            if (regular_gi != 0) {
+                face = regular;
+                gi = regular_gi;
+            }
+        }
+    }
+    if (gi == 0 && cp != '?')
+        gi = FT_Get_Char_Index(face, '?');
+    if (gi == 0) {
+        g->xadvance = tier->logical_px * 0.5f * (tier->baked_px / tier->logical_px);
+        g->valid = 1;
+        return true;
+    }
+
+    int32_t load_flags = is_icon_range
+        ? (FT_LOAD_DEFAULT | FT_LOAD_NO_HINTING | FT_LOAD_RENDER)
+        : (FT_LOAD_DEFAULT | FT_LOAD_TARGET_LIGHT |
+           FT_LOAD_RENDER | FT_LOAD_FORCE_AUTOHINT);
+    if (FT_Load_Glyph(face, gi, load_flags) != 0) return false;
+    FT_GlyphSlot slot = face->glyph;
+    if (slot->format != FT_GLYPH_FORMAT_BITMAP) {
+        FT_Render_Mode mode = FT_RENDER_MODE_NORMAL;
+        if (FT_Render_Glyph(slot, mode) != 0) return false;
+    }
+
+    const FT_Bitmap *bmp = &slot->bitmap;
+    int pixel_w = (bmp->pixel_mode == FT_PIXEL_MODE_LCD)
+        ? (int)bmp->width / 3
+        : (int)bmp->width;
+    int pixel_h = (int)bmp->rows;
+
+    if (pixel_w <= 0 || pixel_h <= 0) {
+        g->xadvance = (float)slot->advance.x / 64.0f;
+        g->valid = 1;
+        return true;
+    }
+
+    int rx, ry;
+    if (!font_page_alloc(tier, pixel_w + 2, pixel_h + 2, &rx, &ry)) {
+        return false;
+    }
+    rx += 1;
+    ry += 1;
+
+    if (bmp->pixel_mode == FT_PIXEL_MODE_LCD)
+        blit_lcd(font->atlas_rgba, font->atlas_w, rx, ry, bmp);
+    else
+        blit_gray(font->atlas_rgba, font->atlas_w, rx, ry, bmp);
+
+    g->x0 = (uint16_t)rx;
+    g->y0 = (uint16_t)ry;
+    g->x1 = (uint16_t)(rx + pixel_w);
+    g->y1 = (uint16_t)(ry + pixel_h);
+    g->xoff  = (float)slot->bitmap_left;
+    g->yoff  = (float)(-slot->bitmap_top);
+    g->xoff2 = g->xoff + (float)pixel_w;
+    g->yoff2 = g->yoff + (float)pixel_h;
+    g->xadvance = (float)slot->advance.x / 64.0f;
+    g->valid = 1;
+
+    font_mark_dirty(font, (uint16_t)(rx - 1), (uint16_t)(ry - 1),
+                    (uint16_t)(pixel_w + 2), (uint16_t)(pixel_h + 2));
+    return true;
+}
+
+Ca_FontTier *ca_font_select_tier_for_size(Ca_Font *font,
+                                          float desired_px,
+                                          bool bold)
+{
+    if (!font) return NULL;
+    uint8_t style = (bold && font->bold_face) ? CA_FONT_STYLE_BOLD : CA_FONT_STYLE_REGULAR;
+    uint32_t key = font_size_key(desired_px);
+    Ca_FontTier *tier = font_find_page(font, key, style);
+    if (tier) return tier;
+    tier = font_alloc_page(font, key, style);
+    if (tier) return tier;
+    tier = font_find_page(font, font_size_key(font->default_size), CA_FONT_STYLE_REGULAR);
+    return tier ? tier : font_any_live_page(font);
+}
+
+Ca_Glyph *ca_font_glyph_from_tier(Ca_FontTier *tier, uint32_t cp,
+                                  Ca_FontTier **out_tier)
+{
+    if (out_tier) *out_tier = tier;
+    if (!tier) return NULL;
+    Ca_Font *font = tier->owner;
+    if (!font) return NULL;
+
+    const uint32_t key = tier->size_key;
+    const uint8_t style = tier->style;
+    Ca_Glyph *g = font_find_rendered_glyph(font, key, style, cp, out_tier);
+    if (g) return g;
+
+    for (int i = 0; i < CA_FONT_MAX_PAGES; i++) {
+        Ca_FontTier *page = &font->pages[i];
+        if (!font_page_matches(page, key, style)) continue;
+        ca_font_touch_page(font, i);
+        g = font_render_glyph_on_page(page, cp, out_tier);
+        if (g) return g;
+    }
+
+    Ca_FontTier *page = font_alloc_page(font, key, style);
+    if (page) {
+        g = font_render_glyph_on_page(page, cp, out_tier);
+        if (g) return g;
+    }
+
+    fprintf(stderr, "[font] could not render/pack glyph %.1fpx style=%u cp=U+%04X\n",
+            tier->logical_px, (unsigned)style, cp);
+    return NULL;
+}
+
+void ca_font_begin_frame(Ca_Font *font)
+{
+    if (font) font->frame_counter++;
+}
+
+void ca_font_touch_page(Ca_Font *font, int page_index)
+{
+    if (!font || page_index < 0 || page_index >= CA_FONT_MAX_PAGES) return;
+    if (font->pages[page_index].dynamic_page)
+        font->pages[page_index].last_used_frame = font->frame_counter;
+}
+
+void ca_font_flush_uploads(Ca_Instance *inst, Ca_Font *font)
+{
+    if (!inst || !font || !font->atlas_rgba || font->image == VK_NULL_HANDLE)
+        return;
+    uint32_t rect_count = font->dirty_full ? 1u : font->dirty_rect_count;
+    if (rect_count == 0) return;
+
+    Ca_FontDirtyRect full = { 0, 0, (uint16_t)font->atlas_w, (uint16_t)font->atlas_h };
+    Ca_FontDirtyRect *rects = font->dirty_full ? &full : font->dirty_rects;
+
+    VkDeviceSize total = 0;
+    for (uint32_t i = 0; i < rect_count; i++)
+        total += (VkDeviceSize)rects[i].w * rects[i].h * 4u;
+    if (total == 0) return;
+
+    VkBufferCreateInfo buf_ci = {
+        .sType       = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+        .size        = total,
+        .usage       = VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+        .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+    };
+    VkBuffer staging_buf = VK_NULL_HANDLE;
+    VkDeviceMemory staging_mem = VK_NULL_HANDLE;
+    VkResult vr = vkCreateBuffer(inst->vk_device, &buf_ci, NULL, &staging_buf);
+    if (vr != VK_SUCCESS) {
+        fprintf(stderr, "[font] vkCreateBuffer failed for atlas upload (%d)\n", vr);
+        return;
+    }
+
+    VkMemoryRequirements buf_req;
+    vkGetBufferMemoryRequirements(inst->vk_device, staging_buf, &buf_req);
+    uint32_t mem_type = find_memory_type(inst->vk_gpu, buf_req.memoryTypeBits,
+                                         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                                         VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    if (mem_type == UINT32_MAX) {
+        fprintf(stderr, "[font] no host-visible memory for atlas upload\n");
+        vkDestroyBuffer(inst->vk_device, staging_buf, NULL);
+        return;
+    }
+    VkMemoryAllocateInfo buf_mem_ai = {
+        .sType           = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+        .allocationSize  = buf_req.size,
+        .memoryTypeIndex = mem_type,
+    };
+    vr = vkAllocateMemory(inst->vk_device, &buf_mem_ai, NULL, &staging_mem);
+    if (vr != VK_SUCCESS) {
+        fprintf(stderr, "[font] vkAllocateMemory failed for atlas upload (%d)\n", vr);
+        vkDestroyBuffer(inst->vk_device, staging_buf, NULL);
+        return;
+    }
+    vr = vkBindBufferMemory(inst->vk_device, staging_buf, staging_mem, 0);
+    if (vr != VK_SUCCESS) {
+        fprintf(stderr, "[font] vkBindBufferMemory failed for atlas upload (%d)\n", vr);
+        vkDestroyBuffer(inst->vk_device, staging_buf, NULL);
+        vkFreeMemory(inst->vk_device, staging_mem, NULL);
+        return;
+    }
+
+    void *mapped = NULL;
+    vr = vkMapMemory(inst->vk_device, staging_mem, 0, total, 0, &mapped);
+    if (vr != VK_SUCCESS || !mapped) {
+        fprintf(stderr, "[font] vkMapMemory failed for atlas upload (%d)\n", vr);
+        vkDestroyBuffer(inst->vk_device, staging_buf, NULL);
+        vkFreeMemory(inst->vk_device, staging_mem, NULL);
+        return;
+    }
+    unsigned char *dst = (unsigned char *)mapped;
+    VkBufferImageCopy *copies =
+        (VkBufferImageCopy *)CA_CALLOC(rect_count, sizeof(VkBufferImageCopy));
+    if (!copies) {
+        fprintf(stderr, "[font] copy list allocation failed for atlas upload\n");
+        vkUnmapMemory(inst->vk_device, staging_mem);
+        vkDestroyBuffer(inst->vk_device, staging_buf, NULL);
+        vkFreeMemory(inst->vk_device, staging_mem, NULL);
+        return;
+    }
+    VkDeviceSize off = 0;
+    for (uint32_t i = 0; i < rect_count; i++) {
+        Ca_FontDirtyRect r = rects[i];
+        size_t row_bytes = (size_t)r.w * 4u;
+        const unsigned char *src = font->atlas_rgba +
+            ((uint32_t)r.y * (uint32_t)font->atlas_w + (uint32_t)r.x) * 4u;
+        for (uint16_t y = 0; y < r.h; y++)
+            memcpy(dst + off + (VkDeviceSize)y * row_bytes,
+                   src + (size_t)y * (size_t)font->atlas_w * 4u,
+                   row_bytes);
+        copies[i] = (VkBufferImageCopy){
+            .bufferOffset = off,
+            .bufferRowLength = 0,
+            .bufferImageHeight = 0,
+            .imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 },
+            .imageOffset = { r.x, r.y, 0 },
+            .imageExtent = { r.w, r.h, 1 },
+        };
+        off += (VkDeviceSize)r.w * r.h * 4u;
+    }
+    vkUnmapMemory(inst->vk_device, staging_mem);
+
+    VkCommandBuffer cmd = begin_once(inst);
+    VkImageMemoryBarrier bar = {
+        .sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+        .srcAccessMask       = VK_ACCESS_SHADER_READ_BIT,
+        .dstAccessMask       = VK_ACCESS_TRANSFER_WRITE_BIT,
+        .oldLayout           = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+        .newLayout           = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .image               = font->image,
+        .subresourceRange    = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 },
+    };
+    vkCmdPipelineBarrier(cmd,
+        VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+        0, 0, NULL, 0, NULL, 1, &bar);
+
+    vkCmdCopyBufferToImage(cmd, staging_buf, font->image,
+                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                           rect_count, copies);
+
+    bar.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    bar.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    bar.oldLayout     = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    bar.newLayout     = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    vkCmdPipelineBarrier(cmd,
+        VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+        0, 0, NULL, 0, NULL, 1, &bar);
+    end_once(inst, cmd);
+
+    CA_FREE(copies);
+    vkDestroyBuffer(inst->vk_device, staging_buf, NULL);
+    vkFreeMemory(inst->vk_device, staging_mem, NULL);
+    font->dirty_rect_count = 0;
+    font->dirty_full = false;
+    font->atlas_generation++;
 }
 
 /* ============================================================
@@ -493,148 +988,85 @@ static bool font_create_internal(Ca_Instance *inst, GLFWwindow *glfw_win,
 
     float cx = 1.0f;
     glfwGetWindowContentScale(glfw_win, &cx, NULL);
+    if (!(cx > 0.0f)) cx = 1.0f;
     out_font->content_scale = cx;
     out_font->default_size  = CA_FONT_DEFAULT_SIZE_PX;
+    out_font->owner         = inst;
+    out_font->atlas_w       = CA_FONT_ATLAS_W;
+    out_font->atlas_h       = CA_FONT_ATLAS_H;
 
     FT_Library lib = NULL;
     if (FT_Init_FreeType(&lib) != 0) {
         fprintf(stderr, "[font] FT_Init_FreeType failed\n");
         return false;
     }
-    /* Grayscale antialiasing — no LCD filter needed.  Subpixel rendering
-       produces color fringing under composited window managers (Wayland,
-       X11 compositors) and depends on display subpixel order, so grayscale
-       is used for portability and correctness on all platforms.         */
 
-    /* Atlas: 4096x4096 RGBA8 holds all baked size tiers.  Icons (Nerd-Font
-       ranges) are baked only at CA_FONT_DEFAULT_SIZE_PX; all other sizes
-       carry text-only (ASCII+Latin-1) and fall back to the icon tier via
-       Ca_FontTier::icon_fallback for codepoints outside their ranges.   */
-    out_font->atlas_w = 4096;
-    out_font->atlas_h = 4096;
-    size_t atlas_bytes = (size_t)out_font->atlas_w * out_font->atlas_h * 4;
-    unsigned char *atlas = (unsigned char *)CA_CALLOC(1, atlas_bytes);
-    if (!atlas) {
+    out_font->regular_data = (unsigned char *)CA_MALLOC(regular_size);
+    if (!out_font->regular_data) {
         FT_Done_FreeType(lib);
         return false;
     }
+    memcpy(out_font->regular_data, regular_data, regular_size);
+    out_font->regular_size = regular_size;
 
-    ShelfPacker packer = {
-        .width      = out_font->atlas_w,
-        .height     = out_font->atlas_h,
-        .shelf_y    = 0,
-        .shelf_h    = 0,
-        .shelf_x    = 0,
-        .atlas_rgba = atlas,
-    };
-
-    /* Collect the size set: always include CA_FONT_DEFAULT_SIZE_PX (the icon
-       tier), then fill from the standard list until we reach CA_FONT_MAX_SIZES.
-       Sort ascending so the log output is tidy.                              */
-    float size_list[CA_FONT_MAX_SIZES];
-    int   size_count = 0;
-    size_list[size_count++] = CA_FONT_DEFAULT_SIZE_PX;
-    for (int i = 0; i < g_std_sizes_count && size_count < CA_FONT_MAX_SIZES; i++) {
-        float s = g_std_sizes[i];
-        bool already = false;
-        for (int j = 0; j < size_count; j++)
-            if (fabsf(size_list[j] - s) < 0.5f) { already = true; break; }
-        if (!already) size_list[size_count++] = s;
+    FT_Face regular_face = NULL;
+    if (FT_New_Memory_Face(lib, out_font->regular_data,
+                           (FT_Long)out_font->regular_size,
+                           0, &regular_face) != 0) {
+        fprintf(stderr, "[font] FT_New_Memory_Face regular failed\n");
+        CA_FREE(out_font->regular_data);
+        FT_Done_FreeType(lib);
+        memset(out_font, 0, sizeof(*out_font));
+        return false;
     }
-    /* Bubble-sort ascending (tiny array). */
-    for (int i = 0; i < size_count - 1; i++)
-        for (int j = i + 1; j < size_count; j++)
-            if (size_list[i] > size_list[j]) {
-                float tmp = size_list[i]; size_list[i] = size_list[j]; size_list[j] = tmp;
-            }
+    out_font->regular_face = regular_face;
 
-    /* Bake every size in the list into the shared atlas. */
-    bool any_reg_ok = false;
-    for (int si = 0; si < size_count; si++) {
-        float logical = size_list[si];
-        float baked   = (float)(int)(logical * cx + 0.5f);
-        if (baked < 8.0f) baked = 8.0f;
-
-        /* Only CA_FONT_DEFAULT_SIZE_PX gets all icon/Nerd-Font ranges.
-           All other sizes bake text-only (ASCII+Latin-1, range 0);
-           icon lookups fall back via Ca_FontTier::icon_fallback.     */
-        int num_ranges = (fabsf(logical - CA_FONT_DEFAULT_SIZE_PX) < 0.5f)
-                         ? CA_FONT_RANGE_COUNT : CA_FONT_TEXT_RANGES;
-
-        Ca_FontTier *reg  = &out_font->size_tiers[si][CA_FONT_STYLE_REGULAR];
-        Ca_FontTier *bold = &out_font->size_tiers[si][CA_FONT_STYLE_BOLD];
-
-        reg->logical_px = logical;
-        reg->baked_px   = baked;
-        bool reg_ok = bake_style(lib, &packer, reg,
-                                 regular_data, regular_size, baked, num_ranges);
-        if (reg_ok) {
-            float to_logical = logical / baked;
-            reg->ascent   *= to_logical;
-            reg->descent  *= to_logical;
-            reg->line_gap *= to_logical;
-            any_reg_ok = true;
-        }
-
-        if (bold_data && bold_size > 0) {
-            bold->logical_px = logical;
-            bold->baked_px   = baked;
-            bool bold_ok = bake_style(lib, &packer, bold,
-                                      bold_data, bold_size, baked, num_ranges);
-            if (bold_ok) {
-                float to_logical = logical / baked;
-                bold->ascent   *= to_logical;
-                bold->descent  *= to_logical;
-                bold->line_gap *= to_logical;
+    if (bold_data && bold_size > 0) {
+        out_font->bold_data = (unsigned char *)CA_MALLOC(bold_size);
+        if (out_font->bold_data) {
+            memcpy(out_font->bold_data, bold_data, bold_size);
+            out_font->bold_size = bold_size;
+            FT_Face bold_face = NULL;
+            if (FT_New_Memory_Face(lib, out_font->bold_data,
+                                   (FT_Long)out_font->bold_size,
+                                   0, &bold_face) == 0) {
+                out_font->bold_face = bold_face;
+            } else {
+                fprintf(stderr, "[font] FT_New_Memory_Face bold failed; using regular\n");
+                CA_FREE(out_font->bold_data);
+                out_font->bold_data = NULL;
+                out_font->bold_size = 0;
             }
         }
-
-        out_font->baked_logicals[si] = logical;
-    }
-    out_font->baked_size_count = size_count;
-
-    /* Wire icon_fallback: find the icon tier slot (CA_FONT_DEFAULT_SIZE_PX)
-       then point every text-only tier at it so ca_font_glyph can fall back
-       for icon codepoints without knowing which tier has them.             */
-    int icon_si = 0;
-    for (int si = 0; si < size_count; si++) {
-        if (fabsf(size_list[si] - CA_FONT_DEFAULT_SIZE_PX) < 0.5f) {
-            icon_si = si; break;
-        }
-    }
-    for (int si = 0; si < size_count; si++) {
-        if (si == icon_si) continue;
-        for (int s = 0; s < CA_FONT_STYLE_COUNT; s++)
-            out_font->size_tiers[si][s].icon_fallback =
-                &out_font->size_tiers[icon_si][s];
     }
 
-    FT_Done_FreeType(lib);
+    out_font->ft_library = lib;
 
-    if (!any_reg_ok) {
-        fprintf(stderr, "[font] no regular tier succeeded in baking\n");
-        CA_FREE(atlas);
-        for (int si = 0; si < size_count; si++)
-            for (int s = 0; s < CA_FONT_STYLE_COUNT; s++)
-                CA_FREE(out_font->size_tiers[si][s].chardata_block);
+    size_t atlas_bytes = (size_t)out_font->atlas_w * out_font->atlas_h * 4u;
+    out_font->atlas_rgba = (unsigned char *)CA_CALLOC(1, atlas_bytes);
+    if (!out_font->atlas_rgba) {
+        ca_font_destroy(inst, out_font);
+        return false;
+    }
+
+    if (!upload_atlas(inst, out_font, out_font->atlas_rgba)) {
+        ca_font_destroy(inst, out_font);
+        return false;
+    }
+
+    /* Prime the default regular page so callers kept for compatibility
+       (ca_font_select_tier/ca_font_tier) always have a valid fallback. */
+    if (!ca_font_select_tier_for_size(out_font, out_font->default_size, false)) {
+        fprintf(stderr, "[font] failed to initialise default font page\n");
+        ca_font_destroy(inst, out_font);
         memset(out_font, 0, sizeof(*out_font));
         return false;
     }
 
-    if (!upload_atlas(inst, out_font, atlas)) {
-        CA_FREE(atlas);
-        for (int si = 0; si < size_count; si++)
-            for (int s = 0; s < CA_FONT_STYLE_COUNT; s++)
-                CA_FREE(out_font->size_tiers[si][s].chardata_block);
-        memset(out_font, 0, sizeof(*out_font));
-        return false;
-    }
-    CA_FREE(atlas);
-
-    printf("[font] FreeType+LCD atlas %dx%d, %d sizes (%.0f..%.0fpx) "
-           "scale=%.1fx\n",
-           out_font->atlas_w, out_font->atlas_h, size_count,
-           size_list[0], size_list[size_count - 1], cx);
+    printf("[font] FreeType dynamic atlas %dx%d, %d LRU pages of %dpx, "
+           "content_scale=%.1fx\n",
+           out_font->atlas_w, out_font->atlas_h,
+           CA_FONT_MAX_PAGES, CA_FONT_PAGE_SIZE, cx);
     return true;
 }
 
@@ -744,18 +1176,30 @@ bool ca_font_detect_system(char *out_path, size_t max_len)
 
 void ca_font_destroy(Ca_Instance *inst, Ca_Font *font)
 {
-    if (!font || font->image == VK_NULL_HANDLE) return;
-    vkDeviceWaitIdle(inst->vk_device);
-    if (font->sampler != VK_NULL_HANDLE)
+    if (!font) return;
+    if (inst && font->image != VK_NULL_HANDLE)
+        vkDeviceWaitIdle(inst->vk_device);
+    if (inst && font->sampler != VK_NULL_HANDLE)
         vkDestroySampler(inst->vk_device, font->sampler, NULL);
-    if (font->view != VK_NULL_HANDLE)
+    if (inst && font->view != VK_NULL_HANDLE)
         vkDestroyImageView(inst->vk_device, font->view, NULL);
-    if (font->image != VK_NULL_HANDLE)
+    if (inst && font->image != VK_NULL_HANDLE)
         vkDestroyImage(inst->vk_device, font->image, NULL);
-    if (font->memory != VK_NULL_HANDLE)
+    if (inst && font->memory != VK_NULL_HANDLE)
         vkFreeMemory(inst->vk_device, font->memory, NULL);
-    for (int si = 0; si < font->baked_size_count; si++)
-        for (int s = 0; s < CA_FONT_STYLE_COUNT; s++)
-            CA_FREE(font->size_tiers[si][s].chardata_block);
+    for (int i = 0; i < CA_FONT_MAX_PAGES; i++) {
+        CA_FREE(font->pages[i].chardata_block);
+        CA_FREE(font->pages[i].extra_glyphs);
+        CA_FREE(font->pages[i].extra_lookup);
+    }
+    if (font->bold_face)
+        FT_Done_Face((FT_Face)font->bold_face);
+    if (font->regular_face)
+        FT_Done_Face((FT_Face)font->regular_face);
+    if (font->ft_library)
+        FT_Done_FreeType((FT_Library)font->ft_library);
+    CA_FREE(font->regular_data);
+    CA_FREE(font->bold_data);
+    CA_FREE(font->atlas_rgba);
     memset(font, 0, sizeof(*font));
 }

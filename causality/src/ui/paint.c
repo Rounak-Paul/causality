@@ -62,6 +62,18 @@ static void set_clip(Ca_DrawCmd *cmd, ClipRect clip)
     }
 }
 
+static void touch_font_pages_for_cmds(Ca_Font *font,
+                                      const Ca_DrawCmd *cmds,
+                                      uint32_t count)
+{
+    if (!font || !cmds) return;
+    for (uint32_t i = 0; i < count; i++) {
+        const Ca_DrawCmd *cmd = &cmds[i];
+        if (cmd->in_use && cmd->type == CA_DRAW_GLYPH)
+            ca_font_touch_page(font, cmd->font_page_index);
+    }
+}
+
 /* Forward declarations — used by paint_node_content before definition */
 static void paint_text(Ca_Window *win, Ca_Font *font,
                        Ca_Node *node,
@@ -859,9 +871,8 @@ static void paint_text_wrapped(Ca_Window *win, Ca_Font *font,
     cur_line_w = 0.0f;
     int cur_line = 0;
 
-    /* Keep xpos fractional for sub-pixel glyph positioning via the LCD
-       atlas's bilinear UV sampling. Snap y for a stable pixel-aligned
-       baseline.                                                            */
+    /* Keep xpos fractional so bilinear coverage sampling preserves smooth
+       horizontal positioning. Snap y for a stable pixel-aligned baseline. */
     float xpos = left_x;
     float baseline_y = start_y;
 
@@ -906,11 +917,16 @@ static void paint_text_wrapped(Ca_Window *win, Ca_Font *font,
                              &glyph_xpos, &glyph_ypos, &q);
             float gw = (q.x1 - q.x0) / glyph_cs_eff;
             float gh = (q.y1 - q.y0) / glyph_cs_eff;
-            if (gw < 0.5f || gh < 0.5f) continue;
+            float adv = pc->xadvance / glyph_cs_eff;
+            if (gw < 0.5f || gh < 0.5f) {
+                xpos += adv;
+                continue;
+            }
 
             Ca_DrawCmd *cmd = &win->draw_cmds[win->draw_cmd_count++];
             memset(cmd, 0, sizeof(*cmd));
             cmd->type = CA_DRAW_GLYPH;
+            cmd->font_page_index = (int16_t)glyph_tier->page_index;
             cmd->x = q.x0 / glyph_cs_eff; cmd->y = q.y0 / glyph_cs_eff;
             cmd->w = gw; cmd->h = gh;
             cmd->r = r; cmd->g = g; cmd->b = b; cmd->a = a;
@@ -919,7 +935,7 @@ static void paint_text_wrapped(Ca_Window *win, Ca_Font *font,
             cmd->z_index = node->desc.z_index;
             cmd->in_use = true;
             set_clip(cmd, node_clip);
-            xpos += pc->xadvance / glyph_cs_eff;
+            xpos += adv;
         }
         if (*p == '\n') {
             cur_line++;
@@ -1006,11 +1022,16 @@ static void paint_text(Ca_Window *win, Ca_Font *font,
 
         float gw = (q.x1 - q.x0) / glyph_cs_eff;
         float gh = (q.y1 - q.y0) / glyph_cs_eff;
-        if (gw < 0.5f || gh < 0.5f) continue;
+        float adv = pc->xadvance / glyph_cs_eff;
+        if (gw < 0.5f || gh < 0.5f) {
+            xpos += adv;
+            continue;
+        }
 
         Ca_DrawCmd *cmd = &win->draw_cmds[win->draw_cmd_count++];
         memset(cmd, 0, sizeof(*cmd));
         cmd->type   = CA_DRAW_GLYPH;
+        cmd->font_page_index = (int16_t)glyph_tier->page_index;
         cmd->x = q.x0 / glyph_cs_eff;  cmd->y = q.y0 / glyph_cs_eff;
         cmd->w = gw;          cmd->h = gh;
         cmd->r = r;  cmd->g = g;  cmd->b = b;  cmd->a = a;
@@ -1019,7 +1040,7 @@ static void paint_text(Ca_Window *win, Ca_Font *font,
         cmd->z_index = node->desc.z_index;
         cmd->in_use = true;
         set_clip(cmd, node_clip);
-        xpos += pc->xadvance / glyph_cs_eff;
+        xpos += adv;
     }
 }
 
@@ -1072,11 +1093,16 @@ static void paint_text_left(Ca_Window *win, Ca_Font *font,
 
         float gw = (q.x1 - q.x0) / glyph_cs_eff;
         float gh = (q.y1 - q.y0) / glyph_cs_eff;
-        if (gw < 0.5f || gh < 0.5f) continue;
+        float adv = pc->xadvance / glyph_cs_eff;
+        if (gw < 0.5f || gh < 0.5f) {
+            xpos += adv;
+            continue;
+        }
 
         Ca_DrawCmd *cmd = &win->draw_cmds[win->draw_cmd_count++];
         memset(cmd, 0, sizeof(*cmd));
         cmd->type   = CA_DRAW_GLYPH;
+        cmd->font_page_index = (int16_t)glyph_tier->page_index;
         cmd->x = q.x0 / glyph_cs_eff;  cmd->y = q.y0 / glyph_cs_eff;
         cmd->w = gw;          cmd->h = gh;
         cmd->r = r;  cmd->g = g;  cmd->b = b;  cmd->a = a;
@@ -1084,7 +1110,7 @@ static void paint_text_left(Ca_Window *win, Ca_Font *font,
         cmd->u1 = q.s1;  cmd->v1 = q.t1;
         cmd->in_use = true;
         set_clip(cmd, input_clip);
-        xpos += pc->xadvance / glyph_cs_eff;
+        xpos += adv;
     }
 }
 
@@ -1350,6 +1376,9 @@ static void paint_tree_cached(Ca_Instance *inst, Ca_Window *win,
                node->cache_count * sizeof(Ca_DrawCmd));
         node->draw_cmd_idx = (int32_t)win->draw_cmd_count;
         win->draw_cmd_count += node->cache_count;
+        touch_font_pages_for_cmds(inst->font,
+                                  &win->draw_cmds[replay_start],
+                                  node->cache_count);
         apply_inherited_z(win, replay_start, node->cache_count, effective_z);
     }
 
@@ -1377,6 +1406,9 @@ static void paint_tree_cached(Ca_Instance *inst, Ca_Window *win,
                &win->paint_cache[node->cache_post_start],
                node->cache_post_count * sizeof(Ca_DrawCmd));
         win->draw_cmd_count += node->cache_post_count;
+        touch_font_pages_for_cmds(inst->font,
+                                  &win->draw_cmds[sb_replay],
+                                  node->cache_post_count);
         apply_inherited_z(win, sb_replay, node->cache_post_count, effective_z);
     }
 }

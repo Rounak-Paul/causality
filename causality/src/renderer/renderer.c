@@ -474,6 +474,9 @@ bool ca_renderer_window_resize(Ca_Instance *inst, Ca_Window *win, int w, int h)
 
 void ca_renderer_frame(Ca_Instance *inst)
 {
+    if (inst && inst->font)
+        ca_font_flush_uploads(inst, inst->font);
+
     for (int i = 0; i < CA_MAX_WINDOWS_TOTAL; ++i) {
         Ca_Window *win = &inst->windows[i];
         if (!win->in_use || win->sc.swapchain == VK_NULL_HANDLE) continue;

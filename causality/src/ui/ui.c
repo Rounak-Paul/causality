@@ -9,6 +9,7 @@
 #include "widget.h"
 #include "css.h"
 #include "title_bar.h"
+#include "font.h"
 #include "../platform/window.h"
 
 #include <GLFW/glfw3.h>
@@ -249,6 +250,9 @@ static void mark_subtree_content_dirty(Ca_Node *node)
 
 void ca_ui_update(Ca_Instance *inst)
 {
+    if (inst && inst->font)
+        ca_font_begin_frame(inst->font);
+
     /* Builder rebuilds happen during ca_reactive_flush (called by
        ca_instance_tick before this function) so the new tree is already
        in place by the time we run layout. */
