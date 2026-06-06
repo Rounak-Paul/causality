@@ -20,13 +20,6 @@
 #include <string.h>
 #include <stdlib.h>
 
-#ifdef _WIN32
-  #ifndef WIN32_LEAN_AND_MEAN
-    #define WIN32_LEAN_AND_MEAN
-  #endif
-  #include <windows.h>
-#endif
-
 /* Codepoint ranges supported by the on-demand cache: ASCII/Latin-1 plus
    the Nerd-Font private-use ranges used by the editor.                 */
 static const struct { int first; int count; } g_range_defs[CA_FONT_RANGE_COUNT] = {
@@ -302,12 +295,22 @@ static void blit_lcd(unsigned char *atlas, int atlas_w,
     }
 }
 
+/* Strengthen regular text coverage after high-resolution rasterisation so
+   small embedded-font glyphs remain solid after low-DPI downsampling. */
+static unsigned char strengthen_text_coverage(unsigned char value)
+{
+    if (value == 0 || value == 255) return value;
+    unsigned v = value;
+    unsigned boosted = v + (((255u - v) * v + 510u) / 1020u);
+    return (unsigned char)(boosted > 255u ? 255u : boosted);
+}
+
 /* Blit a normal grayscale FreeType bitmap into all RGB channels of the atlas
-   so the existing text shader receives identical per-channel coverage.  This
-   is the normal path for both text and icons.                            */
+   so the existing text shader receives identical per-channel coverage. */
 static void blit_gray(unsigned char *atlas, int atlas_w,
                        int dst_x, int dst_y,
-                       const FT_Bitmap *src)
+                       const FT_Bitmap *src,
+                       bool strengthen)
 {
     int w = (int)src->width;
     int h = (int)src->rows;
@@ -319,6 +322,7 @@ static void blit_gray(unsigned char *atlas, int atlas_w,
         unsigned char *d = atlas + ((dst_y + y) * atlas_w + dst_x) * 4;
         for (int x = 0; x < w; x++) {
             unsigned char v = *s++;
+            if (strengthen) v = strengthen_text_coverage(v);
             d[0] = v; d[1] = v; d[2] = v; d[3] = v;
             d += 4;
         }
@@ -575,7 +579,8 @@ static FT_Face font_primary_face_for_range(Ca_Font *font,
     /* Icon glyphs live in the regular Nerd Font bundle.  Some bold faces omit
        private-use icon ranges, so icons deliberately avoid bold-face lookup. */
     if (is_icon_range)
-        return (FT_Face)font->regular_face;
+        return font->icon_face ? (FT_Face)font->icon_face
+                               : (FT_Face)font->regular_face;
     if (style == CA_FONT_STYLE_BOLD && font->bold_face)
         return (FT_Face)font->bold_face;
     return (FT_Face)font->regular_face;
@@ -730,7 +735,7 @@ static bool font_render_glyph(Ca_FontTier *tier, uint32_t cp, Ca_Glyph *g)
 
     int32_t load_flags = is_icon_range
         ? (FT_LOAD_DEFAULT | FT_LOAD_NO_HINTING | FT_LOAD_RENDER)
-        : (FT_LOAD_DEFAULT | FT_LOAD_TARGET_LIGHT |
+        : (FT_LOAD_DEFAULT | FT_LOAD_TARGET_NORMAL |
            FT_LOAD_RENDER | FT_LOAD_FORCE_AUTOHINT);
     if (FT_Load_Glyph(face, gi, load_flags) != 0) return false;
     FT_GlyphSlot slot = face->glyph;
@@ -761,7 +766,8 @@ static bool font_render_glyph(Ca_FontTier *tier, uint32_t cp, Ca_Glyph *g)
     if (bmp->pixel_mode == FT_PIXEL_MODE_LCD)
         blit_lcd(font->atlas_rgba, font->atlas_w, rx, ry, bmp);
     else
-        blit_gray(font->atlas_rgba, font->atlas_w, rx, ry, bmp);
+        blit_gray(font->atlas_rgba, font->atlas_w, rx, ry, bmp,
+                  !is_icon_range);
 
     g->x0 = (uint16_t)rx;
     g->y0 = (uint16_t)ry;
@@ -989,7 +995,10 @@ static bool font_create_internal(Ca_Instance *inst, GLFWwindow *glfw_win,
     float cx = 1.0f;
     glfwGetWindowContentScale(glfw_win, &cx, NULL);
     if (!(cx > 0.0f)) cx = 1.0f;
-    out_font->content_scale = cx;
+    out_font->display_scale = cx;
+    out_font->content_scale = cx < CA_FONT_MIN_RASTER_SCALE
+        ? CA_FONT_MIN_RASTER_SCALE
+        : cx;
     out_font->default_size  = CA_FONT_DEFAULT_SIZE_PX;
     out_font->owner         = inst;
     out_font->atlas_w       = CA_FONT_ATLAS_W;
@@ -1040,6 +1049,31 @@ static bool font_create_internal(Ca_Instance *inst, GLFWwindow *glfw_win,
         }
     }
 
+    extern const unsigned char ca_embedded_font_data[];
+    extern const unsigned int  ca_embedded_font_size;
+    const bool regular_is_embedded =
+        regular_data == ca_embedded_font_data &&
+        regular_size == (size_t)ca_embedded_font_size;
+    if (!regular_is_embedded) {
+        out_font->icon_data = (unsigned char *)CA_MALLOC(ca_embedded_font_size);
+        if (out_font->icon_data) {
+            memcpy(out_font->icon_data, ca_embedded_font_data,
+                   ca_embedded_font_size);
+            out_font->icon_size = ca_embedded_font_size;
+            FT_Face icon_face = NULL;
+            if (FT_New_Memory_Face(lib, out_font->icon_data,
+                                   (FT_Long)out_font->icon_size,
+                                   0, &icon_face) == 0) {
+                out_font->icon_face = icon_face;
+            } else {
+                fprintf(stderr, "[font] FT_New_Memory_Face icons failed; using regular\n");
+                CA_FREE(out_font->icon_data);
+                out_font->icon_data = NULL;
+                out_font->icon_size = 0;
+            }
+        }
+    }
+
     out_font->ft_library = lib;
 
     size_t atlas_bytes = (size_t)out_font->atlas_w * out_font->atlas_h * 4u;
@@ -1064,9 +1098,10 @@ static bool font_create_internal(Ca_Instance *inst, GLFWwindow *glfw_win,
     }
 
     printf("[font] FreeType dynamic atlas %dx%d, %d LRU pages of %dpx, "
-           "content_scale=%.1fx\n",
+           "display_scale=%.1fx, raster_scale=%.1fx\n",
            out_font->atlas_w, out_font->atlas_h,
-           CA_FONT_MAX_PAGES, CA_FONT_PAGE_SIZE, cx);
+           CA_FONT_MAX_PAGES, CA_FONT_PAGE_SIZE,
+           out_font->display_scale, out_font->content_scale);
     return true;
 }
 
@@ -1118,62 +1153,6 @@ bool ca_font_create_from_memory(Ca_Instance *inst, GLFWwindow *glfw_win,
                                 bold_data,    (size_t)bold_size);
 }
 
-/* ============================================================
-   System font detection
-   ============================================================ */
-
-bool ca_font_detect_system(char *out_path, size_t max_len)
-{
-    if (!out_path || max_len < 2) return false;
-
-#ifdef _WIN32
-    char windir[MAX_PATH];
-    if (!GetWindowsDirectoryA(windir, MAX_PATH)) return false;
-
-    const char *candidates[] = { "segoeui.ttf", "arial.ttf" };
-    for (int i = 0; i < (int)(sizeof(candidates) / sizeof(candidates[0])); i++) {
-        char path[MAX_PATH];
-        snprintf(path, sizeof(path), "%s\\Fonts\\%s", windir, candidates[i]);
-        FILE *f = fopen(path, "rb");
-        if (f) {
-            fclose(f);
-            snprintf(out_path, max_len, "%s", path);
-            return true;
-        }
-    }
-#elif defined(__APPLE__)
-    const char *candidates[] = {
-        "/System/Library/Fonts/SFNS.ttf",
-        "/System/Library/Fonts/Helvetica.ttc",
-        "/Library/Fonts/Arial.ttf",
-    };
-    for (int i = 0; i < (int)(sizeof(candidates) / sizeof(candidates[0])); i++) {
-        FILE *f = fopen(candidates[i], "rb");
-        if (f) {
-            fclose(f);
-            snprintf(out_path, max_len, "%s", candidates[i]);
-            return true;
-        }
-    }
-#else
-    const char *candidates[] = {
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-        "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
-        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
-    };
-    for (int i = 0; i < (int)(sizeof(candidates) / sizeof(candidates[0])); i++) {
-        FILE *f = fopen(candidates[i], "rb");
-        if (f) {
-            fclose(f);
-            snprintf(out_path, max_len, "%s", candidates[i]);
-            return true;
-        }
-    }
-#endif
-
-    return false;
-}
-
 void ca_font_destroy(Ca_Instance *inst, Ca_Font *font)
 {
     if (!font) return;
@@ -1194,12 +1173,15 @@ void ca_font_destroy(Ca_Instance *inst, Ca_Font *font)
     }
     if (font->bold_face)
         FT_Done_Face((FT_Face)font->bold_face);
+    if (font->icon_face)
+        FT_Done_Face((FT_Face)font->icon_face);
     if (font->regular_face)
         FT_Done_Face((FT_Face)font->regular_face);
     if (font->ft_library)
         FT_Done_FreeType((FT_Library)font->ft_library);
     CA_FREE(font->regular_data);
     CA_FREE(font->bold_data);
+    CA_FREE(font->icon_data);
     CA_FREE(font->atlas_rgba);
     memset(font, 0, sizeof(*font));
 }

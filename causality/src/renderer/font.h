@@ -3,15 +3,16 @@
 
 /* font.h — dynamic GPU font atlas with regular, bold, and icon glyphs.
 
-   Backend: FreeType grayscale rasterisation at the final device-pixel size.
-   The atlas is RGBA8 with equal RGB coverage for portability across LCD,
-   HiDPI, compositor, and rotation setups; the text shader can still consume
-   it through the same coverage path used by previous atlas formats.
+   Backend: FreeType grayscale rasterisation at Causality's controlled
+   raster scale.  The atlas is RGBA8 with equal RGB coverage for portability
+   across LCD, HiDPI, compositor, and rotation setups; the text shader can
+   still consume it through the same coverage path used by previous atlas
+   formats.
 
    Font sizes are not baked up front.  Glyphs are rasterised on demand
-   into a page-based LRU atlas keyed by visual pixel size and style, so
-   runtime UI-scale changes get native-size glyphs without reinitialising
-   the renderer.                                                     */
+   into a page-based LRU atlas keyed by visual pixel size and style.  Low-DPI
+   displays still use a higher internal raster scale, so the embedded font is
+   sampled from high-quality source coverage instead of platform font output. */
 #pragma once
 
 #include "ca_internal.h"
@@ -24,6 +25,7 @@
 #define CA_FONT_STYLE_REGULAR  0
 #define CA_FONT_STYLE_BOLD     1
 #define CA_FONT_DEFAULT_SIZE_PX 12.0f
+#define CA_FONT_MIN_RASTER_SCALE 2.0f
 #define CA_FONT_ATLAS_W        4096
 #define CA_FONT_ATLAS_H        4096
 #define CA_FONT_PAGE_SIZE      1024
@@ -35,7 +37,7 @@
 
 /* Per-glyph atlas record.  Fields mirror what stb_truetype's packedchar
    exposed, so the layout/paint call-sites translate one-to-one.  All
-   coordinates are in baked-pixel space (i.e. logical_px * content_scale). */
+   coordinates are in baked-pixel space (i.e. logical_px * raster scale). */
 typedef struct Ca_Glyph {
     uint16_t x0, y0, x1, y1;  /* atlas rect, in atlas pixels */
     float    xoff,  yoff;     /* top-left of glyph relative to pen origin */
@@ -96,6 +98,7 @@ typedef struct Ca_Font {
     VkSampler      sampler;
 
     int   atlas_w, atlas_h;
+    float display_scale;
     float content_scale;
     float default_size;
 
@@ -110,10 +113,13 @@ typedef struct Ca_Font {
     void       *ft_library;
     void       *regular_face;
     void       *bold_face;
+    void       *icon_face;
     unsigned char *regular_data;
     size_t      regular_size;
     unsigned char *bold_data;
     size_t      bold_size;
+    unsigned char *icon_data;
+    size_t      icon_size;
 } Ca_Font;
 
 /* Select or create the exact visual-size page for this scaled pixel size. */
@@ -216,10 +222,6 @@ bool ca_font_create_from_memory(Ca_Instance *inst, GLFWwindow *glfw_win,
                                 Ca_Font *out_font,
                                 const unsigned char *regular_data, unsigned int regular_size,
                                 const unsigned char *bold_data,    unsigned int bold_size);
-
-/** Detect the platform's default proportional UI font.
-    Returns true and writes the path into out_path on success. */
-bool ca_font_detect_system(char *out_path, size_t max_len);
 
 void ca_font_destroy(Ca_Instance *inst, Ca_Font *font);
 void ca_font_begin_frame(Ca_Font *font);

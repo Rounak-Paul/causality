@@ -811,6 +811,16 @@ static inline float glyph_adv(Ca_FontTier *tier, uint32_t cp,
     return g->xadvance / cs_eff;
 }
 
+/* Snap low-DPI glyph origins to physical pixels; keep HiDPI fractional. */
+static inline float snap_text_position(float value, float raster_scale,
+                                       float display_scale)
+{
+    if (display_scale > 1.25f) return value;
+    float logical = value / raster_scale;
+    return floorf(logical * display_scale + 0.5f) *
+           (raster_scale / display_scale);
+}
+
 /* Emit glyph draw commands for a multi-line word-wrapped text string. */
 static void paint_text_wrapped(Ca_Window *win, Ca_Font *font,
                                Ca_Node *node,
@@ -911,7 +921,9 @@ static void paint_text_wrapped(Ca_Window *win, Ca_Font *font,
 
             Ca_GlyphQuad q;
             float glyph_cs_eff = ca_font_glyph_cs_eff(glyph_tier, desired_size, cs);
-            float glyph_xpos = xpos * glyph_cs_eff;
+            float glyph_xpos = snap_text_position(xpos * glyph_cs_eff,
+                                                  glyph_cs_eff,
+                                                  font->display_scale);
             float glyph_ypos = floorf(baseline_y * glyph_cs_eff + 0.5f);
             ca_font_get_quad(pc, font->atlas_w, font->atlas_h,
                              &glyph_xpos, &glyph_ypos, &q);
@@ -1001,7 +1013,8 @@ static void paint_text(Ca_Window *win, Ca_Font *font,
         }
     }
 
-    float xpos = left_logical;
+    float xpos = snap_text_position(left_logical * cs, cs,
+                                    font->display_scale) / cs;
 
     ClipRect node_clip = text_clip_for_node(node);
 
@@ -1015,7 +1028,9 @@ static void paint_text(Ca_Window *win, Ca_Font *font,
 
         Ca_GlyphQuad q;
         float glyph_cs_eff = ca_font_glyph_cs_eff(glyph_tier, desired_size, cs);
-        float glyph_xpos = xpos * glyph_cs_eff;
+        float glyph_xpos = snap_text_position(xpos * glyph_cs_eff,
+                                              glyph_cs_eff,
+                                              font->display_scale);
         float glyph_ypos = floorf(baseline_logical * glyph_cs_eff + 0.5f);
         ca_font_get_quad(pc, font->atlas_w, font->atlas_h,
                          &glyph_xpos, &glyph_ypos, &q);
@@ -1072,7 +1087,8 @@ static void paint_text_left(Ca_Window *win, Ca_Font *font,
         + (tier->ascent * metric_scale + tier->descent * metric_scale) * 0.5f;
     float left_logical = node->x + node->desc.padding_left;
 
-    float xpos = left_logical;
+    float xpos = snap_text_position(left_logical * cs, cs,
+                                    font->display_scale) / cs;
 
     ClipRect input_clip = text_clip_for_node(node);
 
@@ -1086,7 +1102,9 @@ static void paint_text_left(Ca_Window *win, Ca_Font *font,
 
         Ca_GlyphQuad q;
         float glyph_cs_eff = ca_font_glyph_cs_eff(glyph_tier, desired_size, cs);
-        float glyph_xpos = xpos * glyph_cs_eff;
+        float glyph_xpos = snap_text_position(xpos * glyph_cs_eff,
+                                              glyph_cs_eff,
+                                              font->display_scale);
         float glyph_ypos = floorf(baseline_logical * glyph_cs_eff + 0.5f);
         ca_font_get_quad(pc, font->atlas_w, font->atlas_h,
                          &glyph_xpos, &glyph_ypos, &q);

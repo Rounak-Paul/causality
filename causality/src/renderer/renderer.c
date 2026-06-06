@@ -363,9 +363,10 @@ bool ca_renderer_window_init(Ca_Instance *inst, Ca_Window *win)
         const unsigned char *regular_data = ca_embedded_font_data;
         unsigned int         regular_size = ca_embedded_font_size;
         unsigned char       *regular_buf  = NULL;
+        const char          *regular_path = inst->font_path;
 
-        if (inst->font_path[0] != '\0') {
-            FILE *fp = fopen(inst->font_path, "rb");
+        if (regular_path[0] != '\0') {
+            FILE *fp = fopen(regular_path, "rb");
             if (fp) {
                 fseek(fp, 0, SEEK_END);
                 long sz = ftell(fp);
