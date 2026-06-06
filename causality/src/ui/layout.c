@@ -327,6 +327,42 @@ typedef struct {
 
 #define MAX_FLEX_LINES 64
 
+typedef struct {
+    float *storage;
+    float *child_hypo_main;
+    float *child_margin_before;
+    float *child_margin_after;
+    float *child_margin_cross0;
+    float *child_margin_cross1;
+    float *cm_arr;
+    float *cc_arr;
+} LayoutScratch;
+
+static bool layout_scratch_init(LayoutScratch *scratch, size_t child_count)
+{
+    float *cursor;
+    const size_t array_count = 7u;
+
+    scratch->storage = (float *)CA_CALLOC(child_count * array_count, sizeof(float));
+    if (!scratch->storage)
+        return false;
+
+    cursor = scratch->storage;
+    scratch->child_hypo_main = cursor; cursor += child_count;
+    scratch->child_margin_before = cursor; cursor += child_count;
+    scratch->child_margin_after = cursor; cursor += child_count;
+    scratch->child_margin_cross0 = cursor; cursor += child_count;
+    scratch->child_margin_cross1 = cursor; cursor += child_count;
+    scratch->cm_arr = cursor; cursor += child_count;
+    scratch->cc_arr = cursor;
+    return true;
+}
+
+static void layout_scratch_destroy(LayoutScratch *scratch)
+{
+    CA_FREE(scratch->storage);
+}
+
 static void layout_node(Ca_Node *node, float x, float y, float avail_w, float avail_h)
 {
     /* display: none — zero size, recurse to clear children's dirty flags */
@@ -443,12 +479,19 @@ static void layout_node(Ca_Node *node, float x, float y, float avail_w, float av
     float avail_main  = is_row ? inner_w : inner_h;
     float avail_cross = is_row ? inner_h : inner_w;
 
-    /* Pre-compute each child's hypothetical main-axis size (including margins) */
-    float child_hypo_main[CA_MAX_NODE_CHILDREN];
-    float child_margin_before[CA_MAX_NODE_CHILDREN];  /* main-axis leading margin */
-    float child_margin_after[CA_MAX_NODE_CHILDREN];   /* main-axis trailing margin */
-    float child_margin_cross0[CA_MAX_NODE_CHILDREN];  /* cross-axis start margin */
-    float child_margin_cross1[CA_MAX_NODE_CHILDREN];  /* cross-axis end margin */
+    /* Per-child flex scratch lives off the call stack; layout_node recurses and
+       the node child cap is intentionally large enough to overflow small stacks. */
+    LayoutScratch scratch;
+    if (!layout_scratch_init(&scratch, (size_t)node->child_count))
+        goto out_of_flow;
+    float *child_hypo_main = scratch.child_hypo_main;
+    float *child_margin_before = scratch.child_margin_before;
+    float *child_margin_after = scratch.child_margin_after;
+    float *child_margin_cross0 = scratch.child_margin_cross0;
+    float *child_margin_cross1 = scratch.child_margin_cross1;
+    float *cm_arr = scratch.cm_arr;
+    float *cc_arr = scratch.cc_arr;
+
     for (uint32_t i = 0; i < node->child_count; ++i) {
         Ca_Node *child = node->children[i];
         if (child->desc.hidden || child->desc.position != CA_POSITION_RELATIVE) {
@@ -575,8 +618,6 @@ static void layout_node(Ca_Node *node, float x, float y, float avail_w, float av
         if (remaining < 0) remaining = 0;
 
         /* Compute child main/cross sizes for this line */
-        float cm_arr[CA_MAX_NODE_CHILDREN];
-        float cc_arr[CA_MAX_NODE_CHILDREN];
         float total_main_used = 0;
         uint32_t vis_in_line = 0;
         uint32_t line_child_start = child_idx;
@@ -737,6 +778,8 @@ static void layout_node(Ca_Node *node, float x, float y, float avail_w, float av
         if (node->content_w > 0.0f)
             node->w = node->content_w;
     }
+
+    layout_scratch_destroy(&scratch);
 
 out_of_flow:
     /* Position absolute/fixed children (they are out of the flex flow) */
