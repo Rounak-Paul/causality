@@ -121,6 +121,7 @@ static ClipRect find_clip_for_node(Ca_Node *node)
 static ClipRect text_clip_for_node(Ca_Node *node)
 {
     ClipRect ancestor = find_clip_for_node(node);
+    const float vertical_pad = 2.0f;
 
     ClipRect r;
     r.active = true;
@@ -138,18 +139,19 @@ static ClipRect text_clip_for_node(Ca_Node *node)
     /* Vertical: inherit ancestor unless the node itself requests clipping. */
     bool clip_self_v = node->desc.overflow_y >= 1;
     if (clip_self_v && ancestor.active) {
-        float y0 = node->y > ancestor.y ? node->y : ancestor.y;
-        float y1_a = node->y + node->h;
+        float y0_a = node->y - vertical_pad;
+        float y1_a = node->y + node->h + vertical_pad;
+        float y0 = y0_a > ancestor.y ? y0_a : ancestor.y;
         float y1_b = ancestor.y + ancestor.h;
         float y1 = y1_a < y1_b ? y1_a : y1_b;
         r.y = y0;
         r.h = (y1 > y0) ? y1 - y0 : 0.0f;
     } else if (clip_self_v) {
-        r.y = node->y;
-        r.h = node->h;
+        r.y = node->y - vertical_pad;
+        r.h = node->h + vertical_pad * 2.0f;
     } else if (ancestor.active) {
-        r.y = ancestor.y;
-        r.h = ancestor.h;
+        r.y = ancestor.y - vertical_pad;
+        r.h = ancestor.h + vertical_pad * 2.0f;
     } else {
         r.active = (r.w > 0.0f); /* no vertical clip needed */
         r.y = 0.0f;

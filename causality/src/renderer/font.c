@@ -14,6 +14,7 @@
 
 #include <ft2build.h>
 #include FT_FREETYPE_H
+#include FT_LCD_FILTER_H
 #include FT_MODULE_H
 
 #include <stdio.h>
@@ -242,9 +243,8 @@ static bool upload_atlas(Ca_Instance *inst, Ca_Font *font,
         return false;
     }
 
-    /* Glyph coverage is reconstructed into final atlas texels by Causality.
-       Sample exact coverage values here; extra GPU filtering makes 1x text
-       look smeared and uneven on Windows. */
+    /* Glyph bitmaps already contain final grayscale/LCD antialiasing.
+       Sample exact atlas texels to avoid softening 1x Windows text. */
     VkSamplerCreateInfo samp_ci = {
         .sType        = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
         .magFilter    = VK_FILTER_NEAREST,
@@ -669,6 +669,16 @@ static int font_supersample_for_glyph(const Ca_Font *font,
         : CA_FONT_TEXT_SUPERSAMPLE_LOW_DPI_LARGE;
 }
 
+/* Returns whether to use RGB subpixel coverage for Windows-like 1x text.
+   Parameters: font display state, tier size metrics, and icon-range flag. */
+static bool font_should_use_lcd_glyph(const Ca_Font *font,
+                                      const Ca_FontTier *tier,
+                                      bool is_icon_range)
+{
+    if (!font || !tier || is_icon_range) return false;
+    return font->display_scale < 1.5f && tier->logical_px <= 18.0f;
+}
+
 /* Returns whether post-reconstruction coverage should be boosted.
    Parameters: font display state, tier size metrics, and icon-range flag. */
 static bool font_should_strengthen_glyph(const Ca_Font *font,
@@ -790,6 +800,7 @@ static bool font_render_glyph(Ca_FontTier *tier, uint32_t cp, Ca_Glyph *g)
         return false;
     const int supersample = font_supersample_for_glyph(font, tier,
                                                        is_icon_range);
+    const bool use_lcd = font_should_use_lcd_glyph(font, tier, is_icon_range);
 
     if (cp < 32u || cp == 0x7Fu) {
         if (cp == '\t') {
@@ -823,17 +834,16 @@ static bool font_render_glyph(Ca_FontTier *tier, uint32_t cp, Ca_Glyph *g)
     }
 
     int32_t load_flags = is_icon_range
-        ? (FT_LOAD_DEFAULT | FT_LOAD_NO_HINTING | FT_LOAD_RENDER)
-        : (FT_LOAD_DEFAULT | FT_LOAD_TARGET_LIGHT |
-           FT_LOAD_RENDER | FT_LOAD_FORCE_AUTOHINT);
+        ? (FT_LOAD_DEFAULT | FT_LOAD_NO_HINTING | FT_LOAD_NO_BITMAP)
+        : (use_lcd
+            ? (FT_LOAD_DEFAULT | FT_LOAD_TARGET_LCD | FT_LOAD_NO_BITMAP)
+            : (FT_LOAD_DEFAULT | FT_LOAD_TARGET_LIGHT | FT_LOAD_NO_BITMAP));
     if (!font_set_face_size(face, tier->baked_px * (float)supersample))
         return false;
     if (FT_Load_Glyph(face, gi, load_flags) != 0) return false;
     FT_GlyphSlot slot = face->glyph;
-    if (slot->format != FT_GLYPH_FORMAT_BITMAP) {
-        FT_Render_Mode mode = FT_RENDER_MODE_NORMAL;
-        if (FT_Render_Glyph(slot, mode) != 0) return false;
-    }
+    FT_Render_Mode mode = use_lcd ? FT_RENDER_MODE_LCD : FT_RENDER_MODE_NORMAL;
+    if (FT_Render_Glyph(slot, mode) != 0) return false;
 
     const FT_Bitmap *bmp = &slot->bitmap;
     int src_pixel_w = (bmp->pixel_mode == FT_PIXEL_MODE_LCD)
@@ -1102,6 +1112,7 @@ static bool font_create_internal(Ca_Instance *inst, GLFWwindow *glfw_win,
         fprintf(stderr, "[font] FT_Init_FreeType failed\n");
         return false;
     }
+    FT_Library_SetLcdFilter(lib, FT_LCD_FILTER_DEFAULT);
 
     out_font->regular_data = (unsigned char *)CA_MALLOC(regular_size);
     if (!out_font->regular_data) {

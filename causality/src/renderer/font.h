@@ -3,11 +3,10 @@
 
 /* font.h — dynamic GPU font atlas with regular, bold, and icon glyphs.
 
-   Backend: FreeType grayscale rasterisation with Causality-owned
-   supersampling and area reconstruction.  The atlas is RGBA8 with equal RGB
-   coverage for portability across LCD, HiDPI, compositor, and rotation
-   setups; the text shader can still consume it through the same coverage path
-   used by previous atlas formats.
+   Backend: FreeType rasterisation with Causality-owned LCD/grayscale policy.
+   The atlas is RGBA8: text glyphs may store per-channel LCD coverage on 1x
+   displays, while icons and HiDPI glyphs use grayscale coverage for portable
+   compositing.
 
    Font sizes are not baked up front.  Glyphs are rasterised on demand
    into a page-based LRU atlas keyed by visual pixel size and style.  Low-DPI
@@ -25,7 +24,7 @@
 #define CA_FONT_STYLE_REGULAR  0
 #define CA_FONT_STYLE_BOLD     1
 #define CA_FONT_DEFAULT_SIZE_PX 12.0f
-#define CA_FONT_TEXT_SUPERSAMPLE_LOW_DPI_SMALL 3
+#define CA_FONT_TEXT_SUPERSAMPLE_LOW_DPI_SMALL 1
 #define CA_FONT_TEXT_SUPERSAMPLE_LOW_DPI_LARGE 2
 #define CA_FONT_TEXT_SUPERSAMPLE_HIDPI         1
 #define CA_FONT_ATLAS_W        4096

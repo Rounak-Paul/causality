@@ -314,25 +314,13 @@ static const char *TEXT_VERT_GLSL =
     "    v_color = d.color;\n"
     "}\n";
 
-/* Fragment shader: LCD subpixel text rendering with dual-source blending.
+/* Fragment shader: text coverage compositing.
 
-   The atlas was rasterised by FreeType in LCD mode + the ClearType
-   [1,4,7,4,1]/17 filter, so each pixel in the atlas stores three
-   independent coverage values (R, G, B subpixels of the destination
-   pixel).  The standard subpixel-blend formula per channel is:
-
-       dst' = src.rgb * cov.rgb + dst * (1 - cov.rgb * src.a)
-
-   That requires a different blend weight per channel — exactly what
-   Vulkan dual-source blending provides.  We output:
-
-       index 0: src.rgb * cov.rgb * src.a   (premultiplied colour contribution)
-       index 1: cov.rgb * src.a              (per-channel coverage used as dst weight)
-
-   with blend factors srcColor=ONE, dstColor=ONE_MINUS_SRC1_COLOR.  The
-   framebuffer is sRGB, so we feed it linear colour; the hardware
-   handles linear→sRGB encoding on store and sRGB→linear decoding on the
-   destination read, giving truly gamma-correct ClearType.            */
+   The atlas stores either grayscale coverage with equal RGB channels or LCD
+   coverage with independent RGB channels.  The shader preserves per-channel
+   LCD source coverage while keeping the pipeline on core premultiplied-alpha
+   blending, so Causality gets crisp 1x text without depending on platform
+   fonts or optional dual-source blend features. */
 static const char *TEXT_FRAG_GLSL =
     "#version 450\n"
     "\n"
@@ -351,12 +339,11 @@ static const char *TEXT_FRAG_GLSL =
     "}\n"
     "\n"
     "void main() {\n"
-    "    /* Grayscale atlas: coverage is identical in R/G/B/A.           */\n"
-    "    float cov = texture(font_atlas, v_uv).r;\n"
-    "    float a   = cov * v_color.a;\n"
+    "    vec4 sample_cov = texture(font_atlas, v_uv);\n"
+    "    vec3 cov = sample_cov.rgb;\n"
+    "    float a = max(max(cov.r, cov.g), cov.b) * v_color.a;\n"
     "    vec3 col_lin = srgb_to_linear(v_color.rgb);\n"
-    "    /* Premultiplied-alpha output for ONE + ONE_MINUS_SRC_ALPHA blend */\n"
-    "    out_color = vec4(col_lin * a, a);\n"
+    "    out_color = vec4(col_lin * cov * v_color.a, a);\n"
     "}\n";
 
 bool ca_text_pipeline_create(Ca_Instance *inst, VkFormat color_format)
@@ -474,9 +461,8 @@ bool ca_text_pipeline_create(Ca_Instance *inst, VkFormat color_format)
         .sType                = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
         .rasterizationSamples = VK_SAMPLE_COUNT_1_BIT };
 
-    /* Premultiplied-alpha grayscale blend.
-       src = premultiplied (col_lin * a, a); blend: src*1 + dst*(1-src_a).
-       Works correctly under compositing — no dual-source blend needed.  */
+    /* Premultiplied-alpha text blend.  RGB may contain independent LCD
+       coverage, while alpha carries conservative whole-pixel coverage. */
     VkPipelineColorBlendAttachmentState blend_att = {
         .blendEnable         = VK_TRUE,
         .srcColorBlendFactor = VK_BLEND_FACTOR_ONE,
