@@ -3,16 +3,16 @@
 
 /* font.h — dynamic GPU font atlas with regular, bold, and icon glyphs.
 
-   Backend: FreeType grayscale rasterisation at Causality's controlled
-   raster scale.  The atlas is RGBA8 with equal RGB coverage for portability
-   across LCD, HiDPI, compositor, and rotation setups; the text shader can
-   still consume it through the same coverage path used by previous atlas
-   formats.
+   Backend: FreeType grayscale rasterisation with Causality-owned
+   supersampling and area reconstruction.  The atlas is RGBA8 with equal RGB
+   coverage for portability across LCD, HiDPI, compositor, and rotation
+   setups; the text shader can still consume it through the same coverage path
+   used by previous atlas formats.
 
    Font sizes are not baked up front.  Glyphs are rasterised on demand
    into a page-based LRU atlas keyed by visual pixel size and style.  Low-DPI
-   displays still use a higher internal raster scale, so the embedded font is
-   sampled from high-quality source coverage instead of platform font output. */
+   displays render from higher internal FreeType samples reconstructed into
+   final atlas coverage instead of relying on platform font output. */
 #pragma once
 
 #include "ca_internal.h"
@@ -25,7 +25,9 @@
 #define CA_FONT_STYLE_REGULAR  0
 #define CA_FONT_STYLE_BOLD     1
 #define CA_FONT_DEFAULT_SIZE_PX 12.0f
-#define CA_FONT_MIN_RASTER_SCALE 2.0f
+#define CA_FONT_TEXT_SUPERSAMPLE_LOW_DPI_SMALL 3
+#define CA_FONT_TEXT_SUPERSAMPLE_LOW_DPI_LARGE 2
+#define CA_FONT_TEXT_SUPERSAMPLE_HIDPI         1
 #define CA_FONT_ATLAS_W        4096
 #define CA_FONT_ATLAS_H        4096
 #define CA_FONT_PAGE_SIZE      1024
@@ -37,7 +39,7 @@
 
 /* Per-glyph atlas record.  Fields mirror what stb_truetype's packedchar
    exposed, so the layout/paint call-sites translate one-to-one.  All
-   coordinates are in baked-pixel space (i.e. logical_px * raster scale). */
+   coordinates are in baked-pixel space (i.e. logical_px * content scale). */
 typedef struct Ca_Glyph {
     uint16_t x0, y0, x1, y1;  /* atlas rect, in atlas pixels */
     float    xoff,  yoff;     /* top-left of glyph relative to pen origin */

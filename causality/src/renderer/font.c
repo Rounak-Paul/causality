@@ -242,12 +242,13 @@ static bool upload_atlas(Ca_Instance *inst, Ca_Font *font,
         return false;
     }
 
-    /* LINEAR filtering interpolates glyph coverage when quads land on
-       fractional positions, avoiding shimmer during animated/layout motion. */
+    /* Glyph coverage is reconstructed into final atlas texels by Causality.
+       Sample exact coverage values here; extra GPU filtering makes 1x text
+       look smeared and uneven on Windows. */
     VkSamplerCreateInfo samp_ci = {
         .sType        = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
-        .magFilter    = VK_FILTER_LINEAR,
-        .minFilter    = VK_FILTER_LINEAR,
+        .magFilter    = VK_FILTER_NEAREST,
+        .minFilter    = VK_FILTER_NEAREST,
         .mipmapMode   = VK_SAMPLER_MIPMAP_MODE_NEAREST,
         .addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
         .addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
@@ -327,6 +328,68 @@ static void blit_gray(unsigned char *atlas, int atlas_w,
             d += 4;
         }
         row += src_pitch;
+    }
+}
+
+static unsigned char bitmap_gray_at(const unsigned char *base_row,
+                                    int src_pitch,
+                                    int x, int y)
+{
+    const unsigned char *row = base_row + y * src_pitch;
+    return row[x];
+}
+
+/* Reconstructs a supersampled FreeType grayscale bitmap into atlas coverage.
+   Parameters: atlas destination, source bitmap, supersample ratio, and whether
+   small low-DPI text coverage should be strengthened. */
+static void blit_gray_reconstructed(unsigned char *atlas, int atlas_w,
+                                    int dst_x, int dst_y,
+                                    const FT_Bitmap *src,
+                                    int supersample,
+                                    bool strengthen)
+{
+    int src_w = (int)src->width;
+    int src_h = (int)src->rows;
+    if (src_w <= 0 || src_h <= 0) return;
+    if (supersample <= 1) {
+        blit_gray(atlas, atlas_w, dst_x, dst_y, src, strengthen);
+        return;
+    }
+
+    int dst_w = (src_w + supersample - 1) / supersample;
+    int dst_h = (src_h + supersample - 1) / supersample;
+    int src_pitch = src->pitch;
+    const unsigned char *base_row = src->buffer;
+    if (src_pitch < 0) {
+        base_row = src->buffer + (src_h - 1) * (-src_pitch);
+    }
+
+    for (int y = 0; y < dst_h; y++) {
+        unsigned char *d = atlas + ((dst_y + y) * atlas_w + dst_x) * 4;
+        int sy0 = y * supersample;
+        int sy1 = sy0 + supersample;
+        if (sy1 > src_h) sy1 = src_h;
+        for (int x = 0; x < dst_w; x++) {
+            int sx0 = x * supersample;
+            int sx1 = sx0 + supersample;
+            if (sx1 > src_w) sx1 = src_w;
+
+            unsigned sum = 0;
+            unsigned count = 0;
+            for (int sy = sy0; sy < sy1; sy++) {
+                for (int sx = sx0; sx < sx1; sx++) {
+                    sum += bitmap_gray_at(base_row, src_pitch, sx, sy);
+                    count++;
+                }
+            }
+
+            unsigned char v = count > 0
+                ? (unsigned char)((sum + count / 2u) / count)
+                : 0;
+            if (strengthen) v = strengthen_text_coverage(v);
+            d[0] = v; d[1] = v; d[2] = v; d[3] = v;
+            d += 4;
+        }
     }
 }
 
@@ -592,6 +655,30 @@ static bool font_set_face_size(FT_Face face, float baked_px)
            FT_Set_Pixel_Sizes(face, 0, (FT_UInt)(baked_px + 0.5f)) == 0;
 }
 
+/* Returns the Causality-owned text supersampling ratio for a glyph.
+   Parameters: font display state, tier size metrics, and icon-range flag. */
+static int font_supersample_for_glyph(const Ca_Font *font,
+                                      const Ca_FontTier *tier,
+                                      bool is_icon_range)
+{
+    if (!font || !tier || is_icon_range) return 1;
+    if (font->display_scale >= 1.5f)
+        return CA_FONT_TEXT_SUPERSAMPLE_HIDPI;
+    return tier->logical_px <= 18.0f
+        ? CA_FONT_TEXT_SUPERSAMPLE_LOW_DPI_SMALL
+        : CA_FONT_TEXT_SUPERSAMPLE_LOW_DPI_LARGE;
+}
+
+/* Returns whether post-reconstruction coverage should be boosted.
+   Parameters: font display state, tier size metrics, and icon-range flag. */
+static bool font_should_strengthen_glyph(const Ca_Font *font,
+                                         const Ca_FontTier *tier,
+                                         bool is_icon_range)
+{
+    if (!font || !tier || is_icon_range) return false;
+    return font->display_scale < 1.5f && tier->logical_px <= 12.0f;
+}
+
 static bool font_page_alloc(Ca_FontTier *tier, int w, int h, int *out_x, int *out_y)
 {
     if (w <= 0 || h <= 0) return false;
@@ -701,6 +788,8 @@ static bool font_render_glyph(Ca_FontTier *tier, uint32_t cp, Ca_Glyph *g)
     FT_Face face = font_primary_face_for_range(font, tier->style, is_icon_range);
     if (!font_set_face_size(face, tier->baked_px))
         return false;
+    const int supersample = font_supersample_for_glyph(font, tier,
+                                                       is_icon_range);
 
     if (cp < 32u || cp == 0x7Fu) {
         if (cp == '\t') {
@@ -735,8 +824,10 @@ static bool font_render_glyph(Ca_FontTier *tier, uint32_t cp, Ca_Glyph *g)
 
     int32_t load_flags = is_icon_range
         ? (FT_LOAD_DEFAULT | FT_LOAD_NO_HINTING | FT_LOAD_RENDER)
-        : (FT_LOAD_DEFAULT | FT_LOAD_TARGET_NORMAL |
+        : (FT_LOAD_DEFAULT | FT_LOAD_TARGET_LIGHT |
            FT_LOAD_RENDER | FT_LOAD_FORCE_AUTOHINT);
+    if (!font_set_face_size(face, tier->baked_px * (float)supersample))
+        return false;
     if (FT_Load_Glyph(face, gi, load_flags) != 0) return false;
     FT_GlyphSlot slot = face->glyph;
     if (slot->format != FT_GLYPH_FORMAT_BITMAP) {
@@ -745,13 +836,15 @@ static bool font_render_glyph(Ca_FontTier *tier, uint32_t cp, Ca_Glyph *g)
     }
 
     const FT_Bitmap *bmp = &slot->bitmap;
-    int pixel_w = (bmp->pixel_mode == FT_PIXEL_MODE_LCD)
+    int src_pixel_w = (bmp->pixel_mode == FT_PIXEL_MODE_LCD)
         ? (int)bmp->width / 3
         : (int)bmp->width;
-    int pixel_h = (int)bmp->rows;
+    int src_pixel_h = (int)bmp->rows;
+    int pixel_w = (src_pixel_w + supersample - 1) / supersample;
+    int pixel_h = (src_pixel_h + supersample - 1) / supersample;
 
     if (pixel_w <= 0 || pixel_h <= 0) {
-        g->xadvance = (float)slot->advance.x / 64.0f;
+        g->xadvance = ((float)slot->advance.x / 64.0f) / (float)supersample;
         g->valid = 1;
         return true;
     }
@@ -766,18 +859,20 @@ static bool font_render_glyph(Ca_FontTier *tier, uint32_t cp, Ca_Glyph *g)
     if (bmp->pixel_mode == FT_PIXEL_MODE_LCD)
         blit_lcd(font->atlas_rgba, font->atlas_w, rx, ry, bmp);
     else
-        blit_gray(font->atlas_rgba, font->atlas_w, rx, ry, bmp,
-                  !is_icon_range);
+        blit_gray_reconstructed(font->atlas_rgba, font->atlas_w, rx, ry, bmp,
+                                supersample,
+                                font_should_strengthen_glyph(font, tier,
+                                                             is_icon_range));
 
     g->x0 = (uint16_t)rx;
     g->y0 = (uint16_t)ry;
     g->x1 = (uint16_t)(rx + pixel_w);
     g->y1 = (uint16_t)(ry + pixel_h);
-    g->xoff  = (float)slot->bitmap_left;
-    g->yoff  = (float)(-slot->bitmap_top);
+    g->xoff  = (float)slot->bitmap_left / (float)supersample;
+    g->yoff  = (float)(-slot->bitmap_top) / (float)supersample;
     g->xoff2 = g->xoff + (float)pixel_w;
     g->yoff2 = g->yoff + (float)pixel_h;
-    g->xadvance = (float)slot->advance.x / 64.0f;
+    g->xadvance = ((float)slot->advance.x / 64.0f) / (float)supersample;
     g->valid = 1;
 
     font_mark_dirty(font, (uint16_t)(rx - 1), (uint16_t)(ry - 1),
@@ -996,9 +1091,7 @@ static bool font_create_internal(Ca_Instance *inst, GLFWwindow *glfw_win,
     glfwGetWindowContentScale(glfw_win, &cx, NULL);
     if (!(cx > 0.0f)) cx = 1.0f;
     out_font->display_scale = cx;
-    out_font->content_scale = cx < CA_FONT_MIN_RASTER_SCALE
-        ? CA_FONT_MIN_RASTER_SCALE
-        : cx;
+    out_font->content_scale = cx;
     out_font->default_size  = CA_FONT_DEFAULT_SIZE_PX;
     out_font->owner         = inst;
     out_font->atlas_w       = CA_FONT_ATLAS_W;
@@ -1098,7 +1191,7 @@ static bool font_create_internal(Ca_Instance *inst, GLFWwindow *glfw_win,
     }
 
     printf("[font] FreeType dynamic atlas %dx%d, %d LRU pages of %dpx, "
-           "display_scale=%.1fx, raster_scale=%.1fx\n",
+           "display_scale=%.1fx, atlas_scale=%.1fx\n",
            out_font->atlas_w, out_font->atlas_h,
            CA_FONT_MAX_PAGES, CA_FONT_PAGE_SIZE,
            out_font->display_scale, out_font->content_scale);
