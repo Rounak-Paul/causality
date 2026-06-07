@@ -3294,15 +3294,20 @@ void ca_widget_input_pass(Ca_Window *win)
        using the same geometry as paint_scrollbars, and drive scroll_x/scroll_y
        directly.  Scrollbar drag takes priority over wheel scroll and other drags.
 
-       Geometry (Y scrollbar, retro chunky style):
+       Geometry:
+         y scrollbar uses the retro chunky edge style:
          bar_w=14, no margin — flush to right/bottom edge
          bar_x = node->x + node->w - bar_w
          track spans full node height
          thumb: size proportional to viewport/content, min 20px
+         x scrollbar uses the painted slim style:
+         bar_h=6, margin=2, track spans node width minus margins
+         thumb: size proportional to viewport/content, min 16px
     */
     if (win->node_pool) {
         const float SB_BAR_W  = 14.0f * ui_s;
-        const float SB_MARGIN = 0.0f;
+        const float SB_X_BAR_H = 6.0f * ui_s;
+        const float SB_X_MARGIN = 2.0f * ui_s;
         const float SB_HIT_EXPAND = 2.0f * ui_s;
 
         /* --- Start drag on mouse-click in a scrollbar region --- */
@@ -3333,10 +3338,11 @@ void ca_widget_input_pass(Ca_Window *win)
 
                 /* X scrollbar */
                 if (n->desc.overflow_x >= 2 && n->content_w > n->w) {
-                    float bar_y = n->y + n->h - SB_BAR_W;
+                    float bar_y = n->y + n->h - SB_X_BAR_H - SB_X_MARGIN;
                     if (my >= bar_y - SB_HIT_EXPAND &&
-                        my <= bar_y + SB_BAR_W + SB_HIT_EXPAND &&
-                        mx >= n->x && mx <= n->x + n->w) {
+                        my <= bar_y + SB_X_BAR_H + SB_HIT_EXPAND &&
+                        mx >= n->x + SB_X_MARGIN &&
+                        mx <= n->x + n->w - SB_X_MARGIN) {
                         float area = n->w * n->h;
                         if (area < best_area) {
                             best_area = area;
@@ -3369,14 +3375,15 @@ void ca_widget_input_pass(Ca_Window *win)
                     else
                         win->scrollbar_drag_grab = thumb_h * 0.5f;
                 } else {
-                    float track_w  = best->w;
+                    float track_w  = best->w - SB_X_MARGIN * 2.0f;
+                    if (track_w < 1.0f) track_w = 1.0f;
                     float ratio    = best->w / best->content_w;
                     float thumb_w  = track_w * ratio;
-                    if (thumb_w < 20.0f * ui_s) thumb_w = 20.0f * ui_s;
+                    if (thumb_w < 16.0f * ui_s) thumb_w = 16.0f * ui_s;
                     if (thumb_w > track_w) thumb_w = track_w;
                     float max_s    = best->content_w - best->w;
                     float pct      = (max_s > 0.0f) ? best->scroll_x / max_s : 0.0f;
-                    float thumb_x  = best->x + pct * (track_w - thumb_w);
+                    float thumb_x  = best->x + SB_X_MARGIN + pct * (track_w - thumb_w);
                     if (mx >= thumb_x && mx <= thumb_x + thumb_w)
                         win->scrollbar_drag_grab = mx - thumb_x;
                     else
@@ -3408,14 +3415,16 @@ void ca_widget_input_pass(Ca_Window *win)
                     n->dirty |= CA_DIRTY_LAYOUT | CA_DIRTY_CONTENT;
                 }
             } else {
-                float track_w = n->w;
+                float track_w = n->w - SB_X_MARGIN * 2.0f;
+                if (track_w < 1.0f) track_w = 1.0f;
                 float ratio   = n->w / n->content_w;
                 float thumb_w = track_w * ratio;
-                if (thumb_w < 20.0f * ui_s) thumb_w = 20.0f * ui_s;
+                if (thumb_w < 16.0f * ui_s) thumb_w = 16.0f * ui_s;
                 if (thumb_w > track_w) thumb_w = track_w;
                 float travel  = track_w - thumb_w;
                 float thumb_x = mx - win->scrollbar_drag_grab;
-                float pct     = (travel > 0.0f) ? (thumb_x - n->x) / travel
+                float pct     = (travel > 0.0f)
+                    ? (thumb_x - (n->x + SB_X_MARGIN)) / travel
                                                  : 0.0f;
                 if (pct < 0.0f) pct = 0.0f;
                 if (pct > 1.0f) pct = 1.0f;
