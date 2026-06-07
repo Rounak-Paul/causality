@@ -2694,7 +2694,10 @@ void ca_context_menu(const Ca_CtxMenuDesc *desc)
 
     cm->node = target;
     cm->in_use = true;
-    if (!reused) cm->open = false;  /* preserve open state across reconcile rebuilds */
+    if (!reused) {
+        cm->open = false;
+        cm->hover_index = -1;
+    }
     cm->item_count = desc->item_count;
     if (cm->item_count > CA_MAX_CTXMENU_ITEMS)
         cm->item_count = CA_MAX_CTXMENU_ITEMS;
@@ -2704,6 +2707,70 @@ void ca_context_menu(const Ca_CtxMenuDesc *desc)
     }
     cm->on_select = desc->on_select;
     cm->select_data = desc->select_data;
+    cm->on_open = desc->on_open;
+    cm->open_data = desc->open_data;
+}
+
+static void update_context_menu_hover(Ca_Window *win, float mx, float my,
+                                      float ui_s)
+{
+    if (!win || !win->ctxmenu_pool) return;
+
+    const float item_h = 24.0f * ui_s;
+    const float sep_h = 8.0f * ui_s;
+    const float menu_w = 180.0f * ui_s;
+
+    for (uint32_t i = 0; i < CA_MAX_CTXMENUS_PER_WINDOW; ++i) {
+        Ca_CtxMenu *cm = &win->ctxmenu_pool[i];
+        if (!cm->in_use || !cm->open) {
+            continue;
+        }
+        if (cm->node && node_is_ancestor_hidden(cm->node)) {
+            continue;
+        }
+
+        float menu_h = 6.0f * ui_s;
+        for (int mi = 0; mi < cm->item_count; ++mi) {
+            const bool is_sep =
+                (cm->items[mi][0] == '-' && cm->items[mi][1] == '\0');
+            menu_h += is_sep ? sep_h : item_h;
+        }
+
+        float x = cm->open_x;
+        float y = cm->open_y;
+        if (win->sc.extent.width > 0 &&
+            x + menu_w > (float)win->sc.extent.width) {
+            x = (float)win->sc.extent.width - menu_w;
+        }
+        if (win->sc.extent.height > 0 &&
+            y + menu_h > (float)win->sc.extent.height) {
+            y = (float)win->sc.extent.height - menu_h;
+        }
+        if (x < 0.0f) x = 0.0f;
+        if (y < 0.0f) y = 0.0f;
+
+        int hover_index = -1;
+        if (mx >= x && mx <= x + menu_w && my >= y && my <= y + menu_h) {
+            float item_y = y + 3.0f * ui_s;
+            for (int mi = 0; mi < cm->item_count; ++mi) {
+                const bool is_sep =
+                    (cm->items[mi][0] == '-' && cm->items[mi][1] == '\0');
+                const float row_h = is_sep ? sep_h : item_h;
+                if (!is_sep && my >= item_y && my <= item_y + row_h) {
+                    hover_index = mi;
+                    break;
+                }
+                item_y += row_h;
+            }
+        }
+
+        if (cm->hover_index != hover_index) {
+            cm->hover_index = hover_index;
+            if (cm->node) {
+                cm->node->dirty |= CA_DIRTY_CONTENT;
+            }
+        }
+    }
 }
 
 /* ============================================================
@@ -3761,6 +3828,7 @@ void ca_widget_input_pass(Ca_Window *win)
                                     my >= my_pos && my <= my_pos + menu_h);
 
                 cm->open = false;
+                cm->hover_index = -1;
                 if (cm->node) cm->node->dirty |= CA_DIRTY_CONTENT;
 
                 if (inside_menu) {
@@ -4038,6 +4106,7 @@ void ca_widget_input_pass(Ca_Window *win)
                 Ca_CtxMenu *cm = &win->ctxmenu_pool[i];
                 if (cm->in_use && cm->open) {
                     cm->open = false;
+                    cm->hover_index = -1;
                     if (cm->node) cm->node->dirty |= CA_DIRTY_CONTENT;
                 }
             }
@@ -4058,13 +4127,20 @@ void ca_widget_input_pass(Ca_Window *win)
             }
             if (best) {
                 best->open   = true;
+                best->hover_index = -1;
                 best->open_x = mx;
                 best->open_y = my;
+                if (best->on_open) {
+                    best->on_open(mx - best->node->x, my - best->node->y,
+                                  mx, my, best->open_data);
+                }
                 if (best->node) best->node->dirty |= CA_DIRTY_CONTENT;
             }
         }
         prev_right = right_now;
     }
+
+    update_context_menu_hover(win, mx, my, ui_s);
 
     /* --- Slider drag handling --- */
     if (win->slider_pool) {

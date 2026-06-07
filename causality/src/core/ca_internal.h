@@ -546,9 +546,12 @@ struct Ca_CtxMenu {
     char          items[CA_MAX_CTXMENU_ITEMS][CA_OPTION_TEXT_MAX];
     int           item_count;
     bool          open;
+    int           hover_index;
     float         open_x, open_y;
     Ca_MenuFn     on_select;
     void         *select_data;
+    Ca_ContextMenuOpenFn on_open;
+    void         *open_data;
     bool          in_use;
 };
 

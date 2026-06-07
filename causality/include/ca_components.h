@@ -29,6 +29,9 @@ typedef void (*Ca_SelectFn)(Ca_Select *sel, void *user_data);
 typedef void (*Ca_TabFn)(Ca_TabBar *tabs, void *user_data);
 typedef void (*Ca_TreeToggleFn)(Ca_TreeNode *tn, void *user_data);
 typedef void (*Ca_MenuFn)(int item_index, void *user_data);
+typedef void (*Ca_ContextMenuOpenFn)(float local_x, float local_y,
+                                     float screen_x, float screen_y,
+                                     void *user_data);
 typedef void (*Ca_MenuActionFn)(void *user_data);
 
 /* ============================================================
@@ -146,6 +149,8 @@ typedef struct Ca_CtxMenuDesc {
     int          item_count;
     Ca_MenuFn    on_select;
     void        *select_data;
+    Ca_ContextMenuOpenFn on_open;
+    void        *open_data;
     const char  *id, *style;
 } Ca_CtxMenuDesc;
 
