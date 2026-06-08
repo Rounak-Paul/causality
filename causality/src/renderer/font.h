@@ -215,7 +215,7 @@ bool ca_font_create(Ca_Instance *inst, GLFWwindow *glfw_win,
                     const char *regular_path, const char *bold_path);
 
 /** Create a font atlas from in-memory font data.
-    regular_data/regular_size: required — Ubuntu Nerd Font Regular (text + icons).
+    regular_data/regular_size: required — bundled UI font data.
     bold_data/bold_size: optional (pass NULL/0 to skip bold tier).
     Glyphs and icons are rasterised lazily at scaled runtime sizes into the
     dynamic atlas; creation only uploads an empty atlas and primes defaults. */
