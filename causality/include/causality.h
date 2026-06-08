@@ -8,6 +8,7 @@
 #include <vulkan/vulkan.h>
 #include "causality_config.h"
 #include "ca_api.h"
+#include "ca_icons.h"
 #include "ca_reactive.h"
 
 #ifdef __cplusplus
@@ -64,8 +65,11 @@ typedef struct Ca_MenuBar   Ca_MenuBar;
 typedef struct Ca_InstanceDesc {
     const char *app_name;
     bool        prefer_dedicated_gpu;
-    /* Font — leave NULL to use the built-in Roboto Mono Nerd Font.
-       Set font_path to override with a custom .ttf or .otf file. */
+    /* Font — leave NULL to use the built-in Roboto Mono Nerd Font text layer
+       plus Symbols Nerd Font icon layer.
+       Set font_path to override text with a custom .ttf or .otf file.
+       The bundled Symbols icon layer remains active for CA_ICON_* glyphs
+       even when the regular/bold text faces are overridden. */
     const char *font_path;       /* path to regular .ttf or .otf, or NULL for embedded */
     const char *bold_font_path;  /* path to bold .ttf or .otf, or NULL for embedded bold */
     /* Default UI scale inherited by every window created on this instance.

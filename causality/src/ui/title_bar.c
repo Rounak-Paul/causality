@@ -26,14 +26,6 @@
 #include <stdio.h>
 #include <assert.h>
 
-/* ------------------------------------------------------------------ */
-/* Icon glyphs (Nerd Font / FontAwesome embedded in the app font)      */
-/* ------------------------------------------------------------------ */
-#define ICON_MINUS    "\xEF\x81\xA8"   /* U+F068  fa-minus        */
-#define ICON_MAXIMIZE "\xEF\x8B\x90"   /* U+F2D0  fa-window-maximize */
-#define ICON_RESTORE  "\xEF\x8B\x92"   /* U+F2D2  fa-window-restore  */
-#define ICON_TIMES    "\xEF\x80\x8D"   /* U+F00D  fa-times        */
-
 #define TITLE_BAR_SIDE_PADDING_PX 2.0f
 
 /* ------------------------------------------------------------------ */
@@ -320,7 +312,7 @@ void ca_title_bar_rebuild(Ca_Window *win)
 } while(0)
 
     Ca_Button *min_btn = ca_btn_begin(&(Ca_BtnDesc){
-        .text       = ICON_MINUS,
+        .text       = CA_ICON_FA_MINUS,
         .width      = 18.0f,
         .height     = 16.0f,
         .background = COL_FACE,
@@ -335,7 +327,9 @@ void ca_title_bar_rebuild(Ca_Window *win)
     ca_btn_end(); /* min btn */
 
     Ca_Button *max_btn = ca_btn_begin(&(Ca_BtnDesc){
-        .text       = win->titlebar_maximized ? ICON_RESTORE : ICON_MAXIMIZE,
+        .text       = win->titlebar_maximized
+                          ? CA_ICON_FA_WINDOW_RESTORE
+                          : CA_ICON_FA_WINDOW_MAXIMIZE,
         .width      = 18.0f,
         .height     = 16.0f,
         .background = COL_FACE,
@@ -350,7 +344,7 @@ void ca_title_bar_rebuild(Ca_Window *win)
     ca_btn_end(); /* max btn */
 
     Ca_Button *cls_btn = ca_btn_begin(&(Ca_BtnDesc){
-        .text       = ICON_TIMES,
+        .text       = CA_ICON_FA_TIMES,
         .width      = 18.0f,
         .height     = 16.0f,
         .background = COL_FACE,

@@ -124,7 +124,7 @@ typedef struct Ca_TreeNodeDesc {
     const char      *id, *style;
     bool             hidden;
     bool             is_leaf;        /* suppress disclosure triangle */
-    const char      *icon;           /* UTF-8 icon string (single glyph) */
+    const char      *icon;           /* UTF-8 icon string, e.g. CA_ICON_* */
     uint32_t         icon_color;     /* packed RGBA for icon (0 = text_color) */
     /* Additional class(es) appended to the built-in "tree-row" class on
        the inner clickable header row. Lets callers attach state-aware

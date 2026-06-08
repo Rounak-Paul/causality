@@ -639,8 +639,7 @@ static FT_Face font_primary_face_for_range(Ca_Font *font,
                                            bool is_icon_range)
 {
     if (!font) return NULL;
-    /* Icon glyphs live in the regular Nerd Font bundle.  Some bold faces omit
-       private-use icon ranges, so icons deliberately avoid bold-face lookup. */
+    /* Icon glyphs live in the bundled Symbols Nerd Font layer. */
     if (is_icon_range)
         return font->icon_face ? (FT_Face)font->icon_face
                                : (FT_Face)font->regular_face;
@@ -1153,17 +1152,15 @@ static bool font_create_internal(Ca_Instance *inst, GLFWwindow *glfw_win,
         }
     }
 
-    extern const unsigned char ca_embedded_font_data[];
-    extern const unsigned int  ca_embedded_font_size;
-    const bool regular_is_embedded =
-        regular_data == ca_embedded_font_data &&
-        regular_size == (size_t)ca_embedded_font_size;
-    if (!regular_is_embedded) {
-        out_font->icon_data = (unsigned char *)CA_MALLOC(ca_embedded_font_size);
+    extern const unsigned char ca_embedded_symbols_font_data[];
+    extern const unsigned int  ca_embedded_symbols_font_size;
+    if (ca_embedded_symbols_font_size > 0u) {
+        out_font->icon_data =
+            (unsigned char *)CA_MALLOC(ca_embedded_symbols_font_size);
         if (out_font->icon_data) {
-            memcpy(out_font->icon_data, ca_embedded_font_data,
-                   ca_embedded_font_size);
-            out_font->icon_size = ca_embedded_font_size;
+            memcpy(out_font->icon_data, ca_embedded_symbols_font_data,
+                   ca_embedded_symbols_font_size);
+            out_font->icon_size = ca_embedded_symbols_font_size;
             FT_Face icon_face = NULL;
             if (FT_New_Memory_Face(lib, out_font->icon_data,
                                    (FT_Long)out_font->icon_size,

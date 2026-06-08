@@ -5,6 +5,7 @@
 #include "paint.h"
 #include "font.h"
 #include "ca_theme.h"
+#include "../../include/ca_icons.h"
 #include <GLFW/glfw3.h>
 #include <stdio.h>
 #include <string.h>
@@ -546,8 +547,8 @@ static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, Cli
         /* Disclosure triangle — suppress for leaf nodes */
         if (!tn->is_leaf) {
             const char *indicator = tn->expanded
-                ? "\xEF\x83\x97"   /* U+F0D7 caret-down  */
-                : "\xEF\x83\x9A"; /* U+F0DA caret-right */
+                ? CA_ICON_FA_CARET_DOWN
+                : CA_ICON_FA_CARET_RIGHT;
             Ca_Node ind_n = *hdr;
             ind_n.x = hdr->x + x_off;
             ind_n.desc.padding_left = 0;
@@ -1828,7 +1829,9 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
                     tmp2.window = win;
                     tmp2.desc.text_align = 0;
                     tmp2.desc.font_size = drop_item_fs;
-                    paint_text(win, font, &tmp2, "\xEE\xAA\xB6", mb->dropdown_text);
+                    paint_text(win, font, &tmp2,
+                               CA_ICON_NF_COD_CHEVRON_RIGHT,
+                               mb->dropdown_text);
                     for (uint32_t gi = gs2; gi < win->draw_cmd_count; ++gi)
                         win->draw_cmds[gi].overlay = true;
                 }

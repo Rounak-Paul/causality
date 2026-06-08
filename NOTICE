@@ -27,11 +27,15 @@ This product includes the following third-party software:
 
   - Vulkan headers (Apache-2.0) - link-time dep, supplied by the Vulkan SDK.
 
-  - Embedded font: Departure Mono Nerd Font Mono Regular
-      Departure Mono - SIL Open Font License 1.1
-      Copyright 2022-2024 Helena Zhang
-      Upstream: https://github.com/rektdeckard/departure-mono
+  - Embedded text font: Roboto Mono Nerd Font Mono Regular and Bold
+      Roboto Mono - Apache License 2.0
+      Copyright 2015 The Roboto Mono Project Authors
+      Upstream: https://github.com/googlefonts/RobotoMono
       Nerd Fonts patcher (MIT) - https://github.com/ryanoasis/nerd-fonts
       Embedded as static byte arrays in src/renderer/embedded_font*.c.
-      The regular face is currently reused for the bold slot because no
-      bundled bold Departure Mono face is present.
+
+  - Embedded icon font: Symbols Nerd Font Mono Regular
+      Nerd Fonts Symbols Only - MIT License
+      Copyright (c) 2014 Ryan L McIntyre
+      Nerd Fonts patcher (MIT) - https://github.com/ryanoasis/nerd-fonts
+      Embedded as a static byte array in src/renderer/embedded_symbols_font.c.

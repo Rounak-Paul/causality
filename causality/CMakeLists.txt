@@ -80,5 +80,7 @@ set_source_files_properties(src/renderer/embedded_font.c
     PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
 set_source_files_properties(src/renderer/embedded_font_bold.c
     PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
+set_source_files_properties(src/renderer/embedded_symbols_font.c
+    PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
 
 target_precompile_headers(causality PRIVATE src/pch.h)
