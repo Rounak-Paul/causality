@@ -32,6 +32,9 @@ static const struct { int first; int count; } g_range_defs[CA_FONT_RANGE_COUNT] 
     { 0xF000, 737 },   /* Font Awesome                (F000-F2E0) */
 };
 
+#define CA_FONT_SYMBOLS_ICON_SCALE        0.78f
+#define CA_FONT_SYMBOLS_ICON_RAISE_EM     0.11f
+
 static int chars_for_ranges(int num_ranges)
 {
     int n = 0;
@@ -648,6 +651,30 @@ static FT_Face font_primary_face_for_range(Ca_Font *font,
     return (FT_Face)font->regular_face;
 }
 
+/* Returns the render-size multiplier for private-use icons.
+   Parameters: font object, resolved FreeType face, and icon-range flag. */
+static float font_icon_face_scale(const Ca_Font *font,
+                                  FT_Face face,
+                                  bool is_icon_range)
+{
+    return is_icon_range && font && face == (FT_Face)font->icon_face
+        ? CA_FONT_SYMBOLS_ICON_SCALE
+        : 1.0f;
+}
+
+/* Returns the baseline adjustment for normalized Symbols icons.
+   Parameters: font object, resolved FreeType face, icon-range flag, and
+   visual pixel size before icon normalization. */
+static float font_icon_baseline_raise(const Ca_Font *font,
+                                      FT_Face face,
+                                      bool is_icon_range,
+                                      float baked_px)
+{
+    return is_icon_range && font && face == (FT_Face)font->icon_face
+        ? baked_px * CA_FONT_SYMBOLS_ICON_RAISE_EM
+        : 0.0f;
+}
+
 static bool font_set_face_size(FT_Face face, float baked_px)
 {
     return face &&
@@ -837,7 +864,9 @@ static bool font_render_glyph(Ca_FontTier *tier, uint32_t cp, Ca_Glyph *g)
         : (use_lcd
             ? (FT_LOAD_DEFAULT | FT_LOAD_TARGET_LCD | FT_LOAD_NO_BITMAP)
             : (FT_LOAD_DEFAULT | FT_LOAD_TARGET_LIGHT | FT_LOAD_NO_BITMAP));
-    if (!font_set_face_size(face, tier->baked_px * (float)supersample))
+    const float icon_scale = font_icon_face_scale(font, face, is_icon_range);
+    const float render_px = tier->baked_px * icon_scale;
+    if (!font_set_face_size(face, render_px * (float)supersample))
         return false;
     if (FT_Load_Glyph(face, gi, load_flags) != 0) return false;
     FT_GlyphSlot slot = face->glyph;
@@ -878,7 +907,9 @@ static bool font_render_glyph(Ca_FontTier *tier, uint32_t cp, Ca_Glyph *g)
     g->x1 = (uint16_t)(rx + pixel_w);
     g->y1 = (uint16_t)(ry + pixel_h);
     g->xoff  = (float)slot->bitmap_left / (float)supersample;
-    g->yoff  = (float)(-slot->bitmap_top) / (float)supersample;
+    g->yoff  = ((float)(-slot->bitmap_top) / (float)supersample) -
+               font_icon_baseline_raise(font, face, is_icon_range,
+                                        tier->baked_px);
     g->xoff2 = g->xoff + (float)pixel_w;
     g->yoff2 = g->yoff + (float)pixel_h;
     g->xadvance = ((float)slot->advance.x / 64.0f) / (float)supersample;
