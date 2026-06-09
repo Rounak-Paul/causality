@@ -22,16 +22,80 @@ extern "C" {
    COMPONENT CALLBACK TYPES
    ============================================================ */
 
+/*
+ * Callback fired when a checkbox or radio button changes state.
+ *
+ * cb         The checkbox (or Ca_Checkbox-compatible handle) that changed.
+ * user_data  Caller-supplied context pointer.
+ */
 typedef void (*Ca_CheckFn)(Ca_Checkbox *cb, void *user_data);
+
+/*
+ * Callback fired when a slider value changes.
+ *
+ * slider     The slider that changed.
+ * user_data  Caller-supplied context pointer.
+ */
 typedef void (*Ca_SliderFn)(Ca_Slider *slider, void *user_data);
+
+/*
+ * Callback fired when a toggle switch changes state.
+ *
+ * toggle     The toggle that changed.
+ * user_data  Caller-supplied context pointer.
+ */
 typedef void (*Ca_ToggleFn)(Ca_Toggle *toggle, void *user_data);
+
+/*
+ * Callback fired when a select/dropdown selection changes.
+ *
+ * sel        The select widget that changed.
+ * user_data  Caller-supplied context pointer.
+ */
 typedef void (*Ca_SelectFn)(Ca_Select *sel, void *user_data);
+
+/*
+ * Callback fired when the active tab in a tab bar changes.
+ *
+ * tabs       The tab bar that changed.
+ * user_data  Caller-supplied context pointer.
+ */
 typedef void (*Ca_TabFn)(Ca_TabBar *tabs, void *user_data);
+
+/*
+ * Callback fired when a tree node is expanded or collapsed.
+ *
+ * tn         The tree node that was toggled.
+ * user_data  Caller-supplied context pointer.
+ */
 typedef void (*Ca_TreeToggleFn)(Ca_TreeNode *tn, void *user_data);
+
+/*
+ * Callback fired when a context menu item is selected.
+ *
+ * item_index  Zero-based index of the selected item.
+ * user_data   Caller-supplied context pointer.
+ */
 typedef void (*Ca_MenuFn)(int item_index, void *user_data);
+
+/*
+ * Callback fired when a context menu is about to open.
+ *
+ * local_x   X position relative to the target widget's top-left.
+ * local_y   Y position relative to the target widget's top-left.
+ * screen_x  X position in window screen coordinates.
+ * screen_y  Y position in window screen coordinates.
+ * user_data Caller-supplied context pointer.
+ */
 typedef void (*Ca_ContextMenuOpenFn)(float local_x, float local_y,
                                      float screen_x, float screen_y,
                                      void *user_data);
+
+/*
+ * Callback fired when a menu bar item action is invoked.
+ *
+ * user_data  Caller-supplied context pointer bound to the Ca_MenuItemDesc.
+ */
 typedef void (*Ca_MenuActionFn)(void *user_data);
 
 /* ============================================================
@@ -199,68 +263,173 @@ typedef struct Ca_MenuBarDesc {
    COMPONENT API
    ============================================================ */
 
-/* Checkbox */
+/* ---- Checkbox ---- */
+
+/* Emit a checkbox widget; returns the created Ca_Checkbox handle. */
 CA_API Ca_Checkbox *ca_checkbox(const Ca_CheckboxDesc *desc);
+
+/* Programmatically set the checked state of a checkbox. */
 CA_API void         ca_checkbox_set(Ca_Checkbox *cb, bool checked);
+
+/* Returns the current checked state of a checkbox. */
 CA_API bool         ca_checkbox_get(const Ca_Checkbox *cb);
 
-/* Radio button */
+/* ---- Radio button ---- */
+
+/* Emit a radio button widget; returns the created Ca_Radio handle. */
 CA_API Ca_Radio    *ca_radio(const Ca_RadioDesc *desc);
+
+/*
+ * Return the value of the currently selected radio button in a group.
+ *
+ * win    Window owning the radio group.
+ * group  Group identifier passed in Ca_RadioDesc.group.
+ * Returns  Selected value, or -1 if nothing is selected.
+ */
 CA_API int          ca_radio_group_get(Ca_Window *win, int group);
 
-/* Slider */
+/* ---- Slider ---- */
+
+/* Emit a slider widget; returns the created Ca_Slider handle. */
 CA_API Ca_Slider   *ca_slider(const Ca_SliderDesc *desc);
+
+/* Programmatically set the slider value (clamped to [min, max]). */
 CA_API void         ca_slider_set(Ca_Slider *s, float value);
+
+/* Returns the current value of the slider. */
 CA_API float        ca_slider_get(const Ca_Slider *s);
 
-/* Toggle switch */
+/* ---- Toggle switch ---- */
+
+/* Emit a toggle switch widget; returns the created Ca_Toggle handle. */
 CA_API Ca_Toggle   *ca_toggle(const Ca_ToggleDesc *desc);
+
+/* Programmatically set the toggle on/off state. */
 CA_API void         ca_toggle_set(Ca_Toggle *t, bool on);
+
+/* Returns the current on/off state of the toggle. */
 CA_API bool         ca_toggle_get(const Ca_Toggle *t);
 
-/* Progress bar */
+/* ---- Progress bar ---- */
+
+/* Emit a progress bar widget; returns the created Ca_Progress handle. */
 CA_API Ca_Progress *ca_progress(const Ca_ProgressDesc *desc);
+
+/* Update the progress bar fill value (clamped to [0.0, 1.0]). */
 CA_API void         ca_progress_set(Ca_Progress *p, float value);
 
-/* Select / dropdown */
+/* ---- Select / dropdown ---- */
+
+/* Emit a select/dropdown widget; returns the created Ca_Select handle. */
 CA_API Ca_Select   *ca_select(const Ca_SelectDesc *desc);
+
+/* Programmatically set the selected option by index. */
 CA_API void         ca_select_set(Ca_Select *s, int index);
+
+/* Returns the index of the currently selected option. */
 CA_API int          ca_select_get(const Ca_Select *s);
 
-/* Tab bar */
+/* ---- Tab bar ---- */
+
+/* Emit a tab bar widget; returns the created Ca_TabBar handle. */
 CA_API Ca_TabBar   *ca_tabs(const Ca_TabBarDesc *desc);
+
+/* Returns the zero-based index of the currently active tab. */
 CA_API int          ca_tabs_active(const Ca_TabBar *t);
 
-/* Tree view */
+/* ---- Tree view ---- */
+
+/* Open a tree view container; must be paired with ca_tree_end(). */
 CA_API void         ca_tree_begin(const Ca_DivDesc *desc);
+
+/* Close a tree view container opened by ca_tree_begin(). */
 CA_API void         ca_tree_end(void);
+
+/*
+ * Open a tree node row inside the current tree view.
+ *
+ * desc     Node label, expand state, icon, and toggle callback.
+ * Returns  Handle to the created Ca_TreeNode.
+ */
 CA_API Ca_TreeNode *ca_tree_node_begin(const Ca_TreeNodeDesc *desc);
+
+/* Close a tree node opened by ca_tree_node_begin(). */
 CA_API void         ca_tree_node_end(void);
+
+/* Returns true if the tree node is currently expanded. */
 CA_API bool         ca_tree_node_expanded(const Ca_TreeNode *n);
+
+/* Programmatically expand or collapse a tree node. */
 CA_API void         ca_tree_node_set_expanded(Ca_TreeNode *n, bool expanded);
 
-/* Table */
+/* ---- Table ---- */
+
+/* Open a table container; must be paired with ca_table_end(). */
 CA_API void ca_table_begin(const Ca_TableDesc *desc);
+
+/* Close a table container opened by ca_table_begin(). */
 CA_API void ca_table_end(void);
+
+/* Open a table row; must be paired with ca_table_row_end(). */
 CA_API void ca_table_row_begin(const Ca_DivDesc *desc);
+
+/* Close a table row opened by ca_table_row_begin(). */
 CA_API void ca_table_row_end(void);
+
+/* Emit a single table cell with the given text descriptor. */
 CA_API void ca_table_cell(const Ca_TextDesc *desc);
 
-/* Tooltip — attach to the previously created element. */
+/* ---- Tooltip ---- */
+
+/*
+ * Attach a tooltip to the previously created element.
+ *
+ * desc     Tooltip text and optional id/style.
+ * Returns  Handle to the created Ca_Tooltip.
+ */
 CA_API Ca_Tooltip *ca_tooltip(const Ca_TooltipDesc *desc);
 
-/* Updates an existing tooltip without rebuilding the target widget. */
+/*
+ * Update the text of an existing tooltip without rebuilding its target widget.
+ *
+ * tooltip  Target Ca_Tooltip.
+ * text     New tooltip text.
+ */
 CA_API void ca_tooltip_set_text(Ca_Tooltip *tooltip, const char *text);
 
-/* Context menu — attach to the previously created element */
+/* ---- Context menu ---- */
+
+/*
+ * Attach a context menu to the previously created element.
+ *
+ * desc  Item list, selection callback, and open callback.
+ */
 CA_API void ca_context_menu(const Ca_CtxMenuDesc *desc);
 
-/* Menu bar */
+/* ---- Menu bar ---- */
+
+/*
+ * Emit a horizontal menu bar widget.
+ *
+ * desc     Menu definitions and appearance overrides.
+ * Returns  Handle to the created Ca_MenuBar.
+ */
 CA_API Ca_MenuBar *ca_menu_bar(const Ca_MenuBarDesc *desc);
 
-/* Modal / dialog */
+/* ---- Modal / dialog ---- */
+
+/*
+ * Open a modal overlay container; must be paired with ca_modal_end().
+ *
+ * desc     Initial visibility and overlay color.
+ * Returns  Handle to the created Ca_Modal.
+ */
 CA_API Ca_Modal *ca_modal_begin(const Ca_ModalDesc *desc);
+
+/* Close a modal container opened by ca_modal_begin(). */
 CA_API void      ca_modal_end(void);
+
+/* Show or hide an existing modal overlay. */
 CA_API void      ca_modal_set_visible(Ca_Modal *modal, bool visible);
 
 /* Node graph canvas (see ca_node_graph.h for full documentation) */

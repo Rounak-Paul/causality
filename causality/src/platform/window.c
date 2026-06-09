@@ -8,6 +8,12 @@
 
 /* ---- GLFW callbacks ---- */
 
+/*
+ * GLFW key callback — buffers key events and posts them to the event queue.
+ *
+ * Toggles the debug overlay on F9 press before buffering other key events.
+ * Only PRESS and REPEAT actions are buffered for focus/input handling.
+ */
 static void glfw_key_cb(GLFWwindow *glfw, int key, int scancode, int action, int mods)
 {
     Ca_Window *win = (Ca_Window *)glfwGetWindowUserPointer(glfw);
@@ -35,6 +41,12 @@ static void glfw_key_cb(GLFWwindow *glfw, int key, int scancode, int action, int
     ca_event_post(win->instance, &ev);
 }
 
+/*
+ * GLFW character callback — buffers Unicode codepoints and posts a char event.
+ *
+ * Appends the codepoint to the window's char_buf (up to CA_CHAR_BUF_MAX)
+ * and posts a CA_EVENT_CHAR event for the instance event system.
+ */
 static void glfw_char_cb(GLFWwindow *glfw, unsigned int codepoint)
 {
     Ca_Window *win = (Ca_Window *)glfwGetWindowUserPointer(glfw);
@@ -47,6 +59,12 @@ static void glfw_char_cb(GLFWwindow *glfw, unsigned int codepoint)
     ca_event_post(win->instance, &ev);
 }
 
+/*
+ * GLFW mouse button callback — updates button state and posts an event.
+ *
+ * Tracks the first three mouse buttons in win->mouse_buttons[] and sets
+ * mouse_click_this_frame on left-button press.
+ */
 static void glfw_mouse_button_cb(GLFWwindow *glfw, int button, int action, int mods)
 {
     Ca_Window *win = (Ca_Window *)glfwGetWindowUserPointer(glfw);
@@ -63,6 +81,7 @@ static void glfw_mouse_button_cb(GLFWwindow *glfw, int button, int action, int m
     ca_event_post(win->instance, &ev);
 }
 
+/* GLFW cursor position callback — updates win->mouse_x/y and posts a move event. */
 static void glfw_cursor_pos_cb(GLFWwindow *glfw, double x, double y)
 {
     Ca_Window *win = (Ca_Window *)glfwGetWindowUserPointer(glfw);
@@ -76,6 +95,13 @@ static void glfw_cursor_pos_cb(GLFWwindow *glfw, double x, double y)
     ca_event_post(win->instance, &ev);
 }
 
+/*
+ * GLFW cursor enter/leave callback — clears hover state when the cursor exits.
+ *
+ * Moves the recorded cursor position out-of-bounds on exit so the next input
+ * pass cannot hit any node, ensuring :hover styles clear correctly.  Wakes
+ * the event loop to trigger a repaint.
+ */
 static void glfw_cursor_enter_cb(GLFWwindow *glfw, int entered)
 {
     Ca_Window *win = (Ca_Window *)glfwGetWindowUserPointer(glfw);
@@ -92,6 +118,7 @@ static void glfw_cursor_enter_cb(GLFWwindow *glfw, int entered)
     }
 }
 
+/* GLFW scroll callback — accumulates scroll deltas and posts a scroll event. */
 static void glfw_scroll_cb(GLFWwindow *glfw, double dx, double dy)
 {
     Ca_Window *win = (Ca_Window *)glfwGetWindowUserPointer(glfw);
@@ -106,6 +133,13 @@ static void glfw_scroll_cb(GLFWwindow *glfw, double dx, double dy)
     ca_event_post(win->instance, &ev);
 }
 
+/*
+ * GLFW window size callback — resizes the swapchain and marks layout dirty.
+ *
+ * Posts a CA_EVENT_WINDOW_RESIZE event, queries the framebuffer size in
+ * device pixels (for HiDPI correctness), calls ca_renderer_window_resize(),
+ * and marks the root node layout-dirty so the UI reflows.
+ */
 static void glfw_window_size_cb(GLFWwindow *glfw, int width, int height)
 {
     Ca_Window *win = (Ca_Window *)glfwGetWindowUserPointer(glfw);
@@ -130,6 +164,12 @@ static void glfw_window_size_cb(GLFWwindow *glfw, int width, int height)
         win->root->dirty |= CA_DIRTY_LAYOUT | CA_DIRTY_CONTENT;
 }
 
+/*
+ * GLFW framebuffer size callback — resizes the swapchain to device pixels.
+ *
+ * Called by GLFW when the framebuffer resolution changes (e.g. on HiDPI).
+ * Delegates to ca_renderer_window_resize() and marks the root node dirty.
+ */
 static void glfw_framebuffer_size_cb(GLFWwindow *glfw, int width, int height)
 {
     Ca_Window *win = (Ca_Window *)glfwGetWindowUserPointer(glfw);
@@ -144,6 +184,12 @@ static void glfw_framebuffer_size_cb(GLFWwindow *glfw, int width, int height)
 
 static int g_glfw_refcount = 0;
 
+/*
+ * Initialise the GLFW window system, with reference counting.
+ *
+ * Safe to call multiple times; only the first call actually calls glfwInit().
+ * Returns true on success; false if glfwInit() fails.
+ */
 bool ca_window_system_init(void)
 {
     if (g_glfw_refcount > 0) {
@@ -159,6 +205,15 @@ bool ca_window_system_init(void)
     return true;
 }
 
+/*
+ * Destroy all open windows for an instance and decrement the GLFW refcount.
+ *
+ * glfwTerminate() is intentionally omitted to avoid races with MoltenVK/
+ * Vulkan-loader background threads on macOS; the OS reclaims GLFW resources
+ * at process exit.
+ *
+ * inst  Instance whose windows are to be destroyed.
+ */
 void ca_window_system_shutdown(Ca_Instance *inst)
 {
     for (int i = 0; i < CA_MAX_WINDOWS_TOTAL; ++i) {
@@ -174,6 +229,17 @@ void ca_window_system_shutdown(Ca_Instance *inst)
        The OS reclaims all GLFW resources at process exit. */
 }
 
+/*
+ * Process one tick of the GLFW event loop for the instance.
+ *
+ * Clears per-frame input flags, polls or waits for GLFW events (depending on
+ * inst->continuous), dispatches event handlers, destroys any windows that
+ * have requested close, and re-focuses a remaining window on macOS after a
+ * close so the next click is delivered to the app rather than consumed by the OS.
+ *
+ * inst    Instance to tick.
+ * Returns true while at least one window remains open; false when all are gone.
+ */
 bool ca_window_system_tick(Ca_Instance *inst)
 {
     /* Clear per-frame click flags before GLFW fires callbacks */
@@ -231,6 +297,18 @@ bool ca_window_system_tick(Ca_Instance *inst)
 
 /* ---- Per-window ---- */
 
+/*
+ * Create a GLFW window and initialise a Ca_Window at a specific pool slot.
+ *
+ * Zeros the slot, creates an undecorated GLFW window, installs all GLFW
+ * callbacks, boots the Vulkan surface/swapchain, and initialises the UI
+ * layer.  Returns the existing window if the slot is already in use.
+ *
+ * inst        Owning instance.
+ * desc        Window configuration (title, size).
+ * slot_index  Index into inst->windows[]; must be in [0, CA_MAX_WINDOWS_TOTAL).
+ * Returns     Initialised Ca_Window pointer, or NULL on failure.
+ */
 static Ca_Window *window_create_in_slot(Ca_Instance *inst, const Ca_WindowDesc *desc,
                                         int slot_index)
 {
@@ -305,6 +383,13 @@ static Ca_Window *window_create_in_slot(Ca_Instance *inst, const Ca_WindowDesc *
     return slot;
 }
 
+/*
+ * Create a user application window in the first available pool slot.
+ *
+ * inst  Owning instance (must not be NULL).
+ * desc  Window configuration (must not be NULL).
+ * Returns  Newly created Ca_Window, or NULL if the pool is exhausted.
+ */
 Ca_Window *ca_window_create(Ca_Instance *inst, const Ca_WindowDesc *desc)
 {
     assert(inst && desc);
@@ -318,6 +403,17 @@ Ca_Window *ca_window_create(Ca_Instance *inst, const Ca_WindowDesc *desc)
     return NULL;
 }
 
+/*
+ * Create a window in a reserved (internal-use) pool slot.
+ *
+ * Reserved slots sit above the user window slots and are used for system
+ * dialogs such as popup windows.
+ *
+ * inst            Owning instance.
+ * desc            Window configuration.
+ * reserved_index  Index within the reserved range [0, CA_RESERVED_POPUP_WINDOWS).
+ * Returns         Initialised Ca_Window, or NULL on invalid arguments or failure.
+ */
 Ca_Window *ca_window_create_reserved(Ca_Instance *inst, const Ca_WindowDesc *desc,
                                      int reserved_index)
 {
@@ -327,6 +423,14 @@ Ca_Window *ca_window_create_reserved(Ca_Instance *inst, const Ca_WindowDesc *des
     return window_create_in_slot(inst, desc, CA_MAX_WINDOWS + reserved_index);
 }
 
+/*
+ * Tear down a window and release all associated resources.
+ *
+ * Shuts down the UI layer, the renderer surface/swapchain, and the GLFW
+ * window.  Marks the slot as not in use.  No-op if window is NULL or not in use.
+ *
+ * window  Window to destroy.
+ */
 void ca_window_destroy(Ca_Window *window)
 {
     if (!window || !window->in_use) return;
@@ -339,18 +443,29 @@ void ca_window_destroy(Ca_Window *window)
     window->in_use   = false;
 }
 
+/* Return the underlying GLFWwindow* for window, or NULL if not in use. */
 GLFWwindow *ca_window_glfw(const Ca_Window *window)
 {
     if (!window || !window->in_use) return NULL;
     return window->glfw;
 }
 
+/* Request the window to close by setting its GLFW close flag. */
 void ca_window_close(Ca_Window *window)
 {
     if (!window || !window->in_use || !window->glfw) return;
     glfwSetWindowShouldClose(window->glfw, GLFW_TRUE);
 }
 
+/*
+ * Maximise the window to cover the work area of the monitor it currently sits on.
+ *
+ * Saves the pre-maximised position and size so it can be restored later.
+ * Identifies the target monitor by the window's centre point.  No-op if
+ * the window is already maximised or not in use.
+ *
+ * window  Window to maximise.
+ */
 void ca_window_maximize(Ca_Window *window)
 {
     if (!window || !window->in_use || !window->glfw) return;
@@ -384,11 +499,13 @@ void ca_window_maximize(Ca_Window *window)
     window->titlebar_needs_rebuild = true;
 }
 
+/* Return the Ca_Instance that owns window, or NULL if not in use. */
 Ca_Instance *ca_window_instance(Ca_Window *window)
 {
     return (window && window->in_use) ? window->instance : NULL;
 }
 
+/* Return true if window is non-NULL and currently in use (open). */
 bool ca_window_is_open(const Ca_Window *window)
 {
     return window && window->in_use;
@@ -406,6 +523,16 @@ bool ca_window_is_open(const Ca_Window *window)
 #define RESIZE_MIN_W 200
 #define RESIZE_MIN_H 120
 
+/*
+ * Compute the resize-edge bitmask for a cursor position within a window.
+ *
+ * win_w  Window width in logical pixels.
+ * win_h  Window height in logical pixels.
+ * cx     Cursor x in window-local coordinates.
+ * cy     Cursor y in window-local coordinates.
+ * Returns  Bitmask of RESIZE_LEFT / RESIZE_RIGHT / RESIZE_TOP / RESIZE_BOTTOM,
+ *          or 0 if the cursor is not in any edge hit zone.
+ */
 static int resize_edge_for_pos(int win_w, int win_h, double cx, double cy)
 {
     int edge = 0;
@@ -419,6 +546,7 @@ static int resize_edge_for_pos(int win_w, int win_h, double cx, double cy)
 static GLFWcursor *s_cursors[3]; /* hresize, vresize, crossresize */
 static bool        s_cursors_init = false;
 
+/* Lazily create the three resize cursor shapes (hresize, vresize, all-resize). */
 static void ensure_cursors(void)
 {
     if (s_cursors_init) return;
@@ -428,6 +556,17 @@ static void ensure_cursors(void)
     s_cursors_init = true;
 }
 
+/*
+ * Handle per-frame edge/corner resize logic for undecorated windows.
+ *
+ * On each tick: hit-tests the cursor against window edges, shows the
+ * appropriate resize cursor, and on left-click begins a resize drag.
+ * While dragging, recomputes and applies the new window position and size,
+ * enforcing minimum dimensions.  Ends the drag when the button is released.
+ * No-op for maximised windows.
+ *
+ * win  Window to process.
+ */
 void ca_window_resize_pass(Ca_Window *win)
 {
     if (!win || !win->in_use || win->titlebar_maximized) return;
@@ -518,24 +657,50 @@ void ca_window_resize_pass(Ca_Window *win)
     }
 }
 
+/*
+ * Set the UI scale for this window's instance (affects all windows).
+ *
+ * Delegates to ca_instance_set_scale(); see its documentation for semantics.
+ *
+ * window  Any open window belonging to the target instance.
+ * scale   Desired scale factor.
+ */
 void ca_window_set_scale(Ca_Window *window, float scale)
 {
     if (!window || !window->in_use) return;
     ca_instance_set_scale(window->instance, scale);
 }
 
+/*
+ * Return the current UI scale for this window's instance.
+ *
+ * window  Any open window belonging to the target instance; returns 1.0 if NULL.
+ * Returns Current scale factor.
+ */
 float ca_window_get_scale(Ca_Window *window)
 {
     if (!window || !window->in_use) return 1.0f;
     return ca_instance_get_scale(window->instance);
 }
 
+/*
+ * Write a UTF-8 string to the system clipboard via GLFW.
+ *
+ * window  Window whose GLFW context is used for the clipboard call.
+ * text    Text to set; passing NULL sets an empty string.
+ */
 void ca_clipboard_set_text(Ca_Window *window, const char *text)
 {
     if (!window || !window->glfw) return;
     glfwSetClipboardString(window->glfw, text ? text : "");
 }
 
+/*
+ * Read the current clipboard contents as a UTF-8 string.
+ *
+ * window  Window whose GLFW context is used for the clipboard call.
+ * Returns Pointer to the clipboard text (owned by GLFW), or NULL.
+ */
 const char *ca_clipboard_get_text(Ca_Window *window)
 {
     if (!window || !window->glfw) return NULL;

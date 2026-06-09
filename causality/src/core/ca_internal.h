@@ -382,10 +382,16 @@ struct Ca_Node {
     bool          dbg_repainted;
 };
 
-/* Returns true if the node itself OR any ancestor in the tree is hidden.
-   Used to suppress dropdown overlays whose host widget is inside a panel
-   hidden via ca_set_hidden() — the select node is not individually hidden,
-   only its parent panel is, so the simple `node->desc.hidden` check misses it. */
+/*
+ * Return true if the node or any ancestor in the tree has hidden=true.
+ *
+ * Used to suppress dropdown overlays whose host widget is inside a panel
+ * hidden via ca_set_hidden() — the select node is not individually hidden,
+ * only its parent panel is, so checking node->desc.hidden alone misses it.
+ *
+ * n        Node at which to begin the ancestor walk.
+ * Returns  true if any node on the path to root is hidden.
+ */
 static inline bool node_is_ancestor_hidden(const Ca_Node *n)
 {
     while (n) {
@@ -407,6 +413,13 @@ struct Ca_Label {
     bool      in_use;
 };
 
+/*
+ * Return the active text pointer for a label, preferring heap-allocated
+ * dynamic text when present.
+ *
+ * lbl      Label to query.
+ * Returns  Pointer to the label's current text string.
+ */
 static inline const char *ca_label_get_text(const Ca_Label *lbl)
 { return lbl->dyn_text ? lbl->dyn_text : lbl->text; }
 

@@ -6,14 +6,19 @@
 
 #include "ca_internal.h"
 
-/* Called once at instance creation. */
+/* Initialise the event subsystem for inst; called once at instance creation. */
 void ca_event_init(Ca_Instance *inst);
 
-/* Called at instance destruction. */
+/* Tear down the event subsystem for inst; called at instance destruction. */
 void ca_event_shutdown(Ca_Instance *inst);
 
-/* Thread-safe: push an event onto the ring buffer. */
+/*
+ * Push an event onto the ring buffer (thread-safe).
+ *
+ * inst   Instance to post to.
+ * event  Event to enqueue; copied by value.
+ */
 void ca_event_post(Ca_Instance *inst, const Ca_Event *event);
 
-/* Drain the ring buffer and invoke registered handlers. */
+/* Drain the ring buffer and invoke all registered handlers. */
 void ca_event_dispatch(Ca_Instance *inst);

@@ -77,7 +77,15 @@ typedef struct Ca_InstanceDesc {
     float       default_ui_scale;
 } Ca_InstanceDesc;
 
+/*
+ * Create a new Causality instance, initialising Vulkan and the font system.
+ *
+ * desc      Description of the instance to create.
+ * Returns   A heap-allocated Ca_Instance, or NULL on failure.
+ */
 CA_API Ca_Instance *ca_instance_create(const Ca_InstanceDesc *desc);
+
+/* Destroy the instance and release all associated GPU and CPU resources. */
 CA_API void         ca_instance_destroy(Ca_Instance *instance);
 
 /* Sets a custom allocator for all Causality internal heap allocations.
@@ -110,16 +118,26 @@ typedef struct Ca_WindowDesc {
     int         height;
 } Ca_WindowDesc;
 
+/*
+ * Create a new platform window belonging to the given instance.
+ *
+ * instance  Owning Ca_Instance.
+ * desc      Window title, width, and height.
+ * Returns   Newly created Ca_Window, or NULL on failure.
+ */
 CA_API Ca_Window *ca_window_create(Ca_Instance *instance, const Ca_WindowDesc *desc);
+
+/* Immediately destroy a window and release its swap-chain resources. */
 CA_API void       ca_window_destroy(Ca_Window *window);
 
-/// Returns the Ca_Instance that owns this window.
+/* Returns the Ca_Instance that owns this window. */
 CA_API Ca_Instance *ca_window_instance(Ca_Window *window);
 
 /* Request the window to close at the end of the current tick.
    Safe to call from button callbacks or any other context.
    The window is fully destroyed by the event loop on the next frame. */
 CA_API void       ca_window_close(Ca_Window *window);
+/* Maximize the window to fill the screen. */
 CA_API void       ca_window_maximize(Ca_Window *window);
 
 /* Returns true if the window handle is valid and still open. */
@@ -127,13 +145,34 @@ CA_API bool       ca_window_is_open(const Ca_Window *window);
 
 /* Clipboard helpers for text content. Clipboard ownership remains with the
    platform backend; returned text is valid until the next clipboard update. */
+/*
+ * Write a UTF-8 string to the system clipboard.
+ *
+ * window  Window whose platform context owns the clipboard.
+ * text    Null-terminated UTF-8 string to set.
+ */
 CA_API void        ca_clipboard_set_text(Ca_Window *window, const char *text);
+
+/*
+ * Read the current UTF-8 text from the system clipboard.
+ *
+ * window  Window whose platform context owns the clipboard.
+ * Returns Pointer to the clipboard text, valid until the next clipboard update.
+ */
 CA_API const char *ca_clipboard_get_text(Ca_Window *window);
 
 /* Compatibility aliases for instance-wide UI scale.  Causality intentionally
    has one global UI scale per instance; calling this on any window updates
    every open window and the scale inherited by future windows. */
+/*
+ * Set the instance-wide UI scale via a window handle (compatibility alias).
+ *
+ * window  Any open window belonging to the instance.
+ * scale   New scale factor; clamped to [0.25, 4.0].
+ */
 CA_API void       ca_window_set_scale(Ca_Window *window, float scale);
+
+/* Returns the current instance-wide UI scale via a window handle. */
 CA_API float      ca_window_get_scale(Ca_Window *window);
 
 /* Instance-wide UI scale — like browser zoom.
@@ -141,7 +180,15 @@ CA_API float      ca_window_get_scale(Ca_Window *window);
    Affects all widget sizes, paddings, gaps, and text rendering.
    Every existing open window is rescaled, and every future window inherits
    the same value.  Clamped to [0.25, 4.0]. */
+/*
+ * Set the instance-wide UI scale factor.
+ *
+ * instance  Owning Ca_Instance.
+ * scale     New scale factor; clamped to [0.25, 4.0].
+ */
 CA_API void  ca_instance_set_scale(Ca_Instance *instance, float scale);
+
+/* Returns the current instance-wide UI scale factor. */
 CA_API float ca_instance_get_scale(const Ca_Instance *instance);
 
 /* Set the window title displayed in the custom title bar. */
@@ -167,6 +214,12 @@ typedef enum Ca_PopupResult {
    CA_POPUP_RESULT_REPLACED,
 } Ca_PopupResult;
 
+/*
+ * Callback invoked when a popup is dismissed.
+ *
+ * result     Which button the user pressed (or CLOSED/REPLACED).
+ * user_data  Value passed via Ca_PopupDesc.result_data.
+ */
 typedef void (*Ca_PopupResultFn)(Ca_PopupResult result, void *user_data);
 
 typedef struct Ca_PopupDesc {
@@ -179,16 +232,19 @@ typedef struct Ca_PopupDesc {
    void             *result_data;
 } Ca_PopupDesc;
 
-/* Show a popup using Causality's reserved popup window control.
-   Returns false only when request is rejected (e.g. busy + no queue) or invalid.
-   If a popup is active and replace_active is false, queue_if_busy controls whether
-   this request is queued for later display. */
+/*
+ * Show a popup using Causality's reserved popup window control.
+ *
+ * instance  Owning Ca_Instance.
+ * desc      Popup title, message, button set, and optional result callback.
+ * Returns   false if the request is rejected (busy with no queue), true otherwise.
+ */
 CA_API bool ca_popup_show(Ca_Instance *instance, const Ca_PopupDesc *desc);
 
-/* Returns true when a popup is currently visible/active. */
+/* Returns true when a popup is currently visible or being displayed. */
 CA_API bool ca_popup_is_active(const Ca_Instance *instance);
 
-/* Drop any queued popup requests (does not close active popup). */
+/* Drop all queued popup requests without closing the currently active popup. */
 CA_API void ca_popup_clear_queue(Ca_Instance *instance);
 
 /* ============================================================
@@ -208,7 +264,22 @@ CA_API void ca_popup_clear_queue(Ca_Instance *instance);
 
    Pass fn = NULL to hide the bar. Setting height = 0 also hides it.
    Height is specified in logical UI units and is scaled by window UI scale. */
+/*
+ * Builder callback invoked each time the status bar needs to be rebuilt.
+ *
+ * window     Window that owns the status bar.
+ * user_data  Caller-supplied context pointer.
+ */
 typedef void (*Ca_StatusBarFn)(Ca_Window *window, void *user_data);
+
+/*
+ * Attach a status-bar builder to a window.
+ *
+ * window     Target window.
+ * fn         Builder function; pass NULL to hide the bar.
+ * user_data  Passed to fn on each rebuild.
+ * height     Bar height in logical UI units (0 also hides the bar).
+ */
 CA_API void ca_window_set_status_bar(Ca_Window      *window,
                                      Ca_StatusBarFn  fn,
                                      void           *user_data,
@@ -252,8 +323,22 @@ typedef struct Ca_Event {
     };
 } Ca_Event;
 
+/*
+ * Callback invoked when an event of the registered type is dispatched.
+ *
+ * event      The incoming event (valid only for the duration of the call).
+ * user_data  Caller-supplied context pointer.
+ */
 typedef void (*Ca_EventFn)(const Ca_Event *event, void *user_data);
 
+/*
+ * Register a handler for a specific event type on an instance.
+ *
+ * instance   Owning Ca_Instance.
+ * type       The event type to listen for.
+ * fn         Handler function (NULL to clear).
+ * user_data  Passed to fn on each event.
+ */
 CA_API void ca_event_set_handler(Ca_Instance *instance, Ca_EventType type,
                                  Ca_EventFn fn, void *user_data);
 
@@ -261,22 +346,62 @@ CA_API void ca_event_set_handler(Ca_Instance *instance, Ca_EventType type,
    THREADS
    ============================================================ */
 
+/*
+ * Thread entry-point function.
+ *
+ * user_data  Caller-supplied context pointer passed to ca_thread_create.
+ * Returns    Arbitrary pointer value (retrievable after ca_thread_join).
+ */
 typedef void *(*Ca_ThreadFn)(void *user_data);
 
+/*
+ * Spawn a new platform thread running fn.
+ *
+ * fn         Thread entry point.
+ * user_data  Passed to fn.
+ * Returns    Newly created Ca_Thread handle.
+ */
 CA_API Ca_Thread *ca_thread_create(Ca_ThreadFn fn, void *user_data);
-CA_API void       ca_thread_join(Ca_Thread *thread);   /* blocks, then frees handle */
-CA_API void       ca_thread_detach(Ca_Thread *thread); /* fire-and-forget, frees handle */
 
+/* Block until the thread exits, then free the handle. */
+CA_API void       ca_thread_join(Ca_Thread *thread);
+
+/* Detach the thread so it runs independently; the handle is freed immediately. */
+CA_API void       ca_thread_detach(Ca_Thread *thread);
+
+/* Allocate and return a new, unlocked mutex. */
 CA_API Ca_Mutex  *ca_mutex_create(void);
-CA_API void       ca_mutex_destroy(Ca_Mutex *mutex);
-CA_API void       ca_mutex_lock(Ca_Mutex *mutex);
-CA_API void       ca_mutex_unlock(Ca_Mutex *mutex);
-CA_API bool       ca_mutex_trylock(Ca_Mutex *mutex);   /* returns true if lock acquired */
 
+/* Destroy a mutex and release its resources. */
+CA_API void       ca_mutex_destroy(Ca_Mutex *mutex);
+
+/* Acquire the mutex, blocking until it is available. */
+CA_API void       ca_mutex_lock(Ca_Mutex *mutex);
+
+/* Release a previously acquired mutex. */
+CA_API void       ca_mutex_unlock(Ca_Mutex *mutex);
+
+/* Attempt to acquire the mutex without blocking; returns true if acquired. */
+CA_API bool       ca_mutex_trylock(Ca_Mutex *mutex);
+
+/* Allocate and return a new condition variable. */
 CA_API Ca_CondVar *ca_condvar_create(void);
+
+/* Destroy a condition variable and release its resources. */
 CA_API void        ca_condvar_destroy(Ca_CondVar *cv);
+
+/*
+ * Atomically release the mutex and wait on the condition variable.
+ *
+ * cv     Condition variable to wait on.
+ * mutex  Mutex to release; re-acquired before returning.
+ */
 CA_API void        ca_condvar_wait(Ca_CondVar *cv, Ca_Mutex *mutex);
+
+/* Wake one thread waiting on the condition variable. */
 CA_API void        ca_condvar_signal(Ca_CondVar *cv);
+
+/* Wake all threads waiting on the condition variable. */
 CA_API void        ca_condvar_broadcast(Ca_CondVar *cv);
 
 /* ============================================================
@@ -294,7 +419,20 @@ CA_API void        ca_condvar_broadcast(Ca_CondVar *cv);
    UI — WIDGETS
    ============================================================ */
 
+/*
+ * Callback fired when a button is clicked.
+ *
+ * button     The button that was clicked.
+ * user_data  Caller-supplied context pointer.
+ */
 typedef void (*Ca_ClickFn)(Ca_Button *button, void *user_data);
+
+/*
+ * Callback fired whenever a text input's content changes.
+ *
+ * input      The text input that changed.
+ * user_data  Caller-supplied context pointer.
+ */
 typedef void (*Ca_ChangeFn)(Ca_TextInput *input, void *user_data);
 
 /* Drag interaction callback.
@@ -312,10 +450,21 @@ typedef struct Ca_DragEvent {
     float      node_w, node_h;
 } Ca_DragEvent;
 
+/*
+ * Callback fired on drag-start, drag-move, or drag-end of a div.
+ *
+ * event      Drag state including position, delta, and node-local coordinates.
+ * user_data  Caller-supplied context pointer.
+ */
 typedef void (*Ca_DragFn)(const Ca_DragEvent *event, void *user_data);
 
-/* Scroll callback — fired when the scroll wheel / trackpad scrolls over a div.
-   'dx' / 'dy' are the raw GLFW scroll deltas for this frame. */
+/*
+ * Callback fired when the scroll wheel or trackpad scrolls over a div.
+ *
+ * dx         Horizontal scroll delta for this frame (raw GLFW value).
+ * dy         Vertical scroll delta for this frame (raw GLFW value).
+ * user_data  Caller-supplied context pointer.
+ */
 typedef void (*Ca_ScrollFn)(double dx, double dy, void *user_data);
 
 /* Layout direction constants */
@@ -466,44 +615,79 @@ typedef struct Ca_InputDesc {
 
 /* ---- Tree root ---- */
 
+/*
+ * Begin the per-frame UI tree for a window.
+ *
+ * window     Target window.
+ * root_desc  Descriptor for the root div (layout direction, padding, etc.).
+ */
 CA_API void ca_ui_begin(Ca_Window *window, const Ca_DivDesc *root_desc);
+
+/* Close the UI tree opened by ca_ui_begin. */
 CA_API void ca_ui_end(void);
 
-/// Removes all children from a div and enters it as the current parent.
-/// New widgets created after this call become children of the cleared div.
-/// Must be paired with ca_div_end().
+/*
+ * Remove all children from a div and enter it as the current parent.
+ *
+ * div  Target div to clear and enter; must be paired with ca_div_end().
+ */
 CA_API void ca_div_clear(Ca_Div *div);
 
-/// Registers a builder callback on a div.  Internally creates an effect that
-/// re-runs the builder whenever any signal it reads via ca_signal_get
-/// changes, or when ca_effect_invalidate / ca_div_invalidate is called.
-/// The builder receives the div already cleared and entered as the current
-/// parent — do NOT call ca_div_clear or ca_div_end inside the builder.
-/// Returns the underlying Ca_Effect (owned by the instance) so callers can
-/// later invalidate it directly via ca_effect_invalidate.
+/*
+ * Register a reactive builder callback on a div.
+ *
+ * div        Target div.
+ * fn         Builder function; called with the div cleared and entered.
+ * user_data  Passed to fn on each rebuild.
+ * Returns    The underlying Ca_Effect (owned by the instance).
+ */
 CA_API Ca_Effect *ca_div_set_builder(Ca_Div *div,
                                      void (*fn)(Ca_Div *div, void *user_data),
                                      void *user_data);
 
-/// Manually re-run the builder registered on this div.  Equivalent to
-/// ca_effect_invalidate on the effect returned by ca_div_set_builder.
+/*
+ * Manually trigger a rebuild of the builder registered on this div.
+ *
+ * div  Div whose builder should be re-run on the next tick.
+ */
 CA_API void ca_div_invalidate(Ca_Div *div);
 
-/// Enters a div in keyed reconciliation mode.
-/// Children created while active are matched/reused by key (id) when possible,
-/// and any old unmatched children are removed on the matching ca_div_end().
+/*
+ * Enter a div in keyed reconciliation mode.
+ *
+ * div  Target div; children will be matched/reused by key until ca_div_end().
+ */
 CA_API void ca_reconcile_begin(Ca_Div *div);
 
-/// Sets a one-shot reconciliation key for the next created element.
-/// If set, this key overrides descriptor id for matching in reconcile mode.
+/*
+ * Set a one-shot reconciliation key for the next created element.
+ *
+ * key  Key string that overrides the descriptor id for matching.
+ */
 CA_API void ca_reconcile_key(const char *key);
 
 /* ---- Container elements (push / pop the parent stack) ---- */
 
+/*
+ * Open a new div container and push it onto the parent stack.
+ *
+ * desc     Descriptor for layout, appearance, and interaction; NULL for defaults.
+ * Returns  Handle to the created div.
+ */
 CA_API Ca_Div *ca_div_begin(const Ca_DivDesc *desc);
+
+/* Pop the current div from the parent stack. */
 CA_API void    ca_div_end(void);
 
+/*
+ * Open a new button container and push it onto the parent stack.
+ *
+ * desc     Descriptor for label, appearance, and click callback; NULL for defaults.
+ * Returns  Handle to the created button.
+ */
 CA_API Ca_Button *ca_btn_begin(const Ca_BtnDesc *desc);
+
+/* Pop the current button from the parent stack. */
 CA_API void       ca_btn_end(void);
 
 /* Read the most recent click position (in pixels) relative to the
@@ -528,48 +712,82 @@ CA_API float ca_measure_text_px(Ca_Window *window,
 CA_API bool ca_font_line_metrics(Ca_Window *window, float font_size,
                                  float *out_ascent, float *out_descent);
 
-CA_API void ca_list_begin(const Ca_DivDesc *desc); /* vertical, gap 4 */
+/* Open a vertical list container (gap 4); must be paired with ca_list_end(). */
+CA_API void ca_list_begin(const Ca_DivDesc *desc);
 CA_API void ca_list_end(void);
 
-CA_API void ca_li_begin(const Ca_DivDesc *desc);   /* horizontal, gap 8 */
+/* Open a horizontal list-item container (gap 8); must be paired with ca_li_end(). */
+CA_API void ca_li_begin(const Ca_DivDesc *desc);
 CA_API void ca_li_end(void);
 
 /* ---- Self-closing elements ---- */
 
+/* Emit a text label; returns the created Ca_Label handle. */
 CA_API Ca_Label     *ca_text(const Ca_TextDesc *desc);
-CA_API Ca_TextInput *ca_input(const Ca_InputDesc *desc);    /* text input field     */
 
-CA_API void ca_hr(const Ca_HrDesc *desc);               /* horizontal rule      */
-CA_API void ca_spacer(const Ca_SpacerDesc *desc);       /* invisible space      */
+/* Emit a single-line text input field; returns the created Ca_TextInput handle. */
+CA_API Ca_TextInput *ca_input(const Ca_InputDesc *desc);
+
+/* Emit a horizontal rule separator. */
+CA_API void ca_hr(const Ca_HrDesc *desc);
+
+/* Emit an invisible spacing element. */
+CA_API void ca_spacer(const Ca_SpacerDesc *desc);
 
 /* ---- Headings (convenience — text with default heights) ---- */
 
-CA_API Ca_Label *ca_h1(const Ca_TextDesc *desc);        /* 24px */
-CA_API Ca_Label *ca_h2(const Ca_TextDesc *desc);        /* 20px */
-CA_API Ca_Label *ca_h3(const Ca_TextDesc *desc);        /* 18px */
-CA_API Ca_Label *ca_h4(const Ca_TextDesc *desc);        /* 16px */
-CA_API Ca_Label *ca_h5(const Ca_TextDesc *desc);        /* 14px */
-CA_API Ca_Label *ca_h6(const Ca_TextDesc *desc);        /* 12px */
+CA_API Ca_Label *ca_h1(const Ca_TextDesc *desc);  /* heading text at 24 px */
+CA_API Ca_Label *ca_h2(const Ca_TextDesc *desc);  /* heading text at 20 px */
+CA_API Ca_Label *ca_h3(const Ca_TextDesc *desc);  /* heading text at 18 px */
+CA_API Ca_Label *ca_h4(const Ca_TextDesc *desc);  /* heading text at 16 px */
+CA_API Ca_Label *ca_h5(const Ca_TextDesc *desc);  /* heading text at 14 px */
+CA_API Ca_Label *ca_h6(const Ca_TextDesc *desc);  /* heading text at 12 px */
 
 /* ---- Scroll container queries (by CSS id) ---- */
 
-/// Scrolls a scroll container to the top of its content.
+/*
+ * Scroll a scroll container to the very top of its content.
+ *
+ * window  Window owning the container.
+ * id      CSS id of the scroll container.
+ */
 CA_API void ca_scroll_to_top(Ca_Window *window, const char *id);
 
-/// Scrolls a scroll container to the bottom of its content.
+/*
+ * Scroll a scroll container to the very bottom of its content.
+ *
+ * window  Window owning the container.
+ * id      CSS id of the scroll container.
+ */
 CA_API void ca_scroll_to_bottom(Ca_Window *window, const char *id);
 
-/// Returns the current vertical scroll offset of a scroll container (in px).
-/// Returns 0 if no container with the given id exists.
+/*
+ * Return the current vertical scroll offset of a scroll container in pixels.
+ *
+ * window  Window owning the container.
+ * id      CSS id of the scroll container.
+ * Returns Current scroll-Y offset, or 0 if no container with that id exists.
+ */
 CA_API float ca_get_scroll_y(Ca_Window *window, const char *id);
 
-/// Sets the vertical scroll offset of a scroll container, clamped to
-/// [0, content_h - h].  No-op if no container with the given id exists.
+/*
+ * Set the vertical scroll offset of a scroll container, clamped to [0, content_h - h].
+ *
+ * window  Window owning the container.
+ * id      CSS id of the scroll container.
+ * y       Desired scroll offset in pixels.
+ */
 CA_API void  ca_set_scroll_y(Ca_Window *window, const char *id, float y);
 
 /* ---- Window callbacks ---- */
 
-/// Registers a per-frame callback invoked after input processing, before paint.
+/*
+ * Register a per-frame callback invoked after input processing, before paint.
+ *
+ * window     Target window.
+ * fn         Function called once per tick; NULL to clear.
+ * user_data  Passed to fn each frame.
+ */
 CA_API void ca_window_set_on_frame(Ca_Window *window, void (*fn)(void *), void *user_data);
 
 /* Component widgets (checkbox, slider, tabs, tree, table, menu bar, etc.)
@@ -609,9 +827,26 @@ typedef struct Ca_SplitDesc {
     const char *id, *style;
 } Ca_SplitDesc;
 
+/*
+ * Open a resizable split container and push it onto the parent stack.
+ *
+ * desc     Split direction, initial ratio, limits, and resize callback.
+ * Returns  Handle to the created Ca_Splitter.
+ */
 CA_API Ca_Splitter *ca_split_begin(const Ca_SplitDesc *desc);
+
+/* Pop the current split container from the parent stack. */
 CA_API void         ca_split_end(void);
+
+/* Returns the current divider position as a fraction of the total size [0, 1]. */
 CA_API float        ca_split_get_ratio(const Ca_Splitter *s);
+
+/*
+ * Programmatically move the divider to a new position.
+ *
+ * s      Target splitter.
+ * ratio  New fraction [0, 1] clamped to [min_ratio, max_ratio].
+ */
 CA_API void         ca_split_set_ratio(Ca_Splitter *s, float ratio);
 
 /* ============================================================
@@ -707,11 +942,24 @@ CA_API void ca_image(const Ca_ImageDesc *desc);
 
 typedef struct Ca_Stylesheet Ca_Stylesheet;
 
+/*
+ * Parse a CSS string into a Ca_Stylesheet.
+ *
+ * css_text  Null-terminated CSS source string.
+ * Returns   Newly allocated Ca_Stylesheet, or NULL on parse error.
+ */
 CA_API Ca_Stylesheet *ca_css_parse(const char *css_text);
+
+/* Destroy a Ca_Stylesheet and release its memory. */
 CA_API void           ca_css_destroy(Ca_Stylesheet *ss);
 
-/* Attach a parsed stylesheet to the instance.  Ownership is NOT transferred;
-   the caller must keep the stylesheet alive and destroy it after the instance. */
+/*
+ * Attach a parsed stylesheet to the instance.
+ *
+ * instance  Owning Ca_Instance.
+ * ss        Stylesheet to attach; ownership is NOT transferred — the caller
+ *           must keep it alive and destroy it after the instance.
+ */
 CA_API void ca_instance_set_stylesheet(Ca_Instance *instance, Ca_Stylesheet *ss);
 
 /* ============================================================
@@ -724,38 +972,72 @@ CA_API void ca_instance_set_stylesheet(Ca_Instance *instance, Ca_Stylesheet *ss)
    destroy them.
    ============================================================ */
 
-/// Returns the VkInstance created by causality.
+/* Returns the VkInstance created by Causality. */
 CA_API VkInstance          ca_gpu_instance(Ca_Instance *instance);
 
-/// Returns the VkPhysicalDevice selected during init.
+/* Returns the VkPhysicalDevice selected during initialisation. */
 CA_API VkPhysicalDevice    ca_gpu_physical_device(Ca_Instance *instance);
 
-/// Returns the VkDevice (logical device).
+/* Returns the VkDevice (logical device). */
 CA_API VkDevice            ca_gpu_device(Ca_Instance *instance);
 
-/// Returns the graphics queue and its family index.
+/*
+ * Return the graphics VkQueue and optionally its queue family index.
+ *
+ * instance      Owning Ca_Instance.
+ * family_index  Written with the queue family index; may be NULL.
+ * Returns       The graphics VkQueue.
+ */
 CA_API VkQueue             ca_gpu_graphics_queue(Ca_Instance *instance, uint32_t *family_index);
 
-/// Returns the presentation queue and its family index.
+/*
+ * Return the presentation VkQueue and optionally its queue family index.
+ *
+ * instance      Owning Ca_Instance.
+ * family_index  Written with the queue family index; may be NULL.
+ * Returns       The presentation VkQueue.
+ */
 CA_API VkQueue             ca_gpu_present_queue(Ca_Instance *instance, uint32_t *family_index);
 
-/// Returns the shared command pool (graphics family, resettable buffers).
+/* Returns the shared graphics-family command pool (buffers are individually resettable). */
 CA_API VkCommandPool       ca_gpu_command_pool(Ca_Instance *instance);
 
-/// Finds a memory type index matching the given type bits and property flags.
-/// Returns UINT32_MAX on failure.
+/*
+ * Find a Vulkan memory type index satisfying the given type bits and property flags.
+ *
+ * instance    Owning Ca_Instance.
+ * type_bits   Bitmask of acceptable memory type indices from VkMemoryRequirements.
+ * properties  Required memory property flags.
+ * Returns     Matching type index, or UINT32_MAX on failure.
+ */
 CA_API uint32_t            ca_gpu_find_memory_type(Ca_Instance *instance,
                                                    uint32_t type_bits,
                                                    VkMemoryPropertyFlags properties);
 
-/// Allocates and begins a one-shot command buffer for immediate GPU work.
+/*
+ * Allocate and begin a one-shot command buffer for immediate GPU work.
+ *
+ * instance  Owning Ca_Instance.
+ * Returns   A VkCommandBuffer already in the recording state.
+ */
 CA_API VkCommandBuffer     ca_gpu_begin_transfer(Ca_Instance *instance);
 
-/// Ends, submits, waits, and frees a one-shot command buffer.
+/*
+ * End, submit, wait for, and free a one-shot command buffer.
+ *
+ * instance  Owning Ca_Instance.
+ * cmd       Command buffer returned by ca_gpu_begin_transfer.
+ */
 CA_API void                ca_gpu_end_transfer(Ca_Instance *instance, VkCommandBuffer cmd);
 
-/// Compiles a GLSL source string to a VkShaderModule via shaderc.
-/// Returns VK_NULL_HANDLE on failure.
+/*
+ * Compile a GLSL source string to a VkShaderModule via shaderc.
+ *
+ * device      Logical device to create the module on.
+ * glsl_source Null-terminated GLSL source code.
+ * stage       Shader stage (e.g. VK_SHADER_STAGE_VERTEX_BIT).
+ * Returns     The compiled VkShaderModule, or VK_NULL_HANDLE on failure.
+ */
 CA_API VkShaderModule      ca_shader_compile(VkDevice device,
                                              const char *glsl_source,
                                              VkShaderStageFlagBits stage);
@@ -793,10 +1075,22 @@ CA_API VkShaderModule      ca_shader_compile(VkDevice device,
 
 typedef struct Ca_Viewport Ca_Viewport;
 
-/// Called each frame to let the engine render into the viewport.
+/*
+ * Callback invoked each frame to record rendering commands into the viewport.
+ *
+ * viewport   The viewport to render into.
+ * user_data  Caller-supplied context pointer.
+ */
 typedef void (*Ca_ViewportRenderFn)(Ca_Viewport *viewport, void *user_data);
 
-/// Called when the viewport widget is resized by the layout system.
+/*
+ * Callback invoked when the viewport widget is resized by the layout system.
+ *
+ * viewport   The resized viewport.
+ * width      New pixel width.
+ * height     New pixel height.
+ * user_data  Caller-supplied context pointer.
+ */
 typedef void (*Ca_ViewportResizeFn)(Ca_Viewport *viewport,
                                     uint32_t width, uint32_t height,
                                     void *user_data);
@@ -812,39 +1106,59 @@ typedef struct Ca_ViewportDesc {
     const char          *id, *style;
 } Ca_ViewportDesc;
 
-/// Creates a viewport widget in the current UI tree.
+/*
+ * Create a viewport widget in the current UI tree.
+ *
+ * desc     Viewport size, render/resize callbacks, format, and clear color.
+ * Returns  Handle to the created Ca_Viewport.
+ */
 CA_API Ca_Viewport *ca_viewport(const Ca_ViewportDesc *desc);
 
-/// Returns the command buffer to record into during on_render.
+/* Returns the command buffer to record into during the on_render callback. */
 CA_API VkCommandBuffer ca_viewport_cmd(Ca_Viewport *viewport);
 
-/// Returns the current pixel width of the viewport image.
+/* Returns the current pixel width of the viewport image. */
 CA_API uint32_t ca_viewport_width(const Ca_Viewport *viewport);
 
-/// Returns the current pixel height of the viewport image.
+/* Returns the current pixel height of the viewport image. */
 CA_API uint32_t ca_viewport_height(const Ca_Viewport *viewport);
 
-/// Returns the VkImage backing the viewport (for barrier/transition use).
+/* Returns the VkImage backing the viewport (useful for explicit barrier/transition). */
 CA_API VkImage ca_viewport_image(const Ca_Viewport *viewport);
 
-/// Returns the VkImageView for the viewport's colour attachment.
+/* Returns the VkImageView for the viewport's colour attachment. */
 CA_API VkImageView ca_viewport_image_view(const Ca_Viewport *viewport);
 
-/// Returns the VkFormat of the viewport's colour attachment.
+/* Returns the VkFormat of the viewport's colour attachment. */
 CA_API VkFormat ca_viewport_format(const Ca_Viewport *viewport);
 
-/// Returns the owning Ca_Instance.
+/* Returns the Ca_Instance that owns this viewport. */
 CA_API Ca_Instance *ca_viewport_instance(Ca_Viewport *viewport);
 
-/// Marks the viewport as needing a redraw on the next frame.
+/* Mark the viewport as needing a redraw on the next frame. */
 CA_API void ca_viewport_request_redraw(Ca_Viewport *viewport);
 
-/// Returns the viewport's layout-computed screen-space rectangle.
-/// x,y = top-left corner in window coordinates; w,h = size in layout pixels.
+/*
+ * Retrieve the viewport's layout-computed screen-space rectangle.
+ *
+ * viewport  Target viewport.
+ * x         Written with the left edge in window coordinates.
+ * y         Written with the top edge in window coordinates.
+ * w         Written with the layout width in pixels.
+ * h         Written with the layout height in pixels.
+ */
 CA_API void ca_viewport_screen_rect(const Ca_Viewport *viewport,
                                      float *x, float *y, float *w, float *h);
 
-/// Replaces the render and resize callbacks on an existing viewport.
+/*
+ * Replace the render and resize callbacks on an existing viewport.
+ *
+ * viewport     Target viewport.
+ * on_render    New render callback (NULL keeps the existing one).
+ * render_data  User data for on_render.
+ * on_resize    New resize callback (NULL keeps the existing one).
+ * resize_data  User data for on_resize.
+ */
 CA_API void ca_viewport_set_callbacks(Ca_Viewport *viewport,
                                       Ca_ViewportRenderFn on_render, void *render_data,
                                       Ca_ViewportResizeFn on_resize, void *resize_data);
@@ -871,50 +1185,91 @@ CA_API void ca_viewport_set_callbacks(Ca_Viewport *viewport,
    ============================================================ */
 
 /* Backing functions (do not call directly — use the macros below) */
-CA_API void ca__set_style_node(Ca_Div *div, const char *style);
-CA_API void ca__set_style_widget(void *widget, const char *style);
-CA_API void ca__set_hidden_node(Ca_Div *div, bool hidden);
-CA_API void ca__set_hidden_widget(void *widget, bool hidden);
-CA_API void ca__set_disabled_node(Ca_Div *div, bool disabled);
-CA_API void ca__set_disabled_widget(void *widget, bool disabled);
-CA_API void ca__set_text(void *widget, const char *text);
+CA_API void        ca__set_style_node(Ca_Div *div, const char *style);
+CA_API void        ca__set_style_widget(void *widget, const char *style);
+CA_API void        ca__set_hidden_node(Ca_Div *div, bool hidden);
+CA_API void        ca__set_hidden_widget(void *widget, bool hidden);
+CA_API void        ca__set_disabled_node(Ca_Div *div, bool disabled);
+CA_API void        ca__set_disabled_widget(void *widget, bool disabled);
+CA_API void        ca__set_text(void *widget, const char *text);
 CA_API const char *ca__get_text(const void *widget);
-CA_API bool ca_input_is_focused(const Ca_TextInput *input);
-CA_API void ca_input_focus(Ca_TextInput *input);       /* programmatically focus + select-all */
-CA_API bool ca_input_key_pressed(const Ca_TextInput *input, int glfw_key); /* query key this frame */
-CA_API void ca__set_color(void *widget, uint32_t color);
-CA_API void ca__set_background_node(Ca_Div *div, uint32_t color);
-CA_API void ca__set_background_widget(void *widget, uint32_t color);
+CA_API void        ca__set_color(void *widget, uint32_t color);
+CA_API void        ca__set_background_node(Ca_Div *div, uint32_t color);
+CA_API void        ca__set_background_widget(void *widget, uint32_t color);
 
-/* Directly set a div's layout width (pixels). Triggers a layout pass.
-   Use this for absolute-positioned overlays whose width must track a
-   dynamically-computed value that CSS cannot express. */
+/* Returns true when the text input currently holds keyboard focus. */
+CA_API bool ca_input_is_focused(const Ca_TextInput *input);
+
+/* Programmatically focus the text input and select all of its content. */
+CA_API void ca_input_focus(Ca_TextInput *input);
+
+/*
+ * Report whether a key was pressed this frame while the input was active.
+ *
+ * input     Target text input.
+ * glfw_key  GLFW key constant (e.g. GLFW_KEY_ENTER).
+ * Returns   true if the key was pressed this frame.
+ */
+CA_API bool ca_input_key_pressed(const Ca_TextInput *input, int glfw_key);
+
+/*
+ * Directly set a div's layout width in pixels, triggering a layout pass.
+ *
+ * div    Target div.
+ * width  New width in logical pixels.
+ */
 CA_API void  ca_div_set_width(Ca_Div *div, float width);
-/* Returns the div's computed (laid-out) pixel width from the last layout pass. */
+
+/* Returns the div's computed pixel width from the last layout pass. */
 CA_API float ca_div_get_layout_width(const Ca_Div *div);
 
+/*
+ * Apply CSS class names to any widget handle.  Accepts Ca_Div* or any other
+ * widget pointer and dispatches to the correct backing function automatically.
+ *
+ * widget  Widget or div handle.
+ * style   Space-separated CSS class names.
+ */
 #define ca_set_style(widget, style) \
     _Generic((widget),              \
         Ca_Div *: ca__set_style_node,  \
         default:  ca__set_style_widget \
     )((widget), (style))
 
+/*
+ * Show or hide any widget handle (display:none when hidden is true).
+ *
+ * widget  Widget or div handle.
+ * hidden  true to hide, false to show.
+ */
 #define ca_set_hidden(widget, hidden) \
     _Generic((widget),                \
         Ca_Div *: ca__set_hidden_node,  \
         default:  ca__set_hidden_widget \
     )((widget), (hidden))
 
+/*
+ * Enable or disable any widget handle (non-interactive and dimmed when true).
+ *
+ * widget    Widget or div handle.
+ * disabled  true to disable, false to enable.
+ */
 #define ca_set_disabled(widget, disabled) \
     _Generic((widget),                    \
         Ca_Div *: ca__set_disabled_node,  \
         default:  ca__set_disabled_widget \
     )((widget), (disabled))
 
+/* Set the text content of a label, button, or input widget. */
 #define ca_set_text(widget, text)   ca__set_text((widget), (text))
+
+/* Return the current text content of a label, button, or input widget. */
 #define ca_get_text(widget)         ca__get_text((widget))
+
+/* Set the foreground text color of a label or text widget. */
 #define ca_set_color(widget, color) ca__set_color((widget), (color))
 
+/* Set the background color of a div or widget. */
 #define ca_set_background(widget, color) \
     _Generic((widget),                   \
         Ca_Div *: ca__set_background_node,  \
@@ -924,8 +1279,13 @@ CA_API float ca_div_get_layout_width(const Ca_Div *div);
 /* Title bar menu API — declared here because it requires Ca_MenuDesc
    which is defined in ca_components.h above. */
 
-/* Deep-copy 'count' Ca_MenuDesc items into the title bar menu strip.
-   Pass NULL / 0 to remove all menus. */
+/*
+ * Install a menu strip in the window's custom title bar.
+ *
+ * window  Target window.
+ * menus   Array of Ca_MenuDesc items to deep-copy into the title bar.
+ * count   Number of menus; pass 0 (and NULL for menus) to remove all.
+ */
 CA_API void ca_window_set_title_bar_menus(Ca_Window        *window,
                                           const Ca_MenuDesc *menus, int count);
 

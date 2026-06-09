@@ -3,6 +3,13 @@
 
 #include "event.h"
 
+/*
+ * Initialise the event subsystem for an instance.
+ *
+ * Creates the event mutex and resets the ring-buffer head and tail to zero.
+ *
+ * inst  Instance whose event system is being initialised.
+ */
 void ca_event_init(Ca_Instance *inst)
 {
     inst->event_mutex = ca_mutex_create();
@@ -10,12 +17,28 @@ void ca_event_init(Ca_Instance *inst)
     inst->event_tail = 0;
 }
 
+/*
+ * Tear down the event subsystem for an instance.
+ *
+ * Destroys the event mutex and clears the pointer.
+ *
+ * inst  Instance whose event system is being shut down.
+ */
 void ca_event_shutdown(Ca_Instance *inst)
 {
     ca_mutex_destroy(inst->event_mutex);
     inst->event_mutex = NULL;
 }
 
+/*
+ * Push an event onto the instance ring-buffer (thread-safe).
+ *
+ * Acquires the event mutex, writes the event into the next free slot, and
+ * advances the tail.  Drops the event with a warning if the buffer is full.
+ *
+ * inst   Instance to post to.
+ * event  Event to enqueue; copied by value.
+ */
 void ca_event_post(Ca_Instance *inst, const Ca_Event *event)
 {
     ca_mutex_lock(inst->event_mutex);
@@ -29,6 +52,15 @@ void ca_event_post(Ca_Instance *inst, const Ca_Event *event)
     ca_mutex_unlock(inst->event_mutex);
 }
 
+/*
+ * Drain the event ring-buffer and invoke the registered handler for each event.
+ *
+ * Takes a snapshot of the current head/tail under the mutex, then processes
+ * all queued events without holding the lock, allowing new events to be posted
+ * concurrently during dispatch.
+ *
+ * inst  Instance whose events are to be dispatched.
+ */
 void ca_event_dispatch(Ca_Instance *inst)
 {
     /* Snapshot under lock, then process without holding the lock */
@@ -48,6 +80,17 @@ void ca_event_dispatch(Ca_Instance *inst)
     }
 }
 
+/*
+ * Register a handler callback for a specific event type.
+ *
+ * Replaces any previously registered handler for the given type.  Pass
+ * NULL for fn to unregister.  Silently ignores invalid type values.
+ *
+ * inst       Instance to configure.
+ * type       Event type to handle.
+ * fn         Callback invoked on dispatch, or NULL to clear.
+ * user_data  Opaque pointer forwarded to fn on each call.
+ */
 void ca_event_set_handler(Ca_Instance *inst, Ca_EventType type,
                           Ca_EventFn fn, void *user_data)
 {

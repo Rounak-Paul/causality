@@ -15,6 +15,17 @@ void ca_popup_system_init(Ca_Instance *inst);
 void ca_popup_system_tick(Ca_Instance *inst);
 void ca_popup_system_shutdown(Ca_Instance *inst);
 
+/*
+ * Create and initialise a Causality instance.
+ *
+ * Initialises GLFW, allocates the instance, sets up the event system, UI
+ * subsystem, popup manager, and Vulkan renderer.  Font paths and the default
+ * UI scale are copied from desc.  Returns NULL on any failure; all partial
+ * state is cleaned up before returning.
+ *
+ * desc     Configuration descriptor; may be NULL for all defaults.
+ * Returns  Newly allocated instance, or NULL on failure.
+ */
 Ca_Instance *ca_instance_create(const Ca_InstanceDesc *desc)
 {
     if (!ca_window_system_init())
@@ -55,6 +66,14 @@ Ca_Instance *ca_instance_create(const Ca_InstanceDesc *desc)
     return inst;
 }
 
+/*
+ * Destroy an instance and release all associated resources.
+ *
+ * Shuts down the popup system, all windows, the renderer, the UI subsystem,
+ * the event system, and the reactive runtime before freeing the instance.
+ *
+ * instance  Instance to destroy; no-op if NULL.
+ */
 void ca_instance_destroy(Ca_Instance *instance)
 {
     if (!instance) return;
@@ -70,6 +89,15 @@ void ca_instance_destroy(Ca_Instance *instance)
     printf("[causality] instance destroyed\n");
 }
 
+/*
+ * Advance one application frame.
+ *
+ * Processes OS window events, ticks the popup manager, flushes reactive
+ * effects, runs the UI update pass, and submits a renderer frame.
+ *
+ * instance  Instance to tick.
+ * Returns   true while at least one window is open; false when all are closed.
+ */
 bool ca_instance_tick(Ca_Instance *instance)
 {
     if (!ca_window_system_tick(instance)) return false;
@@ -81,23 +109,51 @@ bool ca_instance_tick(Ca_Instance *instance)
     return true;
 }
 
+/*
+ * Wake the event loop from another thread or an idle wait.
+ *
+ * Posts an empty GLFW event, causing glfwWaitEvents() to return immediately
+ * so the main loop can process any pending reactive updates.
+ */
 void ca_instance_wake(void)
 {
     glfwPostEmptyEvent();
 }
 
+/*
+ * Control whether the instance runs in continuous (polling) or event-driven mode.
+ *
+ * instance    Instance to configure; no-op if NULL.
+ * continuous  true = call glfwPollEvents each tick; false = glfwWaitEvents.
+ */
 void ca_instance_set_continuous(Ca_Instance *instance, bool continuous)
 {
     if (!instance) return;
     instance->continuous = continuous;
 }
 
+/*
+ * Attach a parsed CSS stylesheet to the instance.
+ *
+ * instance  Instance to configure; no-op if NULL.
+ * ss        Stylesheet to use, or NULL to clear the current stylesheet.
+ */
 void ca_instance_set_stylesheet(Ca_Instance *instance, Ca_Stylesheet *ss)
 {
     if (!instance) return;
     instance->stylesheet = ss;
 }
 
+/*
+ * Set the global UI scale applied to every current and future window.
+ *
+ * Clamps scale to [0.25, 4.0].  Immediately rescales all open windows,
+ * schedules a deferred layout rescale on each, and recomputes status-bar
+ * heights from their raw (unscaled) values.
+ *
+ * instance  Instance to configure; no-op if NULL.
+ * scale     Desired scale factor; 1.0 = no scaling.
+ */
 void ca_instance_set_scale(Ca_Instance *instance, float scale)
 {
     if (!instance) return;
@@ -141,6 +197,12 @@ void ca_instance_set_scale(Ca_Instance *instance, float scale)
     ca_instance_wake();
 }
 
+/*
+ * Return the current instance-wide UI scale.
+ *
+ * instance  Instance to query; returns 1.0 if NULL.
+ * Returns   Scale factor, defaulting to 1.0 if none has been set.
+ */
 float ca_instance_get_scale(const Ca_Instance *instance)
 {
     if (!instance) return 1.0f;

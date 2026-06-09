@@ -14,6 +14,15 @@ typedef struct Ca_PopupEntry {
     void            *result_data;
 } Ca_PopupEntry;
 
+/*
+ * Copy and sanitise a Ca_PopupDesc into an internal Ca_PopupEntry.
+ *
+ * Supplies defaults (title "Message", buttons OK) when the source fields
+ * are NULL or out of range.
+ *
+ * dst  Destination entry to populate.
+ * src  Source descriptor; may be NULL (all defaults are used).
+ */
 static void popup_copy_entry(Ca_PopupEntry *dst, const Ca_PopupDesc *src)
 {
     memset(dst, 0, sizeof(*dst));
@@ -28,12 +37,25 @@ static void popup_copy_entry(Ca_PopupEntry *dst, const Ca_PopupDesc *src)
     dst->result_data = src ? src->result_data : NULL;
 }
 
+/*
+ * Invoke the result callback stored in entry, if one is registered.
+ *
+ * entry   Popup entry holding the on_result callback and user data.
+ * result  Result code to pass to the callback.
+ */
 static void popup_emit_result(const Ca_PopupEntry *entry, Ca_PopupResult result)
 {
     if (entry && entry->on_result)
         entry->on_result(result, entry->result_data);
 }
 
+/*
+ * Append a popup entry to the end of the instance's pending queue.
+ *
+ * inst   Instance owning the queue.
+ * entry  Entry to enqueue; fields are copied by snprintf/assignment.
+ * Returns  true on success; false if the queue is full or arguments are NULL.
+ */
 static bool popup_queue_push(Ca_Instance *inst, const Ca_PopupEntry *entry)
 {
     if (!inst || !entry) return false;
@@ -48,6 +70,16 @@ static bool popup_queue_push(Ca_Instance *inst, const Ca_PopupEntry *entry)
     return true;
 }
 
+/*
+ * Insert a popup entry at the front of the instance's pending queue.
+ *
+ * Shifts existing entries right by one slot via memmove so the new entry
+ * becomes the next to be activated.
+ *
+ * inst   Instance owning the queue.
+ * entry  Entry to prepend; fields are copied by snprintf/assignment.
+ * Returns  true on success; false if the queue is full or arguments are NULL.
+ */
 static bool popup_queue_push_front(Ca_Instance *inst, const Ca_PopupEntry *entry)
 {
     if (!inst || !entry) return false;
@@ -64,6 +96,16 @@ static bool popup_queue_push_front(Ca_Instance *inst, const Ca_PopupEntry *entry
     return true;
 }
 
+/*
+ * Remove and return the front entry from the instance's pending queue.
+ *
+ * Copies the first entry into out, shifts the remaining entries left, and
+ * decrements popup_queue_count.
+ *
+ * inst  Instance owning the queue.
+ * out   Receives the dequeued entry.
+ * Returns  true on success; false if the queue is empty or arguments are NULL.
+ */
 static bool popup_queue_pop(Ca_Instance *inst, Ca_PopupEntry *out)
 {
     if (!inst || !out || inst->popup_queue_count <= 0) return false;
@@ -78,6 +120,15 @@ static bool popup_queue_pop(Ca_Instance *inst, Ca_PopupEntry *out)
     return true;
 }
 
+/*
+ * Record a pending result and request the popup window to close.
+ *
+ * Stores result in popup_pending_result and calls ca_window_close() on the
+ * popup window so the system tick picks up the close on the next frame.
+ *
+ * inst    Instance owning the active popup.
+ * result  Result code to record.
+ */
 static void popup_mark_and_close(Ca_Instance *inst, Ca_PopupResult result)
 {
     if (!inst) return;
@@ -86,30 +137,45 @@ static void popup_mark_and_close(Ca_Instance *inst, Ca_PopupResult result)
         ca_window_close(inst->popup_window);
 }
 
+/* Button click handler — closes the popup with result OK. */
 static void popup_on_ok(Ca_Button *btn, void *user_data)
 {
     (void)btn;
     popup_mark_and_close((Ca_Instance *)user_data, CA_POPUP_RESULT_OK);
 }
 
+/* Button click handler — closes the popup with result CANCEL. */
 static void popup_on_cancel(Ca_Button *btn, void *user_data)
 {
     (void)btn;
     popup_mark_and_close((Ca_Instance *)user_data, CA_POPUP_RESULT_CANCEL);
 }
 
+/* Button click handler — closes the popup with result YES. */
 static void popup_on_yes(Ca_Button *btn, void *user_data)
 {
     (void)btn;
     popup_mark_and_close((Ca_Instance *)user_data, CA_POPUP_RESULT_YES);
 }
 
+/* Button click handler — closes the popup with result NO. */
 static void popup_on_no(Ca_Button *btn, void *user_data)
 {
     (void)btn;
     popup_mark_and_close((Ca_Instance *)user_data, CA_POPUP_RESULT_NO);
 }
 
+/*
+ * Build the UI tree for the currently active popup dialog.
+ *
+ * Constructs a vertical card with a title label, a message label, and an
+ * action row whose buttons depend on entry->buttons (OK / OK+Cancel /
+ * Yes+No).  Must be called from the main thread.
+ *
+ * inst   Instance owning the popup.
+ * win    Dedicated popup window to build into.
+ * entry  Popup content and button configuration.
+ */
 static void popup_build_ui(Ca_Instance *inst, Ca_Window *win, const Ca_PopupEntry *entry)
 {
     if (!inst || !win || !entry) return;
@@ -194,6 +260,17 @@ static void popup_build_ui(Ca_Instance *inst, Ca_Window *win, const Ca_PopupEntr
     ca_ui_end();
 }
 
+/*
+ * Activate a popup entry, creating the reserved window if necessary.
+ *
+ * Reuses an existing popup window when one is already open, otherwise
+ * creates a new reserved window.  Copies the entry into popup_current,
+ * builds the UI, and focuses the window.
+ *
+ * inst   Instance that will host the popup.
+ * entry  Popup to display.
+ * Returns  true on success; false if window creation fails.
+ */
 static bool popup_activate(Ca_Instance *inst, const Ca_PopupEntry *entry)
 {
     if (!inst || !entry) return false;
@@ -228,6 +305,13 @@ static bool popup_activate(Ca_Instance *inst, const Ca_PopupEntry *entry)
     return true;
 }
 
+/*
+ * Initialise the popup manager for an instance.
+ *
+ * Resets all queue counters, active state, and the pending result.
+ *
+ * inst  Instance to initialise; no-op if NULL.
+ */
 void ca_popup_system_init(Ca_Instance *inst)
 {
     if (!inst) return;
@@ -238,6 +322,15 @@ void ca_popup_system_init(Ca_Instance *inst)
     memset(&inst->popup_current, 0, sizeof(inst->popup_current));
 }
 
+/*
+ * Advance the popup manager by one application tick.
+ *
+ * Detects when the active popup window has been closed (by user or code),
+ * fires the result callback, clears the active state, and then activates
+ * the next queued popup if any exists.
+ *
+ * inst  Instance to tick; no-op if NULL.
+ */
 void ca_popup_system_tick(Ca_Instance *inst)
 {
     if (!inst) return;
@@ -269,6 +362,14 @@ void ca_popup_system_tick(Ca_Instance *inst)
     }
 }
 
+/*
+ * Shut down the popup manager and fire CLOSED results for any pending popups.
+ *
+ * Emits CA_POPUP_RESULT_CLOSED for the currently active popup and every
+ * entry remaining in the queue, then resets all manager state.
+ *
+ * inst  Instance to shut down; no-op if NULL.
+ */
 void ca_popup_system_shutdown(Ca_Instance *inst)
 {
     if (!inst) return;
@@ -300,6 +401,19 @@ void ca_popup_system_shutdown(Ca_Instance *inst)
     memset(&inst->popup_current, 0, sizeof(inst->popup_current));
 }
 
+/*
+ * Request a popup dialog to be displayed.
+ *
+ * If no popup is active the entry is queued for display on the next tick.
+ * If a popup is active and desc->replace_active is set the active popup is
+ * cancelled and the new one is pushed to the front of the queue.  If
+ * desc->queue_if_busy is set the new popup is appended to the back of the
+ * queue.  Otherwise returns false when already busy.
+ *
+ * instance  Instance to show the popup on.
+ * desc      Popup descriptor; must not be NULL.
+ * Returns   true if the popup was queued or triggered; false otherwise.
+ */
 bool ca_popup_show(Ca_Instance *instance, const Ca_PopupDesc *desc)
 {
     if (!instance || !desc) return false;
@@ -326,11 +440,13 @@ bool ca_popup_show(Ca_Instance *instance, const Ca_PopupDesc *desc)
     return popup_queue_push_front(instance, &req);
 }
 
+/* Return true if a popup dialog is currently being displayed. */
 bool ca_popup_is_active(const Ca_Instance *instance)
 {
     return instance && instance->popup_active;
 }
 
+/* Discard all queued (not yet active) popup entries without firing callbacks. */
 void ca_popup_clear_queue(Ca_Instance *instance)
 {
     if (!instance) return;
