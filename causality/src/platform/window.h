@@ -6,10 +6,20 @@
 
 #include "ca_internal.h"
 
-/* Initialise the GLFW window system; must be called before any window is created. */
+/*
+ * Initialize the GLFW window system.
+ *
+ * Must be called before any window is created. Idempotent on subsequent calls.
+ *
+ * Returns true on success, false if GLFW initialization fails.
+ */
 bool        ca_window_system_init(void);
 
-/* Destroy all open windows for inst and decrement the GLFW refcount. */
+/*
+ * Destroy all open windows for an instance and decrement the GLFW reference count.
+ *
+ * inst  Instance whose windows are to be destroyed.
+ */
 void        ca_window_system_shutdown(Ca_Instance *inst);
 
 /*
@@ -19,25 +29,48 @@ void        ca_window_system_shutdown(Ca_Instance *inst);
  */
 bool        ca_window_system_tick(Ca_Instance *inst);
 
-/* Create a user window in the first available pool slot. */
+/*
+ * Create a user-facing window in the first available pool slot.
+ *
+ * inst  Instance to create the window on.
+ * desc  Window descriptor with title, dimensions, and optional properties.
+ * Returns newly created window, or NULL if no slots are available or creation fails.
+ */
 CA_API Ca_Window  *ca_window_create(Ca_Instance *inst, const Ca_WindowDesc *desc);
 
 /*
- * Create a window in a reserved (system-use) pool slot.
- * reserved_index must be in [0, CA_RESERVED_POPUP_WINDOWS).
+ * Create a window in a reserved (system-use) pool slot (e.g., for popups).
+ *
+ * inst              Instance to create the window on.
+ * desc              Window descriptor with title, dimensions, and properties.
+ * reserved_index    Index into reserved pool; must be in [0, CA_RESERVED_POPUP_WINDOWS).
+ * Returns           Newly created window, or NULL if index is invalid or creation fails.
  */
 Ca_Window         *ca_window_create_reserved(Ca_Instance *inst, const Ca_WindowDesc *desc,
 											 int reserved_index);
 
-/* Destroy window and release all Vulkan/GLFW/UI resources. */
+/*
+ * Destroy a window and release all associated Vulkan, GLFW, and UI resources.
+ *
+ * window  Window to destroy; no-op if NULL or not in use.
+ */
 CA_API void        ca_window_destroy(Ca_Window *window);
 
-/* Return the underlying GLFWwindow* handle, or NULL if the window is not in use. */
+/*
+ * Get the underlying GLFW window handle for a Causality window.
+ *
+ * window  Causality window to query.
+ * Returns the GLFWwindow pointer, or NULL if the window is not in use.
+ */
 GLFWwindow *ca_window_glfw(const Ca_Window *window);
 
 /*
- * Process per-frame edge/corner resize hit-testing for undecorated windows.
+ * Perform per-frame edge and corner resize hit-testing for undecorated windows.
+ *
+ * Detects mouse proximity to window edges/corners and updates resize state.
  * Must be called once per tick before the UI update pass.
+ *
+ * window  Window to process; no-op if NULL.
  */
 void        ca_window_resize_pass(Ca_Window *window);
 

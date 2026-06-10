@@ -137,28 +137,48 @@ static void popup_mark_and_close(Ca_Instance *inst, Ca_PopupResult result)
         ca_window_close(inst->popup_window);
 }
 
-/* Button click handler — closes the popup with result OK. */
+/*
+ * Button click handler for OK button — closes the popup with result OK.
+ *
+ * btn       The clicked button (unused).
+ * user_data The Ca_Instance to close the popup on.
+ */
 static void popup_on_ok(Ca_Button *btn, void *user_data)
 {
     (void)btn;
     popup_mark_and_close((Ca_Instance *)user_data, CA_POPUP_RESULT_OK);
 }
 
-/* Button click handler — closes the popup with result CANCEL. */
+/*
+ * Button click handler for Cancel button — closes the popup with result CANCEL.
+ *
+ * btn       The clicked button (unused).
+ * user_data The Ca_Instance to close the popup on.
+ */
 static void popup_on_cancel(Ca_Button *btn, void *user_data)
 {
     (void)btn;
     popup_mark_and_close((Ca_Instance *)user_data, CA_POPUP_RESULT_CANCEL);
 }
 
-/* Button click handler — closes the popup with result YES. */
+/*
+ * Button click handler for Yes button — closes the popup with result YES.
+ *
+ * btn       The clicked button (unused).
+ * user_data The Ca_Instance to close the popup on.
+ */
 static void popup_on_yes(Ca_Button *btn, void *user_data)
 {
     (void)btn;
     popup_mark_and_close((Ca_Instance *)user_data, CA_POPUP_RESULT_YES);
 }
 
-/* Button click handler — closes the popup with result NO. */
+/*
+ * Button click handler for No button — closes the popup with result NO.
+ *
+ * btn       The clicked button (unused).
+ * user_data The Ca_Instance to close the popup on.
+ */
 static void popup_on_no(Ca_Button *btn, void *user_data)
 {
     (void)btn;
@@ -440,13 +460,22 @@ bool ca_popup_show(Ca_Instance *instance, const Ca_PopupDesc *desc)
     return popup_queue_push_front(instance, &req);
 }
 
-/* Return true if a popup dialog is currently being displayed. */
+/*
+ * Check whether a popup dialog is currently being displayed.
+ *
+ * instance  Instance to query.
+ * Returns   true if a popup is active, false otherwise or if instance is NULL.
+ */
 bool ca_popup_is_active(const Ca_Instance *instance)
 {
     return instance && instance->popup_active;
 }
 
-/* Discard all queued (not yet active) popup entries without firing callbacks. */
+/*
+ * Discard all queued (not yet active) popup entries without firing callbacks.
+ *
+ * instance  Instance to clear; no-op if NULL.
+ */
 void ca_popup_clear_queue(Ca_Instance *instance)
 {
     if (!instance) return;

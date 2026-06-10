@@ -81,7 +81,13 @@ static void glfw_mouse_button_cb(GLFWwindow *glfw, int button, int action, int m
     ca_event_post(win->instance, &ev);
 }
 
-/* GLFW cursor position callback — updates win->mouse_x/y and posts a move event. */
+/*
+ * GLFW cursor position callback — update mouse coordinates and post a move event.
+ *
+ * glfw  The GLFW window.
+ * x     New cursor x in logical window coordinates.
+ * y     New cursor y in logical window coordinates.
+ */
 static void glfw_cursor_pos_cb(GLFWwindow *glfw, double x, double y)
 {
     Ca_Window *win = (Ca_Window *)glfwGetWindowUserPointer(glfw);
@@ -118,7 +124,13 @@ static void glfw_cursor_enter_cb(GLFWwindow *glfw, int entered)
     }
 }
 
-/* GLFW scroll callback — accumulates scroll deltas and posts a scroll event. */
+/*
+ * GLFW scroll callback — accumulate scroll deltas and post a scroll event.
+ *
+ * glfw  The GLFW window.
+ * dx    Horizontal scroll delta (positive = right).
+ * dy    Vertical scroll delta (positive = up).
+ */
 static void glfw_scroll_cb(GLFWwindow *glfw, double dx, double dy)
 {
     Ca_Window *win = (Ca_Window *)glfwGetWindowUserPointer(glfw);
@@ -443,14 +455,26 @@ void ca_window_destroy(Ca_Window *window)
     window->in_use   = false;
 }
 
-/* Return the underlying GLFWwindow* for window, or NULL if not in use. */
+/*
+ * Get the underlying GLFW window handle for a Causality window.
+ *
+ * window  Causality window to query.
+ * Returns the GLFWwindow pointer, or NULL if the window is not in use.
+ */
 GLFWwindow *ca_window_glfw(const Ca_Window *window)
 {
     if (!window || !window->in_use) return NULL;
     return window->glfw;
 }
 
-/* Request the window to close by setting its GLFW close flag. */
+/*
+ * Request a window to close by setting its GLFW close flag.
+ *
+ * Flags the window for closure; the next ca_window_system_tick will destroy
+ * it and fire a CA_EVENT_WINDOW_CLOSE event before freeing the resources.
+ *
+ * window  Window to close; no-op if NULL or not in use.
+ */
 void ca_window_close(Ca_Window *window)
 {
     if (!window || !window->in_use || !window->glfw) return;
@@ -499,13 +523,23 @@ void ca_window_maximize(Ca_Window *window)
     window->titlebar_needs_rebuild = true;
 }
 
-/* Return the Ca_Instance that owns window, or NULL if not in use. */
+/*
+ * Get the Causality instance that owns a window.
+ *
+ * window  Window to query.
+ * Returns the owning Ca_Instance, or NULL if the window is not in use.
+ */
 Ca_Instance *ca_window_instance(Ca_Window *window)
 {
     return (window && window->in_use) ? window->instance : NULL;
 }
 
-/* Return true if window is non-NULL and currently in use (open). */
+/*
+ * Check whether a window is currently open and in use.
+ *
+ * window  Window to check.
+ * Returns true if the window is non-NULL and currently open, false otherwise.
+ */
 bool ca_window_is_open(const Ca_Window *window)
 {
     return window && window->in_use;
@@ -546,7 +580,12 @@ static int resize_edge_for_pos(int win_w, int win_h, double cx, double cy)
 static GLFWcursor *s_cursors[3]; /* hresize, vresize, crossresize */
 static bool        s_cursors_init = false;
 
-/* Lazily create the three resize cursor shapes (hresize, vresize, all-resize). */
+/*
+ * Lazily create the three standard resize cursor shapes.
+ *
+ * Initializes the static cursor handles for horizontal, vertical, and
+ * all-direction resize cursors on first call; subsequent calls are no-ops.
+ */
 static void ensure_cursors(void)
 {
     if (s_cursors_init) return;

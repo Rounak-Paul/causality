@@ -1326,7 +1326,14 @@ Ca_Glyph *ca_font_glyph_from_tier(Ca_FontTier *tier, uint32_t cp,
     return NULL;
 }
 
-/* Advance the font's frame counter by one; called at the start of each rendered frame. */
+/*
+ * Advance the font's frame counter by one.
+ *
+ * Called at the start of each rendered frame. Used by the LRU page eviction
+ * policy to track which pages were used in the current frame.
+ *
+ * font  Font to advance; no-op if NULL.
+ */
 void ca_font_begin_frame(Ca_Font *font)
 {
     if (font) font->frame_counter++;

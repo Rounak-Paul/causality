@@ -99,14 +99,22 @@ void ca_mutex_destroy(Ca_Mutex *mutex)
     CA_FREE(mutex);
 }
 
-/* Acquire the mutex, blocking until it becomes available. */
+/*
+ * Acquire the mutex, blocking until it becomes available.
+ *
+ * mutex  Mutex to acquire; no-op if NULL.
+ */
 void ca_mutex_lock(Ca_Mutex *mutex)
 {
     if (!mutex) return;
     EnterCriticalSection(&mutex->cs);
 }
 
-/* Release a previously acquired mutex. */
+/*
+ * Release a previously acquired mutex.
+ *
+ * mutex  Mutex to release; no-op if NULL.
+ */
 void ca_mutex_unlock(Ca_Mutex *mutex)
 {
     if (!mutex) return;
@@ -138,7 +146,11 @@ Ca_CondVar *ca_condvar_create(void)
     return cv;
 }
 
-/* Free a condition variable. */
+/*
+ * Free a condition variable.
+ *
+ * cv  Condition variable to destroy; no-op if NULL.
+ */
 void ca_condvar_destroy(Ca_CondVar *cv)
 {
     if (!cv) return;
@@ -157,14 +169,22 @@ void ca_condvar_wait(Ca_CondVar *cv, Ca_Mutex *mutex)
     SleepConditionVariableCS(&cv->cv, &mutex->cs, INFINITE);
 }
 
-/* Wake one thread waiting on the condition variable. */
+/*
+ * Wake one thread waiting on the condition variable.
+ *
+ * cv  Condition variable to signal; no-op if NULL.
+ */
 void ca_condvar_signal(Ca_CondVar *cv)
 {
     if (!cv) return;
     WakeConditionVariable(&cv->cv);
 }
 
-/* Wake all threads waiting on the condition variable. */
+/*
+ * Wake all threads waiting on the condition variable.
+ *
+ * cv  Condition variable to broadcast to; no-op if NULL.
+ */
 void ca_condvar_broadcast(Ca_CondVar *cv)
 {
     if (!cv) return;
@@ -191,7 +211,11 @@ Ca_Thread *ca_thread_create(Ca_ThreadFn fn, void *user_data)
     return t;
 }
 
-/* Block until the thread finishes, then free the Ca_Thread handle. */
+/*
+ * Block until the POSIX thread finishes, then free the Ca_Thread handle.
+ *
+ * thread  Thread to join; no-op if NULL.
+ */
 void ca_thread_join(Ca_Thread *thread)
 {
     if (!thread) return;
@@ -199,7 +223,11 @@ void ca_thread_join(Ca_Thread *thread)
     CA_FREE(thread);
 }
 
-/* Detach the thread so it cleans up automatically; frees the Ca_Thread handle. */
+/*
+ * Detach the POSIX thread so it cleans up automatically; frees the Ca_Thread handle.
+ *
+ * thread  Thread to detach; no-op if NULL.
+ */
 void ca_thread_detach(Ca_Thread *thread)
 {
     if (!thread) return;
@@ -223,7 +251,11 @@ Ca_Mutex *ca_mutex_create(void)
     return m;
 }
 
-/* Destroy and free a mutex. */
+/*
+ * Destroy and free a POSIX mutex.
+ *
+ * mutex  Mutex to destroy; no-op if NULL.
+ */
 void ca_mutex_destroy(Ca_Mutex *mutex)
 {
     if (!mutex) return;
@@ -231,14 +263,22 @@ void ca_mutex_destroy(Ca_Mutex *mutex)
     CA_FREE(mutex);
 }
 
-/* Acquire the mutex, blocking until it becomes available. */
+/*
+ * Acquire the POSIX mutex, blocking until it becomes available.
+ *
+ * mutex  Mutex to acquire; no-op if NULL.
+ */
 void ca_mutex_lock(Ca_Mutex *mutex)
 {
     if (!mutex) return;
     pthread_mutex_lock(&mutex->handle);
 }
 
-/* Release a previously acquired mutex. */
+/*
+ * Release a previously acquired POSIX mutex.
+ *
+ * mutex  Mutex to release; no-op if NULL.
+ */
 void ca_mutex_unlock(Ca_Mutex *mutex)
 {
     if (!mutex) return;
@@ -273,7 +313,11 @@ Ca_CondVar *ca_condvar_create(void)
     return cv;
 }
 
-/* Destroy and free a condition variable. */
+/*
+ * Destroy and free a POSIX condition variable.
+ *
+ * cv  Condition variable to destroy; no-op if NULL.
+ */
 void ca_condvar_destroy(Ca_CondVar *cv)
 {
     if (!cv) return;
@@ -293,14 +337,22 @@ void ca_condvar_wait(Ca_CondVar *cv, Ca_Mutex *mutex)
     pthread_cond_wait(&cv->handle, &mutex->handle);
 }
 
-/* Wake one thread waiting on the condition variable. */
+/*
+ * Wake one thread waiting on the POSIX condition variable.
+ *
+ * cv  Condition variable to signal; no-op if NULL.
+ */
 void ca_condvar_signal(Ca_CondVar *cv)
 {
     if (!cv) return;
     pthread_cond_signal(&cv->handle);
 }
 
-/* Wake all threads waiting on the condition variable. */
+/*
+ * Wake all threads waiting on the POSIX condition variable.
+ *
+ * cv  Condition variable to broadcast to; no-op if NULL.
+ */
 void ca_condvar_broadcast(Ca_CondVar *cv)
 {
     if (!cv) return;
