@@ -1528,6 +1528,12 @@ float ca_div_get_layout_width(const Ca_Div *div)
     return ((const Ca_Node *)div)->w;
 }
 
+float ca_div_get_layout_height(const Ca_Div *div)
+{
+    assert(div);
+    return ((const Ca_Node *)div)->h;
+}
+
 void ca__set_background_widget(void *widget, uint32_t color)
 {
     Ca_Node *n = *(Ca_Node **)widget;

@@ -1223,6 +1223,9 @@ CA_API void  ca_div_set_width(Ca_Div *div, float width);
 /* Returns the div's computed pixel width from the last layout pass. */
 CA_API float ca_div_get_layout_width(const Ca_Div *div);
 
+/* Returns the div's computed pixel height from the last layout pass. */
+CA_API float ca_div_get_layout_height(const Ca_Div *div);
+
 /*
  * Apply CSS class names to any widget handle.  Accepts Ca_Div* or any other
  * widget pointer and dispatches to the correct backing function automatically.
