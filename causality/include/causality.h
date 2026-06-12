@@ -1227,6 +1227,18 @@ CA_API float ca_div_get_layout_width(const Ca_Div *div);
 CA_API float ca_div_get_layout_height(const Ca_Div *div);
 
 /*
+ * Returns the button's inner content dimensions from the last layout pass —
+ * i.e., the button's laid-out w/h minus its CSS-applied padding on each axis.
+ * Results are clamped to 0.  Both pointers may be NULL.
+ *
+ * btn      Target button (must be non-NULL).
+ * out_w    Receives inner width  (layout_w - pad_left - pad_right).
+ * out_h    Receives inner height (layout_h - pad_top  - pad_bottom).
+ */
+CA_API void ca_btn_get_layout_inner_size(const Ca_Button *btn,
+                                         float *out_w, float *out_h);
+
+/*
  * Apply CSS class names to any widget handle.  Accepts Ca_Div* or any other
  * widget pointer and dispatches to the correct backing function automatically.
  *

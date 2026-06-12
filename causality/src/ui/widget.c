@@ -1534,6 +1534,25 @@ float ca_div_get_layout_height(const Ca_Div *div)
     return ((const Ca_Node *)div)->h;
 }
 
+void ca_btn_get_layout_inner_size(const Ca_Button *btn, float *out_w, float *out_h)
+{
+    assert(btn);
+    const Ca_Node *n = btn->node;
+    if (!n) {
+        if (out_w) *out_w = 0.0f;
+        if (out_h) *out_h = 0.0f;
+        return;
+    }
+    if (out_w) {
+        float w = n->w - n->desc.padding_left - n->desc.padding_right;
+        *out_w = w < 0.0f ? 0.0f : w;
+    }
+    if (out_h) {
+        float h = n->h - n->desc.padding_top - n->desc.padding_bottom;
+        *out_h = h < 0.0f ? 0.0f : h;
+    }
+}
+
 void ca__set_background_widget(void *widget, uint32_t color)
 {
     Ca_Node *n = *(Ca_Node **)widget;

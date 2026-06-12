@@ -322,6 +322,7 @@ typedef struct {
     uint32_t count;          /* number of visible children */
     float    total_fixed;    /* total fixed main-axis size + gaps */
     float    total_grow;     /* sum of flex-grow values */
+    float    total_shrink;   /* sum of (flex_shrink_i * hypo_i) for CSS flex-shrink */
     float    cross_size;     /* max cross-axis size among children in this line */
 } FlexLine;
 
@@ -543,6 +544,7 @@ static void layout_node(Ca_Node *node, float x, float y, float avail_w, float av
         ln->count = 0;
         ln->total_fixed = 0;
         ln->total_grow = 0;
+        ln->total_shrink = 0;
         ln->cross_size = avail_cross;
 
         uint32_t vis = 0;
@@ -553,6 +555,8 @@ static void layout_node(Ca_Node *node, float x, float y, float avail_w, float av
             ln->total_fixed += child_hypo_main[i];
             if (child->desc.flex_grow > 0.0f)
                 ln->total_grow += child->desc.flex_grow;
+            if (child->desc.flex_shrink > 0.0f)
+                ln->total_shrink += child->desc.flex_shrink * child_hypo_main[i];
         }
         ln->count = vis;
         ln->total_fixed += (vis > 1) ? gap * (float)(vis - 1) : 0;
@@ -563,7 +567,7 @@ static void layout_node(Ca_Node *node, float x, float y, float avail_w, float av
         uint32_t line_vis = 0;
         FlexLine *ln = &lines[0];
         ln->start = 0; ln->count = 0;
-        ln->total_fixed = 0; ln->total_grow = 0; ln->cross_size = 0;
+        ln->total_fixed = 0; ln->total_grow = 0; ln->total_shrink = 0; ln->cross_size = 0;
 
         for (uint32_t i = 0; i < node->child_count; ++i) {
             Ca_Node *child = node->children[i];
@@ -580,7 +584,7 @@ static void layout_node(Ca_Node *node, float x, float y, float avail_w, float av
                 line_count++;
                 ln = &lines[line_count];
                 ln->start = i; ln->count = 0;
-                ln->total_fixed = 0; ln->total_grow = 0; ln->cross_size = 0;
+                ln->total_fixed = 0; ln->total_grow = 0; ln->total_shrink = 0; ln->cross_size = 0;
                 line_used = 0; line_vis = 0;
             }
 
@@ -596,6 +600,8 @@ static void layout_node(Ca_Node *node, float x, float y, float avail_w, float av
             ln->total_fixed += hmain;
             if (child->desc.flex_grow > 0.0f)
                 ln->total_grow += child->desc.flex_grow;
+            if (child->desc.flex_shrink > 0.0f)
+                ln->total_shrink += child->desc.flex_shrink * hmain;
         }
         /* Finish last line */
         if (line_vis > 0) {
@@ -620,7 +626,8 @@ static void layout_node(Ca_Node *node, float x, float y, float avail_w, float av
         float line_avail_main = avail_main;
         float line_avail_cross = do_wrap ? ln->cross_size : avail_cross;
         float remaining = line_avail_main - ln->total_fixed;
-        if (remaining < 0) remaining = 0;
+        float overflow  = (remaining < 0.0f) ? -remaining : 0.0f;
+        if (remaining < 0.0f) remaining = 0.0f;
 
         /* Compute child main/cross sizes for this line */
         float total_main_used = 0;
@@ -642,6 +649,22 @@ static void layout_node(Ca_Node *node, float x, float y, float avail_w, float av
             float grow = child->desc.flex_grow;
             if (grow > 0.0f && ln->total_grow > 0.0f && remaining > 0.0f)
                 cm += remaining * grow / ln->total_grow;
+
+            /* flex-shrink: when total_fixed > available, shrink proportionally.
+               Each item's share = overflow * (flex_shrink * hypo) / total_shrink.
+               Items with flex_shrink=0 (e.g. fixed headers) are never shrunk. */
+            if (overflow > 0.0f && ln->total_shrink > 0.0f) {
+                float shrink = child->desc.flex_shrink;
+                if (shrink > 0.0f) {
+                    float reduction = overflow * (shrink * child_hypo_main[i]) / ln->total_shrink;
+                    cm -= reduction;
+                    if (cm < 0.0f) cm = 0.0f;
+                    /* Respect min-height / min-width lower bound */
+                    float min_ms = is_row ? child->desc.min_w : child->desc.min_h;
+                    if (min_ms > 0.0f && cm < min_ms) cm = min_ms;
+                }
+            }
+
             if (cc <= 0.0f) cc = line_avail_cross;
 
             cm_arr[i] = cm;
