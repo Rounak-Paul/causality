@@ -234,7 +234,7 @@ typedef struct {
 #define CA_MAX_MENUS_PER_BAR         16
 #define CA_MAX_ITEMS_PER_MENU        16
 #define CA_MENU_LABEL_MAX            64
-#define CA_MAX_SUB_ITEMS_PER_ITEM     8
+#define CA_MAX_SUB_ITEMS_PER_ITEM     16
 #define CA_MAX_SELECT_OPTIONS        16
 #define CA_SELECT_MAX_VISIBLE         8   /* max options visible without scrolling */
 #define CA_MAX_TAB_LABELS            16
