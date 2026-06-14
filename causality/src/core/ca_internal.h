@@ -647,6 +647,8 @@ struct Ca_MenuBar {
     Ca_MenuBarMenu    menus[CA_MAX_MENUS_PER_BAR];
     int               menu_count;
     int               active_menu;   /* -1 = no dropdown open */
+    int               hover_item;
+    int               hover_sub_item;
     bool              in_use;
     uint32_t          header_highlight;
     uint32_t          dropdown_bg;
@@ -656,6 +658,22 @@ struct Ca_MenuBar {
     uint32_t          text_color;
     float             item_font_size; /* dropdown item font size (derived from CSS) */
 };
+
+void ca_menubar_dropdown_geometry(Ca_Window *win,
+                                  const Ca_Node *header,
+                                  float menu_w,
+                                  float menu_h,
+                                  float *out_x,
+                                  float *out_y);
+void ca_menubar_submenu_geometry(Ca_Window *win,
+                                 float drop_x,
+                                 float drop_y,
+                                 float menu_w,
+                                 float sub_w,
+                                 float sub_h,
+                                 float parent_offset_y,
+                                 float *out_x,
+                                 float *out_y);
 
 /* ======================================================
    WINDOW

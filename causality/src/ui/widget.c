@@ -2541,6 +2541,47 @@ void ca_tooltip_set_text(Ca_Tooltip *tooltip, const char *text)
    PUBLIC — Menu bar
    ============================================================ */
 
+void ca_menubar_dropdown_geometry(Ca_Window *win,
+                                  const Ca_Node *header,
+                                  float menu_w,
+                                  float menu_h,
+                                  float *out_x,
+                                  float *out_y)
+{
+    float x = header ? header->x : 0.0f;
+    float y = header ? header->y + header->h : 0.0f;
+    float window_w = win && win->root ? win->root->w : 0.0f;
+    float window_h = win && win->root ? win->root->h : 0.0f;
+    if (window_w > 0.0f && x + menu_w > window_w) x = window_w - menu_w;
+    if (window_h > 0.0f && y + menu_h > window_h) y = window_h - menu_h;
+    if (x < 0.0f) x = 0.0f;
+    if (y < 0.0f) y = 0.0f;
+    if (out_x) *out_x = x;
+    if (out_y) *out_y = y;
+}
+
+void ca_menubar_submenu_geometry(Ca_Window *win,
+                                 float drop_x,
+                                 float drop_y,
+                                 float menu_w,
+                                 float sub_w,
+                                 float sub_h,
+                                 float parent_offset_y,
+                                 float *out_x,
+                                 float *out_y)
+{
+    float window_w = win && win->root ? win->root->w : 0.0f;
+    float window_h = win && win->root ? win->root->h : 0.0f;
+    float x = drop_x + menu_w;
+    float y = drop_y + parent_offset_y;
+    if (window_w > 0.0f && x + sub_w > window_w) x = drop_x - sub_w;
+    if (window_h > 0.0f && y + sub_h > window_h) y = window_h - sub_h;
+    if (x < 0.0f) x = 0.0f;
+    if (y < 0.0f) y = 0.0f;
+    if (out_x) *out_x = x;
+    if (out_y) *out_y = y;
+}
+
 Ca_MenuBar *ca_menu_bar(const Ca_MenuBarDesc *desc)
 {
     assert(g_ctx.active && desc);
@@ -2570,6 +2611,8 @@ Ca_MenuBar *ca_menu_bar(const Ca_MenuBarDesc *desc)
     mb->node = bar;
     mb->in_use = true;
     mb->active_menu = -1;
+    mb->hover_item = -1;
+    mb->hover_sub_item = -1;
     mb->menu_count = desc->menu_count;
     if (mb->menu_count > CA_MAX_MENUS_PER_BAR)
         mb->menu_count = CA_MAX_MENUS_PER_BAR;
@@ -3710,18 +3753,24 @@ void ca_widget_input_pass(Ca_Window *win)
             const float sep_h = 8.0f * ui_s;
             float item_h = 24.0f * ui_s;
             float menu_w = 180.0f * ui_s;
-            float drop_x = hdr->x;
-            float drop_y = hdr->y + hdr->h;
+            float menu_h = 6.0f * ui_s;
+            for (int ii = 0; ii < am->item_count; ++ii)
+                menu_h += am->items[ii].separator ? sep_h : item_h;
+            float drop_x = 0.0f;
+            float drop_y = 0.0f;
+            ca_menubar_dropdown_geometry(win, hdr, menu_w, menu_h,
+                                         &drop_x, &drop_y);
             int new_sub  = -1;
-            /* Hover over a sub-menu-capable item opens it */
+            int hover_item = -1;
+            int hover_sub_item = -1;
             float iy = drop_y + 3.0f * ui_s; /* 3px top inset — matches paint pass */
             for (int ii = 0; ii < am->item_count; ++ii) {
                 float this_h = am->items[ii].separator ? sep_h : item_h;
-                if (am->items[ii].sub_item_count > 0 &&
+                if (!am->items[ii].separator &&
                     mx >= drop_x && mx <= drop_x + menu_w &&
-                    my >= iy    && my <= iy + this_h) {
-                    new_sub = ii;
-                    break;
+                    my >= iy && my <= iy + this_h) {
+                    hover_item = ii;
+                    if (am->items[ii].sub_item_count > 0) new_sub = ii;
                 }
                 iy += this_h;
             }
@@ -3729,14 +3778,35 @@ void ca_widget_input_pass(Ca_Window *win)
             if (new_sub < 0 && am->active_sub >= 0) {
                 int   asi   = am->active_sub;
                 float sub_w = 180.0f * ui_s;
-                float sub_x = drop_x + menu_w;
-                float sub_y = drop_y;
+                float parent_offset_y = 3.0f * ui_s;
                 for (int jj = 0; jj < asi; ++jj)
-                    sub_y += am->items[jj].separator ? sep_h : item_h;
+                    parent_offset_y += am->items[jj].separator ? sep_h : item_h;
                 float sub_h = item_h * (float)am->items[asi].sub_item_count + 6.0f * ui_s;
+                float sub_x = 0.0f;
+                float sub_y = 0.0f;
+                ca_menubar_submenu_geometry(win, drop_x, drop_y,
+                                            menu_w, sub_w, sub_h,
+                                            parent_offset_y,
+                                            &sub_x, &sub_y);
                 if (mx >= sub_x && mx <= sub_x + sub_w &&
-                    my >= sub_y && my <= sub_y + sub_h)
+                    my >= sub_y && my <= sub_y + sub_h) {
                     new_sub = asi;
+                    float sub_iy = sub_y + 3.0f * ui_s;
+                    for (int si = 0; si < am->items[asi].sub_item_count; ++si) {
+                        float siy = sub_iy + item_h * (float)si;
+                        if (my >= siy && my <= siy + item_h) {
+                            hover_sub_item = si;
+                            break;
+                        }
+                    }
+                }
+            }
+            if (mb->hover_item != hover_item ||
+                mb->hover_sub_item != hover_sub_item ||
+                am->active_sub != new_sub) {
+                mb->hover_item = hover_item;
+                mb->hover_sub_item = hover_sub_item;
+                mb->node->dirty |= CA_DIRTY_CONTENT;
             }
             am->active_sub = new_sub;
         }
@@ -3758,8 +3828,13 @@ void ca_widget_input_pass(Ca_Window *win)
                     const float sep_h = 8.0f * ui_s;
                     float item_h = 24.0f * ui_s;
                     float menu_w = 180.0f * ui_s;
-                    float drop_x = hdr->x;
-                    float drop_y = hdr->y + hdr->h;
+                    float menu_h = 6.0f * ui_s;
+                    for (int ii = 0; ii < am->item_count; ++ii)
+                        menu_h += am->items[ii].separator ? sep_h : item_h;
+                    float drop_x = 0.0f;
+                    float drop_y = 0.0f;
+                    ca_menubar_dropdown_geometry(win, hdr, menu_w, menu_h,
+                                                 &drop_x, &drop_y);
                     bool item_hit = false;
 
                     /* Check click in open sub-menu panel first */
@@ -3768,17 +3843,28 @@ void ca_widget_input_pass(Ca_Window *win)
                         int   asi        = am->active_sub;
                         float sub_item_h = 24.0f * ui_s;
                         float sub_w      = 180.0f * ui_s;
-                        float sub_x      = drop_x + menu_w;
-                        float sub_y      = drop_y + 3.0f * ui_s; /* 3px top inset — matches paint pass */
+                        float parent_offset_y = 3.0f * ui_s;
                         for (int jj = 0; jj < asi; ++jj)
-                            sub_y += am->items[jj].separator ? sep_h : item_h;
+                            parent_offset_y += am->items[jj].separator ? sep_h : item_h;
+                        float sub_h = sub_item_h *
+                                      (float)am->items[asi].sub_item_count +
+                                      6.0f * ui_s;
+                        float sub_x = 0.0f;
+                        float sub_y = 0.0f;
+                        ca_menubar_submenu_geometry(win, drop_x, drop_y,
+                                                    menu_w, sub_w, sub_h,
+                                                    parent_offset_y,
+                                                    &sub_x, &sub_y);
+                        float sub_iy = sub_y + 3.0f * ui_s;
                         for (int si = 0; si < am->items[asi].sub_item_count; ++si) {
-                            float siy = sub_y + sub_item_h * (float)si;
+                            float siy = sub_iy + sub_item_h * (float)si;
                             if (mx >= sub_x && mx <= sub_x + sub_w &&
                                 my >= siy  && my <= siy + sub_item_h) {
                                 Ca_MenuBarSubItem *sitem = &am->items[asi].sub_items[si];
                                 am->active_sub  = -1;
                                 mb->active_menu = -1;
+                                mb->hover_item = -1;
+                                mb->hover_sub_item = -1;
                                 mb->node->dirty |= CA_DIRTY_CONTENT;
                                 if (sitem->action)
                                     sitem->action(sitem->action_data);
@@ -3807,6 +3893,8 @@ void ca_widget_input_pass(Ca_Window *win)
                                 }
                                 am->active_sub  = -1;
                                 mb->active_menu = -1;
+                                mb->hover_item = -1;
+                                mb->hover_sub_item = -1;
                                 mb->node->dirty |= CA_DIRTY_CONTENT;
                                 if (am->items[ii].action)
                                     am->items[ii].action(am->items[ii].action_data);
@@ -3826,6 +3914,8 @@ void ca_widget_input_pass(Ca_Window *win)
                                 point_in_node(mb->menus[mi].header_node, mx, my)) {
                                 am->active_sub  = -1;
                                 mb->active_menu = mi;
+                                mb->hover_item = -1;
+                                mb->hover_sub_item = -1;
                                 mb->node->dirty |= CA_DIRTY_CONTENT;
                                 switched = true;
                                 break;
@@ -3835,6 +3925,8 @@ void ca_widget_input_pass(Ca_Window *win)
                             /* Click anywhere else closes dropdown */
                             am->active_sub  = -1;
                             mb->active_menu = -1;
+                            mb->hover_item = -1;
+                            mb->hover_sub_item = -1;
                             mb->node->dirty |= CA_DIRTY_CONTENT;
                         }
                     }
@@ -4081,6 +4173,8 @@ void ca_widget_input_pass(Ca_Window *win)
                     if (mb->menus[mi].header_node &&
                         point_in_node(mb->menus[mi].header_node, mx, my)) {
                         mb->active_menu = mi;
+                        mb->hover_item = -1;
+                        mb->hover_sub_item = -1;
                         mb->node->dirty |= CA_DIRTY_CONTENT;
                         break;
                     }
@@ -4440,20 +4534,28 @@ void ca_widget_input_pass(Ca_Window *win)
             Ca_MenuBarMenu *am = &mb->menus[mb->active_menu];
             Ca_Node *hdr = am->header_node;
             if (!hdr) continue;
-            float drop_x = hdr->x, drop_y = hdr->y + hdr->h;
             float menu_h = 6.0f * ui_s;
             for (int ii = 0; ii < am->item_count; ++ii)
                 menu_h += am->items[ii].separator ? mb_sep_h : mb_item_h;
+            float drop_x = 0.0f;
+            float drop_y = 0.0f;
+            ca_menubar_dropdown_geometry(win, hdr, mb_menu_w, menu_h,
+                                         &drop_x, &drop_y);
             if (mx >= drop_x && mx <= drop_x + mb_menu_w &&
                 my >= drop_y  && my <= drop_y + menu_h)
                 over_overlay = true;
             /* Sub-menu panel */
             if (!over_overlay && am->active_sub >= 0 && am->active_sub < am->item_count) {
-                float sub_x = drop_x + mb_menu_w;
-                float sub_y = drop_y;
+                float parent_offset_y = 3.0f * ui_s;
                 for (int jj = 0; jj < am->active_sub; ++jj)
-                    sub_y += am->items[jj].separator ? mb_sep_h : mb_item_h;
+                    parent_offset_y += am->items[jj].separator ? mb_sep_h : mb_item_h;
                 float sub_h = mb_item_h * (float)am->items[am->active_sub].sub_item_count + 6.0f * ui_s;
+                float sub_x = 0.0f;
+                float sub_y = 0.0f;
+                ca_menubar_submenu_geometry(win, drop_x, drop_y,
+                                            mb_menu_w, mb_menu_w, sub_h,
+                                            parent_offset_y,
+                                            &sub_x, &sub_y);
                 if (mx >= sub_x && mx <= sub_x + mb_menu_w &&
                     my >= sub_y  && my <= sub_y + sub_h)
                     over_overlay = true;

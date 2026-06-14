@@ -1735,13 +1735,15 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
             float item_h = 24.0f * ui_s;
             float menu_w = 180.0f * ui_s;
             float drop_item_fs = mb->item_font_size > 0.0f ? mb->item_font_size : 12.0f;
-            float drop_x = hdr->x;
-            float drop_y = hdr->y + hdr->h;
+            float drop_x = 0.0f;
+            float drop_y = 0.0f;
 
             /* Compute total menu height (6px top+bottom inset, same as ctx menus) */
             float menu_h = 6.0f * ui_s;
             for (int ii = 0; ii < am->item_count; ++ii)
                 menu_h += am->items[ii].separator ? sep_h : item_h;
+            ca_menubar_dropdown_geometry(win, hdr, menu_w, menu_h,
+                                         &drop_x, &drop_y);
 
             /* Dropdown background — sharp corners (retro) */
             if (win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
@@ -1784,9 +1786,7 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
                 }
 
                 /* Hover highlight — also highlight when this item's sub-menu is open */
-                if ((win->mouse_x >= drop_x && win->mouse_x <= drop_x + menu_w &&
-                     win->mouse_y >= iy      && win->mouse_y <= iy + this_h) ||
-                    am->active_sub == ii) {
+                if (mb->hover_item == ii || am->active_sub == ii) {
                     if (win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
                         Ca_DrawCmd *c = &win->draw_cmds[win->draw_cmd_count++];
                         memset(c, 0, sizeof(*c));
@@ -1844,11 +1844,16 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
                 int   asi        = am->active_sub;
                 float sub_item_h = 24.0f * ui_s;
                 float sub_menu_w = 180.0f * ui_s;
-                float sub_x      = drop_x + menu_w;
-                float sub_y      = drop_y;
+                float parent_offset_y = 3.0f * ui_s;
                 for (int jj = 0; jj < asi; ++jj)
-                    sub_y += am->items[jj].separator ? sep_h : item_h;
+                    parent_offset_y += am->items[jj].separator ? sep_h : item_h;
                 float sub_h      = sub_item_h * (float)am->items[asi].sub_item_count + 6.0f * ui_s;
+                float sub_x = 0.0f;
+                float sub_y = 0.0f;
+                ca_menubar_submenu_geometry(win, drop_x, drop_y,
+                                            menu_w, sub_menu_w, sub_h,
+                                            parent_offset_y,
+                                            &sub_x, &sub_y);
 
                 /* Sub-menu background — sharp corners (retro) */
                 if (win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
@@ -1872,8 +1877,7 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
                     float siy = sub_iy + sub_item_h * (float)si;
 
                     /* Hover highlight */
-                    if (win->mouse_x >= sub_x && win->mouse_x <= sub_x + sub_menu_w &&
-                        win->mouse_y >= siy   && win->mouse_y <= siy + sub_item_h) {
+                    if (mb->hover_sub_item == si) {
                         if (win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
                             Ca_DrawCmd *c = &win->draw_cmds[win->draw_cmd_count++];
                             memset(c, 0, sizeof(*c));
