@@ -60,6 +60,10 @@ set(FT_DISABLE_BZIP2    ON CACHE BOOL "" FORCE)
 set(FT_DISABLE_ZLIB     ON CACHE BOOL "" FORCE)
 set(FT_DISABLE_BROTLI   ON CACHE BOOL "" FORCE)
 set(FT_ENABLE_ERROR_STRINGS OFF CACHE BOOL "" FORCE)
+# freetype is statically linked into libcausality — must be PIC on Linux/ELF
+if(UNIX AND NOT APPLE)
+    set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+endif()
 add_subdirectory(vendors/freetype)
 
 # Library

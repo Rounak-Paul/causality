@@ -1,11 +1,14 @@
 file(GLOB_RECURSE CAUSALITY_SOURCES CONFIGURE_DEPENDS src/*.c)
 
-add_library(causality SHARED ${CAUSALITY_SOURCES})
+add_library(causality STATIC ${CAUSALITY_SOURCES})
 
 # Set default symbol visibility to hidden on GCC/Clang so that only
-# CA_API-decorated symbols are exported from the shared library.
+# CA_API-decorated symbols are exported from the final binary.
+# causality_EXPORTS makes CA_API expand to visibility("default"), which
+# overrides -fvisibility=hidden for the public API surface.
 if(NOT WIN32)
     target_compile_options(causality PRIVATE -fvisibility=hidden)
+    target_compile_definitions(causality PRIVATE causality_EXPORTS)
 endif()
 
 # shaderc — bundled with the LunarG Vulkan SDK, used for runtime GLSL compilation
