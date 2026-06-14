@@ -151,7 +151,7 @@ typedef struct Ca_ProgressDesc {
 } Ca_ProgressDesc;
 
 typedef struct Ca_SelectDesc {
-    const char **options;
+    const char *const *options;
     int          option_count;
     int          selected;
     float        width;

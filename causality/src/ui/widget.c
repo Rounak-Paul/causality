@@ -1845,23 +1845,34 @@ int ca_radio_group_get(Ca_Window *win, int group)
 Ca_Slider *ca_slider(const Ca_SliderDesc *desc)
 {
     assert(g_ctx.active && desc);
-    Ca_Slider *sl = alloc_slider(g_ctx.window);
-    if (!sl) return NULL;
+    const char *next_key = consume_next_key();
+    const char *id = next_key ? next_key : desc->id;
 
     Ca_NodeDesc nd = {0};
     nd.width  = desc->width > 0 ? s(desc->width) : s(160.0f);
     nd.height = s(20.0f);
 
-    Ca_Node *node = ca_node_add(ctx_top(), &nd);
+    bool reused = false;
+    Ca_Node *node = claim_child(&nd, CA_WIDGET_SLIDER, CA_ELEM_SLIDER, id, &reused);
     if (!node) return NULL;
+
+    Ca_Slider *sl = NULL;
+    if (reused && node->widget_type == CA_WIDGET_SLIDER && node->widget)
+        sl = (Ca_Slider *)node->widget;
+    if (!sl) {
+        sl = alloc_slider(g_ctx.window);
+        if (!sl) return NULL;
+        memset(sl, 0, sizeof(*sl));
+        sl->in_use = true;
+        node->widget_type = CA_WIDGET_SLIDER;
+        node->widget = sl;
+    }
 
     sl->node = node;
     sl->in_use = true;
-    sl->min_val = desc->min;
-    node->widget_type = CA_WIDGET_SLIDER;
-    node->widget      = sl;
-    sl->max_val = desc->max;
-    sl->value = desc->value;
+    WIDGET_SET(node, reused, sl->min_val, desc->min);
+    WIDGET_SET(node, reused, sl->max_val, desc->max);
+    WIDGET_SET(node, reused, sl->value, desc->value);
     sl->on_change = desc->on_change;
     sl->change_data = desc->change_data;
 
@@ -1869,7 +1880,7 @@ Ca_Slider *ca_slider(const Ca_SliderDesc *desc)
     if (desc->disabled) node->desc.disabled = true;
 
     uint32_t dummy = 0;
-    apply_css(node, &node->desc, CA_ELEM_SLIDER, desc->style, desc->id, &dummy);
+    apply_css(node, &node->desc, CA_ELEM_SLIDER, desc->style, id, &dummy);
     return sl;
 }
 
@@ -1952,27 +1963,39 @@ bool ca_toggle_get(const Ca_Toggle *t)
 Ca_Progress *ca_progress(const Ca_ProgressDesc *desc)
 {
     assert(g_ctx.active && desc);
-    Ca_Progress *p = alloc_progress(g_ctx.window);
-    if (!p) return NULL;
+    const char *next_key = consume_next_key();
+    const char *id = next_key ? next_key : desc->id;
 
     Ca_NodeDesc nd = {0};
     nd.width  = desc->width > 0 ? s(desc->width) : s(200.0f);
     nd.height = desc->height > 0 ? s(desc->height) : s(8.0f);
 
-    Ca_Node *node = ca_node_add(ctx_top(), &nd);
+    bool reused = false;
+    Ca_Node *node = claim_child(&nd, CA_WIDGET_PROGRESS, CA_ELEM_PROGRESS, id, &reused);
     if (!node) return NULL;
+
+    Ca_Progress *p = NULL;
+    if (reused && node->widget_type == CA_WIDGET_PROGRESS && node->widget)
+        p = (Ca_Progress *)node->widget;
+    if (!p) {
+        p = alloc_progress(g_ctx.window);
+        if (!p) return NULL;
+        memset(p, 0, sizeof(*p));
+        p->in_use = true;
+        node->widget_type = CA_WIDGET_PROGRESS;
+        node->widget = p;
+    }
 
     p->node = node;
     p->in_use = true;
-    p->value = desc->value;
-    node->widget_type = CA_WIDGET_PROGRESS;
-    node->widget      = p;
-    p->bar_color = desc->bar_color ? desc->bar_color : CA_THEME_ACCENT;
+    WIDGET_SET(node, reused, p->value, desc->value);
+    WIDGET_SET(node, reused, p->bar_color,
+               desc->bar_color ? desc->bar_color : CA_THEME_ACCENT);
 
     if (desc->hidden) node->desc.hidden = true;
 
     uint32_t dummy = 0;
-    apply_css(node, &node->desc, CA_ELEM_PROGRESS, desc->style, desc->id, &dummy);
+    apply_css(node, &node->desc, CA_ELEM_PROGRESS, desc->style, id, &dummy);
     return p;
 }
 

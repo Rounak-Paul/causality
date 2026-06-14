@@ -5,8 +5,8 @@
  * ca_node_graph.h — Reusable interactive node graph component.
  *
  * Builds a node graph canvas entirely from Causality div primitives:
- * absolute-positioned node divs, pin dot divs, and thin Manhattan-routed
- * wire segment divs.  No raw GPU rendering required.
+ * absolute-positioned node divs, pin dot divs, and rounded orthogonal wire
+ * segment divs. No raw GPU rendering required.
  *
  * USAGE (inside a ca_div_set_builder callback):
  *

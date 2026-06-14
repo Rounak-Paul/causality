@@ -15,7 +15,7 @@
  *        Input rows   ●dot  label      (ng-hdr)
  *        Separator    1px hr
  *        Output rows  label  ●dot      (ng-hdr + ng-pin-row-out)
- *    Wire segments (absolute, multi-segment Manhattan routing)
+ *    Wire segments (absolute, rounded orthogonal routing)
  *
  * Zoom behaviour
  * ==============
@@ -23,7 +23,7 @@
  *  - Grid effective spacing doubles when it would go below NG_GRID_MIN_SCR_PX.
  *  - Labels hidden below NG_ZOOM_HIDE_TEXT; pin rows hidden below NG_ZOOM_HIDE_PINS.
  *  - Node drag divides screen delta by zoom → correct canvas-space movement.
- *  - Backward wire connections route above both nodes (5-segment path).
+ *  - Backward wire connections route above both node bounds.
  */
 
 #include "ca_node_graph.h"
@@ -50,6 +50,8 @@
 #define NG_WIRE_T             2.0f  /* wire thickness                      */
 #define NG_WIRE_STUB         36.0f  /* horizontal stub length from each pin */
 #define NG_BACK_CLEAR        40.0f  /* clearance above nodes for backwards */
+#define NG_WIRE_RADIUS       10.0f  /* bend radius                         */
+#define NG_WIRE_ARC_STEPS     8     /* samples per rounded bend            */
 #define NG_GRID_SPACING      50.0f  /* logical px between grid lines       */
 #define NG_GRID_THICK         1.0f  /* grid line visual thickness          */
 
@@ -176,58 +178,134 @@ static void emit_wire_seg(float x, float y, float w, float h, uint32_t color)
         .width      = cw,
         .height     = ch,
         .background = (cw > 0.0f && ch > 0.0f) ? color : 0u,
+        .corner_radius = fminf(cw, ch) * 0.5f,
     });
     ca_div_end();
 }
 
-/*
- * Multi-segment Manhattan routing.
- * Always exits source horizontally (right stub) and enters dest horizontally
- * (left stub).
- *
- * Forward  (lx ≤ rx): 3-segment H-V-H.  Slots [3] and [4] emit zero-size divs.
- * Backward (lx >  rx): 5-segment route ABOVE both nodes.
- *
- * IMPORTANT: exactly 5 emit_wire_seg calls are made unconditionally so the
- * canvas container's child count never changes between frames.
- */
-static void emit_route(float sx, float sy, float dx, float dy,
-                       float stub, float zoom, uint32_t color)
+/* ============================================================
+   WIRE ROUTING
+   ============================================================ */
+
+typedef struct NgWirePoint {
+    float x;
+    float y;
+} NgWirePoint;
+
+static float wire_point_distance(NgWirePoint a, NgWirePoint b)
 {
-    float lx = sx + stub;   /* right end of source stub  */
-    float rx = dx - stub;   /* left  end of dest   stub  */
-    float wt = NG_WIRE_T;
-
-    /* Segment table: {x, y, w, h} — 5 entries always */
-    float seg[5][4] = {{0}};
-
-    if (lx <= rx) {
-        /* ---- Forward: slots 0-2 used, 3-4 are zero ---- */
-        float mid = (lx + rx) * 0.5f;
-        float vy  = fminf(sy, dy);
-        float vh  = fabsf(dy - sy) + wt;
-        seg[0][0] = sx;           seg[0][1] = sy - wt * 0.5f; seg[0][2] = mid - sx;  seg[0][3] = wt;
-        seg[1][0] = mid - wt*0.5f; seg[1][1] = vy;            seg[1][2] = wt;        seg[1][3] = (vh > wt + 0.5f) ? vh : 0.0f;
-        seg[2][0] = mid;          seg[2][1] = dy - wt * 0.5f; seg[2][2] = dx - mid;  seg[2][3] = wt;
-        /* seg[3], seg[4] stay {0,0,0,0} */
-    } else {
-        /* ---- Backward: 5 segments, route above both nodes ---- */
-        float clear = NG_BACK_CLEAR * zoom;
-        float ry    = fminf(sy, dy) - clear;
-        seg[0][0] = sx;            seg[0][1] = sy - wt*0.5f; seg[0][2] = stub;    seg[0][3] = wt;
-        seg[1][0] = lx - wt*0.5f; seg[1][1] = ry;           seg[1][2] = wt;      seg[1][3] = sy - ry + wt;
-        seg[2][0] = rx;            seg[2][1] = ry - wt*0.5f; seg[2][2] = lx - rx; seg[2][3] = wt;
-        seg[3][0] = rx - wt*0.5f; seg[3][1] = ry;           seg[3][2] = wt;      seg[3][3] = dy - ry + wt;
-        seg[4][0] = rx;            seg[4][1] = dy - wt*0.5f; seg[4][2] = stub;    seg[4][3] = wt;
-    }
-
-    for (int i = 0; i < 5; i++)
-        emit_wire_seg(seg[i][0], seg[i][1], seg[i][2], seg[i][3], color);
+    return fabsf(b.x - a.x) + fabsf(b.y - a.y);
 }
 
+static void emit_wire_line(NgWirePoint a, NgWirePoint b, float thickness, uint32_t color)
+{
+    if (fabsf(b.x - a.x) >= fabsf(b.y - a.y)) {
+        emit_wire_seg(fminf(a.x, b.x), a.y - thickness * 0.5f,
+                      fabsf(b.x - a.x), thickness, color);
+    } else {
+        emit_wire_seg(a.x - thickness * 0.5f, fminf(a.y, b.y),
+                      thickness, fabsf(b.y - a.y), color);
+    }
+}
+
+static void emit_wire_bend(NgWirePoint a, NgWirePoint b, NgWirePoint c,
+                           float radius, float thickness, uint32_t color)
+{
+    float in_len = wire_point_distance(a, b);
+    float out_len = wire_point_distance(b, c);
+    float r = fminf(radius, fminf(in_len, out_len) * 0.5f);
+    if (r < thickness || in_len <= 0.0f || out_len <= 0.0f) {
+        for (int i = 0; i < NG_WIRE_ARC_STEPS; i++)
+            emit_wire_seg(0.0f, 0.0f, 0.0f, 0.0f, color);
+        return;
+    }
+
+    NgWirePoint u = {(b.x - a.x) / in_len, (b.y - a.y) / in_len};
+    NgWirePoint v = {(c.x - b.x) / out_len, (c.y - b.y) / out_len};
+    NgWirePoint center = {b.x - u.x * r + v.x * r, b.y - u.y * r + v.y * r};
+
+    for (int i = 0; i < NG_WIRE_ARC_STEPS; i++) {
+        float angle = (((float)i + 0.5f) / (float)NG_WIRE_ARC_STEPS) * 1.57079632679f;
+        float x = center.x + (-v.x * cosf(angle) + u.x * sinf(angle)) * r;
+        float y = center.y + (-v.y * cosf(angle) + u.y * sinf(angle)) * r;
+        emit_wire_seg(x - thickness * 0.5f, y - thickness * 0.5f,
+                      thickness, thickness, color);
+    }
+}
+
+static void emit_smooth_route(float sx, float sy, float dx, float dy,
+                              float src_top, float dst_top,
+                              float stub, float zoom, uint32_t color)
+{
+    float lx = sx + stub;
+    float rx = dx - stub;
+    float thickness = fmaxf(NG_WIRE_T, NG_WIRE_T * zoom);
+    float radius = NG_WIRE_RADIUS * zoom;
+    NgWirePoint points[6] = {{0}};
+    int point_count;
+
+    if (!isfinite(sx) || !isfinite(sy) || !isfinite(dx) || !isfinite(dy)) {
+        for (int i = 0; i < 5 + 4 * NG_WIRE_ARC_STEPS; i++)
+            emit_wire_seg(0.0f, 0.0f, 0.0f, 0.0f, color);
+        return;
+    }
+
+    if (lx <= rx) {
+        float mid = (lx + rx) * 0.5f;
+        points[0] = (NgWirePoint){sx, sy};
+        points[1] = (NgWirePoint){mid, sy};
+        points[2] = (NgWirePoint){mid, dy};
+        points[3] = (NgWirePoint){dx, dy};
+        point_count = 4;
+    } else {
+        float route_y = fminf(src_top, dst_top) - NG_BACK_CLEAR * zoom;
+        points[0] = (NgWirePoint){sx, sy};
+        points[1] = (NgWirePoint){lx, sy};
+        points[2] = (NgWirePoint){lx, route_y};
+        points[3] = (NgWirePoint){rx, route_y};
+        points[4] = (NgWirePoint){rx, dy};
+        points[5] = (NgWirePoint){dx, dy};
+        point_count = 6;
+    }
+
+    for (int i = 0; i < 5; i++) {
+        if (i >= point_count - 1) {
+            emit_wire_seg(0.0f, 0.0f, 0.0f, 0.0f, color);
+            continue;
+        }
+
+        NgWirePoint start = points[i];
+        NgWirePoint end = points[i + 1];
+        float length = wire_point_distance(start, end);
+        if (length > 0.0f) {
+            NgWirePoint direction = {(end.x - start.x) / length, (end.y - start.y) / length};
+            if (i > 0) {
+                float trim = fminf(radius, wire_point_distance(points[i - 1], start) * 0.5f);
+                start.x += direction.x * trim;
+                start.y += direction.y * trim;
+            }
+            if (i < point_count - 2) {
+                float trim = fminf(radius, wire_point_distance(end, points[i + 2]) * 0.5f);
+                end.x -= direction.x * trim;
+                end.y -= direction.y * trim;
+            }
+        }
+        emit_wire_line(start, end, thickness, color);
+    }
+
+    for (int i = 0; i < 4; i++) {
+        if (i < point_count - 2) {
+            emit_wire_bend(points[i], points[i + 1], points[i + 2],
+                           radius, thickness, color);
+        } else {
+            for (int sample = 0; sample < NG_WIRE_ARC_STEPS; sample++)
+                emit_wire_seg(0.0f, 0.0f, 0.0f, 0.0f, color);
+        }
+    }
+}
 
 /* ============================================================
-   DRAG CALLBACKS — canvas panning
+   DRAG CALLBACKS - canvas panning
    ============================================================ */
 
 static void canvas_drag_start(const Ca_DragEvent *ev, void *ud)
@@ -714,5 +792,7 @@ void ca_ng_wire(Ca_NodeGraph *ng, const Ca_NgWireDesc *desc)
     float dy = dst->canvas_y * zs + ng->pan_y
                + ng_input_pin_y(desc->dst_pin, zs);
 
-    emit_route(sx, sy, dx, dy, stub, zs, color);
+    float src_top = src->canvas_y * zs + ng->pan_y;
+    float dst_top = dst->canvas_y * zs + ng->pan_y;
+    emit_smooth_route(sx, sy, dx, dy, src_top, dst_top, stub, zs, color);
 }
