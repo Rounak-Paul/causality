@@ -1345,6 +1345,11 @@ void ca__set_disabled_widget(void *widget, bool disabled)
     node_set_disabled(n, disabled);
 }
 
+const char *ca_input_text(const Ca_TextInput *input)
+{
+    return input ? input->text : "";
+}
+
 /* ---- Focus query ---- */
 
 bool ca_input_is_focused(const Ca_TextInput *input)

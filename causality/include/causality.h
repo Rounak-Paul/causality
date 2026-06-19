@@ -1197,6 +1197,14 @@ CA_API void        ca__set_color(void *widget, uint32_t color);
 CA_API void        ca__set_background_node(Ca_Div *div, uint32_t color);
 CA_API void        ca__set_background_widget(void *widget, uint32_t color);
 
+/*
+ * Return the current text content of a text input.
+ *
+ * input   Target text input, or NULL.
+ * Returns Pointer to the null-terminated UTF-8 text; "" when input is NULL.
+ */
+CA_API const char *ca_input_text(const Ca_TextInput *input);
+
 /* Returns true when the text input currently holds keyboard focus. */
 CA_API bool ca_input_is_focused(const Ca_TextInput *input);
 
