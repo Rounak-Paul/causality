@@ -446,9 +446,13 @@ Ca_Window *ca_window_create_reserved(Ca_Instance *inst, const Ca_WindowDesc *des
 void ca_window_destroy(Ca_Window *window)
 {
     if (!window || !window->in_use) return;
-    ca_ui_window_shutdown(window);
+    /* Renderer shutdown must precede UI shutdown: ca_renderer_window_shutdown
+       calls ca_viewport_gpu_destroy on viewport_pool entries, which must still
+       be alive.  ca_ui_window_shutdown frees viewport_pool, so reversing this
+       order would be a use-after-free. */
     if (window->instance && window->instance->vk_device != VK_NULL_HANDLE)
         ca_renderer_window_shutdown(window->instance, window);
+    ca_ui_window_shutdown(window);
     glfwDestroyWindow(window->glfw);
     window->glfw     = NULL;
     window->instance = NULL;

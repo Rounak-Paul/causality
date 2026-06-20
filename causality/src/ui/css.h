@@ -27,10 +27,13 @@ typedef enum {
 typedef struct {
     Ca_CssValType type;
     union {
-        float    number;
-        uint32_t color;
-        int      keyword;   /* also: string-pool offset when type == CA_CSS_VAL_VAR */
+        float    number;     /* CA_CSS_VAL_PX, CA_CSS_VAL_PERCENT, CA_CSS_VAL_NUMBER */
+        uint32_t color;      /* CA_CSS_VAL_COLOR — RRGGBBAA packed */
     };
+    int keyword;             /* CA_CSS_VAL_KEYWORD; string-pool offset for CA_CSS_VAL_VAR;
+                                secondary integer payload for shorthands (e.g. transition
+                                prop-id alongside number=duration). Separate from the union
+                                so shorthands can carry both a numeric value and an int. */
 } Ca_CssValue;
 
 /* ============================================================

@@ -1065,6 +1065,86 @@ static void parse_declarations(Parser *p, Ca_CssRule *rule)
             continue;
         }
 
+        /* box-shadow shorthand: [inset] offset-x offset-y [blur] [spread] [color]
+           We ignore inset/spread. Emits two decls:
+             Decl A (keyword=0): type=COLOR, color=shadow color, keyword packs
+                                 offset_x (upper 16 bits) and offset_y (lower 16 bits) as int16.
+             Decl B (keyword=1): type=NUMBER, number=blur radius. */
+        if (prop_id == CA_CSS_PROP_BOX_SHADOW) {
+            float offset_x = 0.0f, offset_y = 0.0f, blur = 0.0f;
+            uint32_t color = 0x00000080;
+            int nums_seen = 0;
+            float nums[3] = {0};
+
+            while (1) {
+                skip_ws(p);
+                Token pk = parser_peek(p);
+                if (pk.type == TOK_SEMICOLON || pk.type == TOK_RBRACE || pk.type == TOK_EOF) break;
+
+                if (pk.type == TOK_HASH) {
+                    parser_next(p);
+                    color = parse_hex_color(pk.text);
+                } else if (pk.type == TOK_FUNCTION) {
+                    parser_next(p);
+                    if (strcasecmp(pk.text, "rgb") == 0)
+                        color = parse_rgb_func(p, false);
+                    else if (strcasecmp(pk.text, "rgba") == 0)
+                        color = parse_rgb_func(p, true);
+                    else {
+                        int depth = 1;
+                        while (depth > 0) {
+                            Token tt = parser_next(p);
+                            if (tt.type == TOK_LPAREN || tt.type == TOK_FUNCTION) depth++;
+                            else if (tt.type == TOK_RPAREN) depth--;
+                            else if (tt.type == TOK_EOF) break;
+                        }
+                    }
+                } else if (pk.type == TOK_IDENT) {
+                    parser_next(p);
+                    uint32_t named;
+                    if (lookup_named_color(pk.text, &named))
+                        color = named;
+                    /* unknown keywords (e.g. "inset") are skipped */
+                } else if ((pk.type == TOK_DIMENSION || pk.type == TOK_NUMBER) && nums_seen < 3) {
+                    parser_next(p);
+                    nums[nums_seen++] = pk.number;
+                } else {
+                    parser_next(p);
+                }
+            }
+
+            if (nums_seen >= 2) {
+                offset_x = nums[0];
+                offset_y = nums[1];
+                blur     = (nums_seen >= 3) ? nums[2] : 0.0f;
+            }
+
+            int ox = (int)offset_x;
+            int oy = (int)offset_y;
+            if (ox >  32767) ox =  32767; if (ox < -32768) ox = -32768;
+            if (oy >  32767) oy =  32767; if (oy < -32768) oy = -32768;
+
+            int from = rule->decl_count;
+            Ca_CssValue va = {0};
+            va.type    = CA_CSS_VAL_COLOR;
+            va.color   = color;
+            va.keyword = (int)(((uint32_t)(uint16_t)(int16_t)ox << 16) |
+                                ((uint32_t)(uint16_t)(int16_t)oy & 0xFFFF));
+            add_decl(rule, CA_CSS_PROP_BOX_SHADOW, va);
+
+            Ca_CssValue vb = {0};
+            vb.type    = CA_CSS_VAL_NUMBER;
+            vb.number  = blur;
+            vb.keyword = 1;
+            add_decl(rule, CA_CSS_PROP_BOX_SHADOW, vb);
+            consume_important(p, rule, from);
+
+            skip_ws(p);
+            t = parser_peek(p);
+            if (t.type == TOK_SEMICOLON) parser_next(p);
+            continue;
+        }
+
         /* Normal property */
         if (prop_id != CA_CSS_PROP_NONE) {
             int from = rule->decl_count;

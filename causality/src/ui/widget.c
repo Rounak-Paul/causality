@@ -491,20 +491,24 @@ static void apply_css(Ca_Node *node, Ca_NodeDesc *nd,
     /* Scale CSS-resolved pixel values before applying (skip percentages) */
     if (!rs.width_pct)  rs.width  = s(rs.width);
     if (!rs.height_pct) rs.height = s(rs.height);
-    rs.min_width    = s(rs.min_width);
-    rs.max_width    = s(rs.max_width);
-    rs.min_height   = s(rs.min_height);
-    rs.max_height   = s(rs.max_height);
-    rs.padding[0]   = s(rs.padding[0]);
-    rs.padding[1]   = s(rs.padding[1]);
-    rs.padding[2]   = s(rs.padding[2]);
-    rs.padding[3]   = s(rs.padding[3]);
-    rs.gap          = s(rs.gap);
-    rs.border_radius = s(rs.border_radius);
-    rs.margin[0]    = s(rs.margin[0]);
-    rs.margin[1]    = s(rs.margin[1]);
-    rs.margin[2]    = s(rs.margin[2]);
-    rs.margin[3]    = s(rs.margin[3]);
+    rs.min_width       = s(rs.min_width);
+    rs.max_width       = s(rs.max_width);
+    rs.min_height      = s(rs.min_height);
+    rs.max_height      = s(rs.max_height);
+    rs.padding[0]      = s(rs.padding[0]);
+    rs.padding[1]      = s(rs.padding[1]);
+    rs.padding[2]      = s(rs.padding[2]);
+    rs.padding[3]      = s(rs.padding[3]);
+    rs.gap             = s(rs.gap);
+    rs.border_radius   = s(rs.border_radius);
+    rs.margin[0]       = s(rs.margin[0]);
+    rs.margin[1]       = s(rs.margin[1]);
+    rs.margin[2]       = s(rs.margin[2]);
+    rs.margin[3]       = s(rs.margin[3]);
+    rs.border_width    = s(rs.border_width);
+    rs.shadow_offset_x = s(rs.shadow_offset_x);
+    rs.shadow_offset_y = s(rs.shadow_offset_y);
+    rs.shadow_blur     = s(rs.shadow_blur);
 
     ca_style_apply_to_node(&rs, nd, out_color);
 
@@ -575,10 +579,14 @@ void ca_widget_reapply_css(Ca_Node *node)
     rs.min_height *= scale;  rs.max_height *= scale;
     rs.padding[0] *= scale;  rs.padding[1] *= scale;
     rs.padding[2] *= scale;  rs.padding[3] *= scale;
-    rs.gap            *= scale;
-    rs.border_radius  *= scale;
+    rs.gap             *= scale;
+    rs.border_radius   *= scale;
     rs.margin[0] *= scale;   rs.margin[1] *= scale;
     rs.margin[2] *= scale;   rs.margin[3] *= scale;
+    rs.border_width    *= scale;
+    rs.shadow_offset_x *= scale;
+    rs.shadow_offset_y *= scale;
+    rs.shadow_blur     *= scale;
 
     /* ca_style_apply_to_node uses zero-fill semantics — it writes layout
        fields (width/height/padding/margin/gap) whenever the current value
@@ -1235,10 +1243,14 @@ static void node_set_style(Ca_Node *node, const char *style,
         rs.min_height   *= scale;  rs.max_height *= scale;
         rs.padding[0]   *= scale;  rs.padding[1] *= scale;
         rs.padding[2]   *= scale;  rs.padding[3] *= scale;
-        rs.gap          *= scale;
-        rs.border_radius *= scale;
+        rs.gap             *= scale;
+        rs.border_radius   *= scale;
         rs.margin[0]    *= scale;  rs.margin[1]  *= scale;
         rs.margin[2]    *= scale;  rs.margin[3]  *= scale;
+        rs.border_width    *= scale;
+        rs.shadow_offset_x *= scale;
+        rs.shadow_offset_y *= scale;
+        rs.shadow_blur     *= scale;
 
         uint32_t dummy_color = 0;
         ca_style_apply_to_node(&rs, &node->desc,

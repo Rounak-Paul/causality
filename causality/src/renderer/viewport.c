@@ -69,8 +69,16 @@ bool ca_viewport_gpu_create(Ca_Instance *inst, Ca_Viewport *vp,
         .allocationSize  = req.size,
         .memoryTypeIndex = mem_idx,
     };
-    vkAllocateMemory(inst->vk_device, &mem_ai, NULL, &vp->color_memory);
-    vkBindImageMemory(inst->vk_device, vp->color_image, vp->color_memory, 0);
+    if (vkAllocateMemory(inst->vk_device, &mem_ai, NULL, &vp->color_memory) != VK_SUCCESS) {
+        fprintf(stderr, "[viewport] vkAllocateMemory failed\n");
+        ca_viewport_gpu_destroy(inst, vp);
+        return false;
+    }
+    if (vkBindImageMemory(inst->vk_device, vp->color_image, vp->color_memory, 0) != VK_SUCCESS) {
+        fprintf(stderr, "[viewport] vkBindImageMemory failed\n");
+        ca_viewport_gpu_destroy(inst, vp);
+        return false;
+    }
 
     /* Image view */
     VkImageViewCreateInfo view_ci = {
@@ -80,7 +88,11 @@ bool ca_viewport_gpu_create(Ca_Instance *inst, Ca_Viewport *vp,
         .format           = format,
         .subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 },
     };
-    vkCreateImageView(inst->vk_device, &view_ci, NULL, &vp->color_view);
+    if (vkCreateImageView(inst->vk_device, &view_ci, NULL, &vp->color_view) != VK_SUCCESS) {
+        fprintf(stderr, "[viewport] vkCreateImageView failed\n");
+        ca_viewport_gpu_destroy(inst, vp);
+        return false;
+    }
 
     /* Sampler (linear, clamp — for compositing into UI) */
     VkSamplerCreateInfo samp_ci = {
@@ -93,7 +105,11 @@ bool ca_viewport_gpu_create(Ca_Instance *inst, Ca_Viewport *vp,
         .addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
         .maxLod       = VK_LOD_CLAMP_NONE,
     };
-    vkCreateSampler(inst->vk_device, &samp_ci, NULL, &vp->sampler);
+    if (vkCreateSampler(inst->vk_device, &samp_ci, NULL, &vp->sampler) != VK_SUCCESS) {
+        fprintf(stderr, "[viewport] vkCreateSampler failed\n");
+        ca_viewport_gpu_destroy(inst, vp);
+        return false;
+    }
 
     /* Descriptor set — reuses the text pipeline's descriptor set layout for
        combined image sampler at binding 0 */
@@ -131,14 +147,22 @@ bool ca_viewport_gpu_create(Ca_Instance *inst, Ca_Viewport *vp,
         .level              = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
         .commandBufferCount = 1,
     };
-    vkAllocateCommandBuffers(inst->vk_device, &cmd_ai, &vp->cmd);
+    if (vkAllocateCommandBuffers(inst->vk_device, &cmd_ai, &vp->cmd) != VK_SUCCESS) {
+        fprintf(stderr, "[viewport] vkAllocateCommandBuffers failed\n");
+        ca_viewport_gpu_destroy(inst, vp);
+        return false;
+    }
 
     /* Fence for synchronising viewport render with UI composite */
     VkFenceCreateInfo fence_ci = {
         .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
         .flags = VK_FENCE_CREATE_SIGNALED_BIT,
     };
-    vkCreateFence(inst->vk_device, &fence_ci, NULL, &vp->render_fence);
+    if (vkCreateFence(inst->vk_device, &fence_ci, NULL, &vp->render_fence) != VK_SUCCESS) {
+        fprintf(stderr, "[viewport] vkCreateFence failed\n");
+        ca_viewport_gpu_destroy(inst, vp);
+        return false;
+    }
 
     return true;
 }

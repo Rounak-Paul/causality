@@ -621,15 +621,20 @@ void ca_style_resolve(Ca_Stylesheet *ss,
                     if (val->type == CA_CSS_VAL_COLOR) out->border_left_c = val->color;
                     break;
                 case CA_CSS_PROP_BOX_SHADOW:
-                    /* box-shadow stored as: number=blur, color=shadow color.
-                       Offsets default to (2,2) if not parsed separately. */
-                    out->shadow_blur = val->number;
-                    if (val->type == CA_CSS_VAL_COLOR)
-                        out->shadow_color = val->color;
-                    else
-                        out->shadow_color = 0x00000080; /* default semi-transparent black */
-                    out->shadow_offset_x = 2.0f;
-                    out->shadow_offset_y = 2.0f;
+                    /* Two decls are emitted per box-shadow shorthand:
+                       Decl A (keyword=0): type=COLOR — color=shadow_color,
+                                           keyword packs offset_x (upper 16 bits) and
+                                           offset_y (lower 16 bits) as signed int16.
+                       Decl B (keyword=1): type=NUMBER — number=blur radius. */
+                    if (val->keyword == 1) {
+                        out->shadow_blur = val->number;
+                    } else {
+                        out->shadow_color    = val->color;
+                        int16_t ox = (int16_t)((uint32_t)val->keyword >> 16);
+                        int16_t oy = (int16_t)((uint32_t)val->keyword & 0xFFFF);
+                        out->shadow_offset_x = (float)ox;
+                        out->shadow_offset_y = (float)oy;
+                    }
                     break;
                 case CA_CSS_PROP_Z_INDEX:
                     out->z_index = (int)val->number; break;
