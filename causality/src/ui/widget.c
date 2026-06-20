@@ -297,7 +297,7 @@ static Ca_Button *add_button(Ca_Window *win, Ca_Node *parent, const Ca_BtnDesc *
 
 #define CA_STACK_MAX 64
 
-static struct {
+typedef struct Ca_BuildContext {
     Ca_Window *window;
     Ca_Node   *stack[CA_STACK_MAX];
     uint16_t   child_cursor[CA_STACK_MAX];
@@ -306,7 +306,9 @@ static struct {
     int        depth;    /* index of top; -1 = empty */
     bool       active;
     bool       auto_ctx; /* true when ca_div_clear auto-entered the context */
-} g_ctx;
+} Ca_BuildContext;
+
+static Ca_BuildContext g_ctx;
 
 /* Pending pre-CSS desc snapshot: set in claim_child/ca_ui_begin just before
    node->desc is overwritten with the (sparse, pre-CSS) new descriptor.
@@ -1667,25 +1669,29 @@ static void div_builder_effect_fn(void *user)
     Ca_Node *node = (Ca_Node *)user;
     if (!node || !node->in_use || !node->builder_fn) return;
 
-    /* Auto-enter UI context if not already inside ca_ui_begin /
-       on_frame_fn — the effect may fire outside any context (e.g.
-       from a signal write in a click handler that triggers a flush
-       during the input pass). Mirrors ca_div_clear's auto_ctx path. */
-    bool entered = false;
-    if (!g_ctx.active) {
-        assert(node->window);
-        g_ctx.window      = node->window;
-        g_ctx.depth       = -1;
-        g_ctx.active      = true;
-        g_ctx.auto_ctx    = true;
-        g_ctx.next_key[0] = '\0';
-        entered           = true;
-    }
-    (void)entered;
+    /* Signal writes flush effects synchronously, including while another
+       window's frame callback owns the global build context. Rebuild in an
+       isolated context for this node's window so newly allocated widgets
+       enter the same window pools as their nodes, then resume the interrupted
+       build exactly where it was. */
+    assert(node->window);
+    const Ca_BuildContext suspended_ctx = g_ctx;
+    const Ca_NodeDesc suspended_pre_css_desc = s_pre_css_desc;
+    Ca_Node *const suspended_pre_css_node = s_pre_css_node;
+
+    memset(&g_ctx, 0, sizeof(g_ctx));
+    g_ctx.window = node->window;
+    g_ctx.depth = -1;
+    g_ctx.active = true;
 
     ca_reconcile_begin((Ca_Div *)node);
     node->builder_fn((Ca_Div *)node, node->builder_data);
-    ca_div_end(); /* ctx_pop trims unused children + auto-leaves context */
+    ca_div_end();
+    assert(g_ctx.depth == -1);
+
+    g_ctx = suspended_ctx;
+    s_pre_css_desc = suspended_pre_css_desc;
+    s_pre_css_node = suspended_pre_css_node;
 }
 
 Ca_Effect *ca_div_set_builder(Ca_Div *div,
