@@ -136,6 +136,11 @@ typedef struct {
     int      text_wrap;
     /* Aspect ratio */
     float    aspect_ratio;
+    /* Gradient background */
+    uint8_t  gradient_type;    /* CA_DRAW_MODE_LINEAR_GRAD / CA_DRAW_MODE_RADIAL_GRAD, 0=none */
+    uint32_t gradient_color2;  /* end color stop (RRGGBBAA) */
+    float    gradient_angle;   /* degrees for linear-gradient */
+    float    gradient_cx, gradient_cy; /* radial center 0..1 */
 } Ca_ResolvedStyle;
 
 /* ============================================================

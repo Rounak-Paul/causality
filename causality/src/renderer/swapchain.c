@@ -473,19 +473,41 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
                 cur_sc = sc_new;
                 first  = false;
 
-                /* Pack instance data */
+                /* Pack instance data into SSBO */
                 Ca_RectPushConst *dst = &rect_base[rect_n++];
-                dst->pos[0] = cmd->x;            dst->pos[1] = cmd->y;
-                dst->size[0] = cmd->w;            dst->size[1] = cmd->h;
-                dst->color[0] = cmd->r;           dst->color[1] = cmd->g;
-                dst->color[2] = cmd->b;           dst->color[3] = cmd->a;
-                dst->viewport[0] = (float)log_w;  dst->viewport[1] = (float)log_h;
-                dst->corner_radius = cmd->corner_radius;
-                dst->border_width  = cmd->border_width;
-                dst->border_color[0] = cmd->border_r;
-                dst->border_color[1] = cmd->border_g;
-                dst->border_color[2] = cmd->border_b;
-                dst->border_color[3] = cmd->border_a;
+                dst->pos[0]        = cmd->x;           dst->pos[1]        = cmd->y;
+                dst->size[0]       = cmd->w;           dst->size[1]       = cmd->h;
+                dst->color[0]      = cmd->r;           dst->color[1]      = cmd->g;
+                dst->color[2]      = cmd->b;           dst->color[3]      = cmd->a;
+                dst->viewport[0]   = (float)log_w;     dst->viewport[1]   = (float)log_h;
+                dst->_pad0[0]      = 0.0f;             dst->_pad0[1]      = 0.0f;
+                /* Per-corner radii: use per-corner if set, else uniform fallback */
+                {
+                    float tl = cmd->corner_tl > 0.0f ? cmd->corner_tl : cmd->corner_radius;
+                    float tr = cmd->corner_tr > 0.0f ? cmd->corner_tr : cmd->corner_radius;
+                    float br = cmd->corner_br > 0.0f ? cmd->corner_br : cmd->corner_radius;
+                    float bl = cmd->corner_bl > 0.0f ? cmd->corner_bl : cmd->corner_radius;
+                    dst->corner_radii[0] = tl;
+                    dst->corner_radii[1] = tr;
+                    dst->corner_radii[2] = br;
+                    dst->corner_radii[3] = bl;
+                }
+                dst->border_color[0]  = cmd->border_r;
+                dst->border_color[1]  = cmd->border_g;
+                dst->border_color[2]  = cmd->border_b;
+                dst->border_color[3]  = cmd->border_a;
+                dst->color2[0]        = cmd->color2_r;
+                dst->color2[1]        = cmd->color2_g;
+                dst->color2[2]        = cmd->color2_b;
+                dst->color2[3]        = cmd->color2_a;
+                dst->border_width     = cmd->border_width;
+                dst->blur_radius      = cmd->blur_radius;
+                dst->draw_mode        = (uint32_t)cmd->draw_mode;
+                dst->gradient_angle   = cmd->gradient_angle;
+                dst->gradient_cx      = cmd->gradient_cx;
+                dst->gradient_cy      = cmd->gradient_cy;
+                dst->_pad1[0]         = 0.0f;
+                dst->_pad1[1]         = 0.0f;
             }
             /* Flush final batch */
             if (rect_n > batch_start) {

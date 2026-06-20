@@ -27,9 +27,12 @@ typedef enum {
     CA_CSS_VAL_VW,         /* viewport width percent */
     CA_CSS_VAL_VH,         /* viewport height percent */
     CA_CSS_VAL_CALC,       /* calc() — resolved to px at apply time */
-    CA_CSS_VAL_INHERIT,    /* inherit from parent */
+    CA_CSS_VAL_INHERIT,       /* inherit from parent */
     CA_CSS_VAL_CURRENT_COLOR, /* currentColor — resolved from color property */
-    CA_CSS_VAL_INITIAL,    /* initial / unset */
+    CA_CSS_VAL_INITIAL,       /* initial / unset */
+    /* Gradient value: color=start_color, keyword=gradient_type (linear/radial),
+       number=angle (linear) or 0 (radial). A second decl carries color=end_color. */
+    CA_CSS_VAL_GRADIENT,
 } Ca_CssValType;
 
 typedef struct {
@@ -148,6 +151,14 @@ typedef enum {
     CA_CSS_PROP_USER_SELECT,
     /* Scroll */
     CA_CSS_PROP_SCROLL_BEHAVIOR,
+    /* Background (handles gradients — `background` shorthand) */
+    CA_CSS_PROP_BACKGROUND,
+    /* Gradient parameters written as side-channel properties from the
+       background shorthand parser; not set by the user directly. */
+    CA_CSS_PROP_GRADIENT_COLOR2,   /* end color stop */
+    CA_CSS_PROP_GRADIENT_ANGLE,    /* linear-gradient angle in degrees */
+    CA_CSS_PROP_GRADIENT_CX,       /* radial center x (0..1) */
+    CA_CSS_PROP_GRADIENT_CY,       /* radial center y (0..1) */
 
     CA_CSS_PROP_COUNT
 } Ca_CssPropId;

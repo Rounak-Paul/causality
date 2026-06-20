@@ -108,23 +108,48 @@ typedef struct {
 /* Forward-declare Ca_Font (full definition lives in renderer/font.h) */
 typedef struct Ca_Font Ca_Font;
 
-/* Must exactly match the push_constant block in the vertex shader:
-     vec2 pos           (offset  0)
-     vec2 size          (offset  8)
-     vec4 color         (offset 16)
-     vec2 viewport      (offset 32)
-     float corner_radius(offset 40)
-     float border_width (offset 44)
-     vec4 border_color  (offset 48)
-   Total: 64 bytes.                                               */
+/* Draw modes for Ca_RectPushConst.draw_mode */
+typedef enum {
+    CA_DRAW_MODE_NORMAL      = 0,  /* solid fill + uniform border              */
+    CA_DRAW_MODE_SHADOW      = 1,  /* SDF Gaussian shadow — blur via GPU       */
+    CA_DRAW_MODE_LINEAR_GRAD = 2,  /* linear-gradient(angle, color, color2)    */
+    CA_DRAW_MODE_RADIAL_GRAD = 3,  /* radial-gradient(circle, color, color2)   */
+} Ca_DrawMode;
+
+/* GPU-side instance data — must exactly match RectData in VERT_GLSL (std430).
+   Offsets (bytes):
+     pos[2]          offset   0  (8)
+     size[2]         offset   8  (8)
+     color[4]        offset  16  (16)
+     viewport[2]     offset  32  (8)
+     _pad0[2]        offset  40  (8)  ← padding to reach vec4 boundary at 48
+     corner_radii[4] offset  48  (16) tl, tr, br, bl
+     border_color[4] offset  64  (16)
+     color2[4]       offset  80  (16) gradient end / shadow tint
+     border_width    offset  96  (4)
+     blur_radius     offset 100  (4)
+     draw_mode       offset 104  (4)  Ca_DrawMode
+     gradient_angle  offset 108  (4)  degrees (linear) or unused (radial)
+     gradient_cx     offset 112  (4)  radial center x (0..1)
+     gradient_cy     offset 116  (4)  radial center y (0..1)
+     _pad1[2]        offset 120  (8)
+   Total: 128 bytes                                                              */
 typedef struct {
-    float pos[2];
-    float size[2];
-    float color[4];
-    float viewport[2];
-    float corner_radius;
-    float border_width;
-    float border_color[4];
+    float    pos[2];
+    float    size[2];
+    float    color[4];
+    float    viewport[2];
+    float    _pad0[2];
+    float    corner_radii[4];   /* tl, tr, br, bl */
+    float    border_color[4];
+    float    color2[4];
+    float    border_width;
+    float    blur_radius;
+    uint32_t draw_mode;
+    float    gradient_angle;
+    float    gradient_cx;
+    float    gradient_cy;
+    float    _pad1[2];
 } Ca_RectPushConst;
 
 /* ======================================================
@@ -251,6 +276,12 @@ typedef struct {
     uint8_t      cursor;         /* Ca_CssKeyword CURSOR_* */
     uint8_t      pointer_events; /* 0=auto, 1=none */
     uint8_t      user_select;    /* 0=auto, 1=none, 2=text, 3=all */
+    /* Gradient background — 0 means no gradient (solid fill only) */
+    uint8_t      gradient_type;  /* CA_DRAW_MODE_LINEAR_GRAD or CA_DRAW_MODE_RADIAL_GRAD */
+    uint32_t     gradient_color2; /* end color stop (RRGGBBAA) */
+    float        gradient_angle;  /* degrees (linear); 0 = top→bottom */
+    float        gradient_cx;     /* radial center x (0..1) */
+    float        gradient_cy;     /* radial center y (0..1) */
 } Ca_NodeDesc;
 
 /* ======================================================
@@ -283,24 +314,31 @@ typedef struct {
     Ca_DrawType type;
     float       x, y, w, h;
     float       r, g, b, a;
+    /* Per-corner border radius (tl, tr, br, bl).
+       corner_radius is the uniform fallback used when all four are equal. */
     float       corner_radius;
+    float       corner_tl, corner_tr, corner_br, corner_bl;
     /* CA_DRAW_GLYPH: normalised UV coords in the font atlas */
     float       u0, v0, u1, v1;
     bool        in_use;
-    bool        overlay;   /* true = drawn in overlay pass (on top of all normal content) */
-    /* Clip rect for overflow: hidden/scroll — in logical pixels */
+    bool        overlay;
     bool        has_clip;
     float       clip_x, clip_y, clip_w, clip_h;
-    /* Border */
+    /* Border — uniform */
     float       border_width;
     float       border_r, border_g, border_b, border_a;
+    /* Box-shadow: blur uses SDF Gaussian approximation on the GPU */
+    float       blur_radius;
+    /* Gradient: second color stop and parameters */
+    float       color2_r, color2_g, color2_b, color2_a;
+    float       gradient_angle; /* degrees for linear; unused for radial */
+    float       gradient_cx, gradient_cy; /* radial center 0..1 */
+    /* Draw mode (normal / shadow / linear-gradient / radial-gradient) */
+    Ca_DrawMode draw_mode;
     /* Z-index for draw order sorting */
     int16_t     z_index;
-    /* CA_DRAW_IMAGE: index into Ca_Instance.images[] */
     int16_t     image_index;
-    /* CA_DRAW_VIEWPORT: index into Ca_Window.viewport_pool[] */
     int16_t     viewport_index;
-    /* CA_DRAW_GLYPH: dynamic font atlas page referenced by u/v coordinates */
     int16_t     font_page_index;
 } Ca_DrawCmd;
 

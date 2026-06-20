@@ -186,50 +186,75 @@ static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, Cli
     /* Record starting draw cmd index so we can apply disabled dim after. */
     uint32_t cmd_start = win->draw_cmd_count;
 
-    /* ---- Box shadow (drawn before background, behind everything) ---- */
+    /* ---- Box shadow — GPU SDF Gaussian blur ---- */
     if (node->desc.shadow_color != 0 &&
         win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
         float sr, sg, sb, sa;
         unpack_color(node->desc.shadow_color, &sr, &sg, &sb, &sa);
-        float blur = node->desc.shadow_blur;
-        float expand = blur * 0.5f; /* expand rect to simulate blur spread */
+        float blur   = node->desc.shadow_blur;
+        float expand = blur; /* expand to cover the blur falloff extent */
         Ca_DrawCmd *cmd = &win->draw_cmds[win->draw_cmd_count++];
         memset(cmd, 0, sizeof(*cmd));
-        cmd->type          = CA_DRAW_RECT;
-        cmd->x             = node->x + node->desc.shadow_offset_x - expand;
-        cmd->y             = node->y + node->desc.shadow_offset_y - expand;
-        cmd->w             = node->w + expand * 2.0f;
-        cmd->h             = node->h + expand * 2.0f;
+        cmd->type        = CA_DRAW_RECT;
+        cmd->draw_mode   = CA_DRAW_MODE_SHADOW;
+        cmd->x           = node->x + node->desc.shadow_offset_x - expand;
+        cmd->y           = node->y + node->desc.shadow_offset_y - expand;
+        cmd->w           = node->w + expand * 2.0f;
+        cmd->h           = node->h + expand * 2.0f;
         cmd->r = sr; cmd->g = sg; cmd->b = sb; cmd->a = sa;
-        cmd->corner_radius = node->desc.corner_radius + expand;
-        cmd->z_index       = node->desc.z_index;
-        cmd->in_use        = true;
+        /* Pass the node's corner radii so shadow follows the shape */
+        cmd->corner_tl   = node->desc.border_radius_tl > 0.0f ? node->desc.border_radius_tl : node->desc.corner_radius;
+        cmd->corner_tr   = node->desc.border_radius_tr > 0.0f ? node->desc.border_radius_tr : node->desc.corner_radius;
+        cmd->corner_br   = node->desc.border_radius_br > 0.0f ? node->desc.border_radius_br : node->desc.corner_radius;
+        cmd->corner_bl   = node->desc.border_radius_bl > 0.0f ? node->desc.border_radius_bl : node->desc.corner_radius;
+        cmd->blur_radius = blur;
+        cmd->z_index     = node->desc.z_index;
+        cmd->in_use      = true;
         set_clip(cmd, clip);
     }
 
-    /* ---- Background rect ---- */
+    /* ---- Background rect (or gradient) ---- */
     if (win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
         node->draw_cmd_idx = (int32_t)win->draw_cmd_count;
         Ca_DrawCmd *cmd    = &win->draw_cmds[win->draw_cmd_count++];
         memset(cmd, 0, sizeof(*cmd));
-        cmd->type          = CA_DRAW_RECT;
-        cmd->x             = node->x;
-        cmd->y             = node->y;
-        cmd->w             = node->w;
-        cmd->h             = node->h;
-        unpack_color(node->desc.background, &cmd->r, &cmd->g, &cmd->b, &cmd->a);
-        float op = (node->desc.opacity > 0.0f) ? node->desc.opacity : 1.0f;
-        cmd->a *= op;
+        cmd->type = CA_DRAW_RECT;
+        cmd->x    = node->x;   cmd->y = node->y;
+        cmd->w    = node->w;   cmd->h = node->h;
+
+        /* Per-corner radii — GPU handles asymmetric corners natively now */
         cmd->corner_radius = node->desc.corner_radius;
-        cmd->z_index       = node->desc.z_index;
-        /* Border */
-        cmd->border_width  = node->desc.border_width;
+        cmd->corner_tl = node->desc.border_radius_tl > 0.0f ? node->desc.border_radius_tl : node->desc.corner_radius;
+        cmd->corner_tr = node->desc.border_radius_tr > 0.0f ? node->desc.border_radius_tr : node->desc.corner_radius;
+        cmd->corner_br = node->desc.border_radius_br > 0.0f ? node->desc.border_radius_br : node->desc.corner_radius;
+        cmd->corner_bl = node->desc.border_radius_bl > 0.0f ? node->desc.border_radius_bl : node->desc.corner_radius;
+
+        /* Gradient or solid fill */
+        if (node->desc.gradient_type != 0) {
+            cmd->draw_mode     = (Ca_DrawMode)node->desc.gradient_type;
+            unpack_color(node->desc.background,  &cmd->r, &cmd->g, &cmd->b, &cmd->a);
+            unpack_color(node->desc.gradient_color2, &cmd->color2_r, &cmd->color2_g, &cmd->color2_b, &cmd->color2_a);
+            cmd->gradient_angle = node->desc.gradient_angle;
+            cmd->gradient_cx    = node->desc.gradient_cx;
+            cmd->gradient_cy    = node->desc.gradient_cy;
+        } else {
+            cmd->draw_mode = CA_DRAW_MODE_NORMAL;
+            unpack_color(node->desc.background, &cmd->r, &cmd->g, &cmd->b, &cmd->a);
+        }
+
+        float op = (node->desc.opacity > 0.0f) ? node->desc.opacity : 1.0f;
+        cmd->a       *= op;
+        cmd->color2_a *= op;
+
+        /* Uniform border */
+        cmd->border_width = node->desc.border_width;
         if (node->desc.border_color != 0) {
             unpack_color(node->desc.border_color,
                          &cmd->border_r, &cmd->border_g,
                          &cmd->border_b, &cmd->border_a);
         }
-        cmd->in_use        = true;
+        cmd->z_index = node->desc.z_index;
+        cmd->in_use  = true;
         set_clip(cmd, clip);
     }
 

@@ -773,7 +773,7 @@ static Ca_CssPropId lookup_property(const char *name)
         { "flex-basis",                CA_CSS_PROP_FLEX_BASIS },
         { "order",                     CA_CSS_PROP_ORDER },
         { "background-color",          CA_CSS_PROP_BACKGROUND_COLOR },
-        { "background",                CA_CSS_PROP_BACKGROUND_COLOR },
+        { "background",                CA_CSS_PROP_BACKGROUND },
         { "color",                     CA_CSS_PROP_COLOR },
         { "border-radius",             CA_CSS_PROP_BORDER_RADIUS },
         { "border-top-left-radius",    CA_CSS_PROP_BORDER_TOP_LEFT_RADIUS },
@@ -1267,6 +1267,198 @@ static bool consume_important(Parser *p, Ca_CssRule *rule, int from_decl)
     return true;
 }
 
+/* Parse a color stop token (hash, function, or named color keyword) and
+   return its packed RRGGBBAA value.  Returns 0x000000FF (opaque black) on
+   failure.  The parser position is advanced past the color token(s). */
+static uint32_t parse_gradient_color_stop(Parser *p)
+{
+    skip_ws(p);
+    Token t = parser_peek(p);
+    if (t.type == TOK_HASH) {
+        parser_next(p);
+        return parse_hex_color(t.text);
+    }
+    if (t.type == TOK_FUNCTION) {
+        parser_next(p);
+        if (strcasecmp(t.text, "rgb")  == 0) return parse_rgb_func(p, false);
+        if (strcasecmp(t.text, "rgba") == 0) return parse_rgb_func(p, true);
+        if (strcasecmp(t.text, "hsl")  == 0) return parse_hsl_func(p, false);
+        if (strcasecmp(t.text, "hsla") == 0) return parse_hsl_func(p, true);
+        if (strcasecmp(t.text, "oklch") == 0) return parse_oklch_func(p);
+        if (strcasecmp(t.text, "color-mix") == 0) return parse_color_mix_func(p);
+        /* Unknown function — consume to closing paren */
+        int depth = 1;
+        while (depth > 0) {
+            Token tt = parser_next(p);
+            if (tt.type == TOK_FUNCTION || tt.type == TOK_LPAREN) depth++;
+            else if (tt.type == TOK_RPAREN) depth--;
+            else if (tt.type == TOK_EOF) break;
+        }
+        return 0x000000FFu;
+    }
+    if (t.type == TOK_IDENT) {
+        /* Named color */
+        parser_next(p);
+        struct { const char *name; uint32_t rgba; } ctbl[] = {
+            {"transparent", 0x00000000u}, {"black",   0x000000FFu},
+            {"white",       0xFFFFFFFFu}, {"red",     0xFF0000FFu},
+            {"green",       0x008000FFu}, {"blue",    0x0000FFFFu},
+            {"yellow",      0xFFFF00FFu}, {"cyan",    0x00FFFFFFu},
+            {"magenta",     0xFF00FFFFu}, {"orange",  0xFFA500FFu},
+            {"purple",      0x800080FFu}, {"pink",    0xFFC0CBFFu},
+            {"gray",        0x808080FFu}, {"grey",    0x808080FFu},
+            {"silver",      0xC0C0C0FFu}, {"lime",    0x00FF00FFu},
+            {"navy",        0x000080FFu}, {"teal",    0x008080FFu},
+            {"maroon",      0x800000FFu}, {"olive",   0x808000FFu},
+            {"aqua",        0x00FFFFFFu}, {"fuchsia", 0xFF00FFFFu},
+            {"coral",       0xFF7F50FFu}, {"salmon",  0xFA8072FFu},
+            {"khaki",       0xF0E68CFFu}, {"violet",  0xEE82EEFFu},
+            {"indigo",      0x4B0082FFu}, {"gold",    0xFFD700FFu},
+            {"crimson",     0xDC143CFFu}, {"tan",     0xD2B48CFFu},
+        };
+        for (size_t i = 0; i < sizeof(ctbl)/sizeof(ctbl[0]); i++) {
+            if (strcasecmp(t.text, ctbl[i].name) == 0)
+                return ctbl[i].rgba;
+        }
+        return 0x000000FFu;
+    }
+    return 0x000000FFu;
+}
+
+/* Skip past any position hints inside a gradient after a color stop
+   (e.g., "red 20%" — we accept the stop color but ignore percentage hints). */
+static void skip_gradient_stop_hints(Parser *p)
+{
+    skip_ws(p);
+    Token t = parser_peek(p);
+    if (t.type == TOK_NUMBER || (t.type == TOK_DIMENSION)) {
+        parser_next(p); /* skip percentage / length hint */
+    }
+}
+
+/* Parse linear-gradient() or radial-gradient() and emit 5 declarations:
+     CA_CSS_PROP_BACKGROUND       — start color (RRGGBBAA)
+     CA_CSS_PROP_GRADIENT_COLOR2  — end color
+     CA_CSS_PROP_GRADIENT_ANGLE   — degrees (linear) or 0 (radial)
+     CA_CSS_PROP_GRADIENT_CX      — radial center x 0..1
+     CA_CSS_PROP_GRADIENT_CY      — radial center y 0..1
+   The draw_mode is encoded in the `keyword` field of BACKGROUND.
+   Caller must have already consumed the function token (name without paren). */
+static void parse_gradient_func(Parser *p, Ca_CssRule *rule, int is_radial)
+{
+    float angle = 180.0f; /* default: top→bottom */
+    float cx = 0.5f, cy = 0.5f;
+
+    skip_ws(p);
+    Token t = parser_peek(p);
+
+    if (!is_radial) {
+        /* Check for optional angle: e.g., "to bottom", "45deg", "180deg" */
+        if (t.type == TOK_IDENT && strcasecmp(t.text, "to") == 0) {
+            parser_next(p); /* consume "to" */
+            skip_ws(p);
+            Token dir = parser_next(p);
+            if (dir.type == TOK_IDENT) {
+                if      (strcasecmp(dir.text, "bottom") == 0) angle = 180.0f;
+                else if (strcasecmp(dir.text, "top")    == 0) angle = 0.0f;
+                else if (strcasecmp(dir.text, "right")  == 0) angle = 90.0f;
+                else if (strcasecmp(dir.text, "left")   == 0) angle = 270.0f;
+                /* "to top right" etc. — peek for second direction word */
+                skip_ws(p);
+                Token dir2 = parser_peek(p);
+                if (dir2.type == TOK_IDENT &&
+                    (strcasecmp(dir2.text, "top")    == 0 || strcasecmp(dir2.text, "bottom") == 0 ||
+                     strcasecmp(dir2.text, "left")   == 0 || strcasecmp(dir2.text, "right")  == 0)) {
+                    parser_next(p); /* consume second direction, use approximate diagonal */
+                    if (strcasecmp(dir.text, "top") == 0 && strcasecmp(dir2.text, "right") == 0)  angle = 45.0f;
+                    else if (strcasecmp(dir.text, "bottom") == 0 && strcasecmp(dir2.text, "right") == 0) angle = 135.0f;
+                    else if (strcasecmp(dir.text, "bottom") == 0 && strcasecmp(dir2.text, "left") == 0)  angle = 225.0f;
+                    else if (strcasecmp(dir.text, "top") == 0 && strcasecmp(dir2.text, "left") == 0)     angle = 315.0f;
+                }
+            }
+            skip_ws(p);
+            t = parser_peek(p);
+            if (t.type == TOK_COMMA) { parser_next(p); }
+        } else if (t.type == TOK_DIMENSION || t.type == TOK_NUMBER) {
+            /* Numeric angle like "45deg" or "0.5turn" */
+            parser_next(p);
+            angle = t.number;
+            if (t.unit[0] && (strcasecmp(t.unit, "turn") == 0 || strcasecmp(t.unit, "turns") == 0))
+                angle *= 360.0f;
+            else if (t.unit[0] && strcasecmp(t.unit, "rad") == 0)
+                angle *= (180.0f / 3.14159265f);
+            else if (t.unit[0] && strcasecmp(t.unit, "grad") == 0)
+                angle *= 0.9f;
+            skip_ws(p);
+            t = parser_peek(p);
+            if (t.type == TOK_COMMA) parser_next(p);
+        }
+    } else {
+        /* Radial: optional "circle at <cx> <cy>" prefix */
+        if (t.type == TOK_IDENT && strcasecmp(t.text, "circle") == 0) {
+            parser_next(p);
+            skip_ws(p);
+            Token at = parser_peek(p);
+            if (at.type == TOK_IDENT && strcasecmp(at.text, "at") == 0) {
+                parser_next(p);
+                skip_ws(p);
+                Token px = parser_next(p);
+                if (px.type == TOK_NUMBER || px.type == TOK_DIMENSION)
+                    cx = px.number / 100.0f; /* assume % */
+                skip_ws(p);
+                Token py = parser_peek(p);
+                if (py.type == TOK_NUMBER || py.type == TOK_DIMENSION) {
+                    parser_next(p);
+                    cy = py.number / 100.0f;
+                }
+            }
+            skip_ws(p);
+            t = parser_peek(p);
+            if (t.type == TOK_COMMA) parser_next(p);
+        }
+    }
+
+    /* Parse first color stop */
+    uint32_t color1 = parse_gradient_color_stop(p);
+    skip_gradient_stop_hints(p);
+    skip_ws(p);
+    t = parser_peek(p);
+    if (t.type == TOK_COMMA) parser_next(p);
+
+    /* Parse second color stop (we support exactly two stops for now) */
+    uint32_t color2 = parse_gradient_color_stop(p);
+    skip_gradient_stop_hints(p);
+
+    /* Skip any additional stops (consume until closing paren) */
+    int depth = 1;
+    while (depth > 0) {
+        Token tt = parser_next(p);
+        if (tt.type == TOK_FUNCTION || tt.type == TOK_LPAREN) depth++;
+        else if (tt.type == TOK_RPAREN) depth--;
+        else if (tt.type == TOK_EOF) break;
+    }
+
+    /* Emit declarations */
+    Ca_CssValue bg   = {0}; bg.type = CA_CSS_VAL_COLOR; bg.color = color1;
+    /* Encode draw mode in keyword field: 2=linear-gradient, 3=radial-gradient.
+       These match Ca_DrawMode values defined in ca_internal.h without requiring
+       a cross-layer include. */
+    bg.keyword = is_radial ? 3 : 2;
+    add_decl(rule, CA_CSS_PROP_BACKGROUND, bg);
+
+    Ca_CssValue c2   = {0}; c2.type = CA_CSS_VAL_COLOR; c2.color = color2;
+    add_decl(rule, CA_CSS_PROP_GRADIENT_COLOR2, c2);
+
+    Ca_CssValue ang  = {0}; ang.type = CA_CSS_VAL_NUMBER; ang.number = angle;
+    add_decl(rule, CA_CSS_PROP_GRADIENT_ANGLE, ang);
+
+    Ca_CssValue gcx  = {0}; gcx.type = CA_CSS_VAL_NUMBER; gcx.number = cx;
+    add_decl(rule, CA_CSS_PROP_GRADIENT_CX, gcx);
+
+    Ca_CssValue gcy  = {0}; gcy.type = CA_CSS_VAL_NUMBER; gcy.number = cy;
+    add_decl(rule, CA_CSS_PROP_GRADIENT_CY, gcy);
+}
+
 static void parse_declarations(Parser *p, Ca_CssRule *rule)
 {
     /* Already consumed '{'. Parse until '}'. */
@@ -1321,6 +1513,33 @@ static void parse_declarations(Parser *p, Ca_CssRule *rule)
         }
 
         Ca_CssPropId prop_id = lookup_property(prop_name);
+
+        /* `background` shorthand: either a solid color or a gradient function.
+           When a gradient function is detected, emit 5 declarations via
+           parse_gradient_func. Otherwise promote to background-color. */
+        if (prop_id == CA_CSS_PROP_BACKGROUND) {
+            skip_ws(p);
+            Token pk = parser_peek(p);
+            if (pk.type == TOK_FUNCTION &&
+                (strcasecmp(pk.text, "linear-gradient") == 0 ||
+                 strcasecmp(pk.text, "radial-gradient") == 0)) {
+                parser_next(p); /* consume function token (name without paren) */
+                int is_radial = (strcasecmp(pk.text, "radial-gradient") == 0);
+                int from = rule->decl_count;
+                parse_gradient_func(p, rule, is_radial);
+                consume_important(p, rule, from);
+            } else {
+                /* Solid color — treat as background-color */
+                int from = rule->decl_count;
+                Ca_CssValue val = parse_value(p, CA_CSS_PROP_BACKGROUND_COLOR);
+                add_decl(rule, CA_CSS_PROP_BACKGROUND_COLOR, val);
+                consume_important(p, rule, from);
+            }
+            skip_ws(p);
+            t = parser_peek(p);
+            if (t.type == TOK_SEMICOLON) parser_next(p);
+            continue;
+        }
 
         /* `border` shorthand: border: <width> [<style>] <color>;
            We retain border-width + border-color (border-style is ignored). */

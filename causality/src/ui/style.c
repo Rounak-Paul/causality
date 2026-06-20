@@ -730,6 +730,25 @@ void ca_style_resolve(Ca_Stylesheet *ss,
                 case CA_CSS_PROP_SCROLL_BEHAVIOR:
                     if (val->type == CA_CSS_VAL_KEYWORD) out->scroll_behavior = val->keyword;
                     break;
+                case CA_CSS_PROP_BACKGROUND:
+                    /* Gradient start color; draw_mode encoded in keyword field (2=linear, 3=radial) */
+                    if (val->type == CA_CSS_VAL_COLOR) {
+                        out->background_color = val->color;
+                        out->gradient_type = (uint8_t)val->keyword;
+                    }
+                    break;
+                case CA_CSS_PROP_GRADIENT_COLOR2:
+                    if (val->type == CA_CSS_VAL_COLOR) out->gradient_color2 = val->color;
+                    break;
+                case CA_CSS_PROP_GRADIENT_ANGLE:
+                    if (val->type == CA_CSS_VAL_NUMBER) out->gradient_angle = val->number;
+                    break;
+                case CA_CSS_PROP_GRADIENT_CX:
+                    if (val->type == CA_CSS_VAL_NUMBER) out->gradient_cx = val->number;
+                    break;
+                case CA_CSS_PROP_GRADIENT_CY:
+                    if (val->type == CA_CSS_VAL_NUMBER) out->gradient_cy = val->number;
+                    break;
                 default: break;
             }
         }
@@ -809,9 +828,24 @@ void ca_style_apply_to_node(const Ca_ResolvedStyle *style,
             nd->corner_radius = mx;
     }
 
-    /* Background color — 0 = transparent = not set */
-    if (nd->background == 0 && STYLE_SET(CA_CSS_PROP_BACKGROUND_COLOR))
-        nd->background = style->background_color;
+    /* Background color — 0 = transparent = not set.
+       Gradient background (CA_CSS_PROP_BACKGROUND) also writes background_color
+       for the start stop, so both properties feed nd->background. */
+    if (nd->background == 0) {
+        if (STYLE_SET(CA_CSS_PROP_BACKGROUND_COLOR))
+            nd->background = style->background_color;
+        else if (STYLE_SET(CA_CSS_PROP_BACKGROUND) && style->gradient_type != 0)
+            nd->background = style->background_color;
+    }
+
+    /* Gradient parameters */
+    if (nd->gradient_type == 0 && style->gradient_type != 0) {
+        nd->gradient_type   = style->gradient_type;
+        nd->gradient_color2 = style->gradient_color2;
+        nd->gradient_angle  = style->gradient_angle;
+        nd->gradient_cx     = style->gradient_cx;
+        nd->gradient_cy     = style->gradient_cy;
+    }
 
     /* Direction from flex-direction */
     if (STYLE_SET(CA_CSS_PROP_FLEX_DIRECTION)) {
