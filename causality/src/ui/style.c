@@ -503,7 +503,10 @@ void ca_style_resolve(Ca_Stylesheet *ss,
 
             if (val->type == CA_CSS_VAL_NONE) continue;
 
-            out->set_mask |= (1ULL << prop);
+            if ((int)prop < 64)
+                out->set_mask  |= (1ULL << (int)prop);
+            else
+                out->set_mask2 |= (1ULL << ((int)prop - 64));
 
             switch (prop) {
                 case CA_CSS_PROP_WIDTH:
@@ -531,8 +534,13 @@ void ca_style_resolve(Ca_Stylesheet *ss,
                 case CA_CSS_PROP_OPACITY:          out->opacity         = val->number;        break;
                 case CA_CSS_PROP_FONT_SIZE:        out->font_size       = css_val_to_px(val); break;
                 case CA_CSS_PROP_FONT_WEIGHT:
-                    if (val->type == CA_CSS_VAL_KEYWORD)
-                        out->font_bold = (val->keyword != 0);
+                    if (val->type == CA_CSS_VAL_NUMBER) {
+                        out->font_weight = (int)val->number;
+                        out->font_bold   = (val->number >= 700.0f);
+                    } else if (val->type == CA_CSS_VAL_KEYWORD) {
+                        out->font_bold   = (val->keyword != 0);
+                        out->font_weight = out->font_bold ? 700 : 400;
+                    }
                     break;
                 case CA_CSS_PROP_TEXT_ALIGN:
                     if (val->type == CA_CSS_VAL_KEYWORD)
@@ -580,8 +588,8 @@ void ca_style_resolve(Ca_Stylesheet *ss,
                     if (val->type == CA_CSS_VAL_KEYWORD) {
                         out->overflow_x = val->keyword;
                         out->overflow_y = val->keyword;
-                        out->set_mask |= (1ULL << CA_CSS_PROP_OVERFLOW_X) |
-                                         (1ULL << CA_CSS_PROP_OVERFLOW_Y);
+                        out->set_mask |= (1ULL << (int)CA_CSS_PROP_OVERFLOW_X) |
+                                         (1ULL << (int)CA_CSS_PROP_OVERFLOW_Y);
                     }
                     break;
                 case CA_CSS_PROP_TRANSITION: {
@@ -642,6 +650,86 @@ void ca_style_resolve(Ca_Stylesheet *ss,
                     if (val->type == CA_CSS_VAL_KEYWORD)
                         out->text_wrap = (val->keyword == CA_CSS_WRAP_WRAP) ? 1 : 0;
                     break;
+
+                /* New CSS3 properties */
+                case CA_CSS_PROP_ROW_GAP:    out->row_gap    = css_val_to_px(val); break;
+                case CA_CSS_PROP_COLUMN_GAP: out->column_gap = css_val_to_px(val); break;
+                case CA_CSS_PROP_ALIGN_SELF:
+                    if (val->type == CA_CSS_VAL_KEYWORD) out->align_self = val->keyword;
+                    break;
+                case CA_CSS_PROP_ALIGN_CONTENT:
+                    if (val->type == CA_CSS_VAL_KEYWORD) out->align_content = val->keyword;
+                    break;
+                case CA_CSS_PROP_JUSTIFY_SELF:
+                    if (val->type == CA_CSS_VAL_KEYWORD) out->justify_self = val->keyword;
+                    break;
+                case CA_CSS_PROP_FLEX_BASIS:  out->flex_basis = css_val_to_px(val); break;
+                case CA_CSS_PROP_ORDER:       out->flex_order = (int)val->number;   break;
+                case CA_CSS_PROP_BORDER_TOP_LEFT_RADIUS:
+                    out->border_radius_tl = css_val_to_px(val); break;
+                case CA_CSS_PROP_BORDER_TOP_RIGHT_RADIUS:
+                    out->border_radius_tr = css_val_to_px(val); break;
+                case CA_CSS_PROP_BORDER_BOTTOM_RIGHT_RADIUS:
+                    out->border_radius_br = css_val_to_px(val); break;
+                case CA_CSS_PROP_BORDER_BOTTOM_LEFT_RADIUS:
+                    out->border_radius_bl = css_val_to_px(val); break;
+                case CA_CSS_PROP_VISIBILITY:
+                    if (val->type == CA_CSS_VAL_KEYWORD) out->visibility = val->keyword;
+                    break;
+                case CA_CSS_PROP_FONT_STYLE:
+                    if (val->type == CA_CSS_VAL_KEYWORD) out->font_style = val->keyword;
+                    break;
+                case CA_CSS_PROP_LINE_HEIGHT:  out->line_height   = css_val_to_px(val); break;
+                case CA_CSS_PROP_LETTER_SPACING: out->letter_spacing = css_val_to_px(val); break;
+                case CA_CSS_PROP_WORD_SPACING:   out->word_spacing  = css_val_to_px(val); break;
+                case CA_CSS_PROP_TEXT_DECORATION:
+                    if (val->type == CA_CSS_VAL_KEYWORD) out->text_decoration = val->keyword;
+                    break;
+                case CA_CSS_PROP_TEXT_TRANSFORM:
+                    if (val->type == CA_CSS_VAL_KEYWORD) out->text_transform = val->keyword;
+                    break;
+                case CA_CSS_PROP_WHITE_SPACE:
+                    if (val->type == CA_CSS_VAL_KEYWORD) out->white_space = val->keyword;
+                    break;
+                case CA_CSS_PROP_BORDER_STYLE:
+                    if (val->type == CA_CSS_VAL_KEYWORD) out->border_style = val->keyword;
+                    break;
+                case CA_CSS_PROP_BORDER_TOP_STYLE:
+                    if (val->type == CA_CSS_VAL_KEYWORD) out->border_top_style = val->keyword;
+                    break;
+                case CA_CSS_PROP_BORDER_RIGHT_STYLE:
+                    if (val->type == CA_CSS_VAL_KEYWORD) out->border_right_style = val->keyword;
+                    break;
+                case CA_CSS_PROP_BORDER_BOTTOM_STYLE:
+                    if (val->type == CA_CSS_VAL_KEYWORD) out->border_bottom_style = val->keyword;
+                    break;
+                case CA_CSS_PROP_BORDER_LEFT_STYLE:
+                    if (val->type == CA_CSS_VAL_KEYWORD) out->border_left_style = val->keyword;
+                    break;
+                case CA_CSS_PROP_OUTLINE_WIDTH:  out->outline_width  = css_val_to_px(val); break;
+                case CA_CSS_PROP_OUTLINE_COLOR:
+                    if (val->type == CA_CSS_VAL_COLOR) out->outline_color = val->color;
+                    break;
+                case CA_CSS_PROP_OUTLINE_STYLE:
+                    if (val->type == CA_CSS_VAL_KEYWORD) out->outline_style = val->keyword;
+                    break;
+                case CA_CSS_PROP_OUTLINE_OFFSET: out->outline_offset = css_val_to_px(val); break;
+                case CA_CSS_PROP_ASPECT_RATIO:   out->aspect_ratio   = val->number;        break;
+                case CA_CSS_PROP_BOX_SIZING:
+                    if (val->type == CA_CSS_VAL_KEYWORD) out->box_sizing = val->keyword;
+                    break;
+                case CA_CSS_PROP_CURSOR:
+                    if (val->type == CA_CSS_VAL_KEYWORD) out->cursor = val->keyword;
+                    break;
+                case CA_CSS_PROP_POINTER_EVENTS:
+                    if (val->type == CA_CSS_VAL_KEYWORD) out->pointer_events = val->keyword;
+                    break;
+                case CA_CSS_PROP_USER_SELECT:
+                    if (val->type == CA_CSS_VAL_KEYWORD) out->user_select = val->keyword;
+                    break;
+                case CA_CSS_PROP_SCROLL_BEHAVIOR:
+                    if (val->type == CA_CSS_VAL_KEYWORD) out->scroll_behavior = val->keyword;
+                    break;
                 default: break;
             }
         }
@@ -653,13 +741,22 @@ void ca_style_resolve(Ca_Stylesheet *ss,
    APPLY STYLE TO NODE DESC
    ============================================================ */
 
-#define STYLE_SET(prop) (style->set_mask & (1ULL << (prop)))
+#define STYLE_SET(prop) \
+    (((int)(prop) < 64) \
+        ? (style->set_mask  & (1ULL << (int)(prop))) \
+        : (style->set_mask2 & (1ULL << ((int)(prop) - 64))))
 
 void ca_style_apply_to_node(const Ca_ResolvedStyle *style,
                             Ca_NodeDesc *nd,
                             uint32_t *out_color)
 {
-    if (!style || style->set_mask == 0) return;
+    if (!style || (style->set_mask == 0 && style->set_mask2 == 0)) return;
+
+    /* display: none collapses the node immediately */
+    if (STYLE_SET(CA_CSS_PROP_DISPLAY) && style->display == CA_CSS_DISPLAY_NONE) {
+        nd->hidden = true;
+        return;
+    }
 
     /* Sizing — CSS fills if NodeDesc is 0 (auto) */
     if (nd->width  <= 0.0f && STYLE_SET(CA_CSS_PROP_WIDTH))  { nd->width  = style->width;  nd->width_pct  = style->width_pct;  }
@@ -685,12 +782,32 @@ void ca_style_apply_to_node(const Ca_ResolvedStyle *style,
     if (nd->opacity <= 0.0f && STYLE_SET(CA_CSS_PROP_OPACITY))
         nd->opacity = style->opacity;
 
-    /* Gap */
-    if (nd->gap <= 0.0f && STYLE_SET(CA_CSS_PROP_GAP)) nd->gap = style->gap;
+    /* Gap — prefer row/column, fall back to uniform gap */
+    if (nd->gap        <= 0.0f && STYLE_SET(CA_CSS_PROP_GAP))        nd->gap        = style->gap;
+    if (nd->row_gap    <= 0.0f && STYLE_SET(CA_CSS_PROP_ROW_GAP))    nd->row_gap    = style->row_gap;
+    if (nd->column_gap <= 0.0f && STYLE_SET(CA_CSS_PROP_COLUMN_GAP)) nd->column_gap = style->column_gap;
 
-    /* Border radius */
+    /* Border radius — uniform and per-corner */
     if (nd->corner_radius <= 0.0f && STYLE_SET(CA_CSS_PROP_BORDER_RADIUS))
         nd->corner_radius = style->border_radius;
+    if (nd->border_radius_tl <= 0.0f && STYLE_SET(CA_CSS_PROP_BORDER_TOP_LEFT_RADIUS))
+        nd->border_radius_tl = style->border_radius_tl;
+    if (nd->border_radius_tr <= 0.0f && STYLE_SET(CA_CSS_PROP_BORDER_TOP_RIGHT_RADIUS))
+        nd->border_radius_tr = style->border_radius_tr;
+    if (nd->border_radius_br <= 0.0f && STYLE_SET(CA_CSS_PROP_BORDER_BOTTOM_RIGHT_RADIUS))
+        nd->border_radius_br = style->border_radius_br;
+    if (nd->border_radius_bl <= 0.0f && STYLE_SET(CA_CSS_PROP_BORDER_BOTTOM_LEFT_RADIUS))
+        nd->border_radius_bl = style->border_radius_bl;
+    /* If any per-corner was set, derive uniform from max for the GPU shader */
+    {
+        float mx = 0.0f;
+        if (nd->border_radius_tl > mx) mx = nd->border_radius_tl;
+        if (nd->border_radius_tr > mx) mx = nd->border_radius_tr;
+        if (nd->border_radius_br > mx) mx = nd->border_radius_br;
+        if (nd->border_radius_bl > mx) mx = nd->border_radius_bl;
+        if (mx > 0.0f && nd->corner_radius <= 0.0f)
+            nd->corner_radius = mx;
+    }
 
     /* Background color — 0 = transparent = not set */
     if (nd->background == 0 && STYLE_SET(CA_CSS_PROP_BACKGROUND_COLOR))
@@ -717,6 +834,16 @@ void ca_style_apply_to_node(const Ca_ResolvedStyle *style,
             case CA_CSS_ALIGN_STRETCH:    nd->align_items = CA_ALIGN_STRETCH; break;
         }
     }
+    if (STYLE_SET(CA_CSS_PROP_ALIGN_SELF)) {
+        switch (style->align_self) {
+            case CA_CSS_ALIGN_FLEX_START: nd->align_self = CA_ALIGN_START;   break;
+            case CA_CSS_ALIGN_CENTER:     nd->align_self = CA_ALIGN_CENTER;  break;
+            case CA_CSS_ALIGN_FLEX_END:   nd->align_self = CA_ALIGN_END;     break;
+            case CA_CSS_ALIGN_STRETCH:    nd->align_self = CA_ALIGN_STRETCH; break;
+        }
+    }
+    if (STYLE_SET(CA_CSS_PROP_ALIGN_CONTENT))
+        nd->align_content = (Ca_Align)style->align_content;
     if (STYLE_SET(CA_CSS_PROP_JUSTIFY_CONTENT)) {
         switch (style->justify_content) {
             case CA_CSS_ALIGN_FLEX_START: nd->justify_content = CA_ALIGN_START;  break;
@@ -732,7 +859,7 @@ void ca_style_apply_to_node(const Ca_ResolvedStyle *style,
             case CA_CSS_OVERFLOW_HIDDEN:  nd->overflow_x = 1; break;
             case CA_CSS_OVERFLOW_SCROLL:  nd->overflow_x = 2; break;
             case CA_CSS_OVERFLOW_AUTO:    nd->overflow_x = 3; break;
-            default:                     nd->overflow_x = 0; break;
+            default:                      nd->overflow_x = 0; break;
         }
     }
     if (STYLE_SET(CA_CSS_PROP_OVERFLOW_Y)) {
@@ -740,29 +867,33 @@ void ca_style_apply_to_node(const Ca_ResolvedStyle *style,
             case CA_CSS_OVERFLOW_HIDDEN:  nd->overflow_y = 1; break;
             case CA_CSS_OVERFLOW_SCROLL:  nd->overflow_y = 2; break;
             case CA_CSS_OVERFLOW_AUTO:    nd->overflow_y = 3; break;
-            default:                     nd->overflow_y = 0; break;
+            default:                      nd->overflow_y = 0; break;
         }
     }
 
-    /* Flex grow/shrink */
-    if (nd->flex_grow  <= 0.0f && STYLE_SET(CA_CSS_PROP_FLEX_GROW))  nd->flex_grow  = style->flex_grow;
+    /* Flex grow/shrink/basis */
+    if (nd->flex_grow   <= 0.0f && STYLE_SET(CA_CSS_PROP_FLEX_GROW))   nd->flex_grow   = style->flex_grow;
     if (nd->flex_shrink <= 0.0f && STYLE_SET(CA_CSS_PROP_FLEX_SHRINK)) nd->flex_shrink = style->flex_shrink;
+    if (nd->flex_basis  <= 0.0f && STYLE_SET(CA_CSS_PROP_FLEX_BASIS))  nd->flex_basis  = style->flex_basis;
+    if (nd->flex_order  == 0    && STYLE_SET(CA_CSS_PROP_ORDER))        nd->flex_order  = style->flex_order;
 
     /* Flex wrap */
     if (nd->flex_wrap == 0 && STYLE_SET(CA_CSS_PROP_FLEX_WRAP)) {
         if (style->flex_wrap == CA_CSS_WRAP_WRAP) nd->flex_wrap = 1;
     }
 
-    /* Font size */
-    if (nd->font_size <= 0.0f && STYLE_SET(CA_CSS_PROP_FONT_SIZE))
-        nd->font_size = style->font_size;
+    /* Font */
+    if (nd->font_size     <= 0.0f && STYLE_SET(CA_CSS_PROP_FONT_SIZE))     nd->font_size     = style->font_size;
+    if (nd->line_height   <= 0.0f && STYLE_SET(CA_CSS_PROP_LINE_HEIGHT))   nd->line_height   = style->line_height;
+    if (nd->letter_spacing == 0.0f && STYLE_SET(CA_CSS_PROP_LETTER_SPACING)) nd->letter_spacing = style->letter_spacing;
+    if (nd->word_spacing   == 0.0f && STYLE_SET(CA_CSS_PROP_WORD_SPACING))   nd->word_spacing   = style->word_spacing;
+    if (STYLE_SET(CA_CSS_PROP_FONT_WEIGHT)) {
+        nd->font_bold   = style->font_bold;
+        nd->font_weight = (uint8_t)(style->font_weight > 255 ? 255 : style->font_weight);
+    }
+    if (STYLE_SET(CA_CSS_PROP_FONT_STYLE)) nd->font_style = (uint8_t)style->font_style;
 
-    /* Font weight (bold) */
-    if (STYLE_SET(CA_CSS_PROP_FONT_WEIGHT))
-        nd->font_bold = style->font_bold;
-
-    /* Text align — CSS always wins when explicitly specified, even for widgets
-       that hardcode a default (e.g. buttons default to center = 1). */
+    /* Text */
     if (STYLE_SET(CA_CSS_PROP_TEXT_ALIGN)) {
         switch (style->text_align) {
             case CA_CSS_TEXT_ALIGN_LEFT:   nd->text_align = 0; break;
@@ -770,10 +901,32 @@ void ca_style_apply_to_node(const Ca_ResolvedStyle *style,
             case CA_CSS_TEXT_ALIGN_RIGHT:  nd->text_align = 2; break;
         }
     }
+    if (STYLE_SET(CA_CSS_PROP_TEXT_DECORATION)) nd->text_decoration = (uint8_t)style->text_decoration;
+    if (STYLE_SET(CA_CSS_PROP_TEXT_TRANSFORM))  nd->text_transform  = (uint8_t)style->text_transform;
+    if (STYLE_SET(CA_CSS_PROP_WHITE_SPACE))     nd->white_space     = (uint8_t)style->white_space;
+    if (nd->text_wrap == 0 && STYLE_SET(CA_CSS_PROP_TEXT_WRAP))
+        nd->text_wrap = (uint8_t)style->text_wrap;
 
     /* Text/foreground color — output separately */
     if (out_color && *out_color == 0 && STYLE_SET(CA_CSS_PROP_COLOR))
         *out_color = style->color;
+
+    /* Visibility */
+    if (STYLE_SET(CA_CSS_PROP_VISIBILITY))
+        nd->visibility_hidden = (style->visibility != 0);
+
+    /* Aspect ratio */
+    if (nd->aspect_ratio <= 0.0f && STYLE_SET(CA_CSS_PROP_ASPECT_RATIO))
+        nd->aspect_ratio = style->aspect_ratio;
+
+    /* Box sizing */
+    if (STYLE_SET(CA_CSS_PROP_BOX_SIZING))
+        nd->box_sizing = (uint8_t)style->box_sizing;
+
+    /* Interaction */
+    if (STYLE_SET(CA_CSS_PROP_CURSOR))         nd->cursor         = (uint8_t)style->cursor;
+    if (STYLE_SET(CA_CSS_PROP_POINTER_EVENTS)) nd->pointer_events = (uint8_t)style->pointer_events;
+    if (STYLE_SET(CA_CSS_PROP_USER_SELECT))    nd->user_select    = (uint8_t)style->user_select;
 
     /* Border — uniform */
     if (nd->border_width <= 0.0f && STYLE_SET(CA_CSS_PROP_BORDER_WIDTH))
@@ -781,14 +934,32 @@ void ca_style_apply_to_node(const Ca_ResolvedStyle *style,
     if (nd->border_color == 0 && STYLE_SET(CA_CSS_PROP_BORDER_COLOR))
         nd->border_color = style->border_color;
     /* Border — per-side */
-    if (nd->border_top_w   <= 0.0f && STYLE_SET(CA_CSS_PROP_BORDER_TOP_WIDTH))    nd->border_top_w   = style->border_top_w;
-    if (nd->border_top_c   == 0    && STYLE_SET(CA_CSS_PROP_BORDER_TOP_COLOR))    nd->border_top_c   = style->border_top_c;
-    if (nd->border_right_w <= 0.0f && STYLE_SET(CA_CSS_PROP_BORDER_RIGHT_WIDTH))  nd->border_right_w = style->border_right_w;
-    if (nd->border_right_c == 0    && STYLE_SET(CA_CSS_PROP_BORDER_RIGHT_COLOR))  nd->border_right_c = style->border_right_c;
-    if (nd->border_bottom_w<= 0.0f && STYLE_SET(CA_CSS_PROP_BORDER_BOTTOM_WIDTH)) nd->border_bottom_w= style->border_bottom_w;
-    if (nd->border_bottom_c== 0    && STYLE_SET(CA_CSS_PROP_BORDER_BOTTOM_COLOR)) nd->border_bottom_c= style->border_bottom_c;
-    if (nd->border_left_w  <= 0.0f && STYLE_SET(CA_CSS_PROP_BORDER_LEFT_WIDTH))   nd->border_left_w  = style->border_left_w;
-    if (nd->border_left_c  == 0    && STYLE_SET(CA_CSS_PROP_BORDER_LEFT_COLOR))   nd->border_left_c  = style->border_left_c;
+    if (nd->border_top_w    <= 0.0f && STYLE_SET(CA_CSS_PROP_BORDER_TOP_WIDTH))    nd->border_top_w    = style->border_top_w;
+    if (nd->border_top_c    == 0    && STYLE_SET(CA_CSS_PROP_BORDER_TOP_COLOR))    nd->border_top_c    = style->border_top_c;
+    if (nd->border_right_w  <= 0.0f && STYLE_SET(CA_CSS_PROP_BORDER_RIGHT_WIDTH))  nd->border_right_w  = style->border_right_w;
+    if (nd->border_right_c  == 0    && STYLE_SET(CA_CSS_PROP_BORDER_RIGHT_COLOR))  nd->border_right_c  = style->border_right_c;
+    if (nd->border_bottom_w <= 0.0f && STYLE_SET(CA_CSS_PROP_BORDER_BOTTOM_WIDTH)) nd->border_bottom_w = style->border_bottom_w;
+    if (nd->border_bottom_c == 0    && STYLE_SET(CA_CSS_PROP_BORDER_BOTTOM_COLOR)) nd->border_bottom_c = style->border_bottom_c;
+    if (nd->border_left_w   <= 0.0f && STYLE_SET(CA_CSS_PROP_BORDER_LEFT_WIDTH))   nd->border_left_w   = style->border_left_w;
+    if (nd->border_left_c   == 0    && STYLE_SET(CA_CSS_PROP_BORDER_LEFT_COLOR))   nd->border_left_c   = style->border_left_c;
+    /* Per-side fallback to uniform border */
+    if (style->border_width > 0.0f) {
+        if (nd->border_top_w    <= 0.0f) nd->border_top_w    = style->border_width;
+        if (nd->border_right_w  <= 0.0f) nd->border_right_w  = style->border_width;
+        if (nd->border_bottom_w <= 0.0f) nd->border_bottom_w = style->border_width;
+        if (nd->border_left_w   <= 0.0f) nd->border_left_w   = style->border_width;
+    }
+    if (style->border_color != 0) {
+        if (nd->border_top_c    == 0) nd->border_top_c    = style->border_color;
+        if (nd->border_right_c  == 0) nd->border_right_c  = style->border_color;
+        if (nd->border_bottom_c == 0) nd->border_bottom_c = style->border_color;
+        if (nd->border_left_c   == 0) nd->border_left_c   = style->border_color;
+    }
+
+    /* Outline */
+    if (nd->outline_width  <= 0.0f && STYLE_SET(CA_CSS_PROP_OUTLINE_WIDTH))  nd->outline_width  = style->outline_width;
+    if (nd->outline_color  == 0    && STYLE_SET(CA_CSS_PROP_OUTLINE_COLOR))  nd->outline_color  = style->outline_color;
+    if (nd->outline_offset == 0.0f && STYLE_SET(CA_CSS_PROP_OUTLINE_OFFSET)) nd->outline_offset = style->outline_offset;
 
     /* Box shadow */
     if (nd->shadow_color == 0 && STYLE_SET(CA_CSS_PROP_BOX_SHADOW)) {
@@ -801,11 +972,4 @@ void ca_style_apply_to_node(const Ca_ResolvedStyle *style,
     /* Z-index */
     if (nd->z_index == 0 && STYLE_SET(CA_CSS_PROP_Z_INDEX))
         nd->z_index = (int16_t)style->z_index;
-
-    /* Text wrap */
-    if (nd->text_wrap == 0 && STYLE_SET(CA_CSS_PROP_TEXT_WRAP))
-        nd->text_wrap = (uint8_t)style->text_wrap;
-
-    /* Store transition config on the node via nd (will be copied later) */
-    /* The caller (apply_css in widget.c) reads these via the Ca_Node pointer. */
 }

@@ -501,6 +501,210 @@ static uint32_t parse_hsl_func(Parser *p, bool has_alpha)
     return (r << 24) | (g << 16) | (b << 8) | ai;
 }
 
+/* OKLCH -> linear sRGB -> gamma sRGB conversion. */
+static uint32_t parse_oklch_func(Parser *p)
+{
+    float L = 0.0f, C = 0.0f, H = 0.0f, alpha = 1.0f;
+    float vals[4] = {0, 0, 0, 1.0f};
+    int idx = 0;
+    bool after_slash = false;
+
+    while (idx < 4) {
+        skip_ws(p);
+        Token t = parser_peek(p);
+        if (t.type == TOK_RPAREN || t.type == TOK_EOF) { parser_next(p); break; }
+        if (t.type == TOK_IDENT && strcmp(t.text, "/") == 0) {
+            parser_next(p); after_slash = true; continue;
+        }
+        /* handle slash as operator */
+        parser_next(p);
+        if (t.type == TOK_NUMBER || t.type == TOK_DIMENSION) {
+            if (after_slash) { alpha = t.number; if (t.type == TOK_DIMENSION && strcmp(t.unit, "%") == 0) alpha /= 100.0f; }
+            else { vals[idx++] = t.number; if (t.type == TOK_DIMENSION && strcmp(t.unit, "%") == 0 && idx == 1) vals[idx-1] /= 100.0f; }
+        } else if (t.type == TOK_SEMICOLON || t.type == TOK_COMMA) { continue; }
+    }
+    L = vals[0]; C = vals[1]; H = vals[2];
+    if (alpha < 0) alpha = 0; if (alpha > 1) alpha = 1;
+
+    float hr = H * 3.14159265358979323846f / 180.0f;
+    float a_ok = C * cosf(hr);
+    float b_ok = C * sinf(hr);
+
+    /* OKLab -> linear sRGB via D65 matrix */
+    float ll = L + 0.3963377774f * a_ok + 0.2158037573f * b_ok;
+    float mm = L - 0.1055613458f * a_ok - 0.0638541728f * b_ok;
+    float ss = L - 0.0894841775f * a_ok - 1.2914855480f * b_ok;
+    ll = ll*ll*ll; mm = mm*mm*mm; ss = ss*ss*ss;
+
+    float lr =  4.0767416621f*ll - 3.3077115913f*mm + 0.2309699292f*ss;
+    float lg = -1.2684380046f*ll + 2.6097574011f*mm - 0.3413193965f*ss;
+    float lb = -0.0041960863f*ll - 0.7034186147f*mm + 1.7076147010f*ss;
+
+    /* Linear -> gamma sRGB */
+    #define OKLCH_GAMMA(x) ((x) <= 0.0031308f ? (x)*12.92f : 1.055f*powf((x),1.0f/2.4f)-0.055f)
+    float rf = OKLCH_GAMMA(lr); float gf = OKLCH_GAMMA(lg); float bf = OKLCH_GAMMA(lb);
+    #undef OKLCH_GAMMA
+    if (rf < 0) rf = 0; if (rf > 1) rf = 1;
+    if (gf < 0) gf = 0; if (gf > 1) gf = 1;
+    if (bf < 0) bf = 0; if (bf > 1) bf = 1;
+
+    uint32_t r = (uint32_t)(rf*255.0f+0.5f);
+    uint32_t g = (uint32_t)(gf*255.0f+0.5f);
+    uint32_t b = (uint32_t)(bf*255.0f+0.5f);
+    uint32_t ai= (uint32_t)(alpha*255.0f+0.5f);
+    if (r>255) r=255; if (g>255) g=255; if (b>255) b=255; if (ai>255) ai=255;
+    return (r<<24)|(g<<16)|(b<<8)|ai;
+}
+
+/* Blends two CSS colors with given percentage weight.
+   color-mix(in sRGB, color1 p1%, color2 p2%) */
+static uint32_t parse_color_mix_func(Parser *p)
+{
+    /* Skip "in <colorspace>," */
+    int depth = 0;
+    bool past_comma1 = false;
+    uint32_t c1 = 0xFF000000, c2 = 0xFFFFFFFF;
+    float p1 = 50.0f, p2 = 50.0f;
+    int color_idx = 0;
+
+    (void)depth;
+    /* consume "in sRGB ," */
+    skip_ws(p);
+    Token colorspace = parser_next(p); /* 'in' */
+    if (colorspace.type == TOK_IDENT && strcasecmp(colorspace.text, "in") == 0) {
+        skip_ws(p);
+        parser_next(p); /* e.g. 'sRGB' */
+        skip_ws(p);
+        Token comma = parser_next(p); /* comma */
+        (void)comma;
+    }
+    past_comma1 = true;
+    (void)past_comma1;
+
+    /* Parse up to two color entries */
+    while (color_idx < 2) {
+        skip_ws(p);
+        Token t = parser_peek(p);
+        if (t.type == TOK_RPAREN || t.type == TOK_EOF) { parser_next(p); break; }
+
+        uint32_t color = 0;
+        bool got_color = false;
+
+        if (t.type == TOK_HASH) {
+            parser_next(p);
+            color = parse_hex_color(t.text); got_color = true;
+        } else if (t.type == TOK_FUNCTION) {
+            parser_next(p);
+            if      (strcasecmp(t.text, "rgb")  == 0) { color = parse_rgb_func(p, false); got_color = true; }
+            else if (strcasecmp(t.text, "rgba") == 0) { color = parse_rgb_func(p, true);  got_color = true; }
+            else if (strcasecmp(t.text, "hsl")  == 0) { color = parse_hsl_func(p, false); got_color = true; }
+            else if (strcasecmp(t.text, "hsla") == 0) { color = parse_hsl_func(p, true);  got_color = true; }
+            else if (strcasecmp(t.text, "oklch")== 0) { color = parse_oklch_func(p);      got_color = true; }
+            else {
+                int d = 1;
+                while (d > 0) { Token tt = parser_next(p); if (tt.type == TOK_LPAREN || tt.type == TOK_FUNCTION) d++; else if (tt.type == TOK_RPAREN) d--; else if (tt.type == TOK_EOF) break; }
+            }
+        } else if (t.type == TOK_IDENT) {
+            parser_next(p);
+            if (!lookup_named_color(t.text, &color)) color = 0xFF000000;
+            got_color = true;
+        } else {
+            parser_next(p);
+            continue;
+        }
+
+        /* optional percentage following the color */
+        skip_ws(p);
+        Token pk = parser_peek(p);
+        float pct = (color_idx == 0) ? 50.0f : 50.0f;
+        if (pk.type == TOK_DIMENSION && strcmp(pk.unit, "%") == 0) {
+            parser_next(p);
+            pct = pk.number;
+        }
+
+        if (got_color) {
+            if (color_idx == 0) { c1 = color; p1 = pct; }
+            else                { c2 = color; p2 = pct; }
+            color_idx++;
+        }
+
+        skip_ws(p);
+        pk = parser_peek(p);
+        if (pk.type == TOK_COMMA) { parser_next(p); continue; }
+        if (pk.type == TOK_RPAREN) { parser_next(p); break; }
+    }
+
+    /* consume ) if still open */
+    Token t = parser_peek(p);
+    if (t.type == TOK_RPAREN) parser_next(p);
+
+    float total = p1 + p2;
+    if (total <= 0) total = 100.0f;
+    float w1 = p1 / total, w2 = p2 / total;
+
+    float r = ((c1 >> 24) & 0xFF) * w1 + ((c2 >> 24) & 0xFF) * w2;
+    float g = ((c1 >> 16) & 0xFF) * w1 + ((c2 >> 16) & 0xFF) * w2;
+    float b = ((c1 >>  8) & 0xFF) * w1 + ((c2 >>  8) & 0xFF) * w2;
+    float a = ( c1        & 0xFF) * w1 + ( c2        & 0xFF) * w2;
+
+    #define CM_CLAMP(x) ((x) > 255 ? 255 : ((x) < 0 ? 0 : (uint32_t)((x)+0.5f)))
+    return (CM_CLAMP(r) << 24) | (CM_CLAMP(g) << 16) | (CM_CLAMP(b) << 8) | CM_CLAMP(a);
+    #undef CM_CLAMP
+}
+
+/* calc() — left-associative flat expression, returns pixel value. */
+static float parse_calc_expr(Parser *p)
+{
+    float result = 0.0f;
+    char op = '+';
+    int depth = 1; /* we're already inside the first '(' */
+
+    while (1) {
+        skip_ws(p);
+        Token t = parser_next(p);
+
+        if (t.type == TOK_RPAREN || t.type == TOK_EOF) {
+            depth--;
+            if (depth <= 0) break;
+        }
+        if (t.type == TOK_LPAREN || t.type == TOK_FUNCTION) {
+            depth++;
+            float inner = parse_calc_expr(p);
+            float term = inner;
+            if      (op == '+') result += term;
+            else if (op == '-') result -= term;
+            else if (op == '*') result *= term;
+            else if (op == '/' && inner != 0.0f) result /= inner;
+            continue;
+        }
+        if (t.type == TOK_NUMBER || t.type == TOK_DIMENSION) {
+            float v = t.number;
+            if (t.type == TOK_DIMENSION) {
+                if      (strcmp(t.unit, "em")  == 0) v *= 16.0f;
+                else if (strcmp(t.unit, "rem") == 0) v *= 16.0f;
+                else if (strcmp(t.unit, "vw")  == 0) v *= 19.2f;
+                else if (strcmp(t.unit, "vh")  == 0) v *= 10.8f;
+                else if (strcmp(t.unit, "pt")  == 0) v *= (96.0f/72.0f);
+                else if (strcmp(t.unit, "cm")  == 0) v *= 37.795f;
+                else if (strcmp(t.unit, "mm")  == 0) v *= 3.7795f;
+                else if (strcmp(t.unit, "in")  == 0) v *= 96.0f;
+            }
+            if      (op == '+') result += v;
+            else if (op == '-') result -= v;
+            else if (op == '*') result *= v;
+            else if (op == '/' && v != 0.0f) result /= v;
+            else if (op == 0) result = v;
+            op = 0;
+            continue;
+        }
+        if (t.type == TOK_PLUS)  { op = '+'; continue; }
+        if (t.type == TOK_MINUS) { op = '-'; continue; }
+        if (t.type == TOK_STAR)  { op = '*'; continue; }
+        /* '/' would need a special token — skip unknown */
+    }
+    return result;
+}
+
 /* ============================================================
    STRING POOL (intern var-name strings in stylesheet)
    ============================================================ */
@@ -539,52 +743,86 @@ const char *ca_css_str(const Ca_Stylesheet *ss, int offset)
 static Ca_CssPropId lookup_property(const char *name)
 {
     struct { const char *n; Ca_CssPropId id; } props[] = {
-        { "width",            CA_CSS_PROP_WIDTH },
-        { "height",           CA_CSS_PROP_HEIGHT },
-        { "min-width",        CA_CSS_PROP_MIN_WIDTH },
-        { "max-width",        CA_CSS_PROP_MAX_WIDTH },
-        { "min-height",       CA_CSS_PROP_MIN_HEIGHT },
-        { "max-height",       CA_CSS_PROP_MAX_HEIGHT },
-        { "padding-top",      CA_CSS_PROP_PADDING_TOP },
-        { "padding-right",    CA_CSS_PROP_PADDING_RIGHT },
-        { "padding-bottom",   CA_CSS_PROP_PADDING_BOTTOM },
-        { "padding-left",     CA_CSS_PROP_PADDING_LEFT },
-        { "margin-top",       CA_CSS_PROP_MARGIN_TOP },
-        { "margin-right",     CA_CSS_PROP_MARGIN_RIGHT },
-        { "margin-bottom",    CA_CSS_PROP_MARGIN_BOTTOM },
-        { "margin-left",      CA_CSS_PROP_MARGIN_LEFT },
-        { "gap",              CA_CSS_PROP_GAP },
-        { "display",          CA_CSS_PROP_DISPLAY },
-        { "flex-direction",   CA_CSS_PROP_FLEX_DIRECTION },
-        { "flex-wrap",        CA_CSS_PROP_FLEX_WRAP },
-        { "align-items",      CA_CSS_PROP_ALIGN_ITEMS },
-        { "justify-content",  CA_CSS_PROP_JUSTIFY_CONTENT },
-        { "flex-grow",        CA_CSS_PROP_FLEX_GROW },
-        { "flex-shrink",      CA_CSS_PROP_FLEX_SHRINK },
-        { "background-color", CA_CSS_PROP_BACKGROUND_COLOR },
-        { "background",       CA_CSS_PROP_BACKGROUND_COLOR },
-        { "color",            CA_CSS_PROP_COLOR },
-        { "border-radius",    CA_CSS_PROP_BORDER_RADIUS },
-        { "opacity",          CA_CSS_PROP_OPACITY },
-        { "font-size",        CA_CSS_PROP_FONT_SIZE },
-        { "font-weight",      CA_CSS_PROP_FONT_WEIGHT },
-        { "text-align",       CA_CSS_PROP_TEXT_ALIGN },
-        { "overflow",         CA_CSS_PROP_OVERFLOW },
-        { "overflow-x",       CA_CSS_PROP_OVERFLOW_X },
-        { "overflow-y",       CA_CSS_PROP_OVERFLOW_Y },
-        { "border-width",        CA_CSS_PROP_BORDER_WIDTH },
-        { "border-color",        CA_CSS_PROP_BORDER_COLOR },
-        { "border-top-width",    CA_CSS_PROP_BORDER_TOP_WIDTH },
-        { "border-top-color",    CA_CSS_PROP_BORDER_TOP_COLOR },
-        { "border-right-width",  CA_CSS_PROP_BORDER_RIGHT_WIDTH },
-        { "border-right-color",  CA_CSS_PROP_BORDER_RIGHT_COLOR },
-        { "border-bottom-width", CA_CSS_PROP_BORDER_BOTTOM_WIDTH },
-        { "border-bottom-color", CA_CSS_PROP_BORDER_BOTTOM_COLOR },
-        { "border-left-width",   CA_CSS_PROP_BORDER_LEFT_WIDTH },
-        { "border-left-color",   CA_CSS_PROP_BORDER_LEFT_COLOR },
-        { "box-shadow",          CA_CSS_PROP_BOX_SHADOW },
-        { "z-index",          CA_CSS_PROP_Z_INDEX },
-        { "text-wrap",        CA_CSS_PROP_TEXT_WRAP },
+        { "width",                     CA_CSS_PROP_WIDTH },
+        { "height",                    CA_CSS_PROP_HEIGHT },
+        { "min-width",                 CA_CSS_PROP_MIN_WIDTH },
+        { "max-width",                 CA_CSS_PROP_MAX_WIDTH },
+        { "min-height",                CA_CSS_PROP_MIN_HEIGHT },
+        { "max-height",                CA_CSS_PROP_MAX_HEIGHT },
+        { "padding-top",               CA_CSS_PROP_PADDING_TOP },
+        { "padding-right",             CA_CSS_PROP_PADDING_RIGHT },
+        { "padding-bottom",            CA_CSS_PROP_PADDING_BOTTOM },
+        { "padding-left",              CA_CSS_PROP_PADDING_LEFT },
+        { "margin-top",                CA_CSS_PROP_MARGIN_TOP },
+        { "margin-right",              CA_CSS_PROP_MARGIN_RIGHT },
+        { "margin-bottom",             CA_CSS_PROP_MARGIN_BOTTOM },
+        { "margin-left",               CA_CSS_PROP_MARGIN_LEFT },
+        { "gap",                       CA_CSS_PROP_GAP },
+        { "row-gap",                   CA_CSS_PROP_ROW_GAP },
+        { "column-gap",                CA_CSS_PROP_COLUMN_GAP },
+        { "display",                   CA_CSS_PROP_DISPLAY },
+        { "flex-direction",            CA_CSS_PROP_FLEX_DIRECTION },
+        { "flex-wrap",                 CA_CSS_PROP_FLEX_WRAP },
+        { "align-items",               CA_CSS_PROP_ALIGN_ITEMS },
+        { "align-self",                CA_CSS_PROP_ALIGN_SELF },
+        { "align-content",             CA_CSS_PROP_ALIGN_CONTENT },
+        { "justify-content",           CA_CSS_PROP_JUSTIFY_CONTENT },
+        { "justify-self",              CA_CSS_PROP_JUSTIFY_SELF },
+        { "flex-grow",                 CA_CSS_PROP_FLEX_GROW },
+        { "flex-shrink",               CA_CSS_PROP_FLEX_SHRINK },
+        { "flex-basis",                CA_CSS_PROP_FLEX_BASIS },
+        { "order",                     CA_CSS_PROP_ORDER },
+        { "background-color",          CA_CSS_PROP_BACKGROUND_COLOR },
+        { "background",                CA_CSS_PROP_BACKGROUND_COLOR },
+        { "color",                     CA_CSS_PROP_COLOR },
+        { "border-radius",             CA_CSS_PROP_BORDER_RADIUS },
+        { "border-top-left-radius",    CA_CSS_PROP_BORDER_TOP_LEFT_RADIUS },
+        { "border-top-right-radius",   CA_CSS_PROP_BORDER_TOP_RIGHT_RADIUS },
+        { "border-bottom-right-radius",CA_CSS_PROP_BORDER_BOTTOM_RIGHT_RADIUS },
+        { "border-bottom-left-radius", CA_CSS_PROP_BORDER_BOTTOM_LEFT_RADIUS },
+        { "opacity",                   CA_CSS_PROP_OPACITY },
+        { "visibility",                CA_CSS_PROP_VISIBILITY },
+        { "font-size",                 CA_CSS_PROP_FONT_SIZE },
+        { "font-weight",               CA_CSS_PROP_FONT_WEIGHT },
+        { "font-style",                CA_CSS_PROP_FONT_STYLE },
+        { "line-height",               CA_CSS_PROP_LINE_HEIGHT },
+        { "letter-spacing",            CA_CSS_PROP_LETTER_SPACING },
+        { "word-spacing",              CA_CSS_PROP_WORD_SPACING },
+        { "text-align",                CA_CSS_PROP_TEXT_ALIGN },
+        { "text-decoration",           CA_CSS_PROP_TEXT_DECORATION },
+        { "text-transform",            CA_CSS_PROP_TEXT_TRANSFORM },
+        { "white-space",               CA_CSS_PROP_WHITE_SPACE },
+        { "overflow",                  CA_CSS_PROP_OVERFLOW },
+        { "overflow-x",                CA_CSS_PROP_OVERFLOW_X },
+        { "overflow-y",                CA_CSS_PROP_OVERFLOW_Y },
+        { "border-width",              CA_CSS_PROP_BORDER_WIDTH },
+        { "border-color",              CA_CSS_PROP_BORDER_COLOR },
+        { "border-style",              CA_CSS_PROP_BORDER_STYLE },
+        { "border-top-width",          CA_CSS_PROP_BORDER_TOP_WIDTH },
+        { "border-top-color",          CA_CSS_PROP_BORDER_TOP_COLOR },
+        { "border-top-style",          CA_CSS_PROP_BORDER_TOP_STYLE },
+        { "border-right-width",        CA_CSS_PROP_BORDER_RIGHT_WIDTH },
+        { "border-right-color",        CA_CSS_PROP_BORDER_RIGHT_COLOR },
+        { "border-right-style",        CA_CSS_PROP_BORDER_RIGHT_STYLE },
+        { "border-bottom-width",       CA_CSS_PROP_BORDER_BOTTOM_WIDTH },
+        { "border-bottom-color",       CA_CSS_PROP_BORDER_BOTTOM_COLOR },
+        { "border-bottom-style",       CA_CSS_PROP_BORDER_BOTTOM_STYLE },
+        { "border-left-width",         CA_CSS_PROP_BORDER_LEFT_WIDTH },
+        { "border-left-color",         CA_CSS_PROP_BORDER_LEFT_COLOR },
+        { "border-left-style",         CA_CSS_PROP_BORDER_LEFT_STYLE },
+        { "outline-width",             CA_CSS_PROP_OUTLINE_WIDTH },
+        { "outline-color",             CA_CSS_PROP_OUTLINE_COLOR },
+        { "outline-style",             CA_CSS_PROP_OUTLINE_STYLE },
+        { "outline-offset",            CA_CSS_PROP_OUTLINE_OFFSET },
+        { "box-shadow",                CA_CSS_PROP_BOX_SHADOW },
+        { "z-index",                   CA_CSS_PROP_Z_INDEX },
+        { "text-wrap",                 CA_CSS_PROP_TEXT_WRAP },
+        { "aspect-ratio",              CA_CSS_PROP_ASPECT_RATIO },
+        { "box-sizing",                CA_CSS_PROP_BOX_SIZING },
+        { "cursor",                    CA_CSS_PROP_CURSOR },
+        { "pointer-events",            CA_CSS_PROP_POINTER_EVENTS },
+        { "user-select",               CA_CSS_PROP_USER_SELECT },
+        { "scroll-behavior",           CA_CSS_PROP_SCROLL_BEHAVIOR },
     };
     int count = (int)(sizeof(props) / sizeof(props[0]));
     for (int i = 0; i < count; ++i) {
@@ -652,16 +890,109 @@ static bool lookup_keyword(const char *name, Ca_CssPropId prop, int *out)
     };
     /* font-weight */
     static Ca_KwEntry fontweight_kw[] = {
-        { "normal", 0 },
-        { "bold",   1 },
-        { "100",    0 }, { "200", 0 }, { "300", 0 }, { "400", 0 },
-        { "500",    0 }, { "600", 1 }, { "700", 1 }, { "800", 1 }, { "900", 1 },
+        { "normal",  CA_CSS_FONT_WEIGHT_NORMAL },
+        { "bold",    CA_CSS_FONT_WEIGHT_BOLD },
+        { "lighter", CA_CSS_FONT_WEIGHT_LIGHTER },
+        { "bolder",  CA_CSS_FONT_WEIGHT_BOLDER },
+    };
+    /* font-style */
+    static Ca_KwEntry fontstyle_kw[] = {
+        { "normal",  CA_CSS_FONT_STYLE_NORMAL },
+        { "italic",  CA_CSS_FONT_STYLE_ITALIC },
+        { "oblique", CA_CSS_FONT_STYLE_OBLIQUE },
     };
     /* text-align */
     static Ca_KwEntry textalign_kw[] = {
-        { "left",   CA_CSS_TEXT_ALIGN_LEFT },
-        { "center", CA_CSS_TEXT_ALIGN_CENTER },
-        { "right",  CA_CSS_TEXT_ALIGN_RIGHT },
+        { "left",    CA_CSS_TEXT_ALIGN_LEFT },
+        { "center",  CA_CSS_TEXT_ALIGN_CENTER },
+        { "right",   CA_CSS_TEXT_ALIGN_RIGHT },
+        { "start",   CA_CSS_TEXT_ALIGN_START },
+        { "end",     CA_CSS_TEXT_ALIGN_END },
+        { "justify", CA_CSS_TEXT_ALIGN_JUSTIFY },
+    };
+    /* text-decoration */
+    static Ca_KwEntry textdeco_kw[] = {
+        { "none",         CA_CSS_TEXT_DECORATION_NONE },
+        { "underline",    CA_CSS_TEXT_DECORATION_UNDERLINE },
+        { "line-through", CA_CSS_TEXT_DECORATION_LINE_THROUGH },
+        { "overline",     CA_CSS_TEXT_DECORATION_OVERLINE },
+    };
+    /* text-transform */
+    static Ca_KwEntry texttrans_kw[] = {
+        { "none",       CA_CSS_TEXT_TRANSFORM_NONE },
+        { "uppercase",  CA_CSS_TEXT_TRANSFORM_UPPERCASE },
+        { "lowercase",  CA_CSS_TEXT_TRANSFORM_LOWERCASE },
+        { "capitalize", CA_CSS_TEXT_TRANSFORM_CAPITALIZE },
+    };
+    /* white-space */
+    static Ca_KwEntry whitespace_kw[] = {
+        { "normal",   CA_CSS_WHITE_SPACE_NORMAL },
+        { "nowrap",   CA_CSS_WHITE_SPACE_NOWRAP },
+        { "pre",      CA_CSS_WHITE_SPACE_PRE },
+        { "pre-line", CA_CSS_WHITE_SPACE_PRE_LINE },
+        { "pre-wrap", CA_CSS_WHITE_SPACE_PRE_WRAP },
+    };
+    /* visibility */
+    static Ca_KwEntry visibility_kw[] = {
+        { "visible",  CA_CSS_VISIBILITY_VISIBLE },
+        { "hidden",   CA_CSS_VISIBILITY_HIDDEN },
+        { "collapse", CA_CSS_VISIBILITY_COLLAPSE },
+    };
+    /* border-style */
+    static Ca_KwEntry borderstyle_kw[] = {
+        { "none",   CA_CSS_BORDER_NONE },
+        { "solid",  CA_CSS_BORDER_SOLID },
+        { "dashed", CA_CSS_BORDER_DASHED },
+        { "dotted", CA_CSS_BORDER_DOTTED },
+        { "double", CA_CSS_BORDER_DOUBLE },
+        { "groove", CA_CSS_BORDER_GROOVE },
+        { "ridge",  CA_CSS_BORDER_RIDGE },
+        { "inset",  CA_CSS_BORDER_INSET },
+        { "outset", CA_CSS_BORDER_OUTSET },
+        { "hidden", CA_CSS_BORDER_HIDDEN },
+    };
+    /* box-sizing */
+    static Ca_KwEntry boxsizing_kw[] = {
+        { "content-box", CA_CSS_BOX_SIZING_CONTENT_BOX },
+        { "border-box",  CA_CSS_BOX_SIZING_BORDER_BOX },
+    };
+    /* cursor */
+    static Ca_KwEntry cursor_kw[] = {
+        { "auto",       CA_CSS_CURSOR_AUTO },
+        { "default",    CA_CSS_CURSOR_DEFAULT },
+        { "pointer",    CA_CSS_CURSOR_POINTER },
+        { "crosshair",  CA_CSS_CURSOR_CROSSHAIR },
+        { "move",       CA_CSS_CURSOR_MOVE },
+        { "text",       CA_CSS_CURSOR_TEXT },
+        { "wait",       CA_CSS_CURSOR_WAIT },
+        { "help",       CA_CSS_CURSOR_HELP },
+        { "not-allowed",CA_CSS_CURSOR_NOT_ALLOWED },
+        { "grab",       CA_CSS_CURSOR_GRAB },
+        { "grabbing",   CA_CSS_CURSOR_GRABBING },
+        { "ew-resize",  CA_CSS_CURSOR_EW_RESIZE },
+        { "ns-resize",  CA_CSS_CURSOR_NS_RESIZE },
+        { "nwse-resize",CA_CSS_CURSOR_NWSE_RESIZE },
+        { "nesw-resize",CA_CSS_CURSOR_NESW_RESIZE },
+        { "col-resize", CA_CSS_CURSOR_COL_RESIZE },
+        { "row-resize", CA_CSS_CURSOR_ROW_RESIZE },
+        { "none",       CA_CSS_CURSOR_NONE },
+    };
+    /* pointer-events */
+    static Ca_KwEntry ptrevents_kw[] = {
+        { "auto", CA_CSS_POINTER_EVENTS_AUTO },
+        { "none", CA_CSS_POINTER_EVENTS_NONE },
+    };
+    /* user-select */
+    static Ca_KwEntry usersel_kw[] = {
+        { "auto", CA_CSS_USER_SELECT_AUTO },
+        { "none", CA_CSS_USER_SELECT_NONE },
+        { "text", CA_CSS_USER_SELECT_TEXT },
+        { "all",  CA_CSS_USER_SELECT_ALL },
+    };
+    /* scroll-behavior */
+    static Ca_KwEntry scrollbeh_kw[] = {
+        { "auto",   CA_CSS_SCROLL_AUTO },
+        { "smooth", CA_CSS_SCROLL_SMOOTH },
     };
 
     switch (prop) {
@@ -672,17 +1003,47 @@ static bool lookup_keyword(const char *name, Ca_CssPropId prop, int *out)
         case CA_CSS_PROP_FLEX_WRAP:
             tbl = wrap_kw; count = 2; break;
         case CA_CSS_PROP_ALIGN_ITEMS:
-            tbl = align_kw; count = 6; break;
+        case CA_CSS_PROP_ALIGN_SELF:
+        case CA_CSS_PROP_ALIGN_CONTENT:
+        case CA_CSS_PROP_JUSTIFY_SELF:
+            tbl = align_kw; count = (int)(sizeof(align_kw)/sizeof(align_kw[0])); break;
         case CA_CSS_PROP_JUSTIFY_CONTENT:
-            tbl = justify_kw; count = 8; break;
+            tbl = justify_kw; count = (int)(sizeof(justify_kw)/sizeof(justify_kw[0])); break;
         case CA_CSS_PROP_OVERFLOW:
         case CA_CSS_PROP_OVERFLOW_X:
         case CA_CSS_PROP_OVERFLOW_Y:
             tbl = overflow_kw; count = 4; break;
         case CA_CSS_PROP_TEXT_ALIGN:
-            tbl = textalign_kw; count = 3; break;
+            tbl = textalign_kw; count = (int)(sizeof(textalign_kw)/sizeof(textalign_kw[0])); break;
         case CA_CSS_PROP_FONT_WEIGHT:
-            tbl = fontweight_kw; count = 10; break;
+            tbl = fontweight_kw; count = (int)(sizeof(fontweight_kw)/sizeof(fontweight_kw[0])); break;
+        case CA_CSS_PROP_FONT_STYLE:
+            tbl = fontstyle_kw; count = 3; break;
+        case CA_CSS_PROP_TEXT_DECORATION:
+            tbl = textdeco_kw; count = 4; break;
+        case CA_CSS_PROP_TEXT_TRANSFORM:
+            tbl = texttrans_kw; count = 4; break;
+        case CA_CSS_PROP_WHITE_SPACE:
+            tbl = whitespace_kw; count = 5; break;
+        case CA_CSS_PROP_VISIBILITY:
+            tbl = visibility_kw; count = 3; break;
+        case CA_CSS_PROP_BORDER_STYLE:
+        case CA_CSS_PROP_BORDER_TOP_STYLE:
+        case CA_CSS_PROP_BORDER_RIGHT_STYLE:
+        case CA_CSS_PROP_BORDER_BOTTOM_STYLE:
+        case CA_CSS_PROP_BORDER_LEFT_STYLE:
+        case CA_CSS_PROP_OUTLINE_STYLE:
+            tbl = borderstyle_kw; count = (int)(sizeof(borderstyle_kw)/sizeof(borderstyle_kw[0])); break;
+        case CA_CSS_PROP_BOX_SIZING:
+            tbl = boxsizing_kw; count = 2; break;
+        case CA_CSS_PROP_CURSOR:
+            tbl = cursor_kw; count = (int)(sizeof(cursor_kw)/sizeof(cursor_kw[0])); break;
+        case CA_CSS_PROP_POINTER_EVENTS:
+            tbl = ptrevents_kw; count = 2; break;
+        case CA_CSS_PROP_USER_SELECT:
+            tbl = usersel_kw; count = 4; break;
+        case CA_CSS_PROP_SCROLL_BEHAVIOR:
+            tbl = scrollbeh_kw; count = 2; break;
         case CA_CSS_PROP_TEXT_WRAP:
             tbl = wrap_kw; count = 2; break;
         default: return false;
@@ -734,6 +1095,24 @@ static Ca_CssValue parse_value(Parser *p, Ca_CssPropId prop)
             val.color = parse_hsl_func(p, true);
             return val;
         }
+        if (strcasecmp(t.text, "oklch") == 0) {
+            val.type  = CA_CSS_VAL_COLOR;
+            val.color = parse_oklch_func(p);
+            return val;
+        }
+        if (strcasecmp(t.text, "color-mix") == 0) {
+            val.type  = CA_CSS_VAL_COLOR;
+            val.color = parse_color_mix_func(p);
+            return val;
+        }
+        if (strcasecmp(t.text, "calc") == 0 ||
+            strcasecmp(t.text, "min")  == 0 ||
+            strcasecmp(t.text, "max")  == 0 ||
+            strcasecmp(t.text, "clamp") == 0) {
+            val.type   = CA_CSS_VAL_PX;
+            val.number = parse_calc_expr(p);
+            return val;
+        }
         if (strcasecmp(t.text, "var") == 0) {
             /* var(--name [, fallback]) */
             skip_ws(p);
@@ -779,6 +1158,33 @@ static Ca_CssValue parse_value(Parser *p, Ca_CssPropId prop)
         if (strcmp(t.unit, "%") == 0) {
             val.type   = CA_CSS_VAL_PERCENT;
             val.number = t.number;
+        } else if (strcmp(t.unit, "em") == 0) {
+            val.type   = CA_CSS_VAL_EM;
+            val.number = t.number;
+        } else if (strcmp(t.unit, "rem") == 0) {
+            val.type   = CA_CSS_VAL_REM;
+            val.number = t.number;
+        } else if (strcmp(t.unit, "vw") == 0) {
+            val.type   = CA_CSS_VAL_VW;
+            val.number = t.number;
+        } else if (strcmp(t.unit, "vh") == 0) {
+            val.type   = CA_CSS_VAL_VH;
+            val.number = t.number;
+        } else if (strcmp(t.unit, "pt") == 0) {
+            val.type   = CA_CSS_VAL_PX;
+            val.number = t.number * (96.0f / 72.0f);
+        } else if (strcmp(t.unit, "pc") == 0) {
+            val.type   = CA_CSS_VAL_PX;
+            val.number = t.number * 16.0f;
+        } else if (strcmp(t.unit, "cm") == 0) {
+            val.type   = CA_CSS_VAL_PX;
+            val.number = t.number * 37.795f;
+        } else if (strcmp(t.unit, "mm") == 0) {
+            val.type   = CA_CSS_VAL_PX;
+            val.number = t.number * 3.7795f;
+        } else if (strcmp(t.unit, "in") == 0) {
+            val.type   = CA_CSS_VAL_PX;
+            val.number = t.number * 96.0f;
         } else {
             val.type   = CA_CSS_VAL_PX;
             val.number = t.number;
@@ -789,6 +1195,20 @@ static Ca_CssValue parse_value(Parser *p, Ca_CssPropId prop)
     if (t.type == TOK_IDENT) {
         if (strcasecmp(t.text, "auto") == 0) {
             val.type = CA_CSS_VAL_AUTO;
+            return val;
+        }
+        if (strcasecmp(t.text, "inherit") == 0) {
+            val.type = CA_CSS_VAL_INHERIT;
+            return val;
+        }
+        if (strcasecmp(t.text, "initial") == 0 ||
+            strcasecmp(t.text, "unset")   == 0) {
+            val.type = CA_CSS_VAL_INITIAL;
+            return val;
+        }
+        if (strcasecmp(t.text, "currentColor") == 0 ||
+            strcasecmp(t.text, "currentcolor") == 0) {
+            val.type = CA_CSS_VAL_CURRENT_COLOR;
             return val;
         }
         /* Try named color */
@@ -1141,6 +1561,168 @@ static void parse_declarations(Parser *p, Ca_CssRule *rule)
 
             skip_ws(p);
             t = parser_peek(p);
+            if (t.type == TOK_SEMICOLON) parser_next(p);
+            continue;
+        }
+
+        /* gap shorthand: gap: <row-gap> [<column-gap>] */
+        if (strcasecmp(prop_name, "gap") == 0) {
+            int from = rule->decl_count;
+            Ca_CssValue v1 = parse_value(p, CA_CSS_PROP_ROW_GAP);
+            skip_ws(p);
+            Token pk = parser_peek(p);
+            if (pk.type != TOK_SEMICOLON && pk.type != TOK_RBRACE && pk.type != TOK_EOF && pk.type != TOK_BANG) {
+                Ca_CssValue v2 = parse_value(p, CA_CSS_PROP_COLUMN_GAP);
+                add_decl(rule, CA_CSS_PROP_ROW_GAP, v1);
+                add_decl(rule, CA_CSS_PROP_COLUMN_GAP, v2);
+            } else {
+                add_decl(rule, CA_CSS_PROP_GAP, v1);
+                add_decl(rule, CA_CSS_PROP_ROW_GAP, v1);
+                add_decl(rule, CA_CSS_PROP_COLUMN_GAP, v1);
+            }
+            consume_important(p, rule, from);
+            skip_ws(p); t = parser_peek(p);
+            if (t.type == TOK_SEMICOLON) parser_next(p);
+            continue;
+        }
+
+        /* border-radius shorthand: border-radius: <tl> [<tr> [<br> [<bl>]]] [/ <vert>] */
+        if (strcasecmp(prop_name, "border-radius") == 0) {
+            int from = rule->decl_count;
+            Ca_CssValue h[4] = {0}; int hcount = 0;
+
+            while (hcount < 4) {
+                skip_ws(p);
+                Token pk = parser_peek(p);
+                if (pk.type == TOK_SEMICOLON || pk.type == TOK_RBRACE || pk.type == TOK_EOF || pk.type == TOK_BANG) break;
+                /* slash separates horizontal from vertical — treat as end for simplicity (average later) */
+                if (pk.type == TOK_IDENT && strcmp(pk.text, "/") == 0) { parser_next(p); break; }
+                h[hcount++] = parse_value(p, CA_CSS_PROP_BORDER_RADIUS);
+            }
+            /* Skip vertical part if present */
+            while (1) {
+                skip_ws(p);
+                Token pk = parser_peek(p);
+                if (pk.type == TOK_SEMICOLON || pk.type == TOK_RBRACE || pk.type == TOK_EOF || pk.type == TOK_BANG) break;
+                parser_next(p);
+            }
+
+            Ca_CssValue tl, tr, br, bl;
+            if (hcount == 0) { Ca_CssValue z = {0}; tl=tr=br=bl=z; }
+            else if (hcount == 1) { tl=tr=br=bl=h[0]; }
+            else if (hcount == 2) { tl=br=h[0]; tr=bl=h[1]; }
+            else if (hcount == 3) { tl=h[0]; tr=bl=h[1]; br=h[2]; }
+            else                  { tl=h[0]; tr=h[1]; br=h[2]; bl=h[3]; }
+
+            add_decl(rule, CA_CSS_PROP_BORDER_RADIUS, tl); /* uniform fallback */
+            add_decl(rule, CA_CSS_PROP_BORDER_TOP_LEFT_RADIUS,     tl);
+            add_decl(rule, CA_CSS_PROP_BORDER_TOP_RIGHT_RADIUS,    tr);
+            add_decl(rule, CA_CSS_PROP_BORDER_BOTTOM_RIGHT_RADIUS, br);
+            add_decl(rule, CA_CSS_PROP_BORDER_BOTTOM_LEFT_RADIUS,  bl);
+            consume_important(p, rule, from);
+            skip_ws(p); t = parser_peek(p);
+            if (t.type == TOK_SEMICOLON) parser_next(p);
+            continue;
+        }
+
+        /* outline shorthand: outline: <width> [<style>] [<color>] */
+        if (strcasecmp(prop_name, "outline") == 0) {
+            int from = rule->decl_count;
+            bool got_w = false, got_c = false;
+            while (1) {
+                skip_ws(p);
+                Token pk = parser_peek(p);
+                if (pk.type == TOK_SEMICOLON || pk.type == TOK_RBRACE || pk.type == TOK_EOF || pk.type == TOK_BANG) break;
+                Ca_CssValue ov = parse_value(p, CA_CSS_PROP_NONE);
+                if (ov.type == CA_CSS_VAL_COLOR && !got_c) {
+                    add_decl(rule, CA_CSS_PROP_OUTLINE_COLOR, ov); got_c = true;
+                } else if ((ov.type == CA_CSS_VAL_PX || ov.type == CA_CSS_VAL_NUMBER) && !got_w) {
+                    add_decl(rule, CA_CSS_PROP_OUTLINE_WIDTH, ov); got_w = true;
+                }
+            }
+            consume_important(p, rule, from);
+            skip_ws(p); t = parser_peek(p);
+            if (t.type == TOK_SEMICOLON) parser_next(p);
+            continue;
+        }
+
+        /* flex shorthand: flex: none | auto | <grow> [<shrink> [<basis>]] */
+        if (strcasecmp(prop_name, "flex") == 0 && prop_id == CA_CSS_PROP_NONE) {
+            int from = rule->decl_count;
+            skip_ws(p);
+            Token pk = parser_peek(p);
+            if (pk.type == TOK_IDENT &&
+                (strcasecmp(pk.text, "none") == 0 || strcasecmp(pk.text, "auto") == 0)) {
+                parser_next(p);
+                bool is_auto = (strcasecmp(pk.text, "auto") == 0);
+                Ca_CssValue gv = {0}, sv = {0};
+                gv.type = CA_CSS_VAL_NUMBER; gv.number = is_auto ? 1.0f : 0.0f;
+                sv.type = CA_CSS_VAL_NUMBER; sv.number = is_auto ? 1.0f : 0.0f;
+                add_decl(rule, CA_CSS_PROP_FLEX_GROW, gv);
+                add_decl(rule, CA_CSS_PROP_FLEX_SHRINK, sv);
+            } else {
+                Ca_CssValue vals[3] = {0}; int vc = 0;
+                while (vc < 3) {
+                    skip_ws(p);
+                    pk = parser_peek(p);
+                    if (pk.type == TOK_SEMICOLON || pk.type == TOK_RBRACE || pk.type == TOK_EOF || pk.type == TOK_BANG) break;
+                    vals[vc++] = parse_value(p, CA_CSS_PROP_NONE);
+                }
+                if (vc >= 1) { Ca_CssValue gv = vals[0]; gv.type = CA_CSS_VAL_NUMBER; add_decl(rule, CA_CSS_PROP_FLEX_GROW,   gv); }
+                if (vc >= 2) { Ca_CssValue sv = vals[1]; sv.type = CA_CSS_VAL_NUMBER; add_decl(rule, CA_CSS_PROP_FLEX_SHRINK, sv); }
+                if (vc >= 3) add_decl(rule, CA_CSS_PROP_FLEX_BASIS, vals[2]);
+            }
+            consume_important(p, rule, from);
+            skip_ws(p); t = parser_peek(p);
+            if (t.type == TOK_SEMICOLON) parser_next(p);
+            continue;
+        }
+
+        /* flex-flow shorthand: flex-flow: <direction> [<wrap>] */
+        if (strcasecmp(prop_name, "flex-flow") == 0) {
+            int from = rule->decl_count;
+            Ca_CssValue dv = parse_value(p, CA_CSS_PROP_FLEX_DIRECTION);
+            add_decl(rule, CA_CSS_PROP_FLEX_DIRECTION, dv);
+            skip_ws(p);
+            Token pk = parser_peek(p);
+            if (pk.type != TOK_SEMICOLON && pk.type != TOK_RBRACE && pk.type != TOK_EOF && pk.type != TOK_BANG) {
+                Ca_CssValue wv = parse_value(p, CA_CSS_PROP_FLEX_WRAP);
+                add_decl(rule, CA_CSS_PROP_FLEX_WRAP, wv);
+            }
+            consume_important(p, rule, from);
+            skip_ws(p); t = parser_peek(p);
+            if (t.type == TOK_SEMICOLON) parser_next(p);
+            continue;
+        }
+
+        /* place-items shorthand: place-items: <align-items> [<justify-items>] */
+        if (strcasecmp(prop_name, "place-items") == 0) {
+            int from = rule->decl_count;
+            Ca_CssValue av = parse_value(p, CA_CSS_PROP_ALIGN_ITEMS);
+            add_decl(rule, CA_CSS_PROP_ALIGN_ITEMS, av);
+            skip_ws(p);
+            Token pk = parser_peek(p);
+            if (pk.type != TOK_SEMICOLON && pk.type != TOK_RBRACE && pk.type != TOK_EOF && pk.type != TOK_BANG)
+                parser_next(p); /* consume justify-items (not stored, not in our model) */
+            consume_important(p, rule, from);
+            skip_ws(p); t = parser_peek(p);
+            if (t.type == TOK_SEMICOLON) parser_next(p);
+            continue;
+        }
+
+        /* place-content shorthand: place-content: <align-content> [<justify-content>] */
+        if (strcasecmp(prop_name, "place-content") == 0) {
+            int from = rule->decl_count;
+            Ca_CssValue av = parse_value(p, CA_CSS_PROP_ALIGN_CONTENT);
+            add_decl(rule, CA_CSS_PROP_ALIGN_CONTENT, av);
+            skip_ws(p);
+            Token pk = parser_peek(p);
+            if (pk.type != TOK_SEMICOLON && pk.type != TOK_RBRACE && pk.type != TOK_EOF && pk.type != TOK_BANG) {
+                Ca_CssValue jv = parse_value(p, CA_CSS_PROP_JUSTIFY_CONTENT);
+                add_decl(rule, CA_CSS_PROP_JUSTIFY_CONTENT, jv);
+            }
+            consume_important(p, rule, from);
+            skip_ws(p); t = parser_peek(p);
             if (t.type == TOK_SEMICOLON) parser_next(p);
             continue;
         }

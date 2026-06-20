@@ -22,12 +22,20 @@ typedef enum {
     CA_CSS_VAL_NUMBER,
     CA_CSS_VAL_VAR,        /* unresolved var(--name) — `keyword` is offset into
                               the stylesheet string pool holding the var name. */
+    CA_CSS_VAL_EM,         /* relative to current font-size */
+    CA_CSS_VAL_REM,        /* relative to root font-size (16px default) */
+    CA_CSS_VAL_VW,         /* viewport width percent */
+    CA_CSS_VAL_VH,         /* viewport height percent */
+    CA_CSS_VAL_CALC,       /* calc() — resolved to px at apply time */
+    CA_CSS_VAL_INHERIT,    /* inherit from parent */
+    CA_CSS_VAL_CURRENT_COLOR, /* currentColor — resolved from color property */
+    CA_CSS_VAL_INITIAL,    /* initial / unset */
 } Ca_CssValType;
 
 typedef struct {
     Ca_CssValType type;
     union {
-        float    number;     /* CA_CSS_VAL_PX, CA_CSS_VAL_PERCENT, CA_CSS_VAL_NUMBER */
+        float    number;     /* CA_CSS_VAL_PX, CA_CSS_VAL_PERCENT, CA_CSS_VAL_NUMBER, EM, REM, VW, VH, CALC */
         uint32_t color;      /* CA_CSS_VAL_COLOR — RRGGBBAA packed */
     };
     int keyword;             /* CA_CSS_VAL_KEYWORD; string-pool offset for CA_CSS_VAL_VAR;
@@ -61,23 +69,42 @@ typedef enum {
     CA_CSS_PROP_MARGIN_LEFT,
     /* Gap */
     CA_CSS_PROP_GAP,
+    CA_CSS_PROP_ROW_GAP,
+    CA_CSS_PROP_COLUMN_GAP,
     /* Flex */
     CA_CSS_PROP_DISPLAY,
     CA_CSS_PROP_FLEX_DIRECTION,
     CA_CSS_PROP_FLEX_WRAP,
     CA_CSS_PROP_ALIGN_ITEMS,
+    CA_CSS_PROP_ALIGN_SELF,
+    CA_CSS_PROP_ALIGN_CONTENT,
     CA_CSS_PROP_JUSTIFY_CONTENT,
+    CA_CSS_PROP_JUSTIFY_SELF,
     CA_CSS_PROP_FLEX_GROW,
     CA_CSS_PROP_FLEX_SHRINK,
+    CA_CSS_PROP_FLEX_BASIS,
+    CA_CSS_PROP_ORDER,
     /* Visual */
     CA_CSS_PROP_BACKGROUND_COLOR,
     CA_CSS_PROP_COLOR,
     CA_CSS_PROP_BORDER_RADIUS,
+    CA_CSS_PROP_BORDER_TOP_LEFT_RADIUS,
+    CA_CSS_PROP_BORDER_TOP_RIGHT_RADIUS,
+    CA_CSS_PROP_BORDER_BOTTOM_RIGHT_RADIUS,
+    CA_CSS_PROP_BORDER_BOTTOM_LEFT_RADIUS,
     CA_CSS_PROP_OPACITY,
+    CA_CSS_PROP_VISIBILITY,
     /* Typography */
     CA_CSS_PROP_FONT_SIZE,
     CA_CSS_PROP_FONT_WEIGHT,
+    CA_CSS_PROP_FONT_STYLE,
+    CA_CSS_PROP_LINE_HEIGHT,
+    CA_CSS_PROP_LETTER_SPACING,
+    CA_CSS_PROP_WORD_SPACING,
     CA_CSS_PROP_TEXT_ALIGN,
+    CA_CSS_PROP_TEXT_DECORATION,
+    CA_CSS_PROP_TEXT_TRANSFORM,
+    CA_CSS_PROP_WHITE_SPACE,
     /* Overflow */
     CA_CSS_PROP_OVERFLOW,
     CA_CSS_PROP_OVERFLOW_X,
@@ -87,21 +114,41 @@ typedef enum {
     /* Border — uniform */
     CA_CSS_PROP_BORDER_WIDTH,
     CA_CSS_PROP_BORDER_COLOR,
-    /* Border — per-side (top / right / bottom / left) */
+    CA_CSS_PROP_BORDER_STYLE,
+    /* Border — per-side */
     CA_CSS_PROP_BORDER_TOP_WIDTH,
     CA_CSS_PROP_BORDER_TOP_COLOR,
+    CA_CSS_PROP_BORDER_TOP_STYLE,
     CA_CSS_PROP_BORDER_RIGHT_WIDTH,
     CA_CSS_PROP_BORDER_RIGHT_COLOR,
+    CA_CSS_PROP_BORDER_RIGHT_STYLE,
     CA_CSS_PROP_BORDER_BOTTOM_WIDTH,
     CA_CSS_PROP_BORDER_BOTTOM_COLOR,
+    CA_CSS_PROP_BORDER_BOTTOM_STYLE,
     CA_CSS_PROP_BORDER_LEFT_WIDTH,
     CA_CSS_PROP_BORDER_LEFT_COLOR,
-    /* Box shadow (shorthand parsed into individual values) */
+    CA_CSS_PROP_BORDER_LEFT_STYLE,
+    /* Outline */
+    CA_CSS_PROP_OUTLINE_WIDTH,
+    CA_CSS_PROP_OUTLINE_COLOR,
+    CA_CSS_PROP_OUTLINE_STYLE,
+    CA_CSS_PROP_OUTLINE_OFFSET,
+    /* Box shadow */
     CA_CSS_PROP_BOX_SHADOW,
     /* Z-index */
     CA_CSS_PROP_Z_INDEX,
     /* Text wrapping */
     CA_CSS_PROP_TEXT_WRAP,
+    /* Layout */
+    CA_CSS_PROP_ASPECT_RATIO,
+    CA_CSS_PROP_BOX_SIZING,
+    /* Pointer / interaction */
+    CA_CSS_PROP_CURSOR,
+    CA_CSS_PROP_POINTER_EVENTS,
+    CA_CSS_PROP_USER_SELECT,
+    /* Scroll */
+    CA_CSS_PROP_SCROLL_BEHAVIOR,
+
     CA_CSS_PROP_COUNT
 } Ca_CssPropId;
 
@@ -111,6 +158,10 @@ typedef enum {
     CA_CSS_DISPLAY_FLEX = 0,
     CA_CSS_DISPLAY_BLOCK,
     CA_CSS_DISPLAY_NONE,
+    CA_CSS_DISPLAY_INLINE,
+    CA_CSS_DISPLAY_INLINE_FLEX,
+    CA_CSS_DISPLAY_INLINE_BLOCK,
+    CA_CSS_DISPLAY_GRID,
     /* flex-direction */
     CA_CSS_FLEX_ROW,
     CA_CSS_FLEX_COLUMN,
@@ -119,6 +170,7 @@ typedef enum {
     /* flex-wrap */
     CA_CSS_WRAP_NOWRAP,
     CA_CSS_WRAP_WRAP,
+    CA_CSS_WRAP_WRAP_REVERSE,
     /* alignment */
     CA_CSS_ALIGN_FLEX_START,
     CA_CSS_ALIGN_CENTER,
@@ -127,15 +179,103 @@ typedef enum {
     CA_CSS_ALIGN_SPACE_BETWEEN,
     CA_CSS_ALIGN_SPACE_AROUND,
     CA_CSS_ALIGN_SPACE_EVENLY,
+    CA_CSS_ALIGN_BASELINE,
+    CA_CSS_ALIGN_AUTO,
+    CA_CSS_ALIGN_NORMAL,
     /* overflow */
     CA_CSS_OVERFLOW_VISIBLE,
     CA_CSS_OVERFLOW_HIDDEN,
     CA_CSS_OVERFLOW_SCROLL,
     CA_CSS_OVERFLOW_AUTO,
+    CA_CSS_OVERFLOW_CLIP,
     /* text-align */
     CA_CSS_TEXT_ALIGN_LEFT,
     CA_CSS_TEXT_ALIGN_CENTER,
     CA_CSS_TEXT_ALIGN_RIGHT,
+    CA_CSS_TEXT_ALIGN_START,
+    CA_CSS_TEXT_ALIGN_END,
+    CA_CSS_TEXT_ALIGN_JUSTIFY,
+    /* font-weight */
+    CA_CSS_FONT_WEIGHT_NORMAL,
+    CA_CSS_FONT_WEIGHT_BOLD,
+    CA_CSS_FONT_WEIGHT_LIGHTER,
+    CA_CSS_FONT_WEIGHT_BOLDER,
+    /* font-style */
+    CA_CSS_FONT_STYLE_NORMAL,
+    CA_CSS_FONT_STYLE_ITALIC,
+    CA_CSS_FONT_STYLE_OBLIQUE,
+    /* text-decoration */
+    CA_CSS_TEXT_DECORATION_NONE,
+    CA_CSS_TEXT_DECORATION_UNDERLINE,
+    CA_CSS_TEXT_DECORATION_LINE_THROUGH,
+    CA_CSS_TEXT_DECORATION_OVERLINE,
+    /* text-transform */
+    CA_CSS_TEXT_TRANSFORM_NONE,
+    CA_CSS_TEXT_TRANSFORM_UPPERCASE,
+    CA_CSS_TEXT_TRANSFORM_LOWERCASE,
+    CA_CSS_TEXT_TRANSFORM_CAPITALIZE,
+    /* white-space */
+    CA_CSS_WHITE_SPACE_NORMAL,
+    CA_CSS_WHITE_SPACE_NOWRAP,
+    CA_CSS_WHITE_SPACE_PRE,
+    CA_CSS_WHITE_SPACE_PRE_LINE,
+    CA_CSS_WHITE_SPACE_PRE_WRAP,
+    /* visibility */
+    CA_CSS_VISIBILITY_VISIBLE,
+    CA_CSS_VISIBILITY_HIDDEN,
+    CA_CSS_VISIBILITY_COLLAPSE,
+    /* border-style */
+    CA_CSS_BORDER_NONE,
+    CA_CSS_BORDER_SOLID,
+    CA_CSS_BORDER_DASHED,
+    CA_CSS_BORDER_DOTTED,
+    CA_CSS_BORDER_DOUBLE,
+    CA_CSS_BORDER_GROOVE,
+    CA_CSS_BORDER_RIDGE,
+    CA_CSS_BORDER_INSET,
+    CA_CSS_BORDER_OUTSET,
+    CA_CSS_BORDER_HIDDEN,
+    /* box-sizing */
+    CA_CSS_BOX_SIZING_CONTENT_BOX,
+    CA_CSS_BOX_SIZING_BORDER_BOX,
+    /* cursor */
+    CA_CSS_CURSOR_AUTO,
+    CA_CSS_CURSOR_DEFAULT,
+    CA_CSS_CURSOR_POINTER,
+    CA_CSS_CURSOR_CROSSHAIR,
+    CA_CSS_CURSOR_MOVE,
+    CA_CSS_CURSOR_TEXT,
+    CA_CSS_CURSOR_WAIT,
+    CA_CSS_CURSOR_HELP,
+    CA_CSS_CURSOR_NOT_ALLOWED,
+    CA_CSS_CURSOR_GRAB,
+    CA_CSS_CURSOR_GRABBING,
+    CA_CSS_CURSOR_EW_RESIZE,
+    CA_CSS_CURSOR_NS_RESIZE,
+    CA_CSS_CURSOR_NWSE_RESIZE,
+    CA_CSS_CURSOR_NESW_RESIZE,
+    CA_CSS_CURSOR_COL_RESIZE,
+    CA_CSS_CURSOR_ROW_RESIZE,
+    CA_CSS_CURSOR_NONE,
+    /* pointer-events */
+    CA_CSS_POINTER_EVENTS_AUTO,
+    CA_CSS_POINTER_EVENTS_NONE,
+    /* user-select */
+    CA_CSS_USER_SELECT_AUTO,
+    CA_CSS_USER_SELECT_NONE,
+    CA_CSS_USER_SELECT_TEXT,
+    CA_CSS_USER_SELECT_ALL,
+    /* scroll-behavior */
+    CA_CSS_SCROLL_AUTO,
+    CA_CSS_SCROLL_SMOOTH,
+    /* easing functions (stored as keyword in transition decl) */
+    CA_CSS_EASE_LINEAR,
+    CA_CSS_EASE_EASE,
+    CA_CSS_EASE_EASE_IN,
+    CA_CSS_EASE_EASE_OUT,
+    CA_CSS_EASE_EASE_IN_OUT,
+    CA_CSS_EASE_STEP_START,
+    CA_CSS_EASE_STEP_END,
 } Ca_CssKeyword;
 
 /* ============================================================
@@ -233,7 +373,7 @@ typedef struct {
    ============================================================ */
 
 #define CA_CSS_MAX_SELECTORS_PER_RULE 16
-#define CA_CSS_MAX_DECLS_PER_RULE     64
+#define CA_CSS_MAX_DECLS_PER_RULE     96
 
 typedef struct {
     Ca_CssSelector selectors[CA_CSS_MAX_SELECTORS_PER_RULE];

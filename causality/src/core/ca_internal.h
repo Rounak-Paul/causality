@@ -179,39 +179,63 @@ typedef struct {
                  padding_bottom, padding_left;
     float        margin_top,     margin_right,
                  margin_bottom,  margin_left;
+    /* Gap — row_gap / column_gap (gap is kept for backward-compat) */
     float        gap;
+    float        row_gap, column_gap;
     Ca_Direction direction;
     Ca_Align     align_items;
+    Ca_Align     align_self;    /* per-child cross-axis alignment; 0=auto */
+    Ca_Align     align_content; /* multi-line cross-axis packing */
     Ca_Align     justify_content;
     uint32_t     background;
+    /* Per-corner border radius (all four; uniform corner_radius for GPU) */
+    float        border_radius_tl;
+    float        border_radius_tr;
+    float        border_radius_br;
+    float        border_radius_bl;
     float        corner_radius;
     float        opacity;        /* 0 = not set (default 1.0) */
     /* Flex properties */
     float        flex_grow;
     float        flex_shrink;
-    uint8_t      flex_wrap;    /* 0=nowrap, 1=wrap */
+    float        flex_basis;     /* 0 = auto */
+    uint8_t      flex_wrap;      /* 0=nowrap, 1=wrap */
+    int          flex_order;     /* CSS order property */
     /* Overflow clipping / scrolling */
-    float        font_size;     /* 0 = use default baked size */
-    bool         font_bold;     /* true = use bold font tier */
-    uint8_t      text_align;    /* 0=left (default), 1=center, 2=right */
-    uint8_t      overflow_x;   /* 0=visible, 1=hidden, 2=scroll, 3=auto */
+    float        font_size;      /* 0 = use default baked size */
+    float        line_height;    /* 0 = not set */
+    float        letter_spacing; /* extra spacing between glyphs in px */
+    float        word_spacing;   /* extra spacing between words in px */
+    bool         font_bold;      /* true = use bold font tier */
+    uint8_t      font_weight;    /* 0=normal, 1=bold, 2=lighter, 3=bolder */
+    uint8_t      font_style;     /* 0=normal, 1=italic, 2=oblique */
+    uint8_t      text_align;     /* 0=left (default), 1=center, 2=right */
+    uint8_t      text_decoration; /* text-decoration keyword */
+    uint8_t      text_transform;  /* text-transform keyword */
+    uint8_t      white_space;     /* white-space keyword */
+    uint8_t      overflow_x;     /* 0=visible, 1=hidden, 2=scroll, 3=auto */
     uint8_t      overflow_y;
-    bool         hidden;       /* display: none */
-    bool         disabled;     /* non-interactive, visually dimmed */
-    bool         no_hover;     /* transparent to hover detection — node is
-                                  skipped in the hit-test loop so it can never
-                                  become win->hovered_node.  Its descendants
-                                  still participate normally. */
+    bool         hidden;          /* display: none */
+    bool         visibility_hidden; /* visibility: hidden */
+    bool         disabled;        /* non-interactive, visually dimmed */
+    bool         no_hover;        /* transparent to hover detection */
     /* Positioning */
-    uint8_t      position;     /* Ca_Position: 0=relative, 1=absolute, 2=fixed */
-    float        pos_x, pos_y; /* used when position != relative */
+    uint8_t      position;       /* Ca_Position: 0=relative, 1=absolute, 2=fixed */
+    float        pos_x, pos_y;   /* used when position != relative */
+    /* Aspect ratio — width/height; 0 = not set */
+    float        aspect_ratio;
+    /* Box-sizing */
+    uint8_t      box_sizing;     /* 0=content-box, 1=border-box */
     /* Border — uniform */
     float        border_width;
     uint32_t     border_color;
-    /* Border — per-side (0 width = not set; these supplement the uniform
-       border, drawn as separate edge rects so the shader is unchanged). */
+    /* Border — per-side */
     float        border_top_w,   border_right_w,   border_bottom_w,   border_left_w;
     uint32_t     border_top_c,   border_right_c,   border_bottom_c,   border_left_c;
+    /* Outline — drawn outside the border, does not affect layout */
+    float        outline_width;
+    uint32_t     outline_color;
+    float        outline_offset;
     /* Box shadow */
     float        shadow_offset_x, shadow_offset_y;
     float        shadow_blur;
@@ -219,10 +243,14 @@ typedef struct {
     /* Z-index */
     int16_t      z_index;
     /* Text wrapping */
-    uint8_t      text_wrap;    /* 0=nowrap (default), 1=wrap */
+    uint8_t      text_wrap;      /* 0=nowrap (default), 1=wrap */
     /* Percentage sizing (resolved during layout) */
     bool         width_pct;
     bool         height_pct;
+    /* Interaction */
+    uint8_t      cursor;         /* Ca_CssKeyword CURSOR_* */
+    uint8_t      pointer_events; /* 0=auto, 1=none */
+    uint8_t      user_select;    /* 0=auto, 1=none, 2=text, 3=all */
 } Ca_NodeDesc;
 
 /* ======================================================

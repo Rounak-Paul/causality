@@ -180,6 +180,7 @@ static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, Cli
 {
     if (!node->in_use) return;
     if (node->desc.hidden) return;
+    if (node->desc.visibility_hidden) return;
     float ui_s = win->ui_scale > 0.0f ? win->ui_scale : 1.0f;
 
     /* Record starting draw cmd index so we can apply disabled dim after. */
@@ -259,6 +260,37 @@ static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, Cli
                 case 3: ec->x = node->x;                  ec->y = node->y;                  ec->w = ew;       ec->h = node->h;  break; /* left   */
             }
             set_clip(ec, clip);
+        }
+    }
+
+    /* ---- CSS outline — drawn outside the border, does not affect layout ---- */
+    if (node->desc.outline_width > 0.0f && node->desc.outline_color != 0) {
+        float ow  = node->desc.outline_width;
+        float off = node->desc.outline_offset;
+        float ox  = node->x  - ow - off;
+        float oy  = node->y  - ow - off;
+        float oow = node->w + (ow + off) * 2.0f;
+        float ooh = node->h + (ow + off) * 2.0f;
+
+        struct { float x, y, w, h; } osides[4] = {
+            { ox,           oy,            oow, ow  }, /* top    */
+            { ox + oow - ow, oy,           ow,  ooh }, /* right  */
+            { ox,           oy + ooh - ow, oow, ow  }, /* bottom */
+            { ox,           oy,            ow,  ooh }, /* left   */
+        };
+        float or_, og, ob, oa;
+        unpack_color(node->desc.outline_color, &or_, &og, &ob, &oa);
+        for (int oi = 0; oi < 4; oi++) {
+            if (win->draw_cmd_count >= CA_MAX_DRAW_CMDS_PER_WINDOW) break;
+            Ca_DrawCmd *oc = &win->draw_cmds[win->draw_cmd_count++];
+            memset(oc, 0, sizeof(*oc));
+            oc->type    = CA_DRAW_RECT;
+            oc->x = osides[oi].x; oc->y = osides[oi].y;
+            oc->w = osides[oi].w; oc->h = osides[oi].h;
+            oc->r = or_; oc->g = og; oc->b = ob; oc->a = oa;
+            oc->z_index = node->desc.z_index;
+            oc->in_use  = true;
+            set_clip(oc, clip);
         }
     }
 
@@ -1058,7 +1090,7 @@ static void paint_text(Ca_Window *win, Ca_Font *font,
         cmd->z_index = node->desc.z_index;
         cmd->in_use = true;
         set_clip(cmd, node_clip);
-        xpos += adv;
+        xpos += adv + node->desc.letter_spacing;
     }
 }
 

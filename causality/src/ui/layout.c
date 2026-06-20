@@ -404,6 +404,12 @@ static void layout_node(Ca_Node *node, float x, float y, float avail_w, float av
     if (node->desc.min_h > 0.0f && h < node->desc.min_h) h = node->desc.min_h;
     if (node->desc.max_h > 0.0f && h > node->desc.max_h) h = node->desc.max_h;
 
+    /* aspect-ratio: if one axis is explicit and the other is auto, derive it */
+    if (node->desc.aspect_ratio > 0.0f) {
+        if (!auto_w && auto_h)       { h = w / node->desc.aspect_ratio; auto_h = false; }
+        else if (auto_w && !auto_h)  { w = h * node->desc.aspect_ratio; auto_w = false; }
+    }
+
     node->x = x;
     node->y = y;
     node->w = w;
@@ -481,7 +487,14 @@ static void layout_node(Ca_Node *node, float x, float y, float avail_w, float av
 
     bool  is_row      = (node->desc.direction == CA_DIR_ROW);
     bool  do_wrap     = (node->desc.flex_wrap == 1);
-    float gap         = node->desc.gap;
+    /* Prefer row_gap/column_gap; fall back to uniform gap */
+    float main_gap  = is_row
+        ? (node->desc.column_gap > 0.0f ? node->desc.column_gap : node->desc.gap)
+        : (node->desc.row_gap    > 0.0f ? node->desc.row_gap    : node->desc.gap);
+    float cross_gap = is_row
+        ? (node->desc.row_gap    > 0.0f ? node->desc.row_gap    : node->desc.gap)
+        : (node->desc.column_gap > 0.0f ? node->desc.column_gap : node->desc.gap);
+    float gap         = main_gap;
     float avail_main  = is_row ? inner_w : inner_h;
     float avail_cross = is_row ? inner_h : inner_w;
 
@@ -517,12 +530,17 @@ static void layout_node(Ca_Node *node, float x, float y, float avail_w, float av
             child_margin_cross0[i] = child->desc.margin_left;
             child_margin_cross1[i] = child->desc.margin_right;
         }
-        float ms = is_row ? child->desc.width : child->desc.height;
+        /* flex-basis takes priority over width/height on the main axis */
+        float basis = child->desc.flex_basis;
+        float ms = (basis > 0.0f) ? basis
+                 : (is_row ? child->desc.width : child->desc.height);
         /* Resolve percentage main-axis values against parent space */
-        if (is_row && child->desc.width_pct && child->desc.width > 0.0f)
-            ms = avail_main * child->desc.width / 100.0f;
-        else if (!is_row && child->desc.height_pct && child->desc.height > 0.0f)
-            ms = avail_main * child->desc.height / 100.0f;
+        if (basis <= 0.0f) {
+            if (is_row && child->desc.width_pct && child->desc.width > 0.0f)
+                ms = avail_main * child->desc.width / 100.0f;
+            else if (!is_row && child->desc.height_pct && child->desc.height > 0.0f)
+                ms = avail_main * child->desc.height / 100.0f;
+        }
         if (ms > 0.0f) {
             child_hypo_main[i] = ms;
         } else {
@@ -723,9 +741,11 @@ static void layout_node(Ca_Node *node, float x, float y, float avail_w, float av
             if (cm_content < 0) cm_content = 0;
             if (cc_content < 0) cc_content = 0;
 
-            /* Align-items: cross-axis positioning within the line */
+            /* Align: per-child align_self overrides parent align_items */
             float cross_offset = mc0;
-            Ca_Align align = node->desc.align_items;
+            Ca_Align align = (child->desc.align_self != 0)
+                ? child->desc.align_self
+                : node->desc.align_items;
             if (align == CA_ALIGN_CENTER)
                 cross_offset = (line_avail_cross - cc_content - mc0 - mc1) * 0.5f + mc0;
             else if (align == CA_ALIGN_END)
@@ -755,8 +775,8 @@ static void layout_node(Ca_Node *node, float x, float y, float avail_w, float av
             vis_in_line++;
         }
 
-        cross_cursor += line_avail_cross + gap;
-        float cross_end = cross_cursor - gap;
+        cross_cursor += line_avail_cross + cross_gap;
+        float cross_end = cross_cursor - cross_gap;
         if (cross_end > max_cross_extent) max_cross_extent = cross_end;
     }
 

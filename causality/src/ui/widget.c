@@ -491,35 +491,47 @@ static void apply_css(Ca_Node *node, Ca_NodeDesc *nd,
     /* Scale CSS-resolved pixel values before applying (skip percentages) */
     if (!rs.width_pct)  rs.width  = s(rs.width);
     if (!rs.height_pct) rs.height = s(rs.height);
-    rs.min_width       = s(rs.min_width);
-    rs.max_width       = s(rs.max_width);
-    rs.min_height      = s(rs.min_height);
-    rs.max_height      = s(rs.max_height);
-    rs.padding[0]      = s(rs.padding[0]);
-    rs.padding[1]      = s(rs.padding[1]);
-    rs.padding[2]      = s(rs.padding[2]);
-    rs.padding[3]      = s(rs.padding[3]);
-    rs.gap             = s(rs.gap);
-    rs.border_radius   = s(rs.border_radius);
-    rs.margin[0]       = s(rs.margin[0]);
-    rs.margin[1]       = s(rs.margin[1]);
-    rs.margin[2]       = s(rs.margin[2]);
-    rs.margin[3]       = s(rs.margin[3]);
-    rs.border_width    = s(rs.border_width);
-    rs.shadow_offset_x = s(rs.shadow_offset_x);
-    rs.shadow_offset_y = s(rs.shadow_offset_y);
-    rs.shadow_blur     = s(rs.shadow_blur);
+    rs.min_width          = s(rs.min_width);
+    rs.max_width          = s(rs.max_width);
+    rs.min_height         = s(rs.min_height);
+    rs.max_height         = s(rs.max_height);
+    rs.padding[0]         = s(rs.padding[0]);
+    rs.padding[1]         = s(rs.padding[1]);
+    rs.padding[2]         = s(rs.padding[2]);
+    rs.padding[3]         = s(rs.padding[3]);
+    rs.margin[0]          = s(rs.margin[0]);
+    rs.margin[1]          = s(rs.margin[1]);
+    rs.margin[2]          = s(rs.margin[2]);
+    rs.margin[3]          = s(rs.margin[3]);
+    rs.gap                = s(rs.gap);
+    rs.row_gap            = s(rs.row_gap);
+    rs.column_gap         = s(rs.column_gap);
+    rs.border_radius      = s(rs.border_radius);
+    rs.border_radius_tl   = s(rs.border_radius_tl);
+    rs.border_radius_tr   = s(rs.border_radius_tr);
+    rs.border_radius_br   = s(rs.border_radius_br);
+    rs.border_radius_bl   = s(rs.border_radius_bl);
+    rs.border_width       = s(rs.border_width);
+    rs.border_top_w       = s(rs.border_top_w);
+    rs.border_right_w     = s(rs.border_right_w);
+    rs.border_bottom_w    = s(rs.border_bottom_w);
+    rs.border_left_w      = s(rs.border_left_w);
+    rs.outline_width      = s(rs.outline_width);
+    rs.outline_offset     = s(rs.outline_offset);
+    rs.shadow_offset_x    = s(rs.shadow_offset_x);
+    rs.shadow_offset_y    = s(rs.shadow_offset_y);
+    rs.shadow_blur        = s(rs.shadow_blur);
+    rs.font_size          = s(rs.font_size);
+    rs.line_height        = s(rs.line_height);
+    rs.letter_spacing     = s(rs.letter_spacing);
+    rs.word_spacing       = s(rs.word_spacing);
+    rs.flex_basis         = s(rs.flex_basis);
 
     ca_style_apply_to_node(&rs, nd, out_color);
 
     /* Store transition config on the node */
     node->transition_duration = rs.transition_duration;
     node->transition_props    = rs.transition_props;
-
-    /* display: none */
-    if ((rs.set_mask & (1ULL << CA_CSS_PROP_DISPLAY)) &&
-        rs.display == CA_CSS_DISPLAY_NONE)
-        nd->hidden = true;
 
     /* Post-CSS dirty detection: compare the fully-resolved *nd against the
        snapshot saved before claim_child/ca_ui_begin wrote the sparse desc.
@@ -575,18 +587,35 @@ void ca_widget_reapply_css(Ca_Node *node)
     float scale = node->window->ui_scale;
     if (!rs.width_pct)  rs.width  *= scale;
     if (!rs.height_pct) rs.height *= scale;
-    rs.min_width  *= scale;  rs.max_width  *= scale;
-    rs.min_height *= scale;  rs.max_height *= scale;
-    rs.padding[0] *= scale;  rs.padding[1] *= scale;
-    rs.padding[2] *= scale;  rs.padding[3] *= scale;
-    rs.gap             *= scale;
-    rs.border_radius   *= scale;
-    rs.margin[0] *= scale;   rs.margin[1] *= scale;
-    rs.margin[2] *= scale;   rs.margin[3] *= scale;
-    rs.border_width    *= scale;
-    rs.shadow_offset_x *= scale;
-    rs.shadow_offset_y *= scale;
-    rs.shadow_blur     *= scale;
+    rs.min_width         *= scale;  rs.max_width    *= scale;
+    rs.min_height        *= scale;  rs.max_height   *= scale;
+    rs.padding[0]        *= scale;  rs.padding[1]   *= scale;
+    rs.padding[2]        *= scale;  rs.padding[3]   *= scale;
+    rs.margin[0]         *= scale;  rs.margin[1]    *= scale;
+    rs.margin[2]         *= scale;  rs.margin[3]    *= scale;
+    rs.gap               *= scale;
+    rs.row_gap           *= scale;
+    rs.column_gap        *= scale;
+    rs.border_radius     *= scale;
+    rs.border_radius_tl  *= scale;
+    rs.border_radius_tr  *= scale;
+    rs.border_radius_br  *= scale;
+    rs.border_radius_bl  *= scale;
+    rs.border_width      *= scale;
+    rs.border_top_w      *= scale;
+    rs.border_right_w    *= scale;
+    rs.border_bottom_w   *= scale;
+    rs.border_left_w     *= scale;
+    rs.outline_width     *= scale;
+    rs.outline_offset    *= scale;
+    rs.shadow_offset_x   *= scale;
+    rs.shadow_offset_y   *= scale;
+    rs.shadow_blur       *= scale;
+    rs.font_size         *= scale;
+    rs.line_height       *= scale;
+    rs.letter_spacing    *= scale;
+    rs.word_spacing      *= scale;
+    rs.flex_basis        *= scale;
 
     /* ca_style_apply_to_node uses zero-fill semantics — it writes layout
        fields (width/height/padding/margin/gap) whenever the current value
@@ -597,28 +626,28 @@ void ca_widget_reapply_css(Ca_Node *node)
        layout writes; otherwise pseudo-state CSS reapplication (triggered
        e.g. by hover) will resurrect the CSS height and collapse the
        container back to its CSS size, causing siblings to overlap. */
-    float saved_w   = nd->width,   saved_h   = nd->height;
+    float saved_w    = nd->width,   saved_h    = nd->height;
     uint8_t saved_wp = nd->width_pct, saved_hp = nd->height_pct;
     float saved_minw = nd->min_w, saved_maxw = nd->max_w;
     float saved_minh = nd->min_h, saved_maxh = nd->max_h;
-    float saved_pt = nd->padding_top, saved_pr = nd->padding_right;
+    float saved_pt = nd->padding_top,    saved_pr = nd->padding_right;
     float saved_pb = nd->padding_bottom, saved_pl = nd->padding_left;
-    float saved_mt = nd->margin_top, saved_mr = nd->margin_right;
-    float saved_mb = nd->margin_bottom, saved_ml = nd->margin_left;
-    float saved_gap = nd->gap;
+    float saved_mt = nd->margin_top,     saved_mr = nd->margin_right;
+    float saved_mb = nd->margin_bottom,  saved_ml = nd->margin_left;
+    float saved_gap = nd->gap, saved_rg = nd->row_gap, saved_cg = nd->column_gap;
 
     uint32_t out_color = 0;
     ca_style_apply_to_node(&rs, nd, &out_color);
 
-    nd->width = saved_w;   nd->height = saved_h;
+    nd->width = saved_w;    nd->height = saved_h;
     nd->width_pct = saved_wp; nd->height_pct = saved_hp;
     nd->min_w = saved_minw; nd->max_w = saved_maxw;
     nd->min_h = saved_minh; nd->max_h = saved_maxh;
-    nd->padding_top = saved_pt; nd->padding_right = saved_pr;
-    nd->padding_bottom = saved_pb; nd->padding_left = saved_pl;
-    nd->margin_top = saved_mt; nd->margin_right = saved_mr;
-    nd->margin_bottom = saved_mb; nd->margin_left = saved_ml;
-    nd->gap = saved_gap;
+    nd->padding_top = saved_pt;    nd->padding_right  = saved_pr;
+    nd->padding_bottom = saved_pb; nd->padding_left   = saved_pl;
+    nd->margin_top = saved_mt;     nd->margin_right   = saved_mr;
+    nd->margin_bottom = saved_mb;  nd->margin_left    = saved_ml;
+    nd->gap = saved_gap; nd->row_gap = saved_rg; nd->column_gap = saved_cg;
 
     /* Propagate text color for widget types that store it separately. */
     if (out_color) {
@@ -1239,18 +1268,35 @@ static void node_set_style(Ca_Node *node, const char *style,
         /* Scale CSS pixel values */
         if (!rs.width_pct)  rs.width  *= scale;
         if (!rs.height_pct) rs.height *= scale;
-        rs.min_width    *= scale;  rs.max_width  *= scale;
-        rs.min_height   *= scale;  rs.max_height *= scale;
-        rs.padding[0]   *= scale;  rs.padding[1] *= scale;
-        rs.padding[2]   *= scale;  rs.padding[3] *= scale;
-        rs.gap             *= scale;
-        rs.border_radius   *= scale;
-        rs.margin[0]    *= scale;  rs.margin[1]  *= scale;
-        rs.margin[2]    *= scale;  rs.margin[3]  *= scale;
-        rs.border_width    *= scale;
-        rs.shadow_offset_x *= scale;
-        rs.shadow_offset_y *= scale;
-        rs.shadow_blur     *= scale;
+        rs.min_width         *= scale;  rs.max_width    *= scale;
+        rs.min_height        *= scale;  rs.max_height   *= scale;
+        rs.padding[0]        *= scale;  rs.padding[1]   *= scale;
+        rs.padding[2]        *= scale;  rs.padding[3]   *= scale;
+        rs.margin[0]         *= scale;  rs.margin[1]    *= scale;
+        rs.margin[2]         *= scale;  rs.margin[3]    *= scale;
+        rs.gap               *= scale;
+        rs.row_gap           *= scale;
+        rs.column_gap        *= scale;
+        rs.border_radius     *= scale;
+        rs.border_radius_tl  *= scale;
+        rs.border_radius_tr  *= scale;
+        rs.border_radius_br  *= scale;
+        rs.border_radius_bl  *= scale;
+        rs.border_width      *= scale;
+        rs.border_top_w      *= scale;
+        rs.border_right_w    *= scale;
+        rs.border_bottom_w   *= scale;
+        rs.border_left_w     *= scale;
+        rs.outline_width     *= scale;
+        rs.outline_offset    *= scale;
+        rs.shadow_offset_x   *= scale;
+        rs.shadow_offset_y   *= scale;
+        rs.shadow_blur       *= scale;
+        rs.font_size         *= scale;
+        rs.line_height       *= scale;
+        rs.letter_spacing    *= scale;
+        rs.word_spacing      *= scale;
+        rs.flex_basis        *= scale;
 
         uint32_t dummy_color = 0;
         ca_style_apply_to_node(&rs, &node->desc,

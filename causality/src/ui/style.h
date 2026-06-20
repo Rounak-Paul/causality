@@ -59,41 +59,73 @@ typedef enum {
    ============================================================ */
 
 typedef struct {
-    uint64_t set_mask;   /* bitmask of which CA_CSS_PROP_* were set by CSS */
+    uint64_t set_mask;    /* bitmask of which CA_CSS_PROP_* (low 64) were set by CSS */
+    uint64_t set_mask2;   /* bitmask for props >= 64 */
 
+    /* Sizing */
     float    width, height;
     bool     width_pct, height_pct;   /* true when value is a percentage */
     float    min_width, max_width, min_height, max_height;
+    /* Spacing */
     float    padding[4];     /* top, right, bottom, left */
     float    margin[4];
-    float    gap;
+    float    gap, row_gap, column_gap;
+    /* Visual */
     float    border_radius;
+    float    border_radius_tl, border_radius_tr, border_radius_br, border_radius_bl;
     float    opacity;
+    /* Typography */
     float    font_size;
+    float    line_height;
+    float    letter_spacing;
+    float    word_spacing;
     bool     font_bold;
+    /* Flex */
     float    flex_grow, flex_shrink;
-
+    float    flex_basis;
+    int      flex_order;
+    /* Colors */
     uint32_t background_color;
     uint32_t color;
-
-    int      display;         /* Ca_CssKeyword display value */
-    int      flex_direction;  /* Ca_CssKeyword flex direction */
+    /* Layout keywords */
+    int      display;
+    int      flex_direction;
     int      flex_wrap;
     int      align_items;
+    int      align_self;
+    int      align_content;
     int      justify_content;
-    int      overflow_x, overflow_y;  /* Ca_Overflow */
-    int      text_align;              /* Ca_CssKeyword text-align */
-
+    int      justify_self;
+    int      overflow_x, overflow_y;
+    int      text_align;
+    int      text_decoration;
+    int      text_transform;
+    int      white_space;
+    int      font_weight;
+    int      font_style;
+    int      visibility;
+    int      cursor;
+    int      pointer_events;
+    int      user_select;
+    int      scroll_behavior;
+    int      box_sizing;
     /* Transition */
-    float    transition_duration;     /* seconds */
-    uint64_t transition_props;        /* bitmask of Ca_CssPropId to animate */
-
+    float    transition_duration;
+    uint64_t transition_props;
+    int      transition_easing;
     /* Border — uniform */
     float    border_width;
     uint32_t border_color;
-    /* Border — per-side */
-    float    border_top_w,   border_right_w,   border_bottom_w,   border_left_w;
-    uint32_t border_top_c,   border_right_c,   border_bottom_c,   border_left_c;
+    int      border_style;
+    /* Border — per-side (using submodule short-name convention) */
+    float    border_top_w, border_right_w, border_bottom_w, border_left_w;
+    uint32_t border_top_c, border_right_c, border_bottom_c, border_left_c;
+    int      border_top_style, border_right_style, border_bottom_style, border_left_style;
+    /* Outline */
+    float    outline_width;
+    uint32_t outline_color;
+    int      outline_style;
+    float    outline_offset;
     /* Box shadow */
     float    shadow_offset_x, shadow_offset_y;
     float    shadow_blur;
@@ -101,27 +133,37 @@ typedef struct {
     /* Z-index */
     int      z_index;
     /* Text wrapping */
-    int      text_wrap;               /* 0 = nowrap, 1 = wrap */
+    int      text_wrap;
+    /* Aspect ratio */
+    float    aspect_ratio;
 } Ca_ResolvedStyle;
 
 /* ============================================================
    API
    ============================================================ */
 
-/* Get element type name string for CSS selector matching */
+/** Get element type name string for CSS selector matching. */
 const char *ca_elem_type_name(Ca_ElementType type);
 
-/* Resolve all matching CSS rules for a node, producing a merged style.
-   walks the parent chain for descendant/child selector matching.  */
+/** Resolve all matching CSS rules for a node, producing a merged style.
+    Walks the parent chain for descendant/child selector matching.
+    @param ss        Parsed stylesheet (may be NULL — returns zero style).
+    @param node      Target UI node.
+    @param elem_type Element type enum for element-selector matching.
+    @param classes   Space-separated class string for class-selector matching.
+    @param out       Output resolved style (zeroed on entry). */
 void ca_style_resolve(Ca_Stylesheet *ss,
                       Ca_Node *node,
                       Ca_ElementType elem_type,
                       const char *classes,
                       Ca_ResolvedStyle *out);
 
-/* Apply resolved style to a Ca_NodeDesc.
-   Only fills in properties where the NodeDesc value is still at default (0).
-   Non-zero NodeDesc values are treated as inline styles and take precedence. */
+/** Apply resolved style to a Ca_NodeDesc.
+    Only fills in properties where the NodeDesc value is still at default (0).
+    Non-zero NodeDesc values are treated as inline styles and take precedence.
+    @param style     Resolved style (from ca_style_resolve).
+    @param nd        Target node descriptor to update in-place.
+    @param out_color Optional output for the text/foreground color. */
 void ca_style_apply_to_node(const Ca_ResolvedStyle *style,
                             Ca_NodeDesc *nd,
                             uint32_t *out_color);
