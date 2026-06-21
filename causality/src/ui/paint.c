@@ -5,6 +5,7 @@
 #include "paint.h"
 #include "font.h"
 #include "ca_theme.h"
+#include "style.h"
 #include "../../include/ca_icons.h"
 #include <GLFW/glfw3.h>
 #include <stdio.h>
@@ -26,6 +27,30 @@ static void unpack_color(uint32_t packed, float *r, float *g, float *b, float *a
     *g = (float)((packed >> 16) & 0xFF) / 255.0f;
     *b = (float)((packed >>  8) & 0xFF) / 255.0f;
     *a = (float)((packed)       & 0xFF) / 255.0f;
+}
+
+typedef struct OverlayCssStyle {
+    uint32_t background;
+    uint32_t color;
+    float radius;
+} OverlayCssStyle;
+
+/* Resolve a synthetic overlay class while retaining neutral fallback values. */
+static OverlayCssStyle overlay_css_style(Ca_Window *window, Ca_Node *owner,
+                                         const char *classes,
+                                         uint32_t background, uint32_t color,
+                                         float radius)
+{
+    OverlayCssStyle result = { background, color, radius };
+    if (!window || !window->instance || !window->instance->stylesheet || !owner)
+        return result;
+    Ca_ResolvedStyle resolved;
+    ca_style_resolve(window->instance->stylesheet, owner, CA_ELEM_DIV,
+                     classes, &resolved);
+    if (resolved.background_color != 0u) result.background = resolved.background_color;
+    if (resolved.color != 0u) result.color = resolved.color;
+    result.radius = resolved.border_radius * window->ui_scale;
+    return result;
 }
 
 /* Clip rect state passed through the tree */
@@ -1511,6 +1536,15 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
             }
             if (!sel->open) continue;
             Ca_Node *n = sel->node;
+            const OverlayCssStyle popup_style = overlay_css_style(
+                win, n, "ca-select-popup", CA_THEME_POPUP_BG,
+                CA_THEME_POPUP_TEXT, 4.0f * ui_s);
+            const OverlayCssStyle hover_style = overlay_css_style(
+                win, n, "ca-overlay-hover", CA_THEME_BG_SURFACE,
+                popup_style.color, 0.0f);
+            const OverlayCssStyle selected_style = overlay_css_style(
+                win, n, "ca-overlay-selected", CA_THEME_BG_OVERLAY,
+                popup_style.color, 0.0f);
 
             float opt_h   = n->h;
             float drop_y  = n->y + n->h;
@@ -1529,8 +1563,8 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
                 c->type = CA_DRAW_RECT;
                 c->x = n->x; c->y = drop_y;
                 c->w = n->w; c->h = opt_h * (float)visible;
-                c->corner_radius = 4.0f * ui_s;
-                { float _r, _g, _b, _a; unpack_color(CA_THEME_POPUP_BG, &_r, &_g, &_b, &_a); c->r = _r; c->g = _g; c->b = _b; c->a = _a; }
+                c->corner_radius = popup_style.radius;
+                unpack_color(popup_style.background, &c->r, &c->g, &c->b, &c->a);
                 if (use_fallback_chrome) {
                     c->border_width = 1.0f * ui_s;
                     c->border_r = 0.200f; c->border_g = 0.200f;
@@ -1552,10 +1586,9 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
                     memset(c, 0, sizeof(*c));
                     c->type = CA_DRAW_RECT;
                     c->x = n->x; c->y = oy; c->w = n->w; c->h = opt_h;
-                    if (is_selected)
-                        { float _r, _g, _b, _a; unpack_color(CA_THEME_BG_OVERLAY, &_r, &_g, &_b, &_a); c->r = _r; c->g = _g; c->b = _b; c->a = _a; }
-                    else
-                        { float _r, _g, _b, _a; unpack_color(CA_THEME_BG_SURFACE, &_r, &_g, &_b, &_a); c->r = _r; c->g = _g; c->b = _b; c->a = _a; }
+                    const uint32_t fill = is_selected
+                        ? selected_style.background : hover_style.background;
+                    unpack_color(fill, &c->r, &c->g, &c->b, &c->a);
                     c->in_use = true;
                     c->overlay = true;
                 }
@@ -1563,7 +1596,7 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
                 Ca_Node tmp = *n;
                 tmp.parent = NULL; /* break parent chain — overlay must not inherit parent clip */
                 tmp.x = n->x; tmp.y = oy; tmp.h = opt_h;
-                paint_text(win, font, &tmp, sel->options[oi], 0);
+                paint_text(win, font, &tmp, sel->options[oi], popup_style.color);
                 for (uint32_t gi = glyph_start; gi < win->draw_cmd_count; ++gi)
                     win->draw_cmds[gi].overlay = true;
             }
@@ -1590,6 +1623,9 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
                 hover = hover->parent;
             }
             if (!match) continue;
+            const OverlayCssStyle tooltip_style = overlay_css_style(
+                win, tt->node, "ca-tooltip", CA_THEME_POPUP_BG,
+                CA_THEME_POPUP_TEXT, 3.0f * ui_s);
 
             /* Font size resolved at widget-build time and cached in the slot */
             float tooltip_fs  = tt->font_size > 0.0f ? tt->font_size : font->default_size;
@@ -1628,8 +1664,8 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
                 memset(c, 0, sizeof(*c));
                 c->type = CA_DRAW_RECT;
                 c->x = tip_x; c->y = tip_y; c->w = tip_w; c->h = tip_h;
-                c->corner_radius = 3.0f * ui_s;
-                { float _r, _g, _b, _a; unpack_color(CA_THEME_POPUP_BG, &_r, &_g, &_b, &_a); c->r = _r; c->g = _g; c->b = _b; c->a = _a; }
+                c->corner_radius = tooltip_style.radius;
+                unpack_color(tooltip_style.background, &c->r, &c->g, &c->b, &c->a);
                 if (use_fallback_chrome) {
                     c->border_width = 1.0f * ui_s;
                     c->border_r = 0.200f; c->border_g = 0.200f;
@@ -1646,7 +1682,7 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
             tmp.desc.font_size    = tooltip_fs;
             tmp.desc.padding_left = pad;
             tmp.window = win;
-            paint_text(win, font, &tmp, tt->text, CA_THEME_POPUP_TEXT);
+            paint_text(win, font, &tmp, tt->text, tooltip_style.color);
             for (uint32_t gi = glyph_start; gi < win->draw_cmd_count; ++gi)
                 win->draw_cmds[gi].overlay = true;
         }
@@ -1663,6 +1699,12 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
             Ca_CtxMenu *cm = &win->ctxmenu_pool[i];
             if (!cm->in_use || !cm->open || cm->item_count <= 0) continue;
             if (cm->node && node_is_ancestor_hidden(cm->node)) continue;
+            const OverlayCssStyle menu_style = overlay_css_style(
+                win, cm->node, "ca-context-menu", CA_THEME_POPUP_BG,
+                CA_THEME_POPUP_TEXT, 4.0f * ui_s);
+            const OverlayCssStyle item_hover_style = overlay_css_style(
+                win, cm->node, "ca-overlay-hover", CA_THEME_BG_OVERLAY,
+                menu_style.color, 0.0f);
 
             /* Compute total height (items + separators) */
             float menu_h = 6.0f * ui_s; /* top + bottom inset */
@@ -1688,8 +1730,8 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
                 c->type = CA_DRAW_RECT;
                 c->x = mx_pos; c->y = my_pos;
                 c->w = menu_w; c->h = menu_h;
-                c->corner_radius = 4.0f * ui_s;
-                { float _r, _g, _b, _a; unpack_color(CA_THEME_POPUP_BG, &_r, &_g, &_b, &_a); c->r = _r; c->g = _g; c->b = _b; c->a = _a; }
+                c->corner_radius = menu_style.radius;
+                unpack_color(menu_style.background, &c->r, &c->g, &c->b, &c->a);
                 if (use_fallback_chrome) {
                     c->border_width = 1.0f * ui_s;
                     c->border_r = 0.200f; c->border_g = 0.200f;
@@ -1731,8 +1773,9 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
                     c->type = CA_DRAW_RECT;
                     c->x = mx_pos + 2.0f * ui_s; c->y = iy;
                     c->w = menu_w - 4.0f * ui_s; c->h = item_h;
-                    c->corner_radius = 3.0f * ui_s;
-                    { float _r, _g, _b, _a; unpack_color(CA_THEME_BG_OVERLAY, &_r, &_g, &_b, &_a); c->r = _r; c->g = _g; c->b = _b; c->a = _a; }
+                    c->corner_radius = item_hover_style.radius;
+                    unpack_color(item_hover_style.background,
+                                 &c->r, &c->g, &c->b, &c->a);
                     c->in_use = true;
                     c->overlay = true;
                 }
@@ -1748,7 +1791,7 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
                 tmp.h = item_h;
                 tmp.window = win;
                 tmp.desc.font_size = 12.0f;
-                paint_text(win, font, &tmp, cm->items[mi], CA_THEME_POPUP_TEXT);
+                paint_text(win, font, &tmp, cm->items[mi], menu_style.color);
                 for (uint32_t gi = glyph_start; gi < win->draw_cmd_count; ++gi)
                     win->draw_cmds[gi].overlay = true;
 
@@ -1767,6 +1810,15 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
             Ca_MenuBarMenu *am = &mb->menus[mb->active_menu];
             Ca_Node *hdr = am->header_node;
             if (!hdr) continue;
+            const OverlayCssStyle menu_style = overlay_css_style(
+                win, mb->node, "ca-menubar-popup", mb->dropdown_bg,
+                mb->dropdown_text, 0.0f);
+            const OverlayCssStyle item_hover_style = overlay_css_style(
+                win, mb->node, "ca-overlay-hover", mb->dropdown_hover,
+                menu_style.color, 0.0f);
+            const OverlayCssStyle active_style = overlay_css_style(
+                win, mb->node, "ca-overlay-selected", mb->header_highlight,
+                mb->text_color, 0.0f);
 
             if (win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
                 Ca_DrawCmd *c = &win->draw_cmds[win->draw_cmd_count++];
@@ -1774,7 +1826,7 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
                 c->type = CA_DRAW_RECT;
                 c->x = hdr->x; c->y = hdr->y;
                 c->w = hdr->w; c->h = hdr->h;
-                unpack_color(mb->header_highlight, &c->r, &c->g, &c->b, &c->a);
+                unpack_color(active_style.background, &c->r, &c->g, &c->b, &c->a);
                 c->in_use = true;
                 c->overlay = true;
             }
@@ -1790,7 +1842,7 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
                 tmp.window = win;
                 tmp.desc.text_align = 1; /* centered */
                 tmp.desc.font_size = mb->item_font_size > 0.0f ? mb->item_font_size : 12.0f;
-                paint_text(win, font, &tmp, am->label, mb->text_color);
+                paint_text(win, font, &tmp, am->label, active_style.color);
                 for (uint32_t gi = glyph_start; gi < win->draw_cmd_count; ++gi)
                     win->draw_cmds[gi].overlay = true;
             }
@@ -1816,8 +1868,8 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
                 c->type = CA_DRAW_RECT;
                 c->x = drop_x; c->y = drop_y;
                 c->w = menu_w; c->h = menu_h;
-                c->corner_radius = 0.0f;
-                unpack_color(mb->dropdown_bg, &c->r, &c->g, &c->b, &c->a);
+                c->corner_radius = menu_style.radius;
+                unpack_color(menu_style.background, &c->r, &c->g, &c->b, &c->a);
                 c->in_use = true;
                 c->overlay = true;
                 if (use_fallback_chrome) {
@@ -1861,7 +1913,8 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
                         c->x = drop_x + 2.0f * ui_s; c->y = iy;
                         c->w = menu_w - 4.0f * ui_s; c->h = this_h;
                         c->corner_radius = 0.0f;
-                        unpack_color(mb->dropdown_hover, &c->r, &c->g, &c->b, &c->a);
+                        unpack_color(item_hover_style.background,
+                                     &c->r, &c->g, &c->b, &c->a);
                         c->in_use  = true;
                         c->overlay = true;
                     }
@@ -1879,7 +1932,7 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
                 tmp.desc.text_align = 0; /* left-align */
                 tmp.desc.font_size = drop_item_fs;
                 paint_text(win, font, &tmp, am->items[ii].label,
-                           mb->dropdown_text);
+                           menu_style.color);
                 for (uint32_t gi = glyph_start; gi < win->draw_cmd_count; ++gi)
                     win->draw_cmds[gi].overlay = true;
 
@@ -1898,7 +1951,7 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
                     tmp2.desc.font_size = drop_item_fs;
                     paint_text(win, font, &tmp2,
                                CA_ICON_NF_COD_CHEVRON_RIGHT,
-                               mb->dropdown_text);
+                               menu_style.color);
                     for (uint32_t gi = gs2; gi < win->draw_cmd_count; ++gi)
                         win->draw_cmds[gi].overlay = true;
                 }
@@ -1929,8 +1982,9 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
                     c->type = CA_DRAW_RECT;
                     c->x = sub_x; c->y = sub_y;
                     c->w = sub_menu_w; c->h = sub_h;
-                    c->corner_radius = 0.0f;
-                    unpack_color(mb->dropdown_bg, &c->r, &c->g, &c->b, &c->a);
+                    c->corner_radius = menu_style.radius;
+                    unpack_color(menu_style.background,
+                                 &c->r, &c->g, &c->b, &c->a);
                     c->in_use      = true;
                     c->overlay     = true;
                     if (use_fallback_chrome) {
@@ -1954,7 +2008,8 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
                             c->x = sub_x + 2.0f * ui_s; c->y = siy;
                             c->w = sub_menu_w - 4.0f * ui_s; c->h = sub_item_h;
                             c->corner_radius = 0.0f;
-                            unpack_color(mb->dropdown_hover, &c->r, &c->g, &c->b, &c->a);
+                            unpack_color(item_hover_style.background,
+                                         &c->r, &c->g, &c->b, &c->a);
                             c->in_use  = true;
                             c->overlay = true;
                         }
@@ -1974,7 +2029,7 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
                     stmp.desc.font_size = drop_item_fs;
                     paint_text(win, font, &stmp,
                                am->items[asi].sub_items[si].label,
-                               mb->dropdown_text);
+                               menu_style.color);
                     for (uint32_t gi = gs; gi < win->draw_cmd_count; ++gi)
                         win->draw_cmds[gi].overlay = true;
                 }

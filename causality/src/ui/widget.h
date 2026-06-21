@@ -25,3 +25,6 @@ void ca_widget_ctx_leave(void);
    rules (:hover etc.) take effect on builder-pattern panels (whose
    builders don't re-run every frame). */
 void ca_widget_reapply_css(Ca_Node *node);
+
+/* Re-resolve every CSS-owned field, including layout, after a stylesheet swap. */
+void ca_widget_refresh_css(Ca_Node *node);

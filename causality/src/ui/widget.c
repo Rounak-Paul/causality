@@ -459,6 +459,65 @@ static Ca_Node *claim_child(const Ca_NodeDesc *nd, uint8_t widget_type,
 /* Scale a value by the window's UI scale factor */
 static float s(float v) { return v * g_ctx.window->ui_scale; }
 
+/* Scale every pixel-valued resolved CSS field for a target window. */
+static void scale_resolved_style(Ca_ResolvedStyle *style, float scale)
+{
+    if (!style) return;
+    if (!style->width_pct) style->width *= scale;
+    if (!style->height_pct) style->height *= scale;
+    style->min_width *= scale; style->max_width *= scale;
+    style->min_height *= scale; style->max_height *= scale;
+    for (size_t i = 0u; i < 4u; ++i) {
+        style->padding[i] *= scale;
+        style->margin[i] *= scale;
+    }
+    style->gap *= scale;
+    style->row_gap *= scale;
+    style->column_gap *= scale;
+    style->border_radius *= scale;
+    style->border_radius_tl *= scale;
+    style->border_radius_tr *= scale;
+    style->border_radius_br *= scale;
+    style->border_radius_bl *= scale;
+    style->border_width *= scale;
+    style->border_top_w *= scale;
+    style->border_right_w *= scale;
+    style->border_bottom_w *= scale;
+    style->border_left_w *= scale;
+    style->outline_width *= scale;
+    style->outline_offset *= scale;
+    style->shadow_offset_x *= scale;
+    style->shadow_offset_y *= scale;
+    style->shadow_blur *= scale;
+    style->font_size *= scale;
+    style->line_height *= scale;
+    style->letter_spacing *= scale;
+    style->word_spacing *= scale;
+    style->flex_basis *= scale;
+    style->scrollbar_width *= scale;
+    style->scrollbar_radius *= scale;
+}
+
+/* Store a resolved foreground color in widgets that own text paint state. */
+static void apply_widget_text_color(Ca_Node *node, uint32_t color)
+{
+    if (!node || !node->widget) return;
+    if (node->widget_type == CA_WIDGET_SPLITTER)
+        ((Ca_Splitter *)node->widget)->bar_color = node->desc.background;
+    if (color == 0u) return;
+    switch (node->widget_type) {
+    case CA_WIDGET_LABEL: ((Ca_Label *)node->widget)->color = color; break;
+    case CA_WIDGET_BUTTON: ((Ca_Button *)node->widget)->text_color = color; break;
+    case CA_WIDGET_TEXT_INPUT: ((Ca_TextInput *)node->widget)->text_color = color; break;
+    case CA_WIDGET_CHECKBOX: ((Ca_Checkbox *)node->widget)->text_color = color; break;
+    case CA_WIDGET_RADIO: ((Ca_Radio *)node->widget)->text_color = color; break;
+    case CA_WIDGET_TREENODE: ((Ca_TreeNode *)node->widget)->text_color = color; break;
+    case CA_WIDGET_PROGRESS: ((Ca_Progress *)node->widget)->bar_color = color; break;
+    case CA_WIDGET_SPLITTER: ((Ca_Splitter *)node->widget)->bar_hover_color = color; break;
+    default: break;
+    }
+}
+
 /* Resolve CSS styles and apply to a node descriptor + set node metadata.
    Inline (nonzero) descriptor values take precedence over CSS. */
 static void apply_css(Ca_Node *node, Ca_NodeDesc *nd,
@@ -490,48 +549,10 @@ static void apply_css(Ca_Node *node, Ca_NodeDesc *nd,
     Ca_ResolvedStyle rs;
     ca_style_resolve(ss, node, elem_type, node->classes, &rs);
 
-    /* Scale CSS-resolved pixel values before applying (skip percentages) */
-    if (!rs.width_pct)  rs.width  = s(rs.width);
-    if (!rs.height_pct) rs.height = s(rs.height);
-    rs.min_width          = s(rs.min_width);
-    rs.max_width          = s(rs.max_width);
-    rs.min_height         = s(rs.min_height);
-    rs.max_height         = s(rs.max_height);
-    rs.padding[0]         = s(rs.padding[0]);
-    rs.padding[1]         = s(rs.padding[1]);
-    rs.padding[2]         = s(rs.padding[2]);
-    rs.padding[3]         = s(rs.padding[3]);
-    rs.margin[0]          = s(rs.margin[0]);
-    rs.margin[1]          = s(rs.margin[1]);
-    rs.margin[2]          = s(rs.margin[2]);
-    rs.margin[3]          = s(rs.margin[3]);
-    rs.gap                = s(rs.gap);
-    rs.row_gap            = s(rs.row_gap);
-    rs.column_gap         = s(rs.column_gap);
-    rs.border_radius      = s(rs.border_radius);
-    rs.border_radius_tl   = s(rs.border_radius_tl);
-    rs.border_radius_tr   = s(rs.border_radius_tr);
-    rs.border_radius_br   = s(rs.border_radius_br);
-    rs.border_radius_bl   = s(rs.border_radius_bl);
-    rs.border_width       = s(rs.border_width);
-    rs.border_top_w       = s(rs.border_top_w);
-    rs.border_right_w     = s(rs.border_right_w);
-    rs.border_bottom_w    = s(rs.border_bottom_w);
-    rs.border_left_w      = s(rs.border_left_w);
-    rs.outline_width      = s(rs.outline_width);
-    rs.outline_offset     = s(rs.outline_offset);
-    rs.shadow_offset_x    = s(rs.shadow_offset_x);
-    rs.shadow_offset_y    = s(rs.shadow_offset_y);
-    rs.shadow_blur        = s(rs.shadow_blur);
-    rs.font_size          = s(rs.font_size);
-    rs.line_height        = s(rs.line_height);
-    rs.letter_spacing     = s(rs.letter_spacing);
-    rs.word_spacing       = s(rs.word_spacing);
-    rs.flex_basis         = s(rs.flex_basis);
-    rs.scrollbar_width    = s(rs.scrollbar_width);
-    rs.scrollbar_radius   = s(rs.scrollbar_radius);
+    scale_resolved_style(&rs, g_ctx.window->ui_scale);
 
     ca_style_apply_to_node(&rs, nd, out_color);
+    apply_widget_text_color(node, out_color ? *out_color : 0u);
 
     /* Store transition config on the node */
     node->transition_duration = rs.transition_duration;
@@ -588,40 +609,7 @@ void ca_widget_reapply_css(Ca_Node *node)
 
     /* Scale CSS-resolved pixel values (matches apply_css). Use the node's
        own window scale directly since g_ctx may not be active here. */
-    float scale = node->window->ui_scale;
-    if (!rs.width_pct)  rs.width  *= scale;
-    if (!rs.height_pct) rs.height *= scale;
-    rs.min_width         *= scale;  rs.max_width    *= scale;
-    rs.min_height        *= scale;  rs.max_height   *= scale;
-    rs.padding[0]        *= scale;  rs.padding[1]   *= scale;
-    rs.padding[2]        *= scale;  rs.padding[3]   *= scale;
-    rs.margin[0]         *= scale;  rs.margin[1]    *= scale;
-    rs.margin[2]         *= scale;  rs.margin[3]    *= scale;
-    rs.gap               *= scale;
-    rs.row_gap           *= scale;
-    rs.column_gap        *= scale;
-    rs.border_radius     *= scale;
-    rs.border_radius_tl  *= scale;
-    rs.border_radius_tr  *= scale;
-    rs.border_radius_br  *= scale;
-    rs.border_radius_bl  *= scale;
-    rs.border_width      *= scale;
-    rs.border_top_w      *= scale;
-    rs.border_right_w    *= scale;
-    rs.border_bottom_w   *= scale;
-    rs.border_left_w     *= scale;
-    rs.outline_width     *= scale;
-    rs.outline_offset    *= scale;
-    rs.shadow_offset_x   *= scale;
-    rs.shadow_offset_y   *= scale;
-    rs.shadow_blur       *= scale;
-    rs.font_size         *= scale;
-    rs.line_height       *= scale;
-    rs.letter_spacing    *= scale;
-    rs.word_spacing      *= scale;
-    rs.flex_basis        *= scale;
-    rs.scrollbar_width   *= scale;
-    rs.scrollbar_radius  *= scale;
+    scale_resolved_style(&rs, node->window->ui_scale);
 
     /* ca_style_apply_to_node uses zero-fill semantics — it writes layout
        fields (width/height/padding/margin/gap) whenever the current value
@@ -656,17 +644,7 @@ void ca_widget_reapply_css(Ca_Node *node)
     nd->gap = saved_gap; nd->row_gap = saved_rg; nd->column_gap = saved_cg;
 
     /* Propagate text color for widget types that store it separately. */
-    if (out_color) {
-        switch (node->widget_type) {
-        case CA_WIDGET_LABEL:
-            if (node->widget) ((Ca_Label *)node->widget)->color = out_color;
-            break;
-        case CA_WIDGET_BUTTON:
-            if (node->widget) ((Ca_Button *)node->widget)->text_color = out_color;
-            break;
-        default: break;
-        }
-    }
+    apply_widget_text_color(node, out_color);
 
     /* Diff against pre-reapply desc — only dirty when CSS resolution
        actually changed a visual field, so a hover-cross between siblings
@@ -674,6 +652,58 @@ void ca_widget_reapply_css(Ca_Node *node)
     if (content_desc_changed(&old, nd)) node->dirty |= CA_DIRTY_CONTENT;
     /* Note: we intentionally do NOT check layout_desc_changed here because
        this code path doesn't touch layout fields. */
+}
+
+void ca_widget_refresh_css(Ca_Node *node)
+{
+    if (!node || !node->in_use || !node->window || !node->has_base_desc) return;
+    Ca_Stylesheet *stylesheet = node->window->instance
+        ? node->window->instance->stylesheet : NULL;
+    if (!stylesheet) return;
+
+    const Ca_NodeDesc old = node->desc;
+    node->desc = node->base_desc;
+
+    Ca_ResolvedStyle resolved;
+    ca_style_resolve(stylesheet, node, (Ca_ElementType)node->elem_type,
+                     node->classes, &resolved);
+    scale_resolved_style(&resolved, node->window->ui_scale);
+
+    uint32_t text_color = 0u;
+    ca_style_apply_to_node(&resolved, &node->desc, &text_color);
+    apply_widget_text_color(node, text_color);
+    node->transition_duration = resolved.transition_duration;
+    node->transition_props = resolved.transition_props;
+
+    node->desc.hidden = old.hidden;
+    node->desc.disabled = old.disabled;
+    if (node->widget_type == CA_WIDGET_TREENODE)
+        node->desc.height = old.height;
+
+    const float scale = node->window->ui_scale;
+    if (node->widget_type == CA_WIDGET_LABEL && node->desc.height <= 0.0f &&
+        !node->desc.text_wrap) {
+        float default_height = 16.0f;
+        if (node->elem_type == CA_ELEM_H1) default_height = 36.0f;
+        else if (node->elem_type == CA_ELEM_H2) default_height = 28.0f;
+        else if (node->elem_type == CA_ELEM_H3) default_height = 24.0f;
+        else if (node->elem_type == CA_ELEM_H4) default_height = 20.0f;
+        else if (node->elem_type == CA_ELEM_H5 || node->elem_type == CA_ELEM_H6)
+            default_height = 18.0f;
+        node->desc.height = default_height * scale +
+                            node->desc.padding_top + node->desc.padding_bottom;
+    }
+    if (node->widget_type == CA_WIDGET_TEXT_INPUT) {
+        if (node->desc.width <= 0.0f) node->desc.width = 160.0f * scale;
+        if (node->desc.height <= 0.0f) node->desc.height = 24.0f * scale;
+        if (node->desc.padding_left <= 0.0f) node->desc.padding_left = 4.0f * scale;
+        if (node->desc.padding_right <= 0.0f) node->desc.padding_right = 4.0f * scale;
+    }
+    if (node->elem_type == CA_ELEM_HR && node->desc.height <= 0.0f)
+        node->desc.height = scale;
+
+    if (content_desc_changed(&old, &node->desc)) node->dirty |= CA_DIRTY_CONTENT;
+    if (layout_desc_changed(&old, &node->desc)) node->dirty |= CA_DIRTY_LAYOUT;
 }
 
 static Ca_NodeDesc div_to_nd(const Ca_DivDesc *d)

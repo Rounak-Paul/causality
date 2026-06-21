@@ -1013,6 +1013,9 @@ CA_API void           ca_css_destroy(Ca_Stylesheet *ss);
  */
 CA_API void ca_instance_set_stylesheet(Ca_Instance *instance, Ca_Stylesheet *ss);
 
+/* Re-resolve CSS for every live node after replacing a stylesheet. */
+CA_API void ca_instance_refresh_styles(Ca_Instance *instance);
+
 /* ============================================================
    GPU — Vulkan resource accessors
    ============================================================

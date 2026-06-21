@@ -7,6 +7,7 @@
 #include "renderer.h"
 #include "ui.h"
 #include "css.h"
+#include "widget.h"
 
 /* Forward decls into the reactive subsystem (src/reactive/signal.c). */
 void ca_reactive_flush(Ca_Instance *inst);
@@ -162,6 +163,25 @@ void ca_instance_set_stylesheet(Ca_Instance *instance, Ca_Stylesheet *ss)
 {
     if (!instance) return;
     instance->stylesheet = ss;
+}
+
+/* Re-resolve every styled node and schedule layout and paint work. */
+void ca_instance_refresh_styles(Ca_Instance *instance)
+{
+    if (!instance || !instance->stylesheet) return;
+    for (int wi = 0; wi < CA_MAX_WINDOWS_TOTAL; ++wi) {
+        Ca_Window *window = &instance->windows[wi];
+        if (!window->in_use || !window->node_pool) continue;
+        for (uint32_t ni = 0u; ni < CA_MAX_NODES_PER_WINDOW; ++ni) {
+            Ca_Node *node = &window->node_pool[ni];
+            if (!node->in_use) continue;
+            ca_widget_refresh_css(node);
+            node->dirty |= CA_DIRTY_LAYOUT | CA_DIRTY_CONTENT;
+        }
+        window->titlebar_needs_rebuild = true;
+        window->needs_render = true;
+    }
+    ca_instance_wake();
 }
 
 /*
