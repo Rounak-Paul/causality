@@ -989,9 +989,7 @@ struct Ca_Instance {
     Ca_Image         images[CA_MAX_IMAGES];
     VkDescriptorPool image_desc_pool; /* shared pool for image descriptor sets */
 
-    /* When true, ca_window_system_tick uses glfwPollEvents() instead of
-       glfwWaitEvents(), keeping the loop running continuously at full speed.
-       Set via ca_instance_set_continuous(). */
+    /* When true, ca_window_system_tick polls continuously. */
     bool continuous;
 
     /* Instance-wide UI scale applied to every open and future window.

@@ -517,6 +517,8 @@ void ca_window_maximize(Ca_Window *window)
     if (glfwGetWindowAttrib(window->glfw, GLFW_MAXIMIZED)) return;
 
     glfwMaximizeWindow(window->glfw);
+    window->needs_render = true;
+    ca_instance_wake();
 }
 
 /*

@@ -104,8 +104,7 @@ CA_API void         ca_instance_wake(void);
 /* Enable or disable continuous rendering mode.
    When true, ca_instance_tick uses glfwPollEvents() so the loop runs every
    frame regardless of input — required for smooth camera / game-loop behaviour.
-   When false (default), the loop sleeps until an event arrives, saving CPU
-   for idle editor / tool windows. */
+   When false (default), the loop sleeps until an event or explicit wake. */
 CA_API void         ca_instance_set_continuous(Ca_Instance *instance, bool continuous);
 
 /* ============================================================
@@ -833,7 +832,7 @@ CA_API void  ca_set_scroll_y(Ca_Window *window, const char *id, float y);
 /* ---- Window callbacks ---- */
 
 /*
- * Register a per-frame callback invoked after input processing, before paint.
+ * Register a callback invoked after input processing on each scheduled frame.
  *
  * window     Target window.
  * fn         Function called once per tick; NULL to clear.

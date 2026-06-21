@@ -1820,11 +1820,19 @@ void ca_set_scroll_y(Ca_Window *window, const char *id, float y)
     n->dirty      |= CA_DIRTY_LAYOUT;
 }
 
+/*
+ * Set the callback invoked on each scheduled frame for a window.
+ *
+ * window     Target window.
+ * fn         Callback to install, or NULL to clear it.
+ * user_data  Opaque callback data.
+ */
 void ca_window_set_on_frame(Ca_Window *window, void (*fn)(void *), void *user_data)
 {
     if (!window) return;
     window->on_frame_fn   = fn;
     window->on_frame_data = user_data;
+    if (window->instance) ca_instance_wake();
 }
 
 /* Old per-widget setters removed — see unified API below. */
