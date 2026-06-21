@@ -1171,8 +1171,6 @@ Ca_TextInput *ca_input(const Ca_InputDesc *desc)
     inp->node       = node;
     inp->in_use     = true;
     inp->text_color = desc->text_color;
-    inp->cursor     = 0;
-    inp->sel_start  = -1;
     inp->placeholder_color = CA_THEME_TEXT_DIM;
     WIDGET_SET_TEXT(node, reused, inp->text, CA_INPUT_TEXT_MAX, desc->text);
 
@@ -1181,7 +1179,13 @@ Ca_TextInput *ca_input(const Ca_InputDesc *desc)
     else
         inp->placeholder[0] = '\0';
 
-    inp->cursor = (int)strlen(inp->text);
+    /* Only reset cursor/selection on first creation, not on every rebuild.
+     * Resetting each frame would snap the cursor to end-of-text every tick,
+     * making it impossible to position the cursor or see it blink. */
+    if (!reused) {
+        inp->cursor    = (int)strlen(inp->text);
+        inp->sel_start = -1;
+    }
 
     if (desc->on_change) {
         inp->on_change   = desc->on_change;
