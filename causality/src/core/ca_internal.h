@@ -889,6 +889,10 @@ struct Ca_Window {
     bool           titlebar_maximized;
     Ca_MenuBarMenu titlebar_menus[CA_MAX_MENUS_PER_BAR];
     int            titlebar_menu_count;
+    int            titlebar_restore_x;
+    int            titlebar_restore_y;
+    int            titlebar_restore_w;
+    int            titlebar_restore_h;
 
     /* Edge / corner resize state (manual implementation for undecorated windows) */
     bool           resize_active;          /* currently resizing                 */
@@ -991,6 +995,10 @@ struct Ca_Instance {
 
     /* When true, ca_window_system_tick polls continuously. */
     bool continuous;
+
+    /* Earliest requested timed frame, in GLFW monotonic seconds. */
+    double frame_deadline;
+    bool   frame_deadline_pending;
 
     /* Instance-wide UI scale applied to every open and future window.
        0.0 / 1.0 both mean "no scaling".  Set via ca_instance_set_scale(). */

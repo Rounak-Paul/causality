@@ -99,9 +99,7 @@ static void on_maximize_click(Ca_Button *btn, void *ud)
     Ca_Window *win = (Ca_Window *)ud;
 
     if (win->titlebar_maximized) {
-        glfwRestoreWindow(win->glfw);
-        win->needs_render = true;
-        ca_instance_wake();
+        ca_window_restore(win);
     } else {
         ca_window_maximize(win);
     }

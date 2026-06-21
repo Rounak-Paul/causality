@@ -127,6 +127,26 @@ void ca_instance_wake(void)
     glfwPostEmptyEvent();
 }
 
+/**
+ * Schedule a frame without turning the instance into a polling loop.
+ *
+ * @param instance Instance whose event loop should wake.
+ * @param delay_seconds Non-negative delay before the requested frame.
+ */
+void ca_instance_request_frame_after(Ca_Instance *instance,
+                                     double delay_seconds)
+{
+    if (!instance) return;
+    if (delay_seconds < 0.0) delay_seconds = 0.0;
+
+    const double deadline = glfwGetTime() + delay_seconds;
+    if (!instance->frame_deadline_pending ||
+        deadline < instance->frame_deadline) {
+        instance->frame_deadline = deadline;
+        instance->frame_deadline_pending = true;
+    }
+}
+
 /*
  * Control whether the instance runs in continuous (polling) or event-driven mode.
  *

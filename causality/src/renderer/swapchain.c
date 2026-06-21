@@ -63,21 +63,22 @@ static VkSurfaceFormatKHR choose_surface_format(VkPhysicalDevice gpu,
     return chosen;
 }
 
+/**
+ * Selects the compositor-paced presentation mode for a window surface.
+ *
+ * @param gpu Physical device associated with the surface.
+ * @param surface Window surface whose swapchain is being configured.
+ * @return FIFO presentation mode, which Vulkan guarantees is supported.
+ */
 static VkPresentModeKHR choose_present_mode(VkPhysicalDevice gpu,
-                                             VkSurfaceKHR surface)
+                                            VkSurfaceKHR surface)
 {
-    uint32_t count = 0;
-    vkGetPhysicalDeviceSurfacePresentModesKHR(gpu, surface, &count, NULL);
-    VkPresentModeKHR *modes =
-        (VkPresentModeKHR *)CA_MALLOC(count * sizeof(VkPresentModeKHR));
-    vkGetPhysicalDeviceSurfacePresentModesKHR(gpu, surface, &count, modes);
-
-    VkPresentModeKHR chosen = VK_PRESENT_MODE_FIFO_KHR; /* guaranteed */
-    for (uint32_t i = 0; i < count; ++i) {
-        if (modes[i] == VK_PRESENT_MODE_MAILBOX_KHR) { chosen = modes[i]; break; }
-    }
-    CA_FREE(modes);
-    return chosen;
+    (void)gpu;
+    (void)surface;
+    /* FIFO is guaranteed by Vulkan and paced by the display compositor.
+       MAILBOX lets continuously animated UI submit at the GPU's maximum rate,
+       wasting power on frames the display can never show. */
+    return VK_PRESENT_MODE_FIFO_KHR;
 }
 
 static VkExtent2D choose_extent(const VkSurfaceCapabilitiesKHR *caps,

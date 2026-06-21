@@ -101,6 +101,18 @@ CA_API bool         ca_instance_tick(Ca_Instance *instance);
 /* Wake the event loop from another thread (e.g. after posting async data). */
 CA_API void         ca_instance_wake(void);
 
+/**
+ * Request an event-loop frame after a minimum delay.
+ *
+ * Repeated requests keep the earliest deadline. This function must be called
+ * from the UI thread.
+ *
+ * @param instance Instance whose event loop should wake.
+ * @param delay_seconds Non-negative delay in seconds.
+ */
+CA_API void ca_instance_request_frame_after(Ca_Instance *instance,
+                                             double delay_seconds);
+
 /* Enable or disable continuous rendering mode.
    When true, ca_instance_tick uses glfwPollEvents() so the loop runs every
    frame regardless of input — required for smooth camera / game-loop behaviour.
@@ -138,6 +150,8 @@ CA_API Ca_Instance *ca_window_instance(Ca_Window *window);
 CA_API void       ca_window_close(Ca_Window *window);
 /* Maximize the window to fill the screen. */
 CA_API void       ca_window_maximize(Ca_Window *window);
+/* Restore a maximized window to its previous geometry. */
+CA_API void       ca_window_restore(Ca_Window *window);
 
 /* Returns true if the window handle is valid and still open. */
 CA_API bool       ca_window_is_open(const Ca_Window *window);

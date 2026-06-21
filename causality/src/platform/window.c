@@ -282,10 +282,21 @@ bool ca_window_system_tick(Ca_Instance *inst)
             inst->windows[i].key_count  = 0;
         }
 
-    if (inst->continuous)
+    if (inst->continuous) {
         glfwPollEvents();
-    else
+    } else if (inst->frame_deadline_pending) {
+        const double remaining = inst->frame_deadline - glfwGetTime();
+        if (remaining <= 0.0) {
+            inst->frame_deadline_pending = false;
+            glfwPollEvents();
+        } else {
+            glfwWaitEventsTimeout(remaining);
+            if (glfwGetTime() >= inst->frame_deadline)
+                inst->frame_deadline_pending = false;
+        }
+    } else {
         glfwWaitEvents();
+    }
 
     /* Dispatch all queued input / resize events */
     ca_event_dispatch(inst);
@@ -514,9 +525,69 @@ void ca_window_close(Ca_Window *window)
 void ca_window_maximize(Ca_Window *window)
 {
     if (!window || !window->in_use || !window->glfw) return;
-    if (glfwGetWindowAttrib(window->glfw, GLFW_MAXIMIZED)) return;
 
+#ifdef __APPLE__
+    if (window->titlebar_maximized) return;
+
+    glfwGetWindowPos(window->glfw,
+                     &window->titlebar_restore_x, &window->titlebar_restore_y);
+    glfwGetWindowSize(window->glfw,
+                      &window->titlebar_restore_w, &window->titlebar_restore_h);
+
+    const int center_x = window->titlebar_restore_x + window->titlebar_restore_w / 2;
+    const int center_y = window->titlebar_restore_y + window->titlebar_restore_h / 2;
+    int monitor_count = 0;
+    GLFWmonitor **monitors = glfwGetMonitors(&monitor_count);
+    GLFWmonitor *target = glfwGetPrimaryMonitor();
+    for (int i = 0; i < monitor_count; ++i) {
+        int x = 0, y = 0, width = 0, height = 0;
+        glfwGetMonitorWorkarea(monitors[i], &x, &y, &width, &height);
+        if (center_x >= x && center_x < x + width &&
+            center_y >= y && center_y < y + height) {
+            target = monitors[i];
+            break;
+        }
+    }
+
+    int x = 0, y = 0, width = 0, height = 0;
+    glfwGetMonitorWorkarea(target, &x, &y, &width, &height);
+    glfwSetWindowPos(window->glfw, x, y);
+    glfwSetWindowSize(window->glfw, width, height);
+    window->titlebar_maximized = true;
+    window->titlebar_needs_rebuild = true;
+#else
+    if (glfwGetWindowAttrib(window->glfw, GLFW_MAXIMIZED)) return;
     glfwMaximizeWindow(window->glfw);
+#endif
+    window->needs_render = true;
+    ca_instance_wake();
+}
+
+/*
+ * Restore a maximized window to its previous geometry.
+ *
+ * Borderless Cocoa windows restore from Causality's saved geometry. Other
+ * platforms delegate restoration to their compositor or window manager.
+ *
+ * window  Window to restore.
+ */
+void ca_window_restore(Ca_Window *window)
+{
+    if (!window || !window->in_use || !window->glfw) return;
+
+#ifdef __APPLE__
+    if (!window->titlebar_maximized) return;
+    if (window->titlebar_restore_w > 0 && window->titlebar_restore_h > 0) {
+        glfwSetWindowPos(window->glfw,
+                         window->titlebar_restore_x, window->titlebar_restore_y);
+        glfwSetWindowSize(window->glfw,
+                          window->titlebar_restore_w, window->titlebar_restore_h);
+    }
+    window->titlebar_maximized = false;
+    window->titlebar_needs_rebuild = true;
+#else
+    glfwRestoreWindow(window->glfw);
+#endif
     window->needs_render = true;
     ca_instance_wake();
 }
