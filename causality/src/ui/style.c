@@ -592,6 +592,19 @@ void ca_style_resolve(Ca_Stylesheet *ss,
                                          (1ULL << (int)CA_CSS_PROP_OVERFLOW_Y);
                     }
                     break;
+                case CA_CSS_PROP_SCROLLBAR_WIDTH:
+                    out->scrollbar_width = css_val_to_px(val); break;
+                case CA_CSS_PROP_SCROLLBAR_TRACK_COLOR:
+                    if (val->type == CA_CSS_VAL_COLOR) out->scrollbar_track_color = val->color;
+                    break;
+                case CA_CSS_PROP_SCROLLBAR_THUMB_COLOR:
+                    if (val->type == CA_CSS_VAL_COLOR) out->scrollbar_thumb_color = val->color;
+                    break;
+                case CA_CSS_PROP_SCROLLBAR_THUMB_ACTIVE_COLOR:
+                    if (val->type == CA_CSS_VAL_COLOR) out->scrollbar_thumb_active_color = val->color;
+                    break;
+                case CA_CSS_PROP_SCROLLBAR_RADIUS:
+                    out->scrollbar_radius = css_val_to_px(val); break;
                 case CA_CSS_PROP_TRANSITION: {
                     int tprop = val->keyword;
                     float dur = val->number;
@@ -903,6 +916,27 @@ void ca_style_apply_to_node(const Ca_ResolvedStyle *style,
             case CA_CSS_OVERFLOW_AUTO:    nd->overflow_y = 3; break;
             default:                      nd->overflow_y = 0; break;
         }
+    }
+
+    if (STYLE_SET(CA_CSS_PROP_SCROLLBAR_WIDTH)) {
+        nd->scrollbar_width = style->scrollbar_width;
+        nd->scrollbar_width_set = true;
+    }
+    if (STYLE_SET(CA_CSS_PROP_SCROLLBAR_TRACK_COLOR)) {
+        nd->scrollbar_track_color = style->scrollbar_track_color;
+        nd->scrollbar_track_color_set = true;
+    }
+    if (STYLE_SET(CA_CSS_PROP_SCROLLBAR_THUMB_COLOR)) {
+        nd->scrollbar_thumb_color = style->scrollbar_thumb_color;
+        nd->scrollbar_thumb_color_set = true;
+    }
+    if (STYLE_SET(CA_CSS_PROP_SCROLLBAR_THUMB_ACTIVE_COLOR)) {
+        nd->scrollbar_thumb_active_color = style->scrollbar_thumb_active_color;
+        nd->scrollbar_thumb_active_color_set = true;
+    }
+    if (STYLE_SET(CA_CSS_PROP_SCROLLBAR_RADIUS)) {
+        nd->scrollbar_radius = style->scrollbar_radius;
+        nd->scrollbar_radius_set = true;
     }
 
     /* Flex grow/shrink/basis */

@@ -656,8 +656,8 @@ static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, Cli
             bar_w = node->w;
             bar_h = sp->bar_size;
         }
-        bool hovered = (win->hovered_node == node);
-        uint32_t color = hovered ? sp->bar_hover_color : sp->bar_color;
+        bool active = win->hovered_node == node || sp->dragging;
+        uint32_t color = active ? sp->bar_hover_color : sp->bar_color;
         if (win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
             Ca_DrawCmd *cmd = &win->draw_cmds[win->draw_cmd_count++];
             memset(cmd, 0, sizeof(*cmd));
@@ -736,8 +736,10 @@ static void paint_scrollbars(Ca_Window *win, Ca_Node *node, ClipRect clip)
        overlay = true puts them in phase 1, after all phase-0 glyphs. */
     uint32_t sb_first = win->draw_cmd_count;
     float ui_s = win->ui_scale > 0.0f ? win->ui_scale : 1.0f;
-    if (node->desc.overflow_y >= 2 && node->content_h > node->h) {
-        float bar_w   = 14.0f * ui_s;
+    if (node->desc.overflow_y >= 2 && node->content_h > node->h &&
+        (!node->desc.scrollbar_width_set || node->desc.scrollbar_width > 0.0f)) {
+        float bar_w   = node->desc.scrollbar_width_set
+                            ? node->desc.scrollbar_width : 14.0f * ui_s;
         float track_h = node->h;
         float ratio   = node->h / node->content_h;
         float thumb_h = track_h * ratio;
@@ -758,9 +760,11 @@ static void paint_scrollbars(Ca_Window *win, Ca_Node *node, ClipRect clip)
             cmd->type = CA_DRAW_RECT;
             cmd->x = bar_x; cmd->y = node->y;
             cmd->w = bar_w; cmd->h = track_h;
-            unpack_color(CA_THEME_SCROLLBAR_TRACK, &cmd->r, &cmd->g, &cmd->b, &cmd->a);
-            cmd->corner_radius = 0.0f;
-            /* inset bevel: shadow top+left, highlight bottom+right */
+            uint32_t track_color = node->desc.scrollbar_track_color_set
+                                       ? node->desc.scrollbar_track_color
+                                       : CA_THEME_SCROLLBAR_TRACK;
+            unpack_color(track_color, &cmd->r, &cmd->g, &cmd->b, &cmd->a);
+            cmd->corner_radius = node->desc.scrollbar_radius;
             cmd->border_width = 0.0f;
             cmd->in_use = true;
             set_clip(cmd, clip);
@@ -772,40 +776,25 @@ static void paint_scrollbars(Ca_Window *win, Ca_Node *node, ClipRect clip)
             cmd->type = CA_DRAW_RECT;
             cmd->x = bar_x; cmd->y = thumb_y;
             cmd->w = bar_w; cmd->h = thumb_h;
-            unpack_color(dragging_y ? CA_THEME_SCROLLBAR_THUMB_ACTIVE
-                                    : CA_THEME_SCROLLBAR_THUMB,
+            uint32_t thumb_color = dragging_y
+                ? (node->desc.scrollbar_thumb_active_color_set
+                       ? node->desc.scrollbar_thumb_active_color
+                       : CA_THEME_SCROLLBAR_THUMB_ACTIVE)
+                : (node->desc.scrollbar_thumb_color_set
+                       ? node->desc.scrollbar_thumb_color
+                       : CA_THEME_SCROLLBAR_THUMB);
+            unpack_color(thumb_color,
                          &cmd->r, &cmd->g, &cmd->b, &cmd->a);
-            cmd->corner_radius = 0.0f;
+            cmd->corner_radius = node->desc.scrollbar_radius;
             cmd->in_use = true;
             set_clip(cmd, clip);
         }
-        /* Per-side bevel borders on the thumb */
-        /* top+left highlight */
-        if (win->draw_cmd_count + 4 <= CA_MAX_DRAW_CMDS_PER_WINDOW) {
-            float bw = 2.0f * ui_s;
-            uint32_t hi = ca_color(0x4c/255.f, 0x4c/255.f, 0x58/255.f, 1.0f);
-            uint32_t sh = ca_color(0x07/255.f, 0x07/255.f, 0x09/255.f, 1.0f);
-            /* top */
-            { Ca_DrawCmd *c = &win->draw_cmds[win->draw_cmd_count++]; memset(c,0,sizeof(*c));
-              c->type=CA_DRAW_RECT; c->x=bar_x; c->y=thumb_y; c->w=bar_w; c->h=bw;
-              unpack_color(hi,&c->r,&c->g,&c->b,&c->a); c->in_use=true; set_clip(c,clip); }
-            /* left */
-            { Ca_DrawCmd *c = &win->draw_cmds[win->draw_cmd_count++]; memset(c,0,sizeof(*c));
-              c->type=CA_DRAW_RECT; c->x=bar_x; c->y=thumb_y; c->w=bw; c->h=thumb_h;
-              unpack_color(hi,&c->r,&c->g,&c->b,&c->a); c->in_use=true; set_clip(c,clip); }
-            /* bottom */
-            { Ca_DrawCmd *c = &win->draw_cmds[win->draw_cmd_count++]; memset(c,0,sizeof(*c));
-              c->type=CA_DRAW_RECT; c->x=bar_x; c->y=thumb_y+thumb_h-bw; c->w=bar_w; c->h=bw;
-              unpack_color(sh,&c->r,&c->g,&c->b,&c->a); c->in_use=true; set_clip(c,clip); }
-            /* right */
-            { Ca_DrawCmd *c = &win->draw_cmds[win->draw_cmd_count++]; memset(c,0,sizeof(*c));
-              c->type=CA_DRAW_RECT; c->x=bar_x+bar_w-bw; c->y=thumb_y; c->w=bw; c->h=thumb_h;
-              unpack_color(sh,&c->r,&c->g,&c->b,&c->a); c->in_use=true; set_clip(c,clip); }
-        }
     }
     /* ---- X scrollbar ---- */
-    if (node->desc.overflow_x >= 2 && node->content_w > node->w) {
-        float bar_h   = 6.0f * ui_s;
+    if (node->desc.overflow_x >= 2 && node->content_w > node->w &&
+        (!node->desc.scrollbar_width_set || node->desc.scrollbar_width > 0.0f)) {
+        float bar_h   = node->desc.scrollbar_width_set
+                            ? node->desc.scrollbar_width : 6.0f * ui_s;
         float margin  = 2.0f * ui_s;
         float track_w = node->w - margin * 2;
         float ratio   = node->w / node->content_w;
@@ -819,8 +808,16 @@ static void paint_scrollbars(Ca_Window *win, Ca_Node *node, ClipRect clip)
         float bar_y      = node->y + node->h - bar_h - margin;
 
         bool dragging_x = (win->scrollbar_drag_node == node && !win->scrollbar_drag_y);
-        uint32_t thumb_col_x = dragging_x ? CA_THEME_SCROLLBAR_THUMB_ACTIVE
-                                           : CA_THEME_SCROLLBAR_THUMB;
+        uint32_t thumb_col_x = dragging_x
+            ? (node->desc.scrollbar_thumb_active_color_set
+                   ? node->desc.scrollbar_thumb_active_color
+                   : CA_THEME_SCROLLBAR_THUMB_ACTIVE)
+            : (node->desc.scrollbar_thumb_color_set
+                   ? node->desc.scrollbar_thumb_color
+                   : CA_THEME_SCROLLBAR_THUMB);
+        uint32_t track_col_x = node->desc.scrollbar_track_color_set
+                                   ? node->desc.scrollbar_track_color
+                                   : CA_THEME_SCROLLBAR_TRACK;
 
         /* Track */
         if (win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
@@ -831,8 +828,8 @@ static void paint_scrollbars(Ca_Window *win, Ca_Node *node, ClipRect clip)
             cmd->y             = bar_y;
             cmd->w             = track_w;
             cmd->h             = bar_h;
-            unpack_color(CA_THEME_SCROLLBAR_TRACK, &cmd->r, &cmd->g, &cmd->b, &cmd->a);
-            cmd->corner_radius = bar_h * 0.5f;
+            unpack_color(track_col_x, &cmd->r, &cmd->g, &cmd->b, &cmd->a);
+            cmd->corner_radius = node->desc.scrollbar_radius;
             cmd->in_use        = true;
             set_clip(cmd, clip);
         }
@@ -846,7 +843,7 @@ static void paint_scrollbars(Ca_Window *win, Ca_Node *node, ClipRect clip)
             cmd->w             = thumb_w;
             cmd->h             = bar_h;
             unpack_color(thumb_col_x, &cmd->r, &cmd->g, &cmd->b, &cmd->a);
-            cmd->corner_radius = bar_h * 0.5f;
+            cmd->corner_radius = node->desc.scrollbar_radius;
             cmd->in_use        = true;
             set_clip(cmd, clip);
         }
@@ -1499,6 +1496,7 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
 {
     Ca_Font *font = inst->font;
     float ui_s = win->ui_scale > 0.0f ? win->ui_scale : 1.0f;
+    const bool use_fallback_chrome = inst->stylesheet == NULL;
 
     /* ---- Select dropdown overlays ---- */
     if (win->select_pool && font) {
@@ -1532,10 +1530,12 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
                 c->x = n->x; c->y = drop_y;
                 c->w = n->w; c->h = opt_h * (float)visible;
                 c->corner_radius = 4.0f * ui_s;
-                { float _r, _g, _b, _a; unpack_color(CA_THEME_POPUP_BG, &_r, &_g, &_b, &_a); c->r = _r; c->g = _g; c->b = _b; c->a = 1.0f; }
-                /* Visible border so the popup is distinguishable from adjacent panels */
-                c->border_width   = 1.0f * ui_s;
-                c->border_r = 0.200f; c->border_g = 0.200f; c->border_b = 0.267f; c->border_a = 1.0f;
+                { float _r, _g, _b, _a; unpack_color(CA_THEME_POPUP_BG, &_r, &_g, &_b, &_a); c->r = _r; c->g = _g; c->b = _b; c->a = _a; }
+                if (use_fallback_chrome) {
+                    c->border_width = 1.0f * ui_s;
+                    c->border_r = 0.200f; c->border_g = 0.200f;
+                    c->border_b = 0.267f; c->border_a = 1.0f;
+                }
                 c->in_use = true;
                 c->overlay = true;
             }
@@ -1629,9 +1629,12 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
                 c->type = CA_DRAW_RECT;
                 c->x = tip_x; c->y = tip_y; c->w = tip_w; c->h = tip_h;
                 c->corner_radius = 3.0f * ui_s;
-                { float _r, _g, _b, _a; unpack_color(CA_THEME_POPUP_BG, &_r, &_g, &_b, &_a); c->r = _r; c->g = _g; c->b = _b; c->a = 1.0f; }
-                c->border_width   = 1.0f * ui_s;
-                c->border_r = 0.200f; c->border_g = 0.200f; c->border_b = 0.267f; c->border_a = 1.0f;
+                { float _r, _g, _b, _a; unpack_color(CA_THEME_POPUP_BG, &_r, &_g, &_b, &_a); c->r = _r; c->g = _g; c->b = _b; c->a = _a; }
+                if (use_fallback_chrome) {
+                    c->border_width = 1.0f * ui_s;
+                    c->border_r = 0.200f; c->border_g = 0.200f;
+                    c->border_b = 0.267f; c->border_a = 1.0f;
+                }
                 c->in_use = true;
                 c->overlay = true;
             }
@@ -1678,7 +1681,7 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
             if (mx_pos < 0) mx_pos = 0;
             if (my_pos < 0) my_pos = 0;
 
-            /* Background with border */
+            /* Background */
             if (win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
                 Ca_DrawCmd *c = &win->draw_cmds[win->draw_cmd_count++];
                 memset(c, 0, sizeof(*c));
@@ -1686,9 +1689,12 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
                 c->x = mx_pos; c->y = my_pos;
                 c->w = menu_w; c->h = menu_h;
                 c->corner_radius = 4.0f * ui_s;
-                { float _r, _g, _b, _a; unpack_color(CA_THEME_POPUP_BG, &_r, &_g, &_b, &_a); c->r = _r; c->g = _g; c->b = _b; c->a = 1.0f; }
-                c->border_width   = 1.0f * ui_s;
-                c->border_r = 0.200f; c->border_g = 0.200f; c->border_b = 0.267f; c->border_a = 1.0f;
+                { float _r, _g, _b, _a; unpack_color(CA_THEME_POPUP_BG, &_r, &_g, &_b, &_a); c->r = _r; c->g = _g; c->b = _b; c->a = _a; }
+                if (use_fallback_chrome) {
+                    c->border_width = 1.0f * ui_s;
+                    c->border_r = 0.200f; c->border_g = 0.200f;
+                    c->border_b = 0.267f; c->border_a = 1.0f;
+                }
                 c->in_use = true;
                 c->overlay = true;
             }
@@ -1699,7 +1705,8 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
                 bool is_sep = (cm->items[mi][0] == '-' && cm->items[mi][1] == '\0');
                 if (is_sep) {
                     /* Separator line */
-                    if (win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
+                    if (use_fallback_chrome &&
+                        win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
                         Ca_DrawCmd *c = &win->draw_cmds[win->draw_cmd_count++];
                         memset(c, 0, sizeof(*c));
                         c->type = CA_DRAW_RECT;
@@ -1802,7 +1809,7 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
             ca_menubar_dropdown_geometry(win, hdr, menu_w, menu_h,
                                          &drop_x, &drop_y);
 
-            /* Dropdown background — sharp corners (retro) */
+            /* Dropdown background */
             if (win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
                 Ca_DrawCmd *c = &win->draw_cmds[win->draw_cmd_count++];
                 memset(c, 0, sizeof(*c));
@@ -1813,10 +1820,12 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
                 unpack_color(mb->dropdown_bg, &c->r, &c->g, &c->b, &c->a);
                 c->in_use = true;
                 c->overlay = true;
-                c->border_width = 1.0f * ui_s;
-                unpack_color(mb->dropdown_border,
-                             &c->border_r, &c->border_g,
-                             &c->border_b, &c->border_a);
+                if (use_fallback_chrome) {
+                    c->border_width = 1.0f * ui_s;
+                    unpack_color(mb->dropdown_border,
+                                 &c->border_r, &c->border_g,
+                                 &c->border_b, &c->border_a);
+                }
             }
 
             /* Dropdown items */
@@ -1826,7 +1835,8 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
 
                 /* --- Separator --- */
                 if (am->items[ii].separator) {
-                    if (win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
+                    if (use_fallback_chrome &&
+                        win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
                         Ca_DrawCmd *c = &win->draw_cmds[win->draw_cmd_count++];
                         memset(c, 0, sizeof(*c));
                         c->type = CA_DRAW_RECT;
@@ -1912,7 +1922,7 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
                                             parent_offset_y,
                                             &sub_x, &sub_y);
 
-                /* Sub-menu background — sharp corners (retro) */
+                /* Sub-menu background */
                 if (win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
                     Ca_DrawCmd *c = &win->draw_cmds[win->draw_cmd_count++];
                     memset(c, 0, sizeof(*c));
@@ -1923,10 +1933,12 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
                     unpack_color(mb->dropdown_bg, &c->r, &c->g, &c->b, &c->a);
                     c->in_use      = true;
                     c->overlay     = true;
-                    c->border_width = 1.0f * ui_s;
-                    unpack_color(mb->dropdown_border,
-                                 &c->border_r, &c->border_g,
-                                 &c->border_b, &c->border_a);
+                    if (use_fallback_chrome) {
+                        c->border_width = 1.0f * ui_s;
+                        unpack_color(mb->dropdown_border,
+                                     &c->border_r, &c->border_g,
+                                     &c->border_b, &c->border_a);
+                    }
                 }
 
                 float sub_iy = sub_y + 3.0f * ui_s; /* 3px top inset */

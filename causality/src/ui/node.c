@@ -229,6 +229,8 @@ bool layout_desc_changed(const Ca_NodeDesc *a, const Ca_NodeDesc *b)
            a->flex_wrap      != b->flex_wrap      ||
            a->overflow_x     != b->overflow_x     ||
            a->overflow_y     != b->overflow_y     ||
+           a->scrollbar_width != b->scrollbar_width ||
+           a->scrollbar_width_set != b->scrollbar_width_set ||
            a->hidden         != b->hidden         ||
            a->position       != b->position       ||
            a->pos_x          != b->pos_x          ||
@@ -253,6 +255,16 @@ bool content_desc_changed(const Ca_NodeDesc *a, const Ca_NodeDesc *b)
            a->hidden          != b->hidden          ||
            a->overflow_x      != b->overflow_x      ||
            a->overflow_y      != b->overflow_y      ||
+           a->scrollbar_width != b->scrollbar_width ||
+           a->scrollbar_track_color != b->scrollbar_track_color ||
+           a->scrollbar_thumb_color != b->scrollbar_thumb_color ||
+           a->scrollbar_thumb_active_color != b->scrollbar_thumb_active_color ||
+           a->scrollbar_radius != b->scrollbar_radius ||
+           a->scrollbar_width_set != b->scrollbar_width_set ||
+           a->scrollbar_track_color_set != b->scrollbar_track_color_set ||
+           a->scrollbar_thumb_color_set != b->scrollbar_thumb_color_set ||
+           a->scrollbar_thumb_active_color_set != b->scrollbar_thumb_active_color_set ||
+           a->scrollbar_radius_set != b->scrollbar_radius_set ||
            a->border_color    != b->border_color    ||
            a->border_width    != b->border_width    ||
            a->shadow_offset_x != b->shadow_offset_x ||

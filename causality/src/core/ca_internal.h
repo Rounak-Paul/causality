@@ -241,6 +241,16 @@ typedef struct {
     uint8_t      white_space;     /* white-space keyword */
     uint8_t      overflow_x;     /* 0=visible, 1=hidden, 2=scroll, 3=auto */
     uint8_t      overflow_y;
+    float        scrollbar_width;
+    uint32_t     scrollbar_track_color;
+    uint32_t     scrollbar_thumb_color;
+    uint32_t     scrollbar_thumb_active_color;
+    float        scrollbar_radius;
+    bool         scrollbar_width_set;
+    bool         scrollbar_track_color_set;
+    bool         scrollbar_thumb_color_set;
+    bool         scrollbar_thumb_active_color_set;
+    bool         scrollbar_radius_set;
     bool         hidden;          /* display: none */
     bool         visibility_hidden; /* visibility: hidden */
     bool         disabled;        /* non-interactive, visually dimmed */
@@ -959,6 +969,10 @@ struct Ca_Instance {
 
     /* CSS stylesheet (owned by instance; NULL if none loaded) */
     struct Ca_Stylesheet *stylesheet;
+
+    /* Background fallback for windows without a per-window override. */
+    Ca_BgRenderFn default_bg_render_fn;
+    void         *default_bg_render_data;
 
     /* Shared SSBO descriptor set layout + pool for instanced rendering */
     VkDescriptorSetLayout ssbo_desc_layout;

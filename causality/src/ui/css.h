@@ -151,6 +151,11 @@ typedef enum {
     CA_CSS_PROP_USER_SELECT,
     /* Scroll */
     CA_CSS_PROP_SCROLL_BEHAVIOR,
+    CA_CSS_PROP_SCROLLBAR_WIDTH,
+    CA_CSS_PROP_SCROLLBAR_TRACK_COLOR,
+    CA_CSS_PROP_SCROLLBAR_THUMB_COLOR,
+    CA_CSS_PROP_SCROLLBAR_THUMB_ACTIVE_COLOR,
+    CA_CSS_PROP_SCROLLBAR_RADIUS,
     /* Background (handles gradients — `background` shorthand) */
     CA_CSS_PROP_BACKGROUND,
     /* Gradient parameters written as side-channel properties from the

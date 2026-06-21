@@ -149,6 +149,7 @@ CA_API bool       ca_window_is_open(const Ca_Window *window);
  * presented with LOAD_OP_LOAD so this content shows through transparent UI.
  *
  * cmd              Command buffer to record into (already begun).
+ * window           Window whose swapchain is being rendered.
  * swapchain_image  VkImage of the current swapchain image (needed for image barriers).
  * swapchain_view   VkImageView of the current swapchain image (COLOR_ATTACHMENT_OPTIMAL).
  * format           VkFormat of the swapchain image.
@@ -158,6 +159,7 @@ CA_API bool       ca_window_is_open(const Ca_Window *window);
  * user_data        Pointer passed to ca_window_set_bg_render.
  */
 typedef bool (*Ca_BgRenderFn)(VkCommandBuffer cmd,
+                              Ca_Window       *window,
                               VkImage         swapchain_image,
                               VkImageView     swapchain_view,
                               VkFormat        format,
@@ -176,6 +178,15 @@ typedef bool (*Ca_BgRenderFn)(VkCommandBuffer cmd,
  * user_data  Passed unchanged to fn.
  */
 CA_API void ca_window_set_bg_render(Ca_Window *window, Ca_BgRenderFn fn, void *user_data);
+
+/*
+ * Set the background callback inherited by every window that has no explicit
+ * per-window callback. Existing and subsequently created windows both use it.
+ * Pass NULL for fn to clear the fallback.
+ */
+CA_API void ca_instance_set_bg_render(Ca_Instance *instance,
+                                      Ca_BgRenderFn fn,
+                                      void *user_data);
 
 /* Clipboard helpers for text content. Clipboard ownership remains with the
    platform backend; returned text is valid until the next clipboard update. */
@@ -208,6 +219,12 @@ CA_API void       ca_window_set_scale(Ca_Window *window, float scale);
 
 /* Returns the current instance-wide UI scale via a window handle. */
 CA_API float      ca_window_get_scale(Ca_Window *window);
+
+/* Return framebuffer pixels per logical window unit for the current display. */
+CA_API float      ca_window_get_pixel_ratio(Ca_Window *window);
+
+/* Return the resolved logical height reserved for the system title bar. */
+CA_API float      ca_window_get_title_bar_height(Ca_Window *window);
 
 /* Instance-wide UI scale — like browser zoom.
    1.0 = 100% (default), 1.5 = 150%, 2.0 = 200%, etc.

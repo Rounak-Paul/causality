@@ -50,6 +50,8 @@ static void rescale_desc(Ca_NodeDesc *d, float ratio)
     d->shadow_offset_x *= ratio;
     d->shadow_offset_y *= ratio;
     d->shadow_blur    *= ratio;
+    d->scrollbar_width *= ratio;
+    d->scrollbar_radius *= ratio;
 }
 
 /* Recursively rescale all resolved dimension values in a node subtree by

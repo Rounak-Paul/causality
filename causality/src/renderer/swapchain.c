@@ -326,15 +326,22 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
        It renders directly into the swapchain image (already COLOR_ATTACHMENT_OPTIMAL).
        The UI render pass then uses LOAD_OP_LOAD to preserve this content. */
     bool bg_rendered = false;
-    if (win->bg_render_fn)
-        bg_rendered = win->bg_render_fn(f->cmd,
+    Ca_BgRenderFn bg_render_fn = win->bg_render_fn
+                                      ? win->bg_render_fn
+                                      : inst->default_bg_render_fn;
+    void *bg_render_data = win->bg_render_fn
+                               ? win->bg_render_data
+                               : inst->default_bg_render_data;
+    if (bg_render_fn)
+        bg_rendered = bg_render_fn(f->cmd,
+                                        win,
                                         sc->images[image_index],
                                         sc->image_views[image_index],
                                         sc->format,
                                         sc->image_usage,
                                         sc->current_frame,
                                         sc->extent.width, sc->extent.height,
-                                        win->bg_render_data);
+                                        bg_render_data);
 
     /* Background: use the root node's color if available */
     float bg_r = 0.15f, bg_g = 0.15f, bg_b = 0.17f, bg_a = 1.0f;

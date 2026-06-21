@@ -823,6 +823,11 @@ static Ca_CssPropId lookup_property(const char *name)
         { "pointer-events",            CA_CSS_PROP_POINTER_EVENTS },
         { "user-select",               CA_CSS_PROP_USER_SELECT },
         { "scroll-behavior",           CA_CSS_PROP_SCROLL_BEHAVIOR },
+        { "scrollbar-width",            CA_CSS_PROP_SCROLLBAR_WIDTH },
+        { "scrollbar-track-color",      CA_CSS_PROP_SCROLLBAR_TRACK_COLOR },
+        { "scrollbar-thumb-color",      CA_CSS_PROP_SCROLLBAR_THUMB_COLOR },
+        { "scrollbar-thumb-active-color", CA_CSS_PROP_SCROLLBAR_THUMB_ACTIVE_COLOR },
+        { "scrollbar-radius",           CA_CSS_PROP_SCROLLBAR_RADIUS },
     };
     int count = (int)(sizeof(props) / sizeof(props[0]));
     for (int i = 0; i < count; ++i) {

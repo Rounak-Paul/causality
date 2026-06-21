@@ -141,6 +141,11 @@ typedef struct {
     uint32_t gradient_color2;  /* end color stop (RRGGBBAA) */
     float    gradient_angle;   /* degrees for linear-gradient */
     float    gradient_cx, gradient_cy; /* radial center 0..1 */
+    float    scrollbar_width;
+    uint32_t scrollbar_track_color;
+    uint32_t scrollbar_thumb_color;
+    uint32_t scrollbar_thumb_active_color;
+    float    scrollbar_radius;
 } Ca_ResolvedStyle;
 
 /* ============================================================

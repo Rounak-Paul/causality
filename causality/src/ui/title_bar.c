@@ -8,7 +8,7 @@
  *
  * Architecture:
  *   win->root         (vertical flex, fills window, system-managed)
- *   ├── win->title_bar_node  (horizontal, 30 px fixed height)
+ *   ├── win->title_bar_node  (horizontal, 26 px fixed height)
  *   │   ├── ca_menu_bar(...)     (left-aligned menus, if any)
  *   │   ├── drag div             (flex-grow:1, drag-to-move, title text)
  *   │   └── controls div        (min / max / close buttons)
@@ -16,7 +16,9 @@
  */
 
 #include "title_bar.h"
+#include "ca_theme.h"
 #include "node.h"
+#include "style.h"
 #include "widget.h"
 #include "../core/ca_internal.h"
 #include "../../include/causality.h"
@@ -26,7 +28,32 @@
 #include <stdio.h>
 #include <assert.h>
 
-#define TITLE_BAR_SIDE_PADDING_PX 2.0f
+#define TITLE_BAR_HEIGHT_PX       26.0f
+#define TITLE_BAR_SIDE_PADDING_PX 8.0f
+
+/* Apply an instance stylesheet class to a system-owned node. */
+static void apply_system_style(Ca_Node *node, Ca_ElementType type,
+                               const char *classes)
+{
+    if (!node || !node->window || !node->window->instance || !classes) return;
+    Ca_Stylesheet *stylesheet = node->window->instance->stylesheet;
+    if (!stylesheet) return;
+
+    node->elem_type = (uint8_t)type;
+    snprintf(node->classes, sizeof(node->classes), "%s", classes);
+    Ca_ResolvedStyle resolved;
+    ca_style_resolve(stylesheet, node, type, node->classes, &resolved);
+    const float scale = node->window->ui_scale > 0.0f
+                            ? node->window->ui_scale
+                            : 1.0f;
+    resolved.border_width *= scale;
+    resolved.border_top_w *= scale;
+    resolved.border_right_w *= scale;
+    resolved.border_bottom_w *= scale;
+    resolved.border_left_w *= scale;
+    resolved.border_radius *= scale;
+    ca_style_apply_to_node(&resolved, &node->desc, NULL);
+}
 
 /* ------------------------------------------------------------------ */
 /* Window-drag callbacks                                               */
@@ -137,23 +164,23 @@ void ca_title_bar_init(Ca_Window *win)
     float sc_init = win->ui_scale > 0.0f ? win->ui_scale : 1.0f;
     Ca_NodeDesc tb = {0};
     tb.direction     = CA_HORIZONTAL;
-    tb.height        = 22.0f * sc_init;
+    tb.height        = TITLE_BAR_HEIGHT_PX * sc_init;
     tb.align_items   = CA_ALIGN_CENTER;
     /* Inset the menu bar on the left and the window controls on the
        right so neither group is flush against the window chrome. */
      tb.padding_left  = TITLE_BAR_SIDE_PADDING_PX * sc_init;
      tb.padding_right = TITLE_BAR_SIDE_PADDING_PX * sc_init;
-    /* Retro theme: raised panel face with top-light / bottom-shadow bevel */
-    tb.background       = ca_color(0x2a / 255.0f, 0x2a / 255.0f, 0x32 / 255.0f, 1.0f);
-    tb.border_top_w     = 2.0f * sc_init;
-    tb.border_top_c     = ca_color(0x4c / 255.0f, 0x4c / 255.0f, 0x58 / 255.0f, 1.0f);
-    tb.border_bottom_w  = 2.0f * sc_init;
-    tb.border_bottom_c  = ca_color(0x07 / 255.0f, 0x07 / 255.0f, 0x09 / 255.0f, 1.0f);
+    if (!win->instance->stylesheet) {
+        tb.background = CA_THEME_BG_ELEVATED;
+        tb.border_bottom_w = 1.0f * sc_init;
+        tb.border_bottom_c = CA_THEME_POPUP_BORDER;
+    }
     tb.overflow_x    = 1; /* hidden */
     tb.overflow_y    = 1;
     Ca_Node *tbnode = ca_node_add(root, &tb);
     assert(tbnode && "ca_title_bar_init: failed to allocate title_bar_node");
     win->title_bar_node = tbnode;
+    apply_system_style(tbnode, CA_ELEM_DIV, "ca-titlebar");
 
     /* ---- Content root: fills remaining space below title bar ---- */
     Ca_NodeDesc cr = {0};
@@ -191,30 +218,18 @@ void ca_title_bar_rebuild(Ca_Window *win)
        the widget context stack so new children become its children.    */
     ca_div_clear((Ca_Div *)win->title_bar_node);
 
-    /* Scale factor — all pixel sizes below are multiples of 22px @ 1x */
+    /* Scale factor — all pixel sizes below are based on 26px @ 1x. */
     float sc = win->ui_scale > 0.0f ? win->ui_scale : 1.0f;
 
     /* Keep the container's own height in sync with the current scale */
-    win->title_bar_node->desc.height        = 22.0f * sc;
+    win->title_bar_node->desc.height = TITLE_BAR_HEIGHT_PX * sc;
     /* Keep horizontal padding in lockstep with scale so a DPI change
        at runtime doesn't push the menu/controls back against the edge. */
      win->title_bar_node->desc.padding_left  = TITLE_BAR_SIDE_PADDING_PX * sc;
      win->title_bar_node->desc.padding_right = TITLE_BAR_SIDE_PADDING_PX * sc;
     win->title_bar_node->dirty |= CA_DIRTY_LAYOUT;
 
-    /* ---- Colours (self-contained — no CSS classes needed) ---- */
-    /* Retro palette: muted title text, mid-tone icons, soft-red close */
-    const uint32_t COL_TEXT_DIM  = ca_color(0x74/255.f, 0x74/255.f, 0x80/255.f, 1.0f);
-    const uint32_t COL_BTN       = ca_color(0xa0/255.f, 0xa0/255.f, 0xb0/255.f, 1.0f);
-    const uint32_t COL_CLOSE     = ca_color(0xc8/255.f, 0x60/255.f, 0x60/255.f, 1.0f);
-    /* Bevel system: raised face, highlight edge, shadow edge */
-    const uint32_t COL_FACE      = ca_color(0x2a/255.f, 0x2a/255.f, 0x32/255.f, 1.0f);
-    const uint32_t COL_BEVEL_HI  = ca_color(0x4c/255.f, 0x4c/255.f, 0x58/255.f, 1.0f);
-    const uint32_t COL_BEVEL_SH  = ca_color(0x07/255.f, 0x07/255.f, 0x09/255.f, 1.0f);
-    /* Menu dropdown theme */
-    const uint32_t COL_DROP_BG   = ca_color(0x22/255.f, 0x22/255.f, 0x28/255.f, 1.0f);
-    const uint32_t COL_DROP_SEL  = ca_color(0x18/255.f, 0x2e/255.f, 0x50/255.f, 1.0f);
-    const uint32_t COL_DROP_TEXT = ca_color(0xc8/255.f, 0xc8/255.f, 0xcc/255.f, 1.0f);
+    const bool css_styled = win->instance->stylesheet != NULL;
 
     /* ---- Left: optional menu bar ---- */
     if (win->titlebar_menu_count > 0) {
@@ -257,21 +272,18 @@ void ca_title_bar_rebuild(Ca_Window *win)
         ca_menu_bar(&(Ca_MenuBarDesc){
             .menus            = menu_descs,
             .menu_count       = win->titlebar_menu_count,
-            .text_color       = COL_BTN,
-            .header_highlight = COL_DROP_SEL,
-            .dropdown_bg      = COL_DROP_BG,
-            .dropdown_border  = COL_BEVEL_HI,
-            .dropdown_hover   = COL_DROP_SEL,
-            .dropdown_text    = COL_DROP_TEXT,
-            .bar_height       = 22.0f * sc,
-            .item_padding_lr  = 4.0f  * sc,
-            .item_font_size   = 12.0f,
+            .style            = css_styled ? "ca-titlebar-menu" : NULL,
+            .item_style       = css_styled ? "ca-titlebar-menu-item" : NULL,
+            .bar_height       = css_styled ? 0.0f : TITLE_BAR_HEIGHT_PX * sc,
+            .item_padding_lr  = css_styled ? 0.0f : 6.0f * sc,
+            .item_font_size   = css_styled ? 0.0f : 11.0f,
         });
     }
 
     /* ---- Centre: drag zone (invisible, handles window dragging) ---- */
     Ca_Node *drag = (Ca_Node *)ca_div_begin(&(Ca_DivDesc){
-        .height        = 22.0f,
+        .height        = TITLE_BAR_HEIGHT_PX,
+        .style         = "ca-titlebar-drag",
         .on_drag_start = on_titlebar_drag_start,
         .on_drag       = on_titlebar_drag,
         .on_drag_end   = on_titlebar_drag_end,
@@ -285,44 +297,34 @@ void ca_title_bar_rebuild(Ca_Window *win)
 
     Ca_Label *ttl = ca_text(&(Ca_TextDesc){
         .text  = win->title,
-        .color = COL_TEXT_DIM,
+        .color = css_styled ? 0 : CA_THEME_TEXT_MUTED,
+        .style = "ca-titlebar-title",
     });
-    ttl->node->desc.font_size  = 12.0f;
+    if (!css_styled) ttl->node->desc.font_size = 11.0f;
     ttl->node->desc.text_align = 1;
     ttl->node->dirty |= CA_DIRTY_CONTENT | CA_DIRTY_LAYOUT;
 
     ca_div_end(); /* drag zone */
 
     /* ---- Right: window control buttons ---- */
-    Ca_Node *ctrl = (Ca_Node *)ca_div_begin(&(Ca_DivDesc){ .height = 22.0f });
+    Ca_Node *ctrl = (Ca_Node *)ca_div_begin(&(Ca_DivDesc){
+        .height = TITLE_BAR_HEIGHT_PX,
+        .style = "ca-titlebar-controls",
+    });
     ctrl->desc.align_items = CA_ALIGN_CENTER;
     ctrl->dirty |= CA_DIRTY_LAYOUT;
 
-    /* Convenience macro: apply raised bevel to a button node */
-#define RETRO_BTN_BEVEL(btn_node) do { \
-    (btn_node)->desc.border_top_w    = 2.0f; \
-    (btn_node)->desc.border_top_c    = COL_BEVEL_HI; \
-    (btn_node)->desc.border_left_w   = 2.0f; \
-    (btn_node)->desc.border_left_c   = COL_BEVEL_HI; \
-    (btn_node)->desc.border_bottom_w = 2.0f; \
-    (btn_node)->desc.border_bottom_c = COL_BEVEL_SH; \
-    (btn_node)->desc.border_right_w  = 2.0f; \
-    (btn_node)->desc.border_right_c  = COL_BEVEL_SH; \
-    (btn_node)->dirty |= CA_DIRTY_LAYOUT; \
-} while(0)
-
     Ca_Button *min_btn = ca_btn_begin(&(Ca_BtnDesc){
         .text       = CA_ICON_FA_MINUS,
-        .width      = 18.0f,
-        .height     = 16.0f,
-        .background = COL_FACE,
-        .text_color = COL_BTN,
+        .width      = css_styled ? 0.0f : 24.0f,
+        .height     = css_styled ? 0.0f : 20.0f,
+        .text_color = css_styled ? 0 : CA_THEME_TEXT_BRIGHT,
+        .style      = "ca-titlebar-control",
         .on_click   = on_minimize_click,
         .click_data = win,
     });
-    min_btn->node->desc.font_size  = 11.0f;
+    if (!css_styled) min_btn->node->desc.font_size = 10.0f;
     min_btn->node->desc.text_align = 1;
-    RETRO_BTN_BEVEL(min_btn->node);
     min_btn->node->dirty |= CA_DIRTY_CONTENT;
     ca_btn_end(); /* min btn */
 
@@ -330,35 +332,31 @@ void ca_title_bar_rebuild(Ca_Window *win)
         .text       = win->titlebar_maximized
                           ? CA_ICON_FA_WINDOW_RESTORE
                           : CA_ICON_FA_WINDOW_MAXIMIZE,
-        .width      = 18.0f,
-        .height     = 16.0f,
-        .background = COL_FACE,
-        .text_color = COL_BTN,
+        .width      = css_styled ? 0.0f : 24.0f,
+        .height     = css_styled ? 0.0f : 20.0f,
+        .text_color = css_styled ? 0 : CA_THEME_TEXT_BRIGHT,
+        .style      = "ca-titlebar-control",
         .on_click   = on_maximize_click,
         .click_data = win,
     });
-    max_btn->node->desc.font_size  = 11.0f;
+    if (!css_styled) max_btn->node->desc.font_size = 10.0f;
     max_btn->node->desc.text_align = 1;
-    RETRO_BTN_BEVEL(max_btn->node);
     max_btn->node->dirty |= CA_DIRTY_CONTENT;
     ca_btn_end(); /* max btn */
 
     Ca_Button *cls_btn = ca_btn_begin(&(Ca_BtnDesc){
         .text       = CA_ICON_FA_TIMES,
-        .width      = 18.0f,
-        .height     = 16.0f,
-        .background = COL_FACE,
-        .text_color = COL_CLOSE,
+        .width      = css_styled ? 0.0f : 24.0f,
+        .height     = css_styled ? 0.0f : 20.0f,
+        .text_color = css_styled ? 0 : CA_THEME_DANGER,
+        .style      = "ca-titlebar-control ca-titlebar-close",
         .on_click   = on_close_click,
         .click_data = win,
     });
-    cls_btn->node->desc.font_size  = 11.0f;
+    if (!css_styled) cls_btn->node->desc.font_size = 10.0f;
     cls_btn->node->desc.text_align = 1;
-    RETRO_BTN_BEVEL(cls_btn->node);
     cls_btn->node->dirty |= CA_DIRTY_CONTENT;
     ca_btn_end(); /* close btn */
-
-#undef RETRO_BTN_BEVEL
 
     ca_div_end(); /* controls */
 

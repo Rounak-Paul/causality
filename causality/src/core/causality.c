@@ -133,6 +133,26 @@ void ca_instance_set_continuous(Ca_Instance *instance, bool continuous)
 }
 
 /*
+ * Set the background callback inherited by windows without an override.
+ *
+ * instance   Instance whose windows inherit the callback.
+ * fn         Background callback, or NULL to clear it.
+ * user_data  Opaque callback data.
+ */
+void ca_instance_set_bg_render(Ca_Instance *instance,
+                               Ca_BgRenderFn fn,
+                               void *user_data)
+{
+    if (!instance) return;
+    instance->default_bg_render_fn = fn;
+    instance->default_bg_render_data = user_data;
+    for (int i = 0; i < CA_MAX_WINDOWS_TOTAL; ++i) {
+        if (instance->windows[i].in_use && !instance->windows[i].bg_render_fn)
+            instance->windows[i].needs_render = true;
+    }
+}
+
+/*
  * Attach a parsed CSS stylesheet to the instance.
  *
  * instance  Instance to configure; no-op if NULL.

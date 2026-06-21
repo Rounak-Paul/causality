@@ -727,6 +727,38 @@ float ca_window_get_scale(Ca_Window *window)
 }
 
 /*
+ * Return framebuffer pixels per logical window unit.
+ *
+ * window  Window to query.
+ * Returns Current pixel ratio, or 1.0 when unavailable.
+ */
+float ca_window_get_pixel_ratio(Ca_Window *window)
+{
+    if (!window || !window->glfw) return 1.0f;
+    int logical_w = 0, logical_h = 0;
+    int framebuffer_w = 0, framebuffer_h = 0;
+    glfwGetWindowSize(window->glfw, &logical_w, &logical_h);
+    glfwGetFramebufferSize(window->glfw, &framebuffer_w, &framebuffer_h);
+    if (logical_w > 0 && framebuffer_w > 0)
+        return (float)framebuffer_w / (float)logical_w;
+    if (logical_h > 0 && framebuffer_h > 0)
+        return (float)framebuffer_h / (float)logical_h;
+    return 1.0f;
+}
+
+/*
+ * Return the resolved logical height of the system title bar.
+ *
+ * window  Window to query.
+ * Returns Reserved title-bar height, or 0 when unavailable.
+ */
+float ca_window_get_title_bar_height(Ca_Window *window)
+{
+    if (!window || !window->title_bar_node) return 0.0f;
+    return window->title_bar_node->desc.height;
+}
+
+/*
  * Write a UTF-8 string to the system clipboard via GLFW.
  *
  * window  Window whose GLFW context is used for the clipboard call.

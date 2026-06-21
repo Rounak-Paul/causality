@@ -528,6 +528,8 @@ static void apply_css(Ca_Node *node, Ca_NodeDesc *nd,
     rs.letter_spacing     = s(rs.letter_spacing);
     rs.word_spacing       = s(rs.word_spacing);
     rs.flex_basis         = s(rs.flex_basis);
+    rs.scrollbar_width    = s(rs.scrollbar_width);
+    rs.scrollbar_radius   = s(rs.scrollbar_radius);
 
     ca_style_apply_to_node(&rs, nd, out_color);
 
@@ -618,6 +620,8 @@ void ca_widget_reapply_css(Ca_Node *node)
     rs.letter_spacing    *= scale;
     rs.word_spacing      *= scale;
     rs.flex_basis        *= scale;
+    rs.scrollbar_width   *= scale;
+    rs.scrollbar_radius  *= scale;
 
     /* ca_style_apply_to_node uses zero-fill semantics — it writes layout
        fields (width/height/padding/margin/gap) whenever the current value
@@ -3029,7 +3033,10 @@ Ca_Splitter *ca_split_begin(const Ca_SplitDesc *desc)
     sp->min_ratio = (desc->min_ratio > 0.0f) ? desc->min_ratio : 0.1f;
     sp->max_ratio = (desc->max_ratio > 0.0f) ? desc->max_ratio : 0.9f;
     sp->bar_size  = (desc->bar_size > 0.0f)  ? s(desc->bar_size)  : s(4.0f);
-    sp->bar_color       = desc->bar_color       ? desc->bar_color       : CA_THEME_BG_VOID;
+    const bool has_stylesheet = node->window && node->window->instance &&
+                                node->window->instance->stylesheet;
+    sp->bar_color       = desc->bar_color ? desc->bar_color :
+                          (has_stylesheet ? 0u : CA_THEME_BG_VOID);
     sp->bar_hover_color = desc->bar_hover_color ? desc->bar_hover_color : CA_THEME_ACCENT;
     sp->on_resize = desc->on_resize;
     sp->user_data = desc->user_data;
@@ -3521,18 +3528,11 @@ void ca_widget_input_pass(Ca_Window *win)
        using the same geometry as paint_scrollbars, and drive scroll_x/scroll_y
        directly.  Scrollbar drag takes priority over wheel scroll and other drags.
 
-       Geometry:
-         y scrollbar uses the retro chunky edge style:
-         bar_w=14, no margin — flush to right/bottom edge
-         bar_x = node->x + node->w - bar_w
-         track spans full node height
-         thumb: size proportional to viewport/content, min 20px
-         x scrollbar uses the painted slim style:
-         bar_h=6, margin=2, track spans node width minus margins
-         thumb: size proportional to viewport/content, min 16px
+       Geometry matches paint_scrollbars. CSS may replace the fallback width;
+       both axes retain proportional thumbs and the existing minimum sizes.
     */
     if (win->node_pool) {
-        const float SB_BAR_W  = 14.0f * ui_s;
+        const float SB_BAR_W = 14.0f * ui_s;
         const float SB_X_BAR_H = 6.0f * ui_s;
         const float SB_X_MARGIN = 2.0f * ui_s;
         const float SB_HIT_EXPAND = 2.0f * ui_s;
@@ -3549,10 +3549,13 @@ void ca_widget_input_pass(Ca_Window *win)
                 if (!n->in_use || node_is_ancestor_hidden(n)) continue;
 
                 /* Y scrollbar */
-                if (n->desc.overflow_y >= 2 && n->content_h > n->h) {
-                    float bar_x = n->x + n->w - SB_BAR_W;
+                if (n->desc.overflow_y >= 2 && n->content_h > n->h &&
+                    (!n->desc.scrollbar_width_set || n->desc.scrollbar_width > 0.0f)) {
+                    float bar_w = n->desc.scrollbar_width_set
+                                      ? n->desc.scrollbar_width : SB_BAR_W;
+                    float bar_x = n->x + n->w - bar_w;
                     if (mx >= bar_x - SB_HIT_EXPAND &&
-                        mx <= bar_x + SB_BAR_W + SB_HIT_EXPAND &&
+                        mx <= bar_x + bar_w + SB_HIT_EXPAND &&
                         my >= n->y && my <= n->y + n->h) {
                         float area = n->w * n->h;
                         if (area < best_area) {
@@ -3564,10 +3567,13 @@ void ca_widget_input_pass(Ca_Window *win)
                 }
 
                 /* X scrollbar */
-                if (n->desc.overflow_x >= 2 && n->content_w > n->w) {
-                    float bar_y = n->y + n->h - SB_X_BAR_H - SB_X_MARGIN;
+                if (n->desc.overflow_x >= 2 && n->content_w > n->w &&
+                    (!n->desc.scrollbar_width_set || n->desc.scrollbar_width > 0.0f)) {
+                    float bar_h = n->desc.scrollbar_width_set
+                                      ? n->desc.scrollbar_width : SB_X_BAR_H;
+                    float bar_y = n->y + n->h - bar_h - SB_X_MARGIN;
                     if (my >= bar_y - SB_HIT_EXPAND &&
-                        my <= bar_y + SB_X_BAR_H + SB_HIT_EXPAND &&
+                        my <= bar_y + bar_h + SB_HIT_EXPAND &&
                         mx >= n->x + SB_X_MARGIN &&
                         mx <= n->x + n->w - SB_X_MARGIN) {
                         float area = n->w * n->h;
