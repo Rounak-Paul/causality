@@ -192,6 +192,23 @@ static void glfw_framebuffer_size_cb(GLFWwindow *glfw, int width, int height)
         win->root->dirty |= CA_DIRTY_LAYOUT | CA_DIRTY_CONTENT;
 }
 
+/*
+ * GLFW maximize callback - synchronize custom title-bar presentation with
+ * compositor-managed maximize and restore state.
+ *
+ * glfw       The GLFW window whose state changed.
+ * maximized  GLFW_TRUE when maximized, GLFW_FALSE when restored.
+ */
+static void glfw_window_maximize_cb(GLFWwindow *glfw, int maximized)
+{
+    Ca_Window *win = (Ca_Window *)glfwGetWindowUserPointer(glfw);
+    if (!win) return;
+
+    win->titlebar_maximized = maximized == GLFW_TRUE;
+    win->titlebar_needs_rebuild = true;
+    glfwPostEmptyEvent();
+}
+
 /* ---- System ---- */
 
 static int g_glfw_refcount = 0;
@@ -372,6 +389,7 @@ static Ca_Window *window_create_in_slot(Ca_Instance *inst, const Ca_WindowDesc *
     glfwSetScrollCallback(glfw, glfw_scroll_cb);
     glfwSetWindowSizeCallback(glfw, glfw_window_size_cb);
     glfwSetFramebufferSizeCallback(glfw, glfw_framebuffer_size_cb);
+    glfwSetWindowMaximizeCallback(glfw, glfw_window_maximize_cb);
 
     /* Boot surface + swapchain (renderer must already be initialised) */
     if (inst->vk_device != VK_NULL_HANDLE) {
@@ -486,45 +504,19 @@ void ca_window_close(Ca_Window *window)
 }
 
 /*
- * Maximise the window to cover the work area of the monitor it currently sits on.
+ * Ask the platform window manager to maximize the window.
  *
- * Saves the pre-maximised position and size so it can be restored later.
- * Identifies the target monitor by the window's centre point.  No-op if
- * the window is already maximised or not in use.
+ * The compositor chooses the target monitor and work-area geometry. No-op if
+ * the window is already maximized or not in use.
  *
  * window  Window to maximise.
  */
 void ca_window_maximize(Ca_Window *window)
 {
     if (!window || !window->in_use || !window->glfw) return;
-    if (window->titlebar_maximized) return;
+    if (glfwGetWindowAttrib(window->glfw, GLFW_MAXIMIZED)) return;
 
-    /* Mirror the title bar's maximize branch exactly so restore works. */
-    glfwGetWindowPos(window->glfw,
-                     &window->titlebar_pre_max_x, &window->titlebar_pre_max_y);
-    glfwGetWindowSize(window->glfw,
-                      &window->titlebar_pre_max_w, &window->titlebar_pre_max_h);
-
-    int cx = window->titlebar_pre_max_x + window->titlebar_pre_max_w / 2;
-    int cy = window->titlebar_pre_max_y + window->titlebar_pre_max_h / 2;
-    int mon_count = 0;
-    GLFWmonitor **monitors = glfwGetMonitors(&mon_count);
-    GLFWmonitor *target = glfwGetPrimaryMonitor();
-    for (int i = 0; i < mon_count; i++) {
-        int mx, my, mw, mh;
-        glfwGetMonitorWorkarea(monitors[i], &mx, &my, &mw, &mh);
-        if (cx >= mx && cx < mx + mw && cy >= my && cy < my + mh) {
-            target = monitors[i];
-            break;
-        }
-    }
-
-    int wx, wy, ww, wh;
-    glfwGetMonitorWorkarea(target, &wx, &wy, &ww, &wh);
-    glfwSetWindowPos(window->glfw, wx, wy);
-    glfwSetWindowSize(window->glfw, ww, wh);
-    window->titlebar_maximized     = true;
-    window->titlebar_needs_rebuild = true;
+    glfwMaximizeWindow(window->glfw);
 }
 
 /*

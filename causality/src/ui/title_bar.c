@@ -31,18 +31,22 @@
 #define TITLE_BAR_HEIGHT_PX       26.0f
 #define TITLE_BAR_SIDE_PADDING_PX 8.0f
 
-/* Apply an instance stylesheet class to a system-owned node. */
+/* Apply layered system and author styles to a system-owned node. */
 static void apply_system_style(Ca_Node *node, Ca_ElementType type,
                                const char *classes)
 {
     if (!node || !node->window || !node->window->instance || !classes) return;
-    Ca_Stylesheet *stylesheet = node->window->instance->stylesheet;
-    if (!stylesheet) return;
+    Ca_Instance *instance = node->window->instance;
+    if (!instance->system_stylesheet && !instance->stylesheet) return;
+
+    if (node->has_base_desc)
+        node->desc = node->base_desc;
 
     node->elem_type = (uint8_t)type;
     snprintf(node->classes, sizeof(node->classes), "%s", classes);
     Ca_ResolvedStyle resolved;
-    ca_style_resolve(stylesheet, node, type, node->classes, &resolved);
+    ca_style_resolve_layers(instance->system_stylesheet, instance->stylesheet,
+                            node, type, node->classes, &resolved);
     const float scale = node->window->ui_scale > 0.0f
                             ? node->window->ui_scale
                             : 1.0f;
@@ -59,53 +63,16 @@ static void apply_system_style(Ca_Node *node, Ca_ElementType type,
 /* Window-drag callbacks                                               */
 /* ------------------------------------------------------------------ */
 
+/*
+ * Start a compositor-managed interactive move from the title-bar press.
+ *
+ * ev  Drag-start event containing the owning window.
+ * ud  Unused callback data.
+ */
 static void on_titlebar_drag_start(const Ca_DragEvent *ev, void *ud)
 {
     (void)ud;
-    Ca_Window *win = ev->window;
-    int wx, wy;
-    double cx, cy;
-    glfwGetWindowPos(win->glfw, &wx, &wy);
-    /* Use glfwGetCursorPos (real-time OS query) instead of ev->start_x which
-       comes from the cached cursor-callback value.  They agree at drag start
-       but the real-time variant keeps drag and move consistent. */
-    glfwGetCursorPos(win->glfw, &cx, &cy);
-    win->titlebar_drag_win_x    = wx;
-    win->titlebar_drag_win_y    = wy;
-    win->titlebar_drag_screen_x = (double)wx + cx;
-    win->titlebar_drag_screen_y = (double)wy + cy;
-}
-
-static void on_titlebar_drag(const Ca_DragEvent *ev, void *ud)
-{
-    (void)ud;
-    Ca_Window *win = ev->window;
-
-    /* ev->x/y come from win->mouse_x/y which is only updated when the
-       physical cursor moves (cursor-pos callback).  When we call
-       glfwSetWindowPos the window moves under a stationary cursor — no
-       callback fires — leaving win->mouse_x stale relative to the new
-       window pos.  Combining that stale value with a fresh glfwGetWindowPos
-       gives a wrong screen-cursor estimate, accumulating drift.
-       Fix: query the cursor position directly from the OS via
-       glfwGetCursorPos; it is always consistent with the current window pos
-       returned by glfwGetWindowPos (same Cocoa/Win32/XQueryPointer frame). */
-    int wx, wy;
-    double cx, cy;
-    glfwGetWindowPos(win->glfw, &wx, &wy);
-    glfwGetCursorPos(win->glfw, &cx, &cy);
-    double cur_sx = (double)wx + cx;
-    double cur_sy = (double)wy + cy;
-    double dx = cur_sx - win->titlebar_drag_screen_x;
-    double dy = cur_sy - win->titlebar_drag_screen_y;
-    glfwSetWindowPos(win->glfw,
-                     win->titlebar_drag_win_x + (int)dx,
-                     win->titlebar_drag_win_y + (int)dy);
-}
-
-static void on_titlebar_drag_end(const Ca_DragEvent *ev, void *ud)
-{
-    (void)ev; (void)ud;
+    glfwStartInteractiveMove(ev->window->glfw);
 }
 
 /* ------------------------------------------------------------------ */
@@ -132,13 +99,7 @@ static void on_maximize_click(Ca_Button *btn, void *ud)
     Ca_Window *win = (Ca_Window *)ud;
 
     if (win->titlebar_maximized) {
-        /* Restore to pre-maximize geometry */
-        glfwSetWindowPos(win->glfw,
-                         win->titlebar_pre_max_x, win->titlebar_pre_max_y);
-        glfwSetWindowSize(win->glfw,
-                          win->titlebar_pre_max_w, win->titlebar_pre_max_h);
-        win->titlebar_maximized     = false;
-        win->titlebar_needs_rebuild = true;
+        glfwRestoreWindow(win->glfw);
     } else {
         ca_window_maximize(win);
     }
@@ -170,16 +131,13 @@ void ca_title_bar_init(Ca_Window *win)
        right so neither group is flush against the window chrome. */
      tb.padding_left  = TITLE_BAR_SIDE_PADDING_PX * sc_init;
      tb.padding_right = TITLE_BAR_SIDE_PADDING_PX * sc_init;
-    if (!win->instance->stylesheet) {
-        tb.background = CA_THEME_BG_ELEVATED;
-        tb.border_bottom_w = 1.0f * sc_init;
-        tb.border_bottom_c = CA_THEME_POPUP_BORDER;
-    }
     tb.overflow_x    = 1; /* hidden */
     tb.overflow_y    = 1;
     Ca_Node *tbnode = ca_node_add(root, &tb);
     assert(tbnode && "ca_title_bar_init: failed to allocate title_bar_node");
     win->title_bar_node = tbnode;
+    tbnode->base_desc = tb;
+    tbnode->has_base_desc = true;
     apply_system_style(tbnode, CA_ELEM_DIV, "ca-titlebar");
 
     /* ---- Content root: fills remaining space below title bar ---- */
@@ -221,6 +179,8 @@ void ca_title_bar_rebuild(Ca_Window *win)
     /* Scale factor — all pixel sizes below are based on 26px @ 1x. */
     float sc = win->ui_scale > 0.0f ? win->ui_scale : 1.0f;
 
+    apply_system_style(win->title_bar_node, CA_ELEM_DIV, "ca-titlebar");
+
     /* Keep the container's own height in sync with the current scale */
     win->title_bar_node->desc.height = TITLE_BAR_HEIGHT_PX * sc;
     /* Keep horizontal padding in lockstep with scale so a DPI change
@@ -228,8 +188,6 @@ void ca_title_bar_rebuild(Ca_Window *win)
      win->title_bar_node->desc.padding_left  = TITLE_BAR_SIDE_PADDING_PX * sc;
      win->title_bar_node->desc.padding_right = TITLE_BAR_SIDE_PADDING_PX * sc;
     win->title_bar_node->dirty |= CA_DIRTY_LAYOUT;
-
-    const bool css_styled = win->instance->stylesheet != NULL;
 
     /* ---- Left: optional menu bar ---- */
     if (win->titlebar_menu_count > 0) {
@@ -272,11 +230,8 @@ void ca_title_bar_rebuild(Ca_Window *win)
         ca_menu_bar(&(Ca_MenuBarDesc){
             .menus            = menu_descs,
             .menu_count       = win->titlebar_menu_count,
-            .style            = css_styled ? "ca-titlebar-menu" : NULL,
-            .item_style       = css_styled ? "ca-titlebar-menu-item" : NULL,
-            .bar_height       = css_styled ? 0.0f : TITLE_BAR_HEIGHT_PX * sc,
-            .item_padding_lr  = css_styled ? 0.0f : 6.0f * sc,
-            .item_font_size   = css_styled ? 0.0f : 11.0f,
+            .style            = "ca-titlebar-menu",
+            .item_style       = "ca-titlebar-menu-item",
         });
     }
 
@@ -285,23 +240,17 @@ void ca_title_bar_rebuild(Ca_Window *win)
         .height        = TITLE_BAR_HEIGHT_PX,
         .style         = "ca-titlebar-drag",
         .on_drag_start = on_titlebar_drag_start,
-        .on_drag       = on_titlebar_drag,
-        .on_drag_end   = on_titlebar_drag_end,
     });
     drag->desc.flex_grow       = 1.0f;
-    drag->desc.align_items     = CA_ALIGN_CENTER;
-    drag->desc.justify_content = CA_ALIGN_CENTER;
     drag->desc.overflow_x      = 1;
     drag->desc.overflow_y      = 1;
     drag->dirty |= CA_DIRTY_LAYOUT;
 
     Ca_Label *ttl = ca_text(&(Ca_TextDesc){
         .text  = win->title,
-        .color = css_styled ? 0 : CA_THEME_TEXT_MUTED,
+        .color = 0,
         .style = "ca-titlebar-title",
     });
-    if (!css_styled) ttl->node->desc.font_size = 11.0f;
-    ttl->node->desc.text_align = 1;
     ttl->node->dirty |= CA_DIRTY_CONTENT | CA_DIRTY_LAYOUT;
 
     ca_div_end(); /* drag zone */
@@ -311,20 +260,17 @@ void ca_title_bar_rebuild(Ca_Window *win)
         .height = TITLE_BAR_HEIGHT_PX,
         .style = "ca-titlebar-controls",
     });
-    ctrl->desc.align_items = CA_ALIGN_CENTER;
     ctrl->dirty |= CA_DIRTY_LAYOUT;
 
     Ca_Button *min_btn = ca_btn_begin(&(Ca_BtnDesc){
         .text       = CA_ICON_FA_MINUS,
-        .width      = css_styled ? 0.0f : 24.0f,
-        .height     = css_styled ? 0.0f : 20.0f,
-        .text_color = css_styled ? 0 : CA_THEME_TEXT_BRIGHT,
+        .width      = 0.0f,
+        .height     = 0.0f,
+        .text_color = 0,
         .style      = "ca-titlebar-control",
         .on_click   = on_minimize_click,
         .click_data = win,
     });
-    if (!css_styled) min_btn->node->desc.font_size = 10.0f;
-    min_btn->node->desc.text_align = 1;
     min_btn->node->dirty |= CA_DIRTY_CONTENT;
     ca_btn_end(); /* min btn */
 
@@ -332,29 +278,25 @@ void ca_title_bar_rebuild(Ca_Window *win)
         .text       = win->titlebar_maximized
                           ? CA_ICON_FA_WINDOW_RESTORE
                           : CA_ICON_FA_WINDOW_MAXIMIZE,
-        .width      = css_styled ? 0.0f : 24.0f,
-        .height     = css_styled ? 0.0f : 20.0f,
-        .text_color = css_styled ? 0 : CA_THEME_TEXT_BRIGHT,
+        .width      = 0.0f,
+        .height     = 0.0f,
+        .text_color = 0,
         .style      = "ca-titlebar-control",
         .on_click   = on_maximize_click,
         .click_data = win,
     });
-    if (!css_styled) max_btn->node->desc.font_size = 10.0f;
-    max_btn->node->desc.text_align = 1;
     max_btn->node->dirty |= CA_DIRTY_CONTENT;
     ca_btn_end(); /* max btn */
 
     Ca_Button *cls_btn = ca_btn_begin(&(Ca_BtnDesc){
         .text       = CA_ICON_FA_TIMES,
-        .width      = css_styled ? 0.0f : 24.0f,
-        .height     = css_styled ? 0.0f : 20.0f,
-        .text_color = css_styled ? 0 : CA_THEME_DANGER,
+        .width      = 0.0f,
+        .height     = 0.0f,
+        .text_color = 0,
         .style      = "ca-titlebar-control ca-titlebar-close",
         .on_click   = on_close_click,
         .click_data = win,
     });
-    if (!css_styled) cls_btn->node->desc.font_size = 10.0f;
-    cls_btn->node->desc.text_align = 1;
     cls_btn->node->dirty |= CA_DIRTY_CONTENT;
     ca_btn_end(); /* close btn */
 

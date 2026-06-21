@@ -42,11 +42,13 @@ static OverlayCssStyle overlay_css_style(Ca_Window *window, Ca_Node *owner,
                                          float radius)
 {
     OverlayCssStyle result = { background, color, radius };
-    if (!window || !window->instance || !window->instance->stylesheet || !owner)
+    if (!window || !window->instance || !owner)
         return result;
+    Ca_Instance *instance = window->instance;
+    if (!instance->system_stylesheet && !instance->stylesheet) return result;
     Ca_ResolvedStyle resolved;
-    ca_style_resolve(window->instance->stylesheet, owner, CA_ELEM_DIV,
-                     classes, &resolved);
+    ca_style_resolve_layers(instance->system_stylesheet, instance->stylesheet,
+                            owner, CA_ELEM_DIV, classes, &resolved);
     if (resolved.background_color != 0u) result.background = resolved.background_color;
     if (resolved.color != 0u) result.color = resolved.color;
     result.radius = resolved.border_radius * window->ui_scale;

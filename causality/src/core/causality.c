@@ -7,6 +7,7 @@
 #include "renderer.h"
 #include "ui.h"
 #include "css.h"
+#include "style.h"
 #include "widget.h"
 
 /* Forward decls into the reactive subsystem (src/reactive/signal.c). */
@@ -62,6 +63,10 @@ Ca_Instance *ca_instance_create(const Ca_InstanceDesc *desc)
         return NULL;
     }
 
+    inst->system_stylesheet = ca_style_create_system_stylesheet();
+    if (!inst->system_stylesheet)
+        fprintf(stderr, "[causality] warning: failed to load system styles\n");
+
     printf("[causality] instance created (%s)\n",
            desc && desc->app_name ? desc->app_name : "unnamed");
     return inst;
@@ -86,6 +91,7 @@ void ca_instance_destroy(Ca_Instance *instance)
     ca_ui_shutdown(instance);
     ca_event_shutdown(instance);
     ca_reactive_release_instance(instance);
+    ca_css_destroy(instance->system_stylesheet);
     CA_FREE(instance);
     printf("[causality] instance destroyed\n");
 }
@@ -168,7 +174,7 @@ void ca_instance_set_stylesheet(Ca_Instance *instance, Ca_Stylesheet *ss)
 /* Re-resolve every styled node and schedule layout and paint work. */
 void ca_instance_refresh_styles(Ca_Instance *instance)
 {
-    if (!instance || !instance->stylesheet) return;
+    if (!instance || (!instance->system_stylesheet && !instance->stylesheet)) return;
     for (int wi = 0; wi < CA_MAX_WINDOWS_TOTAL; ++wi) {
         Ca_Window *window = &instance->windows[wi];
         if (!window->in_use || !window->node_pool) continue;

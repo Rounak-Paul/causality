@@ -501,7 +501,16 @@ static void scale_resolved_style(Ca_ResolvedStyle *style, float scale)
 /* Store a resolved foreground color in widgets that own text paint state. */
 static void apply_widget_text_color(Ca_Node *node, uint32_t color)
 {
-    if (!node || !node->widget) return;
+    if (!node) return;
+    if (color != 0u && node->parent &&
+        node->parent->widget_type == CA_WIDGET_MENUBAR) {
+        for (uint32_t i = 0; i < node->child_count; ++i) {
+            Ca_Node *child = node->children[i];
+            if (child && child->widget_type == CA_WIDGET_LABEL && child->widget)
+                ((Ca_Label *)child->widget)->color = color;
+        }
+    }
+    if (!node->widget) return;
     if (node->widget_type == CA_WIDGET_SPLITTER)
         ((Ca_Splitter *)node->widget)->bar_color = node->desc.background;
     if (color == 0u) return;
@@ -543,11 +552,12 @@ static void apply_css(Ca_Node *node, Ca_NodeDesc *nd,
     node->base_desc     = *nd;
     node->has_base_desc = true;
 
-    Ca_Stylesheet *ss = g_ctx.window->instance->stylesheet;
-    if (!ss) return;
+    Ca_Instance *instance = g_ctx.window->instance;
+    if (!instance->system_stylesheet && !instance->stylesheet) return;
 
     Ca_ResolvedStyle rs;
-    ca_style_resolve(ss, node, elem_type, node->classes, &rs);
+    ca_style_resolve_layers(instance->system_stylesheet, instance->stylesheet,
+                            node, elem_type, node->classes, &rs);
 
     scale_resolved_style(&rs, g_ctx.window->ui_scale);
 
@@ -573,8 +583,8 @@ void ca_widget_reapply_css(Ca_Node *node)
 {
     if (!node || !node->in_use || !node->window) return;
     if (!node->has_base_desc) return; /* never ran apply_css — nothing to reapply */
-    Ca_Stylesheet *ss = node->window->instance ? node->window->instance->stylesheet : NULL;
-    if (!ss) return;
+    Ca_Instance *instance = node->window->instance;
+    if (!instance || (!instance->system_stylesheet && !instance->stylesheet)) return;
 
     Ca_NodeDesc old = node->desc;
 
@@ -604,8 +614,9 @@ void ca_widget_reapply_css(Ca_Node *node)
     nd->opacity         = bd->opacity;
 
     Ca_ResolvedStyle rs;
-    ca_style_resolve(ss, node, (Ca_ElementType)node->elem_type,
-                     node->classes, &rs);
+    ca_style_resolve_layers(instance->system_stylesheet, instance->stylesheet,
+                            node, (Ca_ElementType)node->elem_type,
+                            node->classes, &rs);
 
     /* Scale CSS-resolved pixel values (matches apply_css). Use the node's
        own window scale directly since g_ctx may not be active here. */
@@ -657,16 +668,16 @@ void ca_widget_reapply_css(Ca_Node *node)
 void ca_widget_refresh_css(Ca_Node *node)
 {
     if (!node || !node->in_use || !node->window || !node->has_base_desc) return;
-    Ca_Stylesheet *stylesheet = node->window->instance
-        ? node->window->instance->stylesheet : NULL;
-    if (!stylesheet) return;
+    Ca_Instance *instance = node->window->instance;
+    if (!instance || (!instance->system_stylesheet && !instance->stylesheet)) return;
 
     const Ca_NodeDesc old = node->desc;
     node->desc = node->base_desc;
 
     Ca_ResolvedStyle resolved;
-    ca_style_resolve(stylesheet, node, (Ca_ElementType)node->elem_type,
-                     node->classes, &resolved);
+    ca_style_resolve_layers(instance->system_stylesheet, instance->stylesheet,
+                            node, (Ca_ElementType)node->elem_type,
+                            node->classes, &resolved);
     scale_resolved_style(&resolved, node->window->ui_scale);
 
     uint32_t text_color = 0u;
@@ -1256,6 +1267,11 @@ static void maybe_transition(Ca_Node *node, Ca_CssPropId prop,
     slot->to_color   = new_color;
     slot->start_time = glfwGetTime();
     slot->duration   = node->transition_duration;
+
+    /* A transition can begin during the input pass, after ca_ui_update has
+       already scanned active transitions for this frame. Wake an idle event
+       loop now so the next tick observes and advances the new transition. */
+    glfwPostEmptyEvent();
 }
 
 /* Old per-widget setters removed — see unified ca__set_text / ca__set_color /
@@ -1295,12 +1311,13 @@ static void node_set_style(Ca_Node *node, const char *style,
     /* Update classes and re-resolve CSS */
     snprintf(node->classes, CA_NODE_CLASS_MAX, "%s", new_classes);
 
-    Ca_Stylesheet *ss = node->window->instance->stylesheet;
-    if (ss) {
+    Ca_Instance *instance = node->window->instance;
+    if (instance && (instance->system_stylesheet || instance->stylesheet)) {
         Ca_ResolvedStyle rs;
         float scale = node->window->ui_scale;
-        ca_style_resolve(ss, node, (Ca_ElementType)node->elem_type,
-                         node->classes, &rs);
+        ca_style_resolve_layers(instance->system_stylesheet, instance->stylesheet,
+                                node, (Ca_ElementType)node->elem_type,
+                                node->classes, &rs);
         /* Scale CSS pixel values */
         if (!rs.width_pct)  rs.width  *= scale;
         if (!rs.height_pct) rs.height *= scale;
@@ -2622,8 +2639,8 @@ Ca_Tooltip *ca_tooltip(const Ca_TooltipDesc *desc)
        frame in the renderer.  A one-element proxy node is used so that the
        same ca_style_resolve path used by every other widget applies. */
     tt->font_size = 0.0f;
-    Ca_Stylesheet *ss = win ? win->instance->stylesheet : NULL;
-    if (ss) {
+    Ca_Instance *instance = win ? win->instance : NULL;
+    if (instance && (instance->system_stylesheet || instance->stylesheet)) {
         Ca_Node proxy;
         memset(&proxy, 0, sizeof(proxy));
         proxy.in_use = true;
@@ -2632,7 +2649,8 @@ Ca_Tooltip *ca_tooltip(const Ca_TooltipDesc *desc)
             snprintf(proxy.classes, CA_NODE_CLASS_MAX, "%s", tt->style);
         Ca_ResolvedStyle rs;
         memset(&rs, 0, sizeof(rs));
-        ca_style_resolve(ss, &proxy, CA_ELEM_TOOLTIP, proxy.classes, &rs);
+        ca_style_resolve_layers(instance->system_stylesheet, instance->stylesheet,
+                                &proxy, CA_ELEM_TOOLTIP, proxy.classes, &rs);
         tt->font_size = rs.font_size; /* 0 if no rule matched */
     }
 
@@ -2781,12 +2799,13 @@ Ca_MenuBar *ca_menu_bar(const Ca_MenuBarDesc *desc)
 
         /* Header node — padding & alignment via caller-supplied item_style */
         Ca_NodeDesc hnd = {0};
-        hnd.align_items = CA_ALIGN_CENTER;
 
         Ca_Node *hdr = ca_node_add(bar, &hnd);
         if (!hdr) continue;
 
-        apply_css(hdr, &hdr->desc, CA_ELEM_DIV, desc->item_style, NULL, &dummy);
+        uint32_t header_color = 0u;
+        apply_css(hdr, &hdr->desc, CA_ELEM_DIV, desc->item_style, NULL,
+                  &header_color);
         /* Inline fallback: apply padding/font_size when no CSS class governs it */
         if (!desc->item_style) {
             if (desc->item_padding_lr > 0.0f) {
@@ -2848,7 +2867,7 @@ Ca_MenuBar *ca_menu_bar(const Ca_MenuBarDesc *desc)
                 ln->widget = lbl;
                 lbl->node = ln;
                 lbl->in_use = true;
-                lbl->color = mb->text_color;
+                lbl->color = header_color ? header_color : mb->text_color;
                 snprintf(lbl->text, CA_LABEL_TEXT_MAX, "%s", menu->label);
             }
         }

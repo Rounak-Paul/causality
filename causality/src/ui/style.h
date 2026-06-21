@@ -155,6 +155,10 @@ typedef struct {
 /** Get element type name string for CSS selector matching. */
 const char *ca_elem_type_name(Ca_ElementType type);
 
+/** Create the Causality-owned lower-priority system chrome stylesheet.
+    @return Parsed stylesheet owned by the caller, or NULL on failure. */
+Ca_Stylesheet *ca_style_create_system_stylesheet(void);
+
 /** Resolve all matching CSS rules for a node, producing a merged style.
     Walks the parent chain for descendant/child selector matching.
     @param ss        Parsed stylesheet (may be NULL — returns zero style).
@@ -167,6 +171,22 @@ void ca_style_resolve(Ca_Stylesheet *ss,
                       Ca_ElementType elem_type,
                       const char *classes,
                       Ca_ResolvedStyle *out);
+
+/** Resolve system defaults followed by author CSS.
+    Author declarations override matching default declarations regardless of
+    selector specificity, matching CSS user-agent and author origin ordering.
+    @param defaults  System default stylesheet, or NULL.
+    @param author    Application stylesheet, or NULL.
+    @param node      Target UI node.
+    @param elem_type Element type enum for selector matching.
+    @param classes   Space-separated class string.
+    @param out       Output resolved style. */
+void ca_style_resolve_layers(Ca_Stylesheet *defaults,
+                             Ca_Stylesheet *author,
+                             Ca_Node *node,
+                             Ca_ElementType elem_type,
+                             const char *classes,
+                             Ca_ResolvedStyle *out);
 
 /** Apply resolved style to a Ca_NodeDesc.
     Only fills in properties where the NodeDesc value is still at default (0).

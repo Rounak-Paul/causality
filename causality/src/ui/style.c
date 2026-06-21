@@ -8,6 +8,28 @@
 #include <stdio.h>
 #include <ctype.h>
 
+static const char CA_SYSTEM_STYLES_CSS[] =
+    ".ca-titlebar { background: #1e1e24; border-bottom-width: 1px; border-bottom-color: #4c4c58; }"
+    ".ca-titlebar-menu { height: 100%; align-items: center; background: transparent; }"
+    ".ca-titlebar-menu-item { height: 100%; padding: 0px 6px; align-items: center; color: #a0a0aa; background: transparent; font-size: 11px; }"
+    ".ca-titlebar-menu-item:hover { background: #182e50; color: #c8c8cc; }"
+    ".ca-titlebar-drag { height: 100%; align-items: center; justify-content: center; background: transparent; }"
+    ".ca-titlebar-title { color: #747480; font-size: 11px; text-align: center; }"
+    ".ca-titlebar-controls { height: 100%; gap: 4px; align-items: center; }"
+    ".ca-titlebar-control { width: 24px; height: 20px; color: #c8c8cc; background: transparent; corner-radius: 2px; font-size: 10px; text-align: center; }"
+    ".ca-titlebar-control:hover { background: #182e50; }"
+    ".ca-titlebar-close { color: #a85c64; }"
+    ".ca-titlebar-close:hover { background: #6f3038; color: #f0d8da; }"
+    ".ca-menubar-popup { background: #1e1e24; color: #c8c8cc; corner-radius: 2px; }"
+    ".ca-overlay-hover { background: #182e50; corner-radius: 1px; }"
+    ".ca-overlay-selected { background: #243b5c; color: #c8c8cc; }";
+
+/* Create the lower-priority stylesheet used for Causality-owned chrome. */
+Ca_Stylesheet *ca_style_create_system_stylesheet(void)
+{
+    return ca_css_parse(CA_SYSTEM_STYLES_CSS);
+}
+
 /* ============================================================
    ELEMENT TYPE NAMES
    ============================================================ */
@@ -448,13 +470,16 @@ static Ca_CssValue resolve_value(const Ca_Stylesheet *ss, const Ca_CssValue *in)
     return z;
 }
 
-void ca_style_resolve(Ca_Stylesheet *ss,
-                      Ca_Node *node,
-                      Ca_ElementType elem_type,
-                      const char *classes,
-                      Ca_ResolvedStyle *out)
+/* Resolve one cascade origin, optionally preserving an earlier origin. */
+static void style_resolve_sheet(Ca_Stylesheet *ss,
+                                Ca_Node *node,
+                                Ca_ElementType elem_type,
+                                const char *classes,
+                                Ca_ResolvedStyle *out,
+                                bool clear_output)
 {
-    memset(out, 0, sizeof(*out));
+    if (clear_output)
+        memset(out, 0, sizeof(*out));
     if (!ss) return;
 
     /* Collect all matching rules */
@@ -767,6 +792,26 @@ void ca_style_resolve(Ca_Stylesheet *ss,
         }
     }
     } /* end pass loop */
+}
+
+void ca_style_resolve(Ca_Stylesheet *ss,
+                      Ca_Node *node,
+                      Ca_ElementType elem_type,
+                      const char *classes,
+                      Ca_ResolvedStyle *out)
+{
+    style_resolve_sheet(ss, node, elem_type, classes, out, true);
+}
+
+void ca_style_resolve_layers(Ca_Stylesheet *defaults,
+                             Ca_Stylesheet *author,
+                             Ca_Node *node,
+                             Ca_ElementType elem_type,
+                             const char *classes,
+                             Ca_ResolvedStyle *out)
+{
+    style_resolve_sheet(defaults, node, elem_type, classes, out, true);
+    style_resolve_sheet(author, node, elem_type, classes, out, false);
 }
 
 /* ============================================================

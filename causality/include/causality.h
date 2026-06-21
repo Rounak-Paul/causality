@@ -957,9 +957,10 @@ CA_API void ca_image(const Ca_ImageDesc *desc);
    CSS STYLESHEET
    ============================================================
 
-   Load a CSS stylesheet from a string and attach it to an instance.
-   All windows belonging to that instance will use the stylesheet
-   for style resolution.
+   Parse a CSS stylesheet and attach it to an instance. All windows belonging
+   to that instance use it as the author style layer. Causality's system chrome
+   retains lower-priority defaults, so applications may override only the
+   declarations they need.
 
    Supported selectors:
      - Type:       div, button, text, image, h1-h6, hr, spacer, list, li
@@ -1005,11 +1006,12 @@ CA_API Ca_Stylesheet *ca_css_parse(const char *css_text);
 CA_API void           ca_css_destroy(Ca_Stylesheet *ss);
 
 /*
- * Attach a parsed stylesheet to the instance.
+ * Attach a parsed author stylesheet to the instance.
  *
  * instance  Owning Ca_Instance.
  * ss        Stylesheet to attach; ownership is NOT transferred — the caller
- *           must keep it alive and destroy it after the instance.
+ *           must keep it alive and destroy it after the instance. NULL clears
+ *           author styles while retaining Causality system defaults.
  */
 CA_API void ca_instance_set_stylesheet(Ca_Instance *instance, Ca_Stylesheet *ss);
 
