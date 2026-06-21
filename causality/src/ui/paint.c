@@ -213,6 +213,27 @@ static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, Cli
     /* Record starting draw cmd index so we can apply disabled dim after. */
     uint32_t cmd_start = win->draw_cmd_count;
 
+    /* ---- Backdrop blur — frosted glass effect ---- */
+    if (node->desc.backdrop_blur > 0.0f &&
+        win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
+        Ca_DrawCmd *cmd = &win->draw_cmds[win->draw_cmd_count++];
+        memset(cmd, 0, sizeof(*cmd));
+        cmd->type                 = CA_DRAW_BACKDROP_BLUR;
+        cmd->x                    = node->x;
+        cmd->y                    = node->y;
+        cmd->w                    = node->w;
+        cmd->h                    = node->h;
+        cmd->backdrop_blur_radius = node->desc.backdrop_blur;
+        cmd->corner_radius        = node->desc.corner_radius;
+        cmd->corner_tl = node->desc.border_radius_tl > 0.0f ? node->desc.border_radius_tl : node->desc.corner_radius;
+        cmd->corner_tr = node->desc.border_radius_tr > 0.0f ? node->desc.border_radius_tr : node->desc.corner_radius;
+        cmd->corner_br = node->desc.border_radius_br > 0.0f ? node->desc.border_radius_br : node->desc.corner_radius;
+        cmd->corner_bl = node->desc.border_radius_bl > 0.0f ? node->desc.border_radius_bl : node->desc.corner_radius;
+        cmd->z_index   = node->desc.z_index;
+        cmd->in_use    = true;
+        set_clip(cmd, clip);
+    }
+
     /* ---- Box shadow — GPU SDF Gaussian blur ---- */
     if (node->desc.shadow_color != 0 &&
         win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {

@@ -793,6 +793,9 @@ static void style_resolve_sheet(Ca_Stylesheet *ss,
                 case CA_CSS_PROP_GRADIENT_CY:
                     if (val->type == CA_CSS_VAL_NUMBER) out->gradient_cy = val->number;
                     break;
+                case CA_CSS_PROP_BACKDROP_FILTER:
+                    if (val->type == CA_CSS_VAL_NUMBER) out->backdrop_blur = val->number;
+                    break;
                 default: break;
             }
         }
@@ -1093,6 +1096,9 @@ void ca_style_apply_to_node(const Ca_ResolvedStyle *style,
     if (STYLE_SET(CA_CSS_PROP_SHADOW_OFFSET_Y)) nd->shadow_offset_y = style->shadow_offset_y;
     if (STYLE_SET(CA_CSS_PROP_SHADOW_BLUR))     nd->shadow_blur     = style->shadow_blur;
     if (STYLE_SET(CA_CSS_PROP_SHADOW_COLOR))    nd->shadow_color    = style->shadow_color;
+
+    /* Backdrop filter — last rule wins */
+    if (STYLE_SET(CA_CSS_PROP_BACKDROP_FILTER)) nd->backdrop_blur = style->backdrop_blur;
 
     /* Z-index */
     if (nd->z_index == 0 && STYLE_SET(CA_CSS_PROP_Z_INDEX))

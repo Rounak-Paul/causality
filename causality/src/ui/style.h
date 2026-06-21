@@ -146,6 +146,8 @@ typedef struct {
     uint32_t scrollbar_thumb_color;
     uint32_t scrollbar_thumb_active_color;
     float    scrollbar_radius;
+    /* Backdrop filter */
+    float    backdrop_blur;
 } Ca_ResolvedStyle;
 
 /* ============================================================

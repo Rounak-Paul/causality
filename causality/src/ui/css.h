@@ -169,6 +169,9 @@ typedef enum {
     CA_CSS_PROP_GRADIENT_CX,       /* radial center x (0..1) */
     CA_CSS_PROP_GRADIENT_CY,       /* radial center y (0..1) */
 
+    /* Backdrop filter */
+    CA_CSS_PROP_BACKDROP_FILTER,   /* backdrop-filter: blur(Xpx) */
+
     CA_CSS_PROP_COUNT
 } Ca_CssPropId;
 

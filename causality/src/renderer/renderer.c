@@ -7,6 +7,7 @@
 #include "font.h"
 #include "image.h"
 #include "viewport.h"
+#include "blur.h"
 
 /* ---- Helpers ---- */
 
@@ -300,6 +301,7 @@ void ca_renderer_shutdown(Ca_Instance *inst)
     vkDeviceWaitIdle(inst->vk_device);
 
     ca_image_pool_shutdown(inst);
+    ca_blur_pipeline_destroy(inst);
     ca_image_pipeline_destroy(inst);
     ca_rect_pipeline_destroy(inst);
     ca_text_pipeline_destroy(inst);
@@ -423,6 +425,9 @@ bool ca_renderer_window_init(Ca_Instance *inst, Ca_Window *win)
 
         /* Image pipeline — RGBA textured quads (shares text pipeline layout) */
         ca_image_pipeline_create(inst, win->sc.format);
+
+        /* Backdrop blur pipeline */
+        ca_blur_pipeline_create(inst, win->sc.format);
     }
 
     /* Create per-frame instance buffers if they don't exist yet.
@@ -437,11 +442,18 @@ bool ca_renderer_window_init(Ca_Instance *inst, Ca_Window *win)
         }
     }
 
+    /* Create per-window blur images if the blur pipeline is ready */
+    if (inst->blur_h_pipeline != VK_NULL_HANDLE && win->blur_image == VK_NULL_HANDLE)
+        ca_blur_window_create(inst, win, win->sc.extent.width, win->sc.extent.height, win->sc.format);
+
     return true;
 }
 
 void ca_renderer_window_shutdown(Ca_Instance *inst, Ca_Window *win)
 {
+    /* Destroy backdrop blur images */
+    ca_blur_window_destroy(inst, win);
+
     /* Destroy viewport GPU resources before tearing down the swapchain */
     if (win->viewport_pool) {
         for (int i = 0; i < CA_MAX_VIEWPORTS_PER_WINDOW; ++i) {
@@ -468,7 +480,12 @@ bool ca_renderer_window_resize(Ca_Instance *inst, Ca_Window *win, int w, int h)
     }
     vkDeviceWaitIdle(inst->vk_device);
     ca_swapchain_destroy(inst, win);
-    return ca_swapchain_create(inst, win, (uint32_t)w, (uint32_t)h);
+    if (!ca_swapchain_create(inst, win, (uint32_t)w, (uint32_t)h))
+        return false;
+    /* Resize backdrop blur images to match new swapchain extent */
+    if (inst->blur_h_pipeline != VK_NULL_HANDLE)
+        ca_blur_window_resize(inst, win, win->sc.extent.width, win->sc.extent.height, win->sc.format);
+    return true;
 }
 
 /* ---- Frame ---- */

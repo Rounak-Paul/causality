@@ -57,14 +57,20 @@ static void end_once(Ca_Instance *inst, VkCommandBuffer cmd)
 
 bool ca_image_pool_init(Ca_Instance *inst)
 {
+    /* Pool is shared by: user images (CA_MAX_IMAGES), viewports (CA_MAX_VIEWPORTS_PER_WINDOW *
+       CA_MAX_WINDOWS_TOTAL), and blur images (2 per window * CA_MAX_WINDOWS_TOTAL).
+       Use a generous cap so none of these run out.                                  */
+    uint32_t pool_cap = CA_MAX_IMAGES
+                      + CA_MAX_VIEWPORTS_PER_WINDOW * CA_MAX_WINDOWS_TOTAL
+                      + 2 * CA_MAX_WINDOWS_TOTAL;
     VkDescriptorPoolSize pool_sz = {
         .type            = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-        .descriptorCount = CA_MAX_IMAGES,
+        .descriptorCount = pool_cap,
     };
     VkDescriptorPoolCreateInfo ci = {
         .sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
         .flags         = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT,
-        .maxSets       = CA_MAX_IMAGES,
+        .maxSets       = pool_cap,
         .poolSizeCount = 1,
         .pPoolSizes    = &pool_sz,
     };

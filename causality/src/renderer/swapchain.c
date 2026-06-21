@@ -5,6 +5,7 @@
 #include "renderer.h"
 #include "pipeline.h"
 #include "viewport.h"
+#include "blur.h"
 #include <string.h>
 
 /* ---- Helpers ---- */
@@ -351,6 +352,26 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
         bg_g = win->draw_cmds[0].g;
         bg_b = win->draw_cmds[0].b;
         bg_a = win->draw_cmds[0].a;
+    }
+
+    /* Backdrop blur: if any nodes use backdrop-filter, capture the current
+       swapchain image and blur it before the UI render pass begins.         */
+    {
+        float max_blur = 0.0f;
+        bool  has_backdrop = false;
+        for (uint32_t d = 0; d < win->draw_cmd_count; ++d) {
+            if (win->draw_cmds[d].in_use &&
+                win->draw_cmds[d].type == CA_DRAW_BACKDROP_BLUR) {
+                has_backdrop = true;
+                if (win->draw_cmds[d].backdrop_blur_radius > max_blur)
+                    max_blur = win->draw_cmds[d].backdrop_blur_radius;
+            }
+        }
+        if (has_backdrop && win->blur_image != VK_NULL_HANDLE)
+            ca_blur_capture_and_blur(inst, win, f->cmd,
+                                     sc->images[image_index],
+                                     sc->extent.width, sc->extent.height,
+                                     max_blur);
     }
 
     /* Dynamic rendering — load if bg_render wrote content, clear otherwise */
@@ -806,6 +827,94 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
                     dst->color[2] = cmd->b;            dst->color[3] = cmd->a;
                     dst->viewport[0] = (float)log_w;   dst->viewport[1] = (float)log_h;
                     dst->_pad[0] = 0.0f;               dst->_pad[1] = 0.0f;
+                }
+                if (ti_n > batch_start) {
+                    vkCmdSetScissor(f->cmd, 0, 1, &cur_sc);
+                    vkCmdDraw(f->cmd, 6, ti_n - batch_start, 0, batch_start);
+                    batch_n++;
+                }
+            }
+        }
+
+        /* ---- Backdrop blur quads ---- */
+        if (inst->image_pipeline != VK_NULL_HANDLE &&
+            win->blur_image_valid && win->blur_desc_set != VK_NULL_HANDLE) {
+
+            bool has_backdrop = false;
+            for (uint32_t d = 0; d < win->draw_cmd_count; ++d) {
+                if (win->draw_cmds[d].in_use &&
+                    win->draw_cmds[d].type == CA_DRAW_BACKDROP_BLUR &&
+                    cmd_in_overlay_phase(&win->draw_cmds[d]) == want_overlay) {
+                    has_backdrop = true;
+                    break;
+                }
+            }
+            if (has_backdrop) {
+                vkCmdBindPipeline(f->cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                  inst->image_pipeline);
+                vkCmdSetViewport(f->cmd, 0, 1, &viewport);
+
+                vkCmdBindDescriptorSets(f->cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                        inst->text_pipeline.layout,
+                                        0, 1, &f->ssbo_set, 1, &text_byte_off);
+                /* Bind blurred image as sampler */
+                vkCmdBindDescriptorSets(f->cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                        inst->text_pipeline.layout,
+                                        1, 1, &win->blur_desc_set, 0, NULL);
+
+                uint32_t batch_start = ti_n;
+                VkRect2D cur_sc      = full_scissor;
+                bool     first       = true;
+
+                for (uint32_t d = 0; d < win->draw_cmd_count; ++d) {
+                    uint32_t idx = sorted_idx ? sorted_idx[d] : d;
+                    const Ca_DrawCmd *cmd = &win->draw_cmds[idx];
+                    if (!cmd->in_use || cmd->type != CA_DRAW_BACKDROP_BLUR)
+                        continue;
+                    if (cmd_in_overlay_phase(cmd) != want_overlay) continue;
+                    if (ti_n >= max_ti) break;
+
+                    VkRect2D sc_new = full_scissor;
+                    if (cmd->has_clip) {
+                        int32_t cx = (int32_t)(cmd->clip_x * scale_x);
+                        int32_t cy = (int32_t)(cmd->clip_y * scale_y);
+                        int32_t cw = (int32_t)(cmd->clip_w * scale_x);
+                        int32_t ch = (int32_t)(cmd->clip_h * scale_y);
+                        if (cx < 0) { cw += cx; cx = 0; }
+                        if (cy < 0) { ch += cy; cy = 0; }
+                        if (cw < 0) cw = 0;
+                        if (ch < 0) ch = 0;
+                        sc_new = (VkRect2D){ .offset = {cx, cy},
+                                             .extent = {(uint32_t)cw, (uint32_t)ch} };
+                    }
+
+                    if (!first && memcmp(&sc_new, &cur_sc, sizeof(VkRect2D)) != 0) {
+                        if (ti_n > batch_start) {
+                            vkCmdSetScissor(f->cmd, 0, 1, &cur_sc);
+                            vkCmdDraw(f->cmd, 6, ti_n - batch_start, 0, batch_start);
+                            batch_n++;
+                        }
+                        batch_start = ti_n;
+                    }
+                    cur_sc = sc_new;
+                    first  = false;
+
+                    /* UV: map node screen-space position to swapchain [0,1] UV space */
+                    float u0 = cmd->x / (float)log_w;
+                    float v0 = cmd->y / (float)log_h;
+                    float u1 = (cmd->x + cmd->w) / (float)log_w;
+                    float v1 = (cmd->y + cmd->h) / (float)log_h;
+
+                    Ca_TextInstance *dst = &ti_base[ti_n++];
+                    dst->pos[0] = cmd->x;            dst->pos[1] = cmd->y;
+                    dst->size[0] = cmd->w;            dst->size[1] = cmd->h;
+                    dst->uv[0] = u0;                  dst->uv[1] = v0;
+                    dst->uv[2] = u1;                  dst->uv[3] = v1;
+                    /* color = white (full opacity) to show blurred image as-is */
+                    dst->color[0] = 1.0f;  dst->color[1] = 1.0f;
+                    dst->color[2] = 1.0f;  dst->color[3] = 1.0f;
+                    dst->viewport[0] = (float)log_w;  dst->viewport[1] = (float)log_h;
+                    dst->_pad[0] = 0.0f;              dst->_pad[1] = 0.0f;
                 }
                 if (ti_n > batch_start) {
                     vkCmdSetScissor(f->cmd, 0, 1, &cur_sc);

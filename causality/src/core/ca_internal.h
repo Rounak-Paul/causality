@@ -276,6 +276,8 @@ typedef struct {
     float        shadow_offset_x, shadow_offset_y;
     float        shadow_blur;
     uint32_t     shadow_color;
+    /* Backdrop filter — blur applied to pixels behind this node */
+    float        backdrop_blur;
     /* Z-index */
     int16_t      z_index;
     /* Text wrapping */
@@ -315,10 +317,11 @@ typedef struct {
    ====================================================== */
 
 typedef enum {
-    CA_DRAW_RECT     = 0,  /* solid colour rectangle               */
-    CA_DRAW_GLYPH    = 1,  /* font glyph textured quad             */
-    CA_DRAW_IMAGE    = 2,  /* user-loaded image textured quad      */
-    CA_DRAW_VIEWPORT = 3,  /* offscreen viewport textured quad     */
+    CA_DRAW_RECT           = 0,  /* solid colour rectangle               */
+    CA_DRAW_GLYPH          = 1,  /* font glyph textured quad             */
+    CA_DRAW_IMAGE          = 2,  /* user-loaded image textured quad      */
+    CA_DRAW_VIEWPORT       = 3,  /* offscreen viewport textured quad     */
+    CA_DRAW_BACKDROP_BLUR  = 4,  /* frosted-glass: blur what's behind    */
 } Ca_DrawType;
 
 typedef struct {
@@ -346,6 +349,8 @@ typedef struct {
     float       gradient_cx, gradient_cy; /* radial center 0..1 */
     /* Draw mode (normal / shadow / linear-gradient / radial-gradient) */
     Ca_DrawMode draw_mode;
+    /* Backdrop blur radius in pixels (CA_DRAW_BACKDROP_BLUR only) */
+    float       backdrop_blur_radius;
     /* Z-index for draw order sorting */
     int16_t     z_index;
     int16_t     image_index;
@@ -773,6 +778,29 @@ struct Ca_Window {
     uint32_t      draw_cmd_count;
     /* Pre-allocated z-sort index (avoids per-frame malloc) */
     uint32_t     *sorted_idx;
+
+    /* Backdrop blur — per-window offscreen image holding a blurred snapshot
+       of the background.  Created lazily when the first backdrop-blur node
+       is painted; destroyed on window shutdown or swapchain recreation.
+       The snapshot is captured from the current swapchain image before the
+       UI render pass begins (after any bg_render_fn has executed). */
+    /* blur_image: result of applying Gaussian blur to the captured background.
+       blur_temp:  intermediate image for the horizontal blur pass.
+       Both live at swapchain resolution; recreated on resize.              */
+    VkImage          blur_image;
+    VkDeviceMemory   blur_memory;
+    VkImageView      blur_view;
+    VkSampler        blur_sampler;
+    VkDescriptorSet  blur_desc_set;   /* combined-image-sampler for the blur tex */
+
+    VkImage          blur_temp;       /* horizontal-pass intermediate */
+    VkDeviceMemory   blur_temp_memory;
+    VkImageView      blur_temp_view;
+    VkDescriptorSet  blur_temp_desc_set;
+
+    uint32_t         blur_image_w;
+    uint32_t         blur_image_h;
+    bool             blur_image_valid; /* true once the snapshot is up to date */
     /* Incremental paint cache — mirrors draw_cmds for per-node caching */
     Ca_DrawCmd   *paint_cache;
     uint32_t      paint_cache_used;
@@ -988,6 +1016,13 @@ struct Ca_Instance {
 
     /* Image pipeline — RGBA textured quad (shares text pipeline layout) */
     VkPipeline       image_pipeline;
+
+    /* Backdrop blur pipeline — two-pass separable Gaussian.
+       blur_h_pipeline == blur_v_pipeline (same code, direction via push constant).
+       blur_pipeline_layout is the VkPipelineLayout for push constants.          */
+    VkPipeline       blur_h_pipeline;
+    VkPipeline       blur_v_pipeline;
+    VkPipelineLayout blur_pipeline_layout;
 
     /* Image pool — user-loaded textures for ca_image() */
     Ca_Image         images[CA_MAX_IMAGES];

@@ -832,6 +832,7 @@ static Ca_CssPropId lookup_property(const char *name)
         { "scrollbar-thumb-color",      CA_CSS_PROP_SCROLLBAR_THUMB_COLOR },
         { "scrollbar-thumb-active-color", CA_CSS_PROP_SCROLLBAR_THUMB_ACTIVE_COLOR },
         { "scrollbar-radius",           CA_CSS_PROP_SCROLLBAR_RADIUS },
+        { "backdrop-filter",            CA_CSS_PROP_BACKDROP_FILTER },
     };
     int count = (int)(sizeof(props) / sizeof(props[0]));
     for (int i = 0; i < count; ++i) {
@@ -1951,6 +1952,34 @@ static void parse_declarations(Parser *p, Ca_CssRule *rule)
             }
             consume_important(p, rule, from);
             skip_ws(p); t = parser_peek(p);
+            if (t.type == TOK_SEMICOLON) parser_next(p);
+            continue;
+        }
+
+        /* backdrop-filter: blur(Xpx) — extract the px value from blur() */
+        if (prop_id == CA_CSS_PROP_BACKDROP_FILTER) {
+            int from = rule->decl_count;
+            float blur_px = 0.0f;
+            skip_ws(p);
+            Token pk = parser_peek(p);
+            if (pk.type == TOK_FUNCTION && strcasecmp(pk.text, "blur") == 0) {
+                parser_next(p); /* consume "blur(" */
+                skip_ws(p);
+                Token vt = parser_next(p);
+                if (vt.type == TOK_DIMENSION || vt.type == TOK_NUMBER)
+                    blur_px = vt.number;
+                /* consume closing ')' */
+                skip_ws(p);
+                Token rp = parser_peek(p);
+                if (rp.type == TOK_RPAREN) parser_next(p);
+            }
+            Ca_CssValue bv = {0};
+            bv.type   = CA_CSS_VAL_NUMBER;
+            bv.number = blur_px;
+            add_decl(rule, CA_CSS_PROP_BACKDROP_FILTER, bv);
+            consume_important(p, rule, from);
+            skip_ws(p);
+            t = parser_peek(p);
             if (t.type == TOK_SEMICOLON) parser_next(p);
             continue;
         }
