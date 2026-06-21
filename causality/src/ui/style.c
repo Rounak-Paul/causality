@@ -1074,8 +1074,8 @@ void ca_style_apply_to_node(const Ca_ResolvedStyle *style,
     if (nd->outline_color  == 0    && STYLE_SET(CA_CSS_PROP_OUTLINE_COLOR))  nd->outline_color  = style->outline_color;
     if (nd->outline_offset == 0.0f && STYLE_SET(CA_CSS_PROP_OUTLINE_OFFSET)) nd->outline_offset = style->outline_offset;
 
-    /* Box shadow */
-    if (nd->shadow_color == 0 && STYLE_SET(CA_CSS_PROP_BOX_SHADOW)) {
+    /* Box shadow — last rule wins (same as rest of cascade) */
+    if (STYLE_SET(CA_CSS_PROP_BOX_SHADOW)) {
         nd->shadow_offset_x = style->shadow_offset_x;
         nd->shadow_offset_y = style->shadow_offset_y;
         nd->shadow_blur     = style->shadow_blur;
