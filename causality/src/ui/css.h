@@ -138,6 +138,10 @@ typedef enum {
     CA_CSS_PROP_OUTLINE_OFFSET,
     /* Box shadow */
     CA_CSS_PROP_BOX_SHADOW,
+    CA_CSS_PROP_SHADOW_OFFSET_X,
+    CA_CSS_PROP_SHADOW_OFFSET_Y,
+    CA_CSS_PROP_SHADOW_BLUR,
+    CA_CSS_PROP_SHADOW_COLOR,
     /* Z-index */
     CA_CSS_PROP_Z_INDEX,
     /* Text wrapping */

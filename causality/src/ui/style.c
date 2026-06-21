@@ -751,7 +751,13 @@ static void style_resolve_sheet(Ca_Stylesheet *ss,
                 case CA_CSS_PROP_OUTLINE_STYLE:
                     if (val->type == CA_CSS_VAL_KEYWORD) out->outline_style = val->keyword;
                     break;
-                case CA_CSS_PROP_OUTLINE_OFFSET: out->outline_offset = css_val_to_px(val); break;
+                case CA_CSS_PROP_OUTLINE_OFFSET:   out->outline_offset   = css_val_to_px(val); break;
+                case CA_CSS_PROP_SHADOW_OFFSET_X:  out->shadow_offset_x  = css_val_to_px(val); break;
+                case CA_CSS_PROP_SHADOW_OFFSET_Y:  out->shadow_offset_y  = css_val_to_px(val); break;
+                case CA_CSS_PROP_SHADOW_BLUR:      out->shadow_blur      = css_val_to_px(val); break;
+                case CA_CSS_PROP_SHADOW_COLOR:
+                    if (val->type == CA_CSS_VAL_COLOR) out->shadow_color = val->color;
+                    break;
                 case CA_CSS_PROP_ASPECT_RATIO:   out->aspect_ratio   = val->number;        break;
                 case CA_CSS_PROP_BOX_SIZING:
                     if (val->type == CA_CSS_VAL_KEYWORD) out->box_sizing = val->keyword;
@@ -1074,13 +1080,19 @@ void ca_style_apply_to_node(const Ca_ResolvedStyle *style,
     if (nd->outline_color  == 0    && STYLE_SET(CA_CSS_PROP_OUTLINE_COLOR))  nd->outline_color  = style->outline_color;
     if (nd->outline_offset == 0.0f && STYLE_SET(CA_CSS_PROP_OUTLINE_OFFSET)) nd->outline_offset = style->outline_offset;
 
-    /* Box shadow — last rule wins (same as rest of cascade) */
+    /* Box shadow — last rule wins (same as rest of cascade).
+     * Both box-shadow shorthand and individual shadow-* properties write
+     * into the same style struct fields, so they compose naturally. */
     if (STYLE_SET(CA_CSS_PROP_BOX_SHADOW)) {
         nd->shadow_offset_x = style->shadow_offset_x;
         nd->shadow_offset_y = style->shadow_offset_y;
         nd->shadow_blur     = style->shadow_blur;
         nd->shadow_color    = style->shadow_color;
     }
+    if (STYLE_SET(CA_CSS_PROP_SHADOW_OFFSET_X)) nd->shadow_offset_x = style->shadow_offset_x;
+    if (STYLE_SET(CA_CSS_PROP_SHADOW_OFFSET_Y)) nd->shadow_offset_y = style->shadow_offset_y;
+    if (STYLE_SET(CA_CSS_PROP_SHADOW_BLUR))     nd->shadow_blur     = style->shadow_blur;
+    if (STYLE_SET(CA_CSS_PROP_SHADOW_COLOR))    nd->shadow_color    = style->shadow_color;
 
     /* Z-index */
     if (nd->z_index == 0 && STYLE_SET(CA_CSS_PROP_Z_INDEX))
