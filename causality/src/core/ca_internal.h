@@ -582,8 +582,11 @@ struct Ca_Select {
     bool          open;
     int           scroll_offset;  /* index of first visible option */
     float         scroll_accum;   /* sub-integer scroll accumulator  */
+    int           hover_item;     /* index of dropdown item under cursor, -1 = none */
     Ca_SelectFn   on_change;
     void         *change_data;
+    Ca_SelectFn   on_hover;       /* fired each time hover_item changes while open */
+    void         *hover_data;
     bool          in_use;
 };
 

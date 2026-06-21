@@ -157,6 +157,8 @@ typedef struct Ca_SelectDesc {
     float        width;
     Ca_SelectFn  on_change;
     void        *change_data;
+    Ca_SelectFn  on_hover;       /* fired when the highlighted item changes while open */
+    void        *hover_data;
     const char  *id, *style;
     bool         hidden;
     bool         disabled;
@@ -328,6 +330,9 @@ CA_API void         ca_select_set(Ca_Select *s, int index);
 
 /* Returns the index of the currently selected option. */
 CA_API int          ca_select_get(const Ca_Select *s);
+
+/* Returns the index of the dropdown item currently under the cursor (-1 when none or closed). */
+CA_API int          ca_select_get_hover(const Ca_Select *s);
 
 /* ---- Tab bar ---- */
 

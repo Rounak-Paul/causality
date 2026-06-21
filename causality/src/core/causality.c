@@ -178,6 +178,27 @@ void ca_instance_refresh_styles(Ca_Instance *instance)
             ca_widget_refresh_css(node);
             node->dirty |= CA_DIRTY_LAYOUT | CA_DIRTY_CONTENT;
         }
+        /* ca_widget_refresh_css resets each node to base_desc then re-applies
+           CSS.  Two system-managed nodes have C-programmed properties that CSS
+           must not override:
+
+           1. status_bar_node — no CSS class; its height comes from C code
+              (ca_window_set_status_bar).  Restore it here so layout is correct.
+
+           2. content_root — ca_ui_begin force-sets flex_grow=1 and clears the
+              height/height_pct fields so the user's CSS height (e.g. "100%")
+              does not compete with the title-bar/status-bar strips in the root
+              flex column.  Without this restore the content_root claims the
+              entire window height, pushing the status bar off-screen. */
+        if (window->status_bar_node && window->status_bar_height > 0.0f) {
+            window->status_bar_node->desc.height = window->status_bar_height;
+            window->status_bar_node->desc.hidden = (window->status_bar_fn == NULL);
+        }
+        if (window->content_root) {
+            window->content_root->desc.flex_grow  = 1.0f;
+            window->content_root->desc.height     = 0.0f;
+            window->content_root->desc.height_pct = false;
+        }
         window->titlebar_needs_rebuild = true;
         window->needs_render = true;
     }

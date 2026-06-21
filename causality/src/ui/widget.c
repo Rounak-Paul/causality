@@ -2155,8 +2155,11 @@ Ca_Select *ca_select(const Ca_SelectDesc *desc)
         for (int i = 0; i < sel->option_count; ++i)
             WIDGET_SET_TEXT(node, reused, sel->options[i], CA_OPTION_TEXT_MAX, desc->options[i]);
     }
-    sel->on_change = desc->on_change;
+    sel->on_change  = desc->on_change;
     sel->change_data = desc->change_data;
+    sel->on_hover   = desc->on_hover;
+    sel->hover_data  = desc->hover_data;
+    if (!reused) sel->hover_item = -1;
 
     if (desc->hidden)   node->desc.hidden   = true;
     if (desc->disabled) node->desc.disabled = true;
@@ -2186,6 +2189,12 @@ int ca_select_get(const Ca_Select *s)
 {
     assert(s && s->in_use);
     return s->selected;
+}
+
+int ca_select_get_hover(const Ca_Select *s)
+{
+    assert(s && s->in_use);
+    return s->hover_item;
 }
 
 /* ============================================================
@@ -4237,6 +4246,7 @@ void ca_widget_input_pass(Ca_Window *win)
                             my >= oy && my <= oy + opt_h) {
                             sel->selected = scroll + vi;
                             sel->open = false;
+                            sel->hover_item = -1;
                             sel->scroll_accum = 0.0f;
                             sel->node->dirty |= CA_DIRTY_CONTENT;
                             if (sel->on_change) sel->on_change(sel, sel->change_data);
@@ -4248,6 +4258,7 @@ void ca_widget_input_pass(Ca_Window *win)
                     if (!clicked_option) {
                         /* Click anywhere else closes the dropdown */
                         sel->open = false;
+                        sel->hover_item = -1;
                         sel->scroll_accum = 0.0f;
                         sel->node->dirty |= CA_DIRTY_CONTENT;
                         select_handled = true;
@@ -4745,5 +4756,18 @@ void ca_widget_input_pass(Ca_Window *win)
             best = best->children[0];
         }
         win->hovered_node = best;
+    }
+
+    /* Mark any open select dropdown's node dirty every frame so paint_overlays
+       runs and can update hover_item and fire on_hover during mouse motion.
+       Dropdown items are overlay draw commands (not Ca_Nodes), so hovered_node
+       never changes while the cursor is over them — without this, paint_overlays
+       only runs when something else marks a node dirty, causing on_hover to stall. */
+    if (win->select_pool) {
+        for (uint32_t i = 0; i < CA_MAX_SELECTS_PER_WINDOW; ++i) {
+            Ca_Select *sel = &win->select_pool[i];
+            if (sel->in_use && sel->open && sel->node)
+                sel->node->dirty |= CA_DIRTY_CONTENT;
+        }
     }
 }

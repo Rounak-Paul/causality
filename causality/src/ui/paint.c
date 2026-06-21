@@ -1573,14 +1573,32 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
                 c->in_use = true;
                 c->overlay = true;
             }
+            /* Track which option is under the cursor; fire on_hover when it changes. */
+            int new_hover = -1;
+            if (win->mouse_x >= 0) {
+                for (int vi = 0; vi < visible; ++vi) {
+                    int oi = scroll + vi;
+                    if (oi >= sel->option_count) break;
+                    float oy = drop_y + opt_h * (float)vi;
+                    if ((double)n->x <= win->mouse_x && win->mouse_x <= (double)(n->x + n->w) &&
+                        (double)oy   <= win->mouse_y && win->mouse_y <= (double)(oy + opt_h)) {
+                        new_hover = oi;
+                        break;
+                    }
+                }
+            }
+            if (new_hover != sel->hover_item) {
+                sel->hover_item = new_hover;
+                if (sel->on_hover) sel->on_hover(sel, sel->hover_data);
+            }
+
             /* Options — only the visible window */
             for (int vi = 0; vi < visible; ++vi) {
                 int oi = scroll + vi;
                 if (oi >= sel->option_count) break;
                 float oy = drop_y + opt_h * (float)vi;
                 bool is_selected = (oi == sel->selected);
-                bool is_hovered  = ((double)n->x <= win->mouse_x && win->mouse_x <= (double)(n->x + n->w) &&
-                                    (double)oy   <= win->mouse_y && win->mouse_y <= (double)(oy + opt_h));
+                bool is_hovered  = (oi == sel->hover_item);
                 if ((is_selected || is_hovered) && win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
                     Ca_DrawCmd *c = &win->draw_cmds[win->draw_cmd_count++];
                     memset(c, 0, sizeof(*c));
