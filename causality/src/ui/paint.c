@@ -1629,7 +1629,7 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
                 c->type = CA_DRAW_RECT;
                 c->x = tip_x; c->y = tip_y; c->w = tip_w; c->h = tip_h;
                 c->corner_radius = 3.0f * ui_s;
-                { float _r, _g, _b, _a; unpack_color(CA_THEME_POPUP_BG, &_r, &_g, &_b, &_a); c->r = _r; c->g = _g; c->b = _b; c->a = _a; }
+                { float _r, _g, _b, _a; unpack_color(CA_THEME_POPUP_BG, &_r, &_g, &_b, &_a); c->r = _r; c->g = _g; c->b = _b; c->a = 1.0f; }
                 c->border_width   = 1.0f * ui_s;
                 c->border_r = 0.200f; c->border_g = 0.200f; c->border_b = 0.267f; c->border_a = 1.0f;
                 c->in_use = true;

@@ -31,6 +31,7 @@ typedef struct {
 typedef struct {
     VkSwapchainKHR  swapchain;
     VkFormat        format;
+    VkImageUsageFlags image_usage;
     VkExtent2D      extent;
     uint32_t        image_count;
     VkImage         images[CA_MAX_SWAPCHAIN_IMAGES];
@@ -854,6 +855,11 @@ struct Ca_Window {
     /* Per-frame user callback (fires after input pass, before paint) */
     void        (*on_frame_fn)(void *user_data);
     void         *on_frame_data;
+
+    /* Background render callback — called before the UI render pass each frame.
+       The swapchain is presented with LOAD_OP_LOAD when this is set. */
+    Ca_BgRenderFn bg_render_fn;
+    void         *bg_render_data;
 
     /* Custom title bar */
     Ca_Node       *title_bar_node;        /* system-managed title bar container  */

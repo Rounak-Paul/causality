@@ -143,6 +143,40 @@ CA_API void       ca_window_maximize(Ca_Window *window);
 /* Returns true if the window handle is valid and still open. */
 CA_API bool       ca_window_is_open(const Ca_Window *window);
 
+/*
+ * Callback invoked each frame to render a background directly into the
+ * swapchain image, BEFORE any UI elements are composited.  The swapchain is
+ * presented with LOAD_OP_LOAD so this content shows through transparent UI.
+ *
+ * cmd              Command buffer to record into (already begun).
+ * swapchain_image  VkImage of the current swapchain image (needed for image barriers).
+ * swapchain_view   VkImageView of the current swapchain image (COLOR_ATTACHMENT_OPTIMAL).
+ * format           VkFormat of the swapchain image.
+ * image_usage      Usage flags enabled for the swapchain image.
+ * frame_slot       In-flight frame slot whose fence has already completed.
+ * width, height    Pixel dimensions of the swapchain image.
+ * user_data        Pointer passed to ca_window_set_bg_render.
+ */
+typedef bool (*Ca_BgRenderFn)(VkCommandBuffer cmd,
+                              VkImage         swapchain_image,
+                              VkImageView     swapchain_view,
+                              VkFormat        format,
+                              VkImageUsageFlags image_usage,
+                              uint32_t        frame_slot,
+                              uint32_t        width,
+                              uint32_t        height,
+                              void           *user_data);
+
+/*
+ * Register or replace the per-window background render callback.
+ * Pass NULL for fn to disable background rendering.
+ *
+ * window     Target window.
+ * fn         Callback to invoke before each frame's UI render pass (NULL = none).
+ * user_data  Passed unchanged to fn.
+ */
+CA_API void ca_window_set_bg_render(Ca_Window *window, Ca_BgRenderFn fn, void *user_data);
+
 /* Clipboard helpers for text content. Clipboard ownership remains with the
    platform backend; returned text is valid until the next clipboard update. */
 /*

@@ -117,6 +117,11 @@ bool ca_swapchain_create(Ca_Instance *inst, Ca_Window *win,
     uint32_t queue_families[2] = { inst->gfx_family, inst->present_family };
     bool     same              = inst->gfx_family == inst->present_family;
 
+    VkImageUsageFlags image_usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
+                                    VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+    if (caps.supportedUsageFlags & VK_IMAGE_USAGE_SAMPLED_BIT)
+        image_usage |= VK_IMAGE_USAGE_SAMPLED_BIT;
+
     VkSwapchainCreateInfoKHR ci = {
         .sType                 = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
         .surface               = win->surface,
@@ -125,8 +130,7 @@ bool ca_swapchain_create(Ca_Instance *inst, Ca_Window *win,
         .imageColorSpace       = fmt.colorSpace,
         .imageExtent           = ext,
         .imageArrayLayers      = 1,
-        .imageUsage            = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
-                                 VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+        .imageUsage            = image_usage,
         .imageSharingMode      = same ? VK_SHARING_MODE_EXCLUSIVE
                                       : VK_SHARING_MODE_CONCURRENT,
         .queueFamilyIndexCount = same ? 0 : 2,
@@ -145,6 +149,7 @@ bool ca_swapchain_create(Ca_Instance *inst, Ca_Window *win,
     }
 
     sc->format = fmt.format;
+    sc->image_usage = image_usage;
     sc->extent = ext;
 
     /* Retrieve images */
@@ -317,6 +322,20 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
         VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
         VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
 
+    /* If a background render callback is registered, invoke it now.
+       It renders directly into the swapchain image (already COLOR_ATTACHMENT_OPTIMAL).
+       The UI render pass then uses LOAD_OP_LOAD to preserve this content. */
+    bool bg_rendered = false;
+    if (win->bg_render_fn)
+        bg_rendered = win->bg_render_fn(f->cmd,
+                                        sc->images[image_index],
+                                        sc->image_views[image_index],
+                                        sc->format,
+                                        sc->image_usage,
+                                        sc->current_frame,
+                                        sc->extent.width, sc->extent.height,
+                                        win->bg_render_data);
+
     /* Background: use the root node's color if available */
     float bg_r = 0.15f, bg_g = 0.15f, bg_b = 0.17f, bg_a = 1.0f;
     if (win->draw_cmd_count > 0 && win->draw_cmds[0].in_use) {
@@ -326,12 +345,13 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
         bg_a = win->draw_cmds[0].a;
     }
 
-    /* Dynamic rendering — background is the dynamic clear color */
+    /* Dynamic rendering — load if bg_render wrote content, clear otherwise */
     VkRenderingAttachmentInfo color_attach = {
         .sType       = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
         .imageView   = sc->image_views[image_index],
         .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-        .loadOp      = VK_ATTACHMENT_LOAD_OP_CLEAR,
+        .loadOp      = bg_rendered ? VK_ATTACHMENT_LOAD_OP_LOAD
+                                   : VK_ATTACHMENT_LOAD_OP_CLEAR,
         .storeOp     = VK_ATTACHMENT_STORE_OP_STORE,
         .clearValue  = { .color = { .float32 = { bg_r, bg_g, bg_b, bg_a } } },
     };

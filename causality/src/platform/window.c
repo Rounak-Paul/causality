@@ -749,3 +749,17 @@ const char *ca_clipboard_get_text(Ca_Window *window)
     if (!window || !window->glfw) return NULL;
     return glfwGetClipboardString(window->glfw);
 }
+
+/*
+ * Register or replace the per-window background render callback.
+ *
+ * window     Target window.
+ * fn         Invoked each frame before the UI render pass; NULL disables.
+ * user_data  Passed unchanged to fn.
+ */
+void ca_window_set_bg_render(Ca_Window *window, Ca_BgRenderFn fn, void *user_data)
+{
+    if (!window) return;
+    window->bg_render_fn   = fn;
+    window->bg_render_data = user_data;
+}

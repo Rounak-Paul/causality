@@ -50,7 +50,7 @@
 #define CA_THEME_DANGER   ca_color(0xa8/255.f, 0x5c/255.f, 0x64/255.f, 1.0f)
 
 /* ---- Popover / overlay surfaces (slightly transparent) ---- */
-#define CA_THEME_POPUP_BG     ca_color(0x1e/255.f, 0x1e/255.f, 0x24/255.f, 0.98f)
+#define CA_THEME_POPUP_BG     ca_color(0x1e/255.f, 0x1e/255.f, 0x24/255.f, 1.0f)
 #define CA_THEME_POPUP_TEXT   CA_THEME_TEXT_BRIGHT
 #define CA_THEME_POPUP_BORDER ca_color(0x4c/255.f, 0x4c/255.f, 0x58/255.f, 1.0f)
 
