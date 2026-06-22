@@ -532,6 +532,8 @@ struct Ca_TextInput {
     int         sel_start;    /* selection anchor (-1 = no selection) */
     Ca_ChangeFn on_change;
     void       *change_data;
+    Ca_InputMode input_mode;
+    float       drag_speed;
     bool        in_use;
 };
 
@@ -837,6 +839,12 @@ struct Ca_Window {
     Ca_Node      *drag_node;
     float         drag_start_x;
     float         drag_start_value;
+
+    /* Numeric text-input drag state */
+    Ca_TextInput *numeric_drag_input;
+    bool          numeric_drag_active;
+    float         numeric_drag_start_x;
+    double        numeric_drag_start_value;
 
     /* Generic drag interaction state */
     Ca_Node      *user_drag_node;      /* node being dragged by user drag callbacks */

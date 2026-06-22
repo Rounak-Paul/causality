@@ -26,6 +26,7 @@
 #include "scrollbar.h"
 #include "../../include/ca_reactive.h"
 #include "viewport.h"
+#include "../platform/window.h"
 
 #include <assert.h>
 #include <stdio.h>
@@ -1173,6 +1174,10 @@ Ca_TextInput *ca_input(const Ca_InputDesc *desc)
     inp->in_use     = true;
     inp->text_color = desc->text_color;
     inp->placeholder_color = CA_THEME_TEXT_DIM;
+    inp->input_mode = desc->input_mode;
+    inp->drag_speed = desc->drag_speed > 0.0f
+        ? desc->drag_speed
+        : (desc->input_mode == CA_INPUT_FLOAT ? 0.1f : 1.0f);
     WIDGET_SET_TEXT(node, reused, inp->text, CA_INPUT_TEXT_MAX, desc->text);
 
     if (desc->placeholder)
@@ -3499,6 +3504,50 @@ static int utf8_encode(uint32_t cp, char *buf)
     }
 }
 
+/** Returns whether a typed codepoint is valid at the numeric input cursor. */
+static bool numeric_input_accepts(const Ca_TextInput *input, uint32_t cp)
+{
+    if (!input || input->input_mode == CA_INPUT_TEXT) return true;
+    if (cp >= '0' && cp <= '9') return true;
+    if (input->input_mode == CA_INPUT_UINT) return false;
+
+    if ((cp == '-' || cp == '+') && input->cursor == 0)
+        return input->text[0] != '-' && input->text[0] != '+';
+
+    return input->input_mode == CA_INPUT_FLOAT && cp == '.' &&
+           strchr(input->text, '.') == NULL;
+}
+
+/** Writes a dragged numeric value using the input mode's canonical format. */
+static void numeric_input_set_drag_value(Ca_TextInput *input, double value)
+{
+    if (!input) return;
+
+    char text[CA_INPUT_TEXT_MAX];
+    switch (input->input_mode) {
+    case CA_INPUT_FLOAT:
+        snprintf(text, sizeof(text), "%.3f", value);
+        break;
+    case CA_INPUT_INT:
+        snprintf(text, sizeof(text), "%.0f", value);
+        break;
+    case CA_INPUT_UINT:
+        if (value < 0.0) value = 0.0;
+        snprintf(text, sizeof(text), "%.0f", value);
+        break;
+    default:
+        return;
+    }
+
+    if (strcmp(input->text, text) == 0) return;
+    snprintf(input->text, sizeof(input->text), "%s", text);
+    input->cursor = (int)strlen(input->text);
+    input->sel_start = -1;
+    input->node->dirty |= CA_DIRTY_CONTENT;
+    if (input->on_change)
+        input->on_change(input, input->change_data);
+}
+
 /* Handle keyboard input for a focused text input */
 static void input_handle_keys(Ca_Window *win, Ca_TextInput *inp)
 {
@@ -3509,6 +3558,7 @@ static void input_handle_keys(Ca_Window *win, Ca_TextInput *inp)
     for (uint32_t i = 0; i < win->char_count; ++i) {
         uint32_t cp = win->char_buf[i];
         if (cp < 32) continue; /* skip control chars */
+        if (!numeric_input_accepts(inp, cp)) continue;
 
         char encoded[4];
         int enc_len = utf8_encode(cp, encoded);
@@ -3744,6 +3794,63 @@ void ca_widget_input_pass(Ca_Window *win)
                 win->scrollbar_drag_node->dirty |= CA_DIRTY_CONTENT;
             }
             win->scrollbar_drag_node = NULL;
+        }
+    }
+
+    /* --- Draggable numeric inputs --- */
+    if (win->input_pool) {
+        if (win->numeric_drag_input &&
+            (!win->numeric_drag_input->in_use ||
+             !win->numeric_drag_input->node ||
+             is_effectively_disabled(win->numeric_drag_input->node))) {
+            ca_window_set_default_cursor(win);
+            win->numeric_drag_input = NULL;
+            win->numeric_drag_active = false;
+        }
+
+        if (left_down && win->mouse_click_this_frame &&
+            !win->numeric_drag_input) {
+            for (uint32_t i = 0; i < CA_MAX_INPUTS_PER_WINDOW; ++i) {
+                Ca_TextInput *input = &win->input_pool[i];
+                if (!input->in_use || !input->node ||
+                    input->input_mode == CA_INPUT_TEXT ||
+                    is_effectively_disabled(input->node))
+                    continue;
+                if (!point_within_clip_ancestors(input->node, mx, my) ||
+                    !point_in_node(input->node, mx, my))
+                    continue;
+
+                char *end = NULL;
+                double value = strtod(input->text, &end);
+                if (end == input->text || (end && *end != '\0')) value = 0.0;
+                win->numeric_drag_input = input;
+                win->numeric_drag_active = false;
+                win->numeric_drag_start_x = mx;
+                win->numeric_drag_start_value = value;
+                break;
+            }
+        }
+
+        if (left_down && win->numeric_drag_input) {
+            Ca_TextInput *input = win->numeric_drag_input;
+            float delta = mx - win->numeric_drag_start_x;
+            if (delta <= -2.0f || delta >= 2.0f) {
+                win->numeric_drag_active = true;
+                ca_window_set_horizontal_drag_cursor(win);
+                double value = win->numeric_drag_start_value +
+                               (double)delta * (double)input->drag_speed;
+                numeric_input_set_drag_value(input, value);
+            }
+        }
+
+        if (!left_down && win->numeric_drag_input) {
+            if (win->numeric_drag_active) {
+                if (win->focused_node == win->numeric_drag_input->node)
+                    win->focused_node = NULL;
+                ca_window_set_default_cursor(win);
+            }
+            win->numeric_drag_input = NULL;
+            win->numeric_drag_active = false;
         }
     }
 

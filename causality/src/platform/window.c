@@ -664,6 +664,19 @@ static void ensure_cursors(void)
     s_cursors_init = true;
 }
 
+void ca_window_set_horizontal_drag_cursor(Ca_Window *win)
+{
+    if (!win || !win->in_use || !win->glfw) return;
+    ensure_cursors();
+    glfwSetCursor(win->glfw, s_cursors[0]);
+}
+
+void ca_window_set_default_cursor(Ca_Window *win)
+{
+    if (!win || !win->in_use || !win->glfw) return;
+    glfwSetCursor(win->glfw, NULL);
+}
+
 /*
  * Handle per-frame edge/corner resize logic for undecorated windows.
  *

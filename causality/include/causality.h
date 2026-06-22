@@ -660,7 +660,14 @@ typedef struct Ca_SpacerDesc {
     const char *style;             /* space-separated CSS class names       */
 } Ca_SpacerDesc;
 
-/* <input> — single-line text input field. */
+typedef enum Ca_InputMode {
+    CA_INPUT_TEXT = 0,
+    CA_INPUT_FLOAT,
+    CA_INPUT_INT,
+    CA_INPUT_UINT,
+} Ca_InputMode;
+
+/* <input> — single-line text or draggable numeric input field. */
 typedef struct Ca_InputDesc {
     const char *text;              /* initial text (NULL = empty)            */
     const char *placeholder;       /* placeholder text (greyed out)          */
@@ -671,6 +678,8 @@ typedef struct Ca_InputDesc {
     float       padding[4];
     Ca_ChangeFn on_change;         /* called on every edit                   */
     void       *change_data;
+    Ca_InputMode input_mode;       /* text or validated numeric editing      */
+    float       drag_speed;        /* numeric units per horizontal pixel     */
     const char *id;                /* CSS id  (without #)                    */
     const char *style;             /* space-separated CSS class names        */
     bool        hidden;            /* display: none — removed from layout    */
@@ -789,7 +798,7 @@ CA_API void ca_li_end(void);
 /* Emit a text label; returns the created Ca_Label handle. */
 CA_API Ca_Label     *ca_text(const Ca_TextDesc *desc);
 
-/* Emit a single-line text input field; returns the created Ca_TextInput handle. */
+/* Emit a single-line text or draggable numeric input field. */
 CA_API Ca_TextInput *ca_input(const Ca_InputDesc *desc);
 
 /* Emit a horizontal rule separator. */

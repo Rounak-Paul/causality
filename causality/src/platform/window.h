@@ -74,3 +74,8 @@ GLFWwindow *ca_window_glfw(const Ca_Window *window);
  */
 void        ca_window_resize_pass(Ca_Window *window);
 
+/** Shows the horizontal-drag cursor for an interactive numeric control. */
+void        ca_window_set_horizontal_drag_cursor(Ca_Window *window);
+
+/** Restores the platform-default cursor for a window. */
+void        ca_window_set_default_cursor(Ca_Window *window);
