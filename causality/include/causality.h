@@ -835,7 +835,7 @@ CA_API void ca_scroll_to_bottom(Ca_Window *window, const char *id);
 CA_API float ca_get_scroll_y(Ca_Window *window, const char *id);
 
 /*
- * Set the vertical scroll offset of a scroll container, clamped to [0, content_h - h].
+ * Set the vertical scroll offset of a scroll container, clamped to its viewport.
  *
  * window  Window owning the container.
  * id      CSS id of the scroll container.

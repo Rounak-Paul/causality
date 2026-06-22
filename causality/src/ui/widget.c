@@ -23,6 +23,7 @@
 #include "style.h"
 #include "ca_theme.h"
 #include "font.h"
+#include "scrollbar.h"
 #include "../../include/ca_reactive.h"
 #include "viewport.h"
 
@@ -1800,9 +1801,7 @@ void ca_scroll_to_bottom(Ca_Window *window, const char *id)
 {
     Ca_Node *n = find_node_by_id(window, id);
     if (!n) return;
-    float max_scroll = n->content_h - n->h;
-    if (max_scroll < 0.0f) max_scroll = 0.0f;
-    n->scroll_y = max_scroll;
+    n->scroll_y = ca_scrollbar_max_y(n);
     n->dirty |= CA_DIRTY_LAYOUT;
 }
 
@@ -1816,8 +1815,7 @@ void ca_set_scroll_y(Ca_Window *window, const char *id, float y)
 {
     Ca_Node *n = find_node_by_id(window, id);
     if (!n) return;
-    float max_scroll = n->content_h - n->h;
-    if (max_scroll < 0.0f) max_scroll = 0.0f;
+    float max_scroll = ca_scrollbar_max_y(n);
     if (y < 0.0f)          y = 0.0f;
     if (y > max_scroll)    y = max_scroll;
     n->scroll_y    = y;
@@ -3347,8 +3345,10 @@ static bool point_within_clip_ancestors(Ca_Node *n, float px, float py)
     while (p) {
         bool clips = (p->desc.overflow_x != 0 || p->desc.overflow_y != 0);
         if (clips) {
-            if (px < p->x || px > p->x + p->w ||
-                py < p->y || py > p->y + p->h)
+            if (px < p->x ||
+                px > p->x + ca_scrollbar_viewport_width(p) ||
+                py < p->y ||
+                py > p->y + ca_scrollbar_viewport_height(p))
                 return false;
         }
         p = p->parent;
@@ -3602,8 +3602,6 @@ void ca_widget_input_pass(Ca_Window *win)
        both axes retain proportional thumbs and the existing minimum sizes.
     */
     if (win->node_pool) {
-        const float SB_BAR_W = 14.0f * ui_s;
-        const float SB_X_BAR_H = 6.0f * ui_s;
         const float SB_X_MARGIN = 2.0f * ui_s;
         const float SB_HIT_EXPAND = 2.0f * ui_s;
 
@@ -3619,14 +3617,13 @@ void ca_widget_input_pass(Ca_Window *win)
                 if (!n->in_use || node_is_ancestor_hidden(n)) continue;
 
                 /* Y scrollbar */
-                if (n->desc.overflow_y >= 2 && n->content_h > n->h &&
-                    (!n->desc.scrollbar_width_set || n->desc.scrollbar_width > 0.0f)) {
-                    float bar_w = n->desc.scrollbar_width_set
-                                      ? n->desc.scrollbar_width : SB_BAR_W;
+                if (n->scrollbar_y_visible) {
+                    float bar_w = ca_scrollbar_vertical_width(n);
                     float bar_x = n->x + n->w - bar_w;
                     if (mx >= bar_x - SB_HIT_EXPAND &&
                         mx <= bar_x + bar_w + SB_HIT_EXPAND &&
-                        my >= n->y && my <= n->y + n->h) {
+                        my >= n->y &&
+                        my <= n->y + ca_scrollbar_viewport_height(n)) {
                         float area = n->w * n->h;
                         if (area < best_area) {
                             best_area = area;
@@ -3637,15 +3634,13 @@ void ca_widget_input_pass(Ca_Window *win)
                 }
 
                 /* X scrollbar */
-                if (n->desc.overflow_x >= 2 && n->content_w > n->w &&
-                    (!n->desc.scrollbar_width_set || n->desc.scrollbar_width > 0.0f)) {
-                    float bar_h = n->desc.scrollbar_width_set
-                                      ? n->desc.scrollbar_width : SB_X_BAR_H;
+                if (n->scrollbar_x_visible) {
+                    float bar_h = ca_scrollbar_horizontal_height(n);
                     float bar_y = n->y + n->h - bar_h - SB_X_MARGIN;
                     if (my >= bar_y - SB_HIT_EXPAND &&
                         my <= bar_y + bar_h + SB_HIT_EXPAND &&
                         mx >= n->x + SB_X_MARGIN &&
-                        mx <= n->x + n->w - SB_X_MARGIN) {
+                        mx <= n->x + ca_scrollbar_viewport_width(n) - SB_X_MARGIN) {
                         float area = n->w * n->h;
                         if (area < best_area) {
                             best_area = area;
@@ -3663,12 +3658,12 @@ void ca_widget_input_pass(Ca_Window *win)
 
                 if (best_y) {
                     /* Compute grab offset from thumb top to mouse click */
-                    float track_h  = best->h;
-                    float ratio    = best->h / best->content_h;
+                    float track_h  = ca_scrollbar_viewport_height(best);
+                    float ratio    = track_h / best->content_h;
                     float thumb_h  = track_h * ratio;
                     if (thumb_h < 20.0f * ui_s) thumb_h = 20.0f * ui_s;
                     if (thumb_h > track_h) thumb_h = track_h;
-                    float max_s    = best->content_h - best->h;
+                    float max_s    = ca_scrollbar_max_y(best);
                     float pct      = (max_s > 0.0f) ? best->scroll_y / max_s : 0.0f;
                     float thumb_y  = best->y + pct * (track_h - thumb_h);
                     /* If click is on the thumb, grab relative to its top.
@@ -3678,13 +3673,15 @@ void ca_widget_input_pass(Ca_Window *win)
                     else
                         win->scrollbar_drag_grab = thumb_h * 0.5f;
                 } else {
-                    float track_w  = best->w - SB_X_MARGIN * 2.0f;
+                    float track_w  = ca_scrollbar_viewport_width(best) -
+                                     SB_X_MARGIN * 2.0f;
                     if (track_w < 1.0f) track_w = 1.0f;
-                    float ratio    = best->w / best->content_w;
+                    float ratio    = ca_scrollbar_viewport_width(best) /
+                                     best->content_w;
                     float thumb_w  = track_w * ratio;
                     if (thumb_w < 16.0f * ui_s) thumb_w = 16.0f * ui_s;
                     if (thumb_w > track_w) thumb_w = track_w;
-                    float max_s    = best->content_w - best->w;
+                    float max_s    = ca_scrollbar_max_x(best);
                     float pct      = (max_s > 0.0f) ? best->scroll_x / max_s : 0.0f;
                     float thumb_x  = best->x + SB_X_MARGIN + pct * (track_w - thumb_w);
                     if (mx >= thumb_x && mx <= thumb_x + thumb_w)
@@ -3699,8 +3696,8 @@ void ca_widget_input_pass(Ca_Window *win)
         if (win->scrollbar_drag_node && left_down) {
             Ca_Node *n = win->scrollbar_drag_node;
             if (win->scrollbar_drag_y) {
-                float track_h = n->h;
-                float ratio   = n->h / n->content_h;
+                float track_h = ca_scrollbar_viewport_height(n);
+                float ratio   = track_h / n->content_h;
                 float thumb_h = track_h * ratio;
                 if (thumb_h < 20.0f * ui_s) thumb_h = 20.0f * ui_s;
                 if (thumb_h > track_h) thumb_h = track_h;
@@ -3710,17 +3707,17 @@ void ca_widget_input_pass(Ca_Window *win)
                                                  : 0.0f;
                 if (pct < 0.0f) pct = 0.0f;
                 if (pct > 1.0f) pct = 1.0f;
-                float max_s = n->content_h - n->h;
-                if (max_s < 0.0f) max_s = 0.0f;
+                float max_s = ca_scrollbar_max_y(n);
                 float new_scroll = pct * max_s;
                 if (new_scroll != n->scroll_y) {
                     n->scroll_y = new_scroll;
                     n->dirty |= CA_DIRTY_LAYOUT | CA_DIRTY_CONTENT;
                 }
             } else {
-                float track_w = n->w - SB_X_MARGIN * 2.0f;
+                float track_w = ca_scrollbar_viewport_width(n) -
+                                SB_X_MARGIN * 2.0f;
                 if (track_w < 1.0f) track_w = 1.0f;
-                float ratio   = n->w / n->content_w;
+                float ratio   = ca_scrollbar_viewport_width(n) / n->content_w;
                 float thumb_w = track_w * ratio;
                 if (thumb_w < 16.0f * ui_s) thumb_w = 16.0f * ui_s;
                 if (thumb_w > track_w) thumb_w = track_w;
@@ -3731,8 +3728,7 @@ void ca_widget_input_pass(Ca_Window *win)
                                                  : 0.0f;
                 if (pct < 0.0f) pct = 0.0f;
                 if (pct > 1.0f) pct = 1.0f;
-                float max_s = n->content_w - n->w;
-                if (max_s < 0.0f) max_s = 0.0f;
+                float max_s = ca_scrollbar_max_x(n);
                 float new_scroll = pct * max_s;
                 if (new_scroll != n->scroll_x) {
                     n->scroll_x = new_scroll;
@@ -3819,8 +3815,7 @@ void ca_widget_input_pass(Ca_Window *win)
                 }
                 if (scroll_target) {
                     scroll_target->scroll_y -= (float)win->scroll_dy * SCROLL_SPEED;
-                    float max_scroll = scroll_target->content_h - scroll_target->h;
-                    if (max_scroll < 0) max_scroll = 0;
+                    float max_scroll = ca_scrollbar_max_y(scroll_target);
                     if (scroll_target->scroll_y < 0) scroll_target->scroll_y = 0;
                     if (scroll_target->scroll_y > max_scroll) scroll_target->scroll_y = max_scroll;
                     scroll_target->dirty |= CA_DIRTY_LAYOUT | CA_DIRTY_CONTENT;

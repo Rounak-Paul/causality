@@ -16,7 +16,11 @@
 #include <string.h>
 
 /* Saved geometry for incremental layout invalidation. */
-typedef struct { float x, y, w, h, cw, ch; } NodeRect;
+typedef struct {
+    float x, y, w, h, cw, ch;
+    bool scrollbar_x_visible;
+    bool scrollbar_y_visible;
+} NodeRect;
 
 /* Scale every already-resolved pixel field in a descriptor.  `font_size` is
    intentionally author-space: paint/layout use ui_scale when selecting the
@@ -209,7 +213,9 @@ static bool layout_and_invalidate(Ca_Window *win)
         Ca_Node *n = &win->node_pool[j];
         if (n->in_use)
             prev[j] = (NodeRect){ n->x, n->y, n->w, n->h,
-                                  n->content_w, n->content_h };
+                                  n->content_w, n->content_h,
+                                  n->scrollbar_x_visible,
+                                  n->scrollbar_y_visible };
     }
 
     ca_node_propagate_layout(win);
@@ -224,7 +230,9 @@ static bool layout_and_invalidate(Ca_Window *win)
         if (n->x != prev[j].x  || n->y  != prev[j].y  ||
             n->w != prev[j].w  || n->h  != prev[j].h  ||
             n->content_w != prev[j].cw ||
-            n->content_h != prev[j].ch)
+            n->content_h != prev[j].ch ||
+            n->scrollbar_x_visible != prev[j].scrollbar_x_visible ||
+            n->scrollbar_y_visible != prev[j].scrollbar_y_visible)
         {
             n->dirty |= CA_DIRTY_CONTENT;
             n->cache_count      = 0;

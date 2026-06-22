@@ -5,6 +5,7 @@
 #include "layout.h"
 #include "css.h"
 #include "font.h"
+#include "scrollbar.h"
 
 static float node_ui_scale(const Ca_Node *node)
 {
@@ -480,8 +481,10 @@ static void layout_node(Ca_Node *node, float x, float y, float avail_w, float av
     /* Inner area after padding */
     float inner_x = x + node->desc.padding_left;
     float inner_y = y + node->desc.padding_top;
-    float inner_w = w - node->desc.padding_left - node->desc.padding_right;
-    float inner_h = h - node->desc.padding_top  - node->desc.padding_bottom;
+    float inner_w = ca_scrollbar_viewport_width(node)
+        - node->desc.padding_left - node->desc.padding_right;
+    float inner_h = ca_scrollbar_viewport_height(node)
+        - node->desc.padding_top - node->desc.padding_bottom;
     if (inner_w < 0.0f) inner_w = 0.0f;
     if (inner_h < 0.0f) inner_h = 0.0f;
 
@@ -804,13 +807,11 @@ static void layout_node(Ca_Node *node, float x, float y, float avail_w, float av
        the old scroll_y may now exceed the scrollable range, leaving
        content positioned above the visible clip area. */
     if (node->desc.overflow_y >= 1) {
-        float max_sy = node->content_h - node->h;
-        if (max_sy < 0.0f) max_sy = 0.0f;
+        float max_sy = ca_scrollbar_max_y(node);
         if (node->scroll_y > max_sy) node->scroll_y = max_sy;
     }
     if (node->desc.overflow_x >= 1) {
-        float max_sx = node->content_w - node->w;
-        if (max_sx < 0.0f) max_sx = 0.0f;
+        float max_sx = ca_scrollbar_max_x(node);
         if (node->scroll_x > max_sx) node->scroll_x = max_sx;
     }
 
@@ -839,9 +840,9 @@ out_of_flow:
            layout_node() itself will resolve width/height (including
            percentages) against this. Passing the literal width here
            would mis-resolve "width: 100%" as "100 pixels". */
-        float avail_cw = node->w
+        float avail_cw = ca_scrollbar_viewport_width(node)
             - node->desc.padding_left - node->desc.padding_right;
-        float avail_ch = node->h
+        float avail_ch = ca_scrollbar_viewport_height(node)
             - node->desc.padding_top  - node->desc.padding_bottom;
         if (avail_cw < 0.0f) avail_cw = 0.0f;
         if (avail_ch < 0.0f) avail_ch = 0.0f;
@@ -869,5 +870,36 @@ void ca_layout_pass(Ca_Window *win)
        which would make every widget appear half-sized. */
     int lw, lh;
     glfwGetWindowSize(win->glfw, &lw, &lh);
-    layout_node(win->root, 0.0f, 0.0f, (float)lw, (float)lh);
+    for (int pass = 0; pass < 3; ++pass) {
+        layout_node(win->root, 0.0f, 0.0f, (float)lw, (float)lh);
+
+        bool visibility_changed = false;
+        for (uint32_t i = 0; i < CA_MAX_NODES_PER_WINDOW; ++i) {
+            Ca_Node *node = &win->node_pool[i];
+            if (!node->in_use) continue;
+
+            bool show_x = false;
+            bool show_y = false;
+            for (int resolve = 0; resolve < 2; ++resolve) {
+                float viewport_w = node->w - (show_y
+                    ? ca_scrollbar_vertical_width(node) : 0.0f);
+                float viewport_h = node->h - (show_x
+                    ? ca_scrollbar_horizontal_height(node) : 0.0f);
+                if (viewport_w < 0.0f) viewport_w = 0.0f;
+                if (viewport_h < 0.0f) viewport_h = 0.0f;
+                show_x = ca_scrollbar_axis_enabled(node, false) &&
+                         node->content_w > viewport_w;
+                show_y = ca_scrollbar_axis_enabled(node, true) &&
+                         node->content_h > viewport_h;
+            }
+
+            if (node->scrollbar_x_visible != show_x ||
+                node->scrollbar_y_visible != show_y) {
+                node->scrollbar_x_visible = show_x;
+                node->scrollbar_y_visible = show_y;
+                visibility_changed = true;
+            }
+        }
+        if (!visibility_changed) break;
+    }
 }

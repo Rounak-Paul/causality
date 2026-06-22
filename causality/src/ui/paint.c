@@ -6,6 +6,7 @@
 #include "font.h"
 #include "ca_theme.h"
 #include "style.h"
+#include "scrollbar.h"
 #include "../../include/ca_icons.h"
 #include <GLFW/glfw3.h>
 #include <stdio.h>
@@ -124,7 +125,9 @@ static ClipRect find_clip_for_node(Ca_Node *node)
     Ca_Node *cur = node->parent;
     while (cur) {
         if (cur->desc.overflow_x >= 1 || cur->desc.overflow_y >= 1) {
-            clip = clip_intersect(clip, cur->x, cur->y, cur->w, cur->h);
+            clip = clip_intersect(clip, cur->x, cur->y,
+                                  ca_scrollbar_viewport_width(cur),
+                                  ca_scrollbar_viewport_height(cur));
         }
         cur = cur->parent;
     }
@@ -784,17 +787,15 @@ static void paint_scrollbars(Ca_Window *win, Ca_Node *node, ClipRect clip)
        overlay = true puts them in phase 1, after all phase-0 glyphs. */
     uint32_t sb_first = win->draw_cmd_count;
     float ui_s = win->ui_scale > 0.0f ? win->ui_scale : 1.0f;
-    if (node->desc.overflow_y >= 2 && node->content_h > node->h &&
-        (!node->desc.scrollbar_width_set || node->desc.scrollbar_width > 0.0f)) {
-        float bar_w   = node->desc.scrollbar_width_set
-                            ? node->desc.scrollbar_width : 14.0f * ui_s;
-        float track_h = node->h;
-        float ratio   = node->h / node->content_h;
+    if (node->scrollbar_y_visible) {
+        float bar_w   = ca_scrollbar_vertical_width(node);
+        float track_h = ca_scrollbar_viewport_height(node);
+        float ratio   = track_h / node->content_h;
         float thumb_h = track_h * ratio;
         if (thumb_h < 20.0f * ui_s) thumb_h = 20.0f * ui_s;
         if (thumb_h > track_h) thumb_h = track_h;
 
-        float max_scroll = node->content_h - node->h;
+        float max_scroll = ca_scrollbar_max_y(node);
         float scroll_pct = (max_scroll > 0.0f) ? node->scroll_y / max_scroll : 0.0f;
         float thumb_y    = node->y + scroll_pct * (track_h - thumb_h);
         float bar_x      = node->x + node->w - bar_w;
@@ -817,7 +818,7 @@ static void paint_scrollbars(Ca_Window *win, Ca_Node *node, ClipRect clip)
             cmd->in_use = true;
             set_clip(cmd, clip);
         }
-        /* Thumb — raised bevel */
+        /* Thumb */
         if (win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
             Ca_DrawCmd *cmd = &win->draw_cmds[win->draw_cmd_count++];
             memset(cmd, 0, sizeof(*cmd));
@@ -839,18 +840,17 @@ static void paint_scrollbars(Ca_Window *win, Ca_Node *node, ClipRect clip)
         }
     }
     /* ---- X scrollbar ---- */
-    if (node->desc.overflow_x >= 2 && node->content_w > node->w &&
-        (!node->desc.scrollbar_width_set || node->desc.scrollbar_width > 0.0f)) {
-        float bar_h   = node->desc.scrollbar_width_set
-                            ? node->desc.scrollbar_width : 6.0f * ui_s;
+    if (node->scrollbar_x_visible) {
+        float bar_h   = ca_scrollbar_horizontal_height(node);
         float margin  = 2.0f * ui_s;
-        float track_w = node->w - margin * 2;
-        float ratio   = node->w / node->content_w;
+        float track_w = ca_scrollbar_viewport_width(node) - margin * 2;
+        if (track_w < 0.0f) track_w = 0.0f;
+        float ratio   = ca_scrollbar_viewport_width(node) / node->content_w;
         float thumb_w = track_w * ratio;
         if (thumb_w < 16.0f * ui_s) thumb_w = 16.0f * ui_s;
         if (thumb_w > track_w) thumb_w = track_w;
 
-        float max_scroll = node->content_w - node->w;
+        float max_scroll = ca_scrollbar_max_x(node);
         float scroll_pct = (max_scroll > 0.0f) ? node->scroll_x / max_scroll : 0.0f;
         float thumb_x    = node->x + margin + scroll_pct * (track_w - thumb_w);
         float bar_y      = node->y + node->h - bar_h - margin;
@@ -1508,7 +1508,9 @@ static void paint_tree_cached(Ca_Instance *inst, Ca_Window *win,
     /* ---- Child clip ---- */
     ClipRect child_clip = clip;
     if (node->desc.overflow_x >= 1 || node->desc.overflow_y >= 1)
-        child_clip = clip_intersect(clip, node->x, node->y, node->w, node->h);
+        child_clip = clip_intersect(clip, node->x, node->y,
+                                    ca_scrollbar_viewport_width(node),
+                                    ca_scrollbar_viewport_height(node));
 
     /* ---- Recurse children (propagate effective_z down) ---- */
     for (uint32_t i = 0; i < node->child_count; ++i)

@@ -443,6 +443,8 @@ struct Ca_Node {
     /* Scroll state (for overflow: scroll) */
     float         scroll_x, scroll_y;
     float         content_w, content_h; /* natural content size        */
+    bool          scrollbar_x_visible;
+    bool          scrollbar_y_visible;
     /* Transition animations */
     Ca_Transition transitions[CA_MAX_TRANSITIONS_PER_NODE];
     float         transition_duration;   /* default duration from CSS (sec) */
