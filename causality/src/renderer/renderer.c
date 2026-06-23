@@ -469,22 +469,62 @@ void ca_renderer_window_shutdown(Ca_Instance *inst, Ca_Window *win)
     }
 }
 
+/*
+ * Defer swapchain recreation to the start of the next ca_renderer_frame.
+ *
+ * Calling vkDeviceWaitIdle from inside a GLFW callback (which fires during
+ * glfwPollEvents) stalls the GPU every frame during live resize, making the
+ * window unresponsive.  We store the new size and apply it at a safe point
+ * after the current frame's in-flight fence has been waited on.
+ */
 bool ca_renderer_window_resize(Ca_Instance *inst, Ca_Window *win, int w, int h)
 {
-    if (w == 0 || h == 0) return true; /* minimised */
+    if (w == 0 || h == 0) return true; /* minimised — nothing to do */
     if (!inst || !win) return false;
+    if (win->sc.swapchain != VK_NULL_HANDLE &&
+        win->sc.extent.width  == (uint32_t)w &&
+        win->sc.extent.height == (uint32_t)h) {
+        return true; /* already correct size */
+    }
+    win->pending_swapchain_resize = true;
+    win->pending_sc_w = w;
+    win->pending_sc_h = h;
+    return true;
+}
+
+/* Apply a deferred swapchain resize — called at the top of ca_renderer_frame,
+   after vkWaitForFences ensures no work is in flight on this window. */
+static bool apply_pending_resize(Ca_Instance *inst, Ca_Window *win)
+{
+    if (!win->pending_swapchain_resize) return true;
+    win->pending_swapchain_resize = false;
+
+    int w = win->pending_sc_w;
+    int h = win->pending_sc_h;
+
+    /* Re-query framebuffer in case multiple resize events were coalesced. */
+    if (win->glfw) {
+        int fb_w = 0, fb_h = 0;
+        glfwGetFramebufferSize(win->glfw, &fb_w, &fb_h);
+        if (fb_w > 0 && fb_h > 0) { w = fb_w; h = fb_h; }
+    }
+    if (w == 0 || h == 0) return true;
+
+    /* Size may already match after coalescing. */
     if (win->sc.swapchain != VK_NULL_HANDLE &&
         win->sc.extent.width  == (uint32_t)w &&
         win->sc.extent.height == (uint32_t)h) {
         return true;
     }
+
     vkDeviceWaitIdle(inst->vk_device);
     ca_swapchain_destroy(inst, win);
     if (!ca_swapchain_create(inst, win, (uint32_t)w, (uint32_t)h))
         return false;
-    /* Resize backdrop blur images to match new swapchain extent */
     if (inst->blur_h_pipeline != VK_NULL_HANDLE)
         ca_blur_window_resize(inst, win, win->sc.extent.width, win->sc.extent.height, win->sc.format);
+    if (win->root)
+        win->root->dirty |= CA_DIRTY_LAYOUT | CA_DIRTY_CONTENT;
     return true;
 }
 
@@ -497,7 +537,14 @@ void ca_renderer_frame(Ca_Instance *inst)
 
     for (int i = 0; i < CA_MAX_WINDOWS_TOTAL; ++i) {
         Ca_Window *win = &inst->windows[i];
-        if (!win->in_use || win->sc.swapchain == VK_NULL_HANDLE) continue;
+        if (!win->in_use) continue;
+
+        /* Apply any deferred swapchain resize before attempting to render.
+           Safe here: we are between frames, not inside a GLFW callback. */
+        if (win->pending_swapchain_resize)
+            apply_pending_resize(inst, win);
+
+        if (win->sc.swapchain == VK_NULL_HANDLE) continue;
         if (win->bg_render_fn || inst->default_bg_render_fn) win->needs_render = true;
         if (!win->needs_render) continue;
         win->needs_render = false;

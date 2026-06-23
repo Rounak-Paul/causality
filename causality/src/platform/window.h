@@ -64,16 +64,6 @@ CA_API void        ca_window_destroy(Ca_Window *window);
  */
 GLFWwindow *ca_window_glfw(const Ca_Window *window);
 
-/*
- * Perform per-frame edge and corner resize hit-testing for undecorated windows.
- *
- * Detects mouse proximity to window edges/corners and updates resize state.
- * Must be called once per tick before the UI update pass.
- *
- * window  Window to process; no-op if NULL.
- */
-void        ca_window_resize_pass(Ca_Window *window);
-
 /** Shows the horizontal-drag cursor for an interactive numeric control. */
 void        ca_window_set_horizontal_drag_cursor(Ca_Window *window);
 

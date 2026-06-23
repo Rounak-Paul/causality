@@ -912,35 +912,24 @@ struct Ca_Window {
     Ca_BgRenderFn bg_render_fn;
     void         *bg_render_data;
 
-    /* Custom title bar */
-    Ca_Node       *title_bar_node;        /* system-managed title bar container  */
+    /* Window structure */
+    Ca_Node       *title_bar_node;        /* always NULL for decorated windows   */
     Ca_Node       *content_root;          /* user content is built here          */
-    Ca_Node       *status_bar_node;       /* system-managed status bar container */
+    Ca_Node       *status_bar_node;       /* optional fixed-height status bar    */
     char           title[256];            /* window title text                   */
-    bool           titlebar_needs_rebuild;
+    bool           titlebar_needs_rebuild; /* triggers ca_title_bar_rebuild       */
     bool           statusbar_needs_rebuild;
-    /* Status bar user builder + config (NULL fn → bar hidden). */
     void         (*status_bar_fn)(Ca_Window *window, void *user_data);
     void          *status_bar_data;
-    float          status_bar_height;     /* pre-scaled: raw_height * ui_scale */
-    float          status_bar_raw_height; /* logical height (unscaled) */
-    bool           titlebar_maximized;
-    Ca_MenuBarMenu titlebar_menus[CA_MAX_MENUS_PER_BAR];
-    int            titlebar_menu_count;
-    int            titlebar_restore_x;
-    int            titlebar_restore_y;
-    int            titlebar_restore_w;
-    int            titlebar_restore_h;
+    float          status_bar_height;     /* pre-scaled: raw_height * ui_scale   */
+    float          status_bar_raw_height;
 
-    /* Edge / corner resize state (manual implementation for undecorated windows) */
-    bool           resize_active;          /* currently resizing                 */
-    int            resize_edge;            /* bitmask: 1=left 2=right 4=top 8=bottom */
-    int            resize_start_win_x;     /* window pos at drag start            */
-    int            resize_start_win_y;
-    int            resize_start_win_w;     /* window size at drag start           */
-    int            resize_start_win_h;
-    double         resize_start_cursor_sx; /* screen-space cursor at drag start   */
-    double         resize_start_cursor_sy;
+    /* Deferred swapchain resize — set by GLFW callbacks, applied at the start
+       of the next ca_renderer_frame after in-flight GPU work has completed.
+       Avoids calling vkDeviceWaitIdle from inside glfwPollEvents callbacks. */
+    bool           pending_swapchain_resize;
+    int            pending_sc_w;
+    int            pending_sc_h;
 };
 
 /* ======================================================
