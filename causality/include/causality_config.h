@@ -112,6 +112,21 @@
 #  define CA_MAX_MENUBARS_PER_WINDOW 4
 #endif
 
+/* ---- App-level (system) menu bar ---- */
+
+/* Maximum top-level menus registered via ca_instance_set_app_menus(). */
+#ifndef CA_MAX_APP_MENUS
+#  define CA_MAX_APP_MENUS 16
+#endif
+/* Maximum items per top-level app menu (including sub-items). */
+#ifndef CA_MAX_APP_MENU_ITEMS
+#  define CA_MAX_APP_MENU_ITEMS 32
+#endif
+/* Maximum sub-items per app menu item. */
+#ifndef CA_MAX_APP_MENU_SUB_ITEMS
+#  define CA_MAX_APP_MENU_SUB_ITEMS 16
+#endif
+
 /* ---- Text storage ---- */
 
 #ifndef CA_LABEL_TEXT_MAX

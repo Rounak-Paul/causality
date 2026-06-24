@@ -936,6 +936,31 @@ struct Ca_Window {
    INSTANCE
    ====================================================== */
 
+/* ======================================================
+   APP MENU — instance-level deep copy of caller-provided menus
+   ====================================================== */
+
+typedef struct {
+    char label[128];
+    Ca_MenuActionFn action;
+    void           *action_data;
+    bool            separator;
+    /* Sub-items stored inline; no recursive nesting beyond one level. */
+    struct {
+        char            label[128];
+        Ca_MenuActionFn action;
+        void           *action_data;
+        bool            separator;
+    } sub_items[CA_MAX_APP_MENU_SUB_ITEMS];
+    int sub_item_count;
+} Ca_AppMenuItem;
+
+typedef struct {
+    char           label[128];
+    Ca_AppMenuItem items[CA_MAX_APP_MENU_ITEMS];
+    int            item_count;
+} Ca_AppMenu;
+
 struct Ca_Instance {
     Ca_Window windows[CA_MAX_WINDOWS_TOTAL];
 
@@ -1026,6 +1051,10 @@ struct Ca_Instance {
     /* Image pool — user-loaded textures for ca_image() */
     Ca_Image         images[CA_MAX_IMAGES];
     VkDescriptorPool image_desc_pool; /* shared pool for image descriptor sets */
+
+    /* App-level (system) menu bar — set via ca_instance_set_app_menus(). */
+    Ca_AppMenu app_menus[CA_MAX_APP_MENUS];
+    int        app_menu_count;
 
     /* When true, ca_window_system_tick polls continuously. */
     bool continuous;

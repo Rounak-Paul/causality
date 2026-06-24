@@ -57,6 +57,9 @@ typedef struct Ca_Tooltip   Ca_Tooltip;
 typedef struct Ca_CtxMenu   Ca_CtxMenu;
 typedef struct Ca_Modal     Ca_Modal;
 typedef struct Ca_MenuBar   Ca_MenuBar;
+/* Menu descriptor types — defined fully in ca_components.h (included below). */
+typedef struct Ca_MenuItemDesc Ca_MenuItemDesc;
+typedef struct Ca_MenuDesc     Ca_MenuDesc;
 
 /* ============================================================
    INSTANCE
@@ -251,6 +254,25 @@ CA_API void  ca_instance_set_scale(Ca_Instance *instance, float scale);
 
 /* Returns the current instance-wide UI scale factor. */
 CA_API float ca_instance_get_scale(const Ca_Instance *instance);
+
+/*
+ * Register the application-level menu bar.
+ *
+ * On macOS, menus are appended to [NSApp mainMenu] (the native system bar
+ * at the top of the screen).  On other platforms, a ca_menu_bar widget is
+ * emitted automatically at the top of the primary window's content area each
+ * time ca_ui_begin is called — no caller action required.
+ *
+ * Causality deep-copies all descriptor data; the caller may free or modify
+ * the arrays immediately after this call returns.
+ *
+ * instance    Owning Ca_Instance.
+ * menus       Array of Ca_MenuDesc describing each top-level menu.
+ * menu_count  Number of elements in menus (clamped to CA_MAX_APP_MENUS).
+ */
+CA_API void ca_instance_set_app_menus(Ca_Instance       *instance,
+                                      const Ca_MenuDesc *menus,
+                                      int                menu_count);
 
 /* Set the window title displayed in the custom title bar. */
 CA_API void ca_window_set_title(Ca_Window *window, const char *title);

@@ -9,6 +9,7 @@
 #include "css.h"
 #include "style.h"
 #include "widget.h"
+#include "../platform/app_menu.h"
 
 /* Forward decls into the reactive subsystem (src/reactive/signal.c). */
 void ca_reactive_flush(Ca_Instance *inst);
@@ -294,4 +295,67 @@ float ca_instance_get_scale(const Ca_Instance *instance)
 {
     if (!instance) return 1.0f;
     return (instance->default_ui_scale > 0.0f) ? instance->default_ui_scale : 1.0f;
+}
+
+/*
+ * Register the application-level menu bar.
+ *
+ * Deep-copies all menu and item data into the instance so the caller may free
+ * or modify the descriptors immediately after this call.  Sub-items are copied
+ * one level deep (no recursive nesting).  Clamps counts to configured maximums.
+ *
+ * On macOS the native [NSApp mainMenu] is rebuilt immediately.
+ * On other platforms the stored data is read by ca_ui_begin each frame.
+ *
+ * instance    Owning Ca_Instance.
+ * menus       Array of top-level menu descriptors.
+ * menu_count  Number of elements in menus.
+ */
+void ca_instance_set_app_menus(Ca_Instance       *instance,
+                               const Ca_MenuDesc *menus,
+                               int                menu_count)
+{
+    if (!instance || !menus || menu_count <= 0) {
+        if (instance) instance->app_menu_count = 0;
+        return;
+    }
+
+    int count = menu_count < CA_MAX_APP_MENUS ? menu_count : CA_MAX_APP_MENUS;
+    instance->app_menu_count = count;
+
+    for (int mi = 0; mi < count; mi++) {
+        const Ca_MenuDesc *src = &menus[mi];
+        Ca_AppMenu        *dst = &instance->app_menus[mi];
+
+        snprintf(dst->label, sizeof(dst->label), "%s", src->label ? src->label : "");
+
+        int ic = src->item_count < CA_MAX_APP_MENU_ITEMS
+               ? src->item_count : CA_MAX_APP_MENU_ITEMS;
+        dst->item_count = ic;
+
+        for (int ii = 0; ii < ic; ii++) {
+            const Ca_MenuItemDesc *si = &src->items[ii];
+            Ca_AppMenuItem        *di = &dst->items[ii];
+
+            snprintf(di->label, sizeof(di->label), "%s", si->label ? si->label : "");
+            di->action       = si->action;
+            di->action_data  = si->action_data;
+            di->separator    = si->separator;
+
+            int sc = si->sub_item_count < CA_MAX_APP_MENU_SUB_ITEMS
+                   ? si->sub_item_count : CA_MAX_APP_MENU_SUB_ITEMS;
+            di->sub_item_count = sc;
+
+            for (int ki = 0; ki < sc; ki++) {
+                const Ca_MenuItemDesc *ss = &si->sub_items[ki];
+                snprintf(di->sub_items[ki].label, sizeof(di->sub_items[ki].label),
+                         "%s", ss->label ? ss->label : "");
+                di->sub_items[ki].action      = ss->action;
+                di->sub_items[ki].action_data = ss->action_data;
+                di->sub_items[ki].separator   = ss->separator;
+            }
+        }
+    }
+
+    ca_app_menu_set(instance);
 }
