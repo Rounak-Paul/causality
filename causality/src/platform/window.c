@@ -399,9 +399,11 @@ static Ca_Window *window_create_in_slot(Ca_Instance *inst, const Ca_WindowDesc *
         return NULL;
     }
 
-    slot->glfw     = glfw;
-    slot->instance = inst;
-    slot->in_use   = true;
+    slot->glfw          = glfw;
+    slot->instance      = inst;
+    slot->in_use        = true;
+    slot->on_close      = desc->on_close;
+    slot->on_close_data = desc->on_close_data;
     /* Apply the instance-wide default scale if one has been set,
        otherwise fall back to 1.0 (no scaling). */
     slot->ui_scale = (inst->default_ui_scale > 0.0f)
@@ -492,6 +494,12 @@ Ca_Window *ca_window_create_reserved(Ca_Instance *inst, const Ca_WindowDesc *des
 void ca_window_destroy(Ca_Window *window)
 {
     if (!window || !window->in_use) return;
+
+    /* Notify the caller before any resources are freed so it can safely null
+       out widget pointers it holds into this window's node/widget pools. */
+    if (window->on_close)
+        window->on_close(window, window->on_close_data);
+
     /* Renderer shutdown must precede UI shutdown: ca_renderer_window_shutdown
        calls ca_viewport_gpu_destroy on viewport_pool entries, which must still
        be alive.  ca_ui_window_shutdown frees viewport_pool, so reversing this

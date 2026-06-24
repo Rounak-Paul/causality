@@ -930,6 +930,11 @@ struct Ca_Window {
     bool           pending_swapchain_resize;
     int            pending_sc_w;
     int            pending_sc_h;
+
+    /* Close callback — invoked by ca_window_destroy before the window's
+       resources are freed.  Use to null out any pointers held by the caller. */
+    void         (*on_close)(Ca_Window *window, void *user_data);
+    void          *on_close_data;
 };
 
 /* ======================================================

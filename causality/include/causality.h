@@ -130,6 +130,10 @@ typedef struct Ca_WindowDesc {
     const char *title;
     int         width;
     int         height;
+    /* Optional callback invoked just before the window's resources are freed.
+       Use to null out any widget pointers the caller holds into this window. */
+    void      (*on_close)(Ca_Window *window, void *user_data);
+    void       *on_close_data;
 } Ca_WindowDesc;
 
 /*
