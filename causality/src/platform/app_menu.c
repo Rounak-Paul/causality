@@ -1,10 +1,7 @@
 /*
- * Non-Apple stub for the platform app-menu interface.
- *
  * All platforms use the custom Causality title bar to host the menu bar.
  * Forward instance-level menus to every open window's title bar.
  */
-#ifndef __APPLE__
 
 #include "app_menu.h"
 #include "../core/ca_internal.h"
@@ -40,5 +37,3 @@ void ca_app_menu_set(Ca_Instance *instance)
             ca_window_set_title_bar_menus(win, menus, count);
     }
 }
-
-#endif /* !__APPLE__ */

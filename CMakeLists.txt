@@ -1,11 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 
-# Enable Objective-C on Apple (required by GLFW for native windows)
-if(APPLE)
-    project(causality LANGUAGES C CXX OBJC)
-else()
-    project(causality LANGUAGES C CXX)
-endif()
+project(causality LANGUAGES C CXX)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
