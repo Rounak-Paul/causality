@@ -1,9 +1,8 @@
 /*
  * Non-Apple stub for the platform app-menu interface.
  *
- * On Linux/Windows the custom title bar embeds the menu bar. Forward
- * the instance-level menu data to every open window's title bar so
- * menus registered with ca_instance_set_app_menus() show up immediately.
+ * All platforms use the custom Causality title bar to host the menu bar.
+ * Forward instance-level menus to every open window's title bar.
  */
 #ifndef __APPLE__
 
@@ -15,8 +14,6 @@ void ca_app_menu_set(Ca_Instance *instance)
 {
     if (!instance || instance->app_menu_count <= 0) return;
 
-    /* Build a Ca_MenuDesc / Ca_MenuItemDesc stack array from the deep-copied
-       instance-level app_menus and push it to every open window. */
     Ca_MenuDesc      menus[CA_MAX_APP_MENUS];
     Ca_MenuItemDesc  items[CA_MAX_APP_MENUS][CA_MAX_APP_MENU_ITEMS];
 
