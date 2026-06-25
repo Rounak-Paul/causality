@@ -11,7 +11,9 @@
 static const char CA_SYSTEM_STYLES_CSS[] =
     ".ca-menubar-popup { background: #1e1e24; color: #c8c8cc; corner-radius: 2px; }"
     ".ca-overlay-hover { background: #182e50; corner-radius: 1px; }"
-    ".ca-overlay-selected { background: #243b5c; color: #c8c8cc; }";
+    ".ca-overlay-selected { background: #243b5c; color: #c8c8cc; }"
+    ".ca-app-menubar { width: 100%; height: 24px; background: #1a1a20; align-items: center; }"
+    ".ca-app-menubar-item { height: 24px; padding: 0px 8px; font-size: 12px; color: #c8c8cc; align-items: center; }";
 
 /* Create the lower-priority stylesheet used for Causality-owned chrome. */
 Ca_Stylesheet *ca_style_create_system_stylesheet(void)

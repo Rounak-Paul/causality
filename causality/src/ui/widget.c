@@ -823,6 +823,8 @@ void ca_ui_begin(Ca_Window *window, const Ca_DivDesc *root_desc)
             .menus      = scratch_menus,
             .menu_count = inst->app_menu_count,
             .id         = "__ca_app_menubar__",
+            .style      = "ca-app-menubar",
+            .item_style = "ca-app-menubar-item",
         });
     }
 #endif /* !__APPLE__ */
