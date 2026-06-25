@@ -193,36 +193,19 @@ static void glfw_framebuffer_size_cb(GLFWwindow *glfw, int width, int height)
 }
 
 /*
- * GLFW window refresh callback — unblocks rendering during OS-modal resize.
+ * GLFW maximize callback - synchronize custom title-bar presentation with
+ * compositor-managed maximize and restore state.
  *
- * On macOS, native window decorations can enter a brief modal tracking loop
- * that prevents glfwPollEvents from returning.  This callback fires inside
- * that loop.  We only mark the pending resize and dirty flags here; the
- * actual swapchain rebuild and render happen in ca_renderer_frame on the
- * next normal tick, safely outside any GLFW callback context.
+ * glfw       The GLFW window whose state changed.
+ * maximized  GLFW_TRUE when maximized, GLFW_FALSE when restored.
  */
-static void glfw_window_refresh_cb(GLFWwindow *glfw)
-{
-    Ca_Window *win = (Ca_Window *)glfwGetWindowUserPointer(glfw);
-    if (!win || !win->instance) return;
-
-    int fb_w = 0, fb_h = 0;
-    glfwGetFramebufferSize(glfw, &fb_w, &fb_h);
-    if (fb_w > 0 && fb_h > 0)
-        ca_renderer_window_resize(win->instance, win, fb_w, fb_h);
-
-    if (win->root)
-        win->root->dirty |= CA_DIRTY_LAYOUT | CA_DIRTY_CONTENT;
-
-    win->needs_render = true;
-    glfwPostEmptyEvent();
-}
-
 static void glfw_window_maximize_cb(GLFWwindow *glfw, int maximized)
 {
-    (void)maximized;
     Ca_Window *win = (Ca_Window *)glfwGetWindowUserPointer(glfw);
     if (!win) return;
+
+    win->titlebar_maximized = maximized == GLFW_TRUE;
+    win->titlebar_needs_rebuild = true;
     glfwPostEmptyEvent();
 }
 
@@ -385,7 +368,8 @@ static Ca_Window *window_create_in_slot(Ca_Instance *inst, const Ca_WindowDesc *
     snprintf(slot->title, sizeof(slot->title), "%s",
              desc->title ? desc->title : "");
 
-    glfwWindowHint(GLFW_DECORATED, GLFW_TRUE);
+    /* Custom title bar: always create undecorated GLFW windows */
+    glfwWindowHint(GLFW_DECORATED, GLFW_FALSE);
 
     GLFWwindow *glfw = glfwCreateWindow(
         desc->width  > 0 ? desc->width  : 1280,
@@ -418,7 +402,6 @@ static Ca_Window *window_create_in_slot(Ca_Instance *inst, const Ca_WindowDesc *
     glfwSetScrollCallback(glfw, glfw_scroll_cb);
     glfwSetWindowSizeCallback(glfw, glfw_window_size_cb);
     glfwSetFramebufferSizeCallback(glfw, glfw_framebuffer_size_cb);
-    glfwSetWindowRefreshCallback(glfw, glfw_window_refresh_cb);
     glfwSetWindowMaximizeCallback(glfw, glfw_window_maximize_cb);
 
     /* Boot surface + swapchain (renderer must already be initialised) */
@@ -550,8 +533,40 @@ void ca_window_close(Ca_Window *window)
 void ca_window_maximize(Ca_Window *window)
 {
     if (!window || !window->in_use || !window->glfw) return;
-    if (!glfwGetWindowAttrib(window->glfw, GLFW_MAXIMIZED))
-        glfwMaximizeWindow(window->glfw);
+
+#ifdef __APPLE__
+    if (window->titlebar_maximized) return;
+
+    glfwGetWindowPos(window->glfw,
+                     &window->titlebar_restore_x, &window->titlebar_restore_y);
+    glfwGetWindowSize(window->glfw,
+                      &window->titlebar_restore_w, &window->titlebar_restore_h);
+
+    const int center_x = window->titlebar_restore_x + window->titlebar_restore_w / 2;
+    const int center_y = window->titlebar_restore_y + window->titlebar_restore_h / 2;
+    int monitor_count = 0;
+    GLFWmonitor **monitors = glfwGetMonitors(&monitor_count);
+    GLFWmonitor *target = glfwGetPrimaryMonitor();
+    for (int i = 0; i < monitor_count; ++i) {
+        int x = 0, y = 0, width = 0, height = 0;
+        glfwGetMonitorWorkarea(monitors[i], &x, &y, &width, &height);
+        if (center_x >= x && center_x < x + width &&
+            center_y >= y && center_y < y + height) {
+            target = monitors[i];
+            break;
+        }
+    }
+
+    int x = 0, y = 0, width = 0, height = 0;
+    glfwGetMonitorWorkarea(target, &x, &y, &width, &height);
+    glfwSetWindowPos(window->glfw, x, y);
+    glfwSetWindowSize(window->glfw, width, height);
+    window->titlebar_maximized = true;
+    window->titlebar_needs_rebuild = true;
+#else
+    if (glfwGetWindowAttrib(window->glfw, GLFW_MAXIMIZED)) return;
+    glfwMaximizeWindow(window->glfw);
+#endif
     window->needs_render = true;
     ca_instance_wake();
 }
@@ -567,7 +582,20 @@ void ca_window_maximize(Ca_Window *window)
 void ca_window_restore(Ca_Window *window)
 {
     if (!window || !window->in_use || !window->glfw) return;
+
+#ifdef __APPLE__
+    if (!window->titlebar_maximized) return;
+    if (window->titlebar_restore_w > 0 && window->titlebar_restore_h > 0) {
+        glfwSetWindowPos(window->glfw,
+                         window->titlebar_restore_x, window->titlebar_restore_y);
+        glfwSetWindowSize(window->glfw,
+                          window->titlebar_restore_w, window->titlebar_restore_h);
+    }
+    window->titlebar_maximized = false;
+    window->titlebar_needs_rebuild = true;
+#else
     glfwRestoreWindow(window->glfw);
+#endif
     window->needs_render = true;
     ca_instance_wake();
 }
@@ -594,29 +622,168 @@ bool ca_window_is_open(const Ca_Window *window)
     return window && window->in_use;
 }
 
+/* ---- Edge / corner resize for undecorated windows ---- */
+
+/* Bitmask for the 8 resize zones */
+#define RESIZE_LEFT   1
+#define RESIZE_RIGHT  2
+#define RESIZE_TOP    4
+#define RESIZE_BOTTOM 8
+
+#define RESIZE_BORDER 6  /* px hit zone on each edge */
+#define RESIZE_MIN_W 200
+#define RESIZE_MIN_H 120
+
 /*
- * Show the horizontal-resize cursor to indicate a numeric drag control.
+ * Compute the resize-edge bitmask for a cursor position within a window.
  *
- * window  Window on which to set the cursor.
+ * win_w  Window width in logical pixels.
+ * win_h  Window height in logical pixels.
+ * cx     Cursor x in window-local coordinates.
+ * cy     Cursor y in window-local coordinates.
+ * Returns  Bitmask of RESIZE_LEFT / RESIZE_RIGHT / RESIZE_TOP / RESIZE_BOTTOM,
+ *          or 0 if the cursor is not in any edge hit zone.
  */
+static int resize_edge_for_pos(int win_w, int win_h, double cx, double cy)
+{
+    int edge = 0;
+    if (cx < RESIZE_BORDER)           edge |= RESIZE_LEFT;
+    if (cx > win_w - RESIZE_BORDER)   edge |= RESIZE_RIGHT;
+    if (cy < RESIZE_BORDER)           edge |= RESIZE_TOP;
+    if (cy > win_h - RESIZE_BORDER)   edge |= RESIZE_BOTTOM;
+    return edge;
+}
+
+static GLFWcursor *s_cursors[3]; /* hresize, vresize, crossresize */
+static bool        s_cursors_init = false;
+
+/*
+ * Lazily create the three standard resize cursor shapes.
+ *
+ * Initializes the static cursor handles for horizontal, vertical, and
+ * all-direction resize cursors on first call; subsequent calls are no-ops.
+ */
+static void ensure_cursors(void)
+{
+    if (s_cursors_init) return;
+    s_cursors[0] = glfwCreateStandardCursor(GLFW_HRESIZE_CURSOR);
+    s_cursors[1] = glfwCreateStandardCursor(GLFW_VRESIZE_CURSOR);
+    s_cursors[2] = glfwCreateStandardCursor(GLFW_RESIZE_ALL_CURSOR);
+    s_cursors_init = true;
+}
+
 void ca_window_set_horizontal_drag_cursor(Ca_Window *win)
 {
     if (!win || !win->in_use || !win->glfw) return;
-    static GLFWcursor *s_hresize = NULL;
-    if (!s_hresize)
-        s_hresize = glfwCreateStandardCursor(GLFW_HRESIZE_CURSOR);
-    glfwSetCursor(win->glfw, s_hresize);
+    ensure_cursors();
+    glfwSetCursor(win->glfw, s_cursors[0]);
 }
 
-/*
- * Restore the platform-default cursor for a window.
- *
- * window  Window on which to reset the cursor.
- */
 void ca_window_set_default_cursor(Ca_Window *win)
 {
     if (!win || !win->in_use || !win->glfw) return;
     glfwSetCursor(win->glfw, NULL);
+}
+
+/*
+ * Handle per-frame edge/corner resize logic for undecorated windows.
+ *
+ * On each tick: hit-tests the cursor against window edges, shows the
+ * appropriate resize cursor, and on left-click begins a resize drag.
+ * While dragging, recomputes and applies the new window position and size,
+ * enforcing minimum dimensions.  Ends the drag when the button is released.
+ * No-op for maximised windows.
+ *
+ * win  Window to process.
+ */
+void ca_window_resize_pass(Ca_Window *win)
+{
+    if (!win || !win->in_use || win->titlebar_maximized) return;
+
+    ensure_cursors();
+
+    bool left_down = win->mouse_buttons[0];
+    double cx, cy;
+    glfwGetCursorPos(win->glfw, &cx, &cy);
+    int win_w, win_h;
+    glfwGetWindowSize(win->glfw, &win_w, &win_h);
+
+    /* --- Continue active resize --- */
+    if (win->resize_active) {
+        if (!left_down) {
+            /* Button released — end resize */
+            win->resize_active = false;
+            glfwSetCursor(win->glfw, NULL);
+            return;
+        }
+
+        int wx, wy;
+        glfwGetWindowPos(win->glfw, &wx, &wy);
+        double sx = (double)wx + cx;
+        double sy = (double)wy + cy;
+        double ddx = sx - win->resize_start_cursor_sx;
+        double ddy = sy - win->resize_start_cursor_sy;
+
+        int new_x = win->resize_start_win_x;
+        int new_y = win->resize_start_win_y;
+        int new_w = win->resize_start_win_w;
+        int new_h = win->resize_start_win_h;
+
+        if (win->resize_edge & RESIZE_RIGHT)  new_w = (int)(win->resize_start_win_w + ddx);
+        if (win->resize_edge & RESIZE_BOTTOM) new_h = (int)(win->resize_start_win_h + ddy);
+        if (win->resize_edge & RESIZE_LEFT) {
+            new_w = (int)(win->resize_start_win_w - ddx);
+            new_x = (int)(win->resize_start_win_x + ddx);
+        }
+        if (win->resize_edge & RESIZE_TOP) {
+            new_h = (int)(win->resize_start_win_h - ddy);
+            new_y = (int)(win->resize_start_win_y + ddy);
+        }
+
+        if (new_w < RESIZE_MIN_W) {
+            if (win->resize_edge & RESIZE_LEFT)
+                new_x = win->resize_start_win_x + win->resize_start_win_w - RESIZE_MIN_W;
+            new_w = RESIZE_MIN_W;
+        }
+        if (new_h < RESIZE_MIN_H) {
+            if (win->resize_edge & RESIZE_TOP)
+                new_y = win->resize_start_win_y + win->resize_start_win_h - RESIZE_MIN_H;
+            new_h = RESIZE_MIN_H;
+        }
+
+        glfwSetWindowPos(win->glfw, new_x, new_y);
+        glfwSetWindowSize(win->glfw, new_w, new_h);
+        return;
+    }
+
+    /* --- Not resizing — hit-test edges to show cursor feedback --- */
+    int edge = resize_edge_for_pos(win_w, win_h, cx, cy);
+
+    if (edge == 0) {
+        glfwSetCursor(win->glfw, NULL);
+        return;
+    }
+
+    /* Choose cursor shape */
+    bool horiz = (edge == RESIZE_LEFT  || edge == RESIZE_RIGHT);
+    bool vert  = (edge == RESIZE_TOP   || edge == RESIZE_BOTTOM);
+    if (horiz && !vert)       glfwSetCursor(win->glfw, s_cursors[0]);
+    else if (vert && !horiz)  glfwSetCursor(win->glfw, s_cursors[1]);
+    else                      glfwSetCursor(win->glfw, s_cursors[2]);
+
+    /* Start resize on mouse press */
+    if (left_down && win->mouse_click_this_frame) {
+        int wx, wy;
+        glfwGetWindowPos(win->glfw, &wx, &wy);
+        win->resize_active          = true;
+        win->resize_edge            = edge;
+        win->resize_start_win_x     = wx;
+        win->resize_start_win_y     = wy;
+        win->resize_start_win_w     = win_w;
+        win->resize_start_win_h     = win_h;
+        win->resize_start_cursor_sx = (double)wx + cx;
+        win->resize_start_cursor_sy = (double)wy + cy;
+    }
 }
 
 /*
@@ -663,6 +830,18 @@ float ca_window_get_pixel_ratio(Ca_Window *window)
     if (logical_h > 0 && framebuffer_h > 0)
         return (float)framebuffer_h / (float)logical_h;
     return 1.0f;
+}
+
+/*
+ * Return the resolved logical height of the system title bar.
+ *
+ * window  Window to query.
+ * Returns Reserved title-bar height, or 0 when unavailable.
+ */
+float ca_window_get_title_bar_height(Ca_Window *window)
+{
+    if (!window || !window->title_bar_node) return 0.0f;
+    return window->title_bar_node->desc.height;
 }
 
 /*

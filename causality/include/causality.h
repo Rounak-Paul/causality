@@ -243,6 +243,9 @@ CA_API float      ca_window_get_scale(Ca_Window *window);
 /* Return framebuffer pixels per logical window unit for the current display. */
 CA_API float      ca_window_get_pixel_ratio(Ca_Window *window);
 
+/* Return the resolved logical height reserved for the system title bar. */
+CA_API float      ca_window_get_title_bar_height(Ca_Window *window);
+
 /* Instance-wide UI scale — like browser zoom.
    1.0 = 100% (default), 1.5 = 150%, 2.0 = 200%, etc.
    Affects all widget sizes, paddings, gaps, and text rendering.
@@ -1399,6 +1402,19 @@ CA_API void ca_btn_get_layout_inner_size(const Ca_Button *btn,
         Ca_Div *: ca__set_background_node,  \
         default:  ca__set_background_widget \
     )((widget), (color))
+
+/* Title bar menu API — declared here because it requires Ca_MenuDesc
+   which is defined in ca_components.h above. */
+
+/*
+ * Install a menu strip in the window's custom title bar.
+ *
+ * window  Target window.
+ * menus   Array of Ca_MenuDesc items to deep-copy into the title bar.
+ * count   Number of menus; pass 0 (and NULL for menus) to remove all.
+ */
+CA_API void ca_window_set_title_bar_menus(Ca_Window        *window,
+                                          const Ca_MenuDesc *menus, int count);
 
 /* Reactivity is provided by ca_reactive.h (signals / effects / computed). */
 

@@ -316,13 +316,21 @@ void ca_ui_update(Ca_Instance *inst)
                 any_content = true;
         }
 
-        /* 5. Input pass — hit-test buttons and fire click callbacks.
+        /* 5. Resize pass — handle edge/corner drag for undecorated windows.
+              Must run before input pass so that a resize drag suppresses
+              normal widget hit-testing on the same click. */
+        ca_window_resize_pass(win);
+
+        /* 6. Input pass — hit-test buttons and fire click callbacks.
               Run BEFORE paint so that input-driven dirty flags are
-              picked up in the same frame's paint pass. */
+              picked up in the same frame's paint pass.
+              Skip while a resize drag is active so edge clicks don't
+              also trigger widgets underneath.  */
         Ca_Node *prev_hovered = win->hovered_node;
         Ca_Node *prev_focused = win->focused_node;
         Ca_Node *prev_drag    = win->drag_node;
-        ca_widget_input_pass(win);
+        if (!win->resize_active)
+            ca_widget_input_pass(win);
 
         /* Mark interactive state changes so paint catches them.
            Any CSS rule may use :hover / :focus / :focus-within / :active
