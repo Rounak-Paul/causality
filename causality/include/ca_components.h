@@ -320,6 +320,9 @@ CA_API Ca_Progress *ca_progress(const Ca_ProgressDesc *desc);
 /* Update the progress bar fill value (clamped to [0.0, 1.0]). */
 CA_API void         ca_progress_set(Ca_Progress *p, float value);
 
+/* Update the progress bar fill colour. */
+CA_API void         ca_progress_set_color(Ca_Progress *p, uint32_t color);
+
 /* ---- Select / dropdown ---- */
 
 /* Emit a select/dropdown widget; returns the created Ca_Select handle. */

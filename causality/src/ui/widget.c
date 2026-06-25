@@ -2144,6 +2144,14 @@ void ca_progress_set(Ca_Progress *p, float value)
     p->node->dirty |= CA_DIRTY_CONTENT;
 }
 
+void ca_progress_set_color(Ca_Progress *p, uint32_t color)
+{
+    assert(p && p->in_use);
+    if (p->bar_color == color) return;
+    p->bar_color = color;
+    p->node->dirty |= CA_DIRTY_CONTENT;
+}
+
 /* ============================================================
    PUBLIC — Select / Dropdown
    ============================================================ */
