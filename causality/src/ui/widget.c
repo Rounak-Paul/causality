@@ -797,37 +797,6 @@ void ca_ui_begin(Ca_Window *window, const Ca_DivDesc *root_desc)
 
     ctx_push(root);
 
-#ifndef __APPLE__
-    /* On non-Apple platforms emit the app menu bar widget at the top of the
-       content root automatically, so the caller never has to think about it. */
-    Ca_Instance *inst = window->instance;
-    if (inst && inst->app_menu_count > 0) {
-        Ca_MenuDesc scratch_menus[CA_MAX_APP_MENUS];
-        Ca_MenuItemDesc scratch_items[CA_MAX_APP_MENUS][CA_MAX_APP_MENU_ITEMS];
-        for (int mi = 0; mi < inst->app_menu_count; mi++) {
-            const Ca_AppMenu *am = &inst->app_menus[mi];
-            scratch_menus[mi].label      = am->label;
-            scratch_menus[mi].item_count = am->item_count;
-            scratch_menus[mi].items      = scratch_items[mi];
-            for (int ii = 0; ii < am->item_count; ii++) {
-                const Ca_AppMenuItem *ai = &am->items[ii];
-                scratch_items[mi][ii].label          = ai->label;
-                scratch_items[mi][ii].action         = ai->action;
-                scratch_items[mi][ii].action_data    = ai->action_data;
-                scratch_items[mi][ii].separator      = ai->separator;
-                scratch_items[mi][ii].sub_items      = NULL;
-                scratch_items[mi][ii].sub_item_count = 0;
-            }
-        }
-        ca_menu_bar(&(Ca_MenuBarDesc){
-            .menus      = scratch_menus,
-            .menu_count = inst->app_menu_count,
-            .id         = "__ca_app_menubar__",
-            .style      = "ca-app-menubar",
-            .item_style = "ca-app-menubar-item",
-        });
-    }
-#endif /* !__APPLE__ */
 }
 
 void ca_ui_end(void)
