@@ -34,6 +34,11 @@
 
 #include <GLFW/glfw3.h>
 
+#ifdef __APPLE__
+/* Defined in platform/mouse_state_mac.m — live OS-level left button state. */
+extern bool ca_mac_left_button_held(void);
+#endif
+
 static float glyph_adv(Ca_FontTier *tier, uint32_t cp,
                        float cs, float desired_size)
 {
@@ -3650,7 +3655,16 @@ void ca_widget_input_pass(Ca_Window *win)
     float mx = (float)win->mouse_x;
     float my = (float)win->mouse_y;
     float ui_s = win->ui_scale > 0.0f ? win->ui_scale : 1.0f;
+#ifdef __APPLE__
+    /* Query the live OS button state. GLFW's cached mouse_buttons[] freezes
+       when the cursor leaves a borderless window mid-drag (Cocoa stops
+       delivering events to the NSView), so a release outside the window would
+       never be seen and any active drag would stay stuck. */
+    bool left_down = ca_mac_left_button_held();
+    if (!left_down) win->mouse_buttons[0] = false;
+#else
     bool left_down = win->mouse_buttons[0];
+#endif
 
     /* --- Scrollbar drag handling ---
        Scrollbars are paint-only overlays (no nodes).  We hit-test them here

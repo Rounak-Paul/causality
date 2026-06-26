@@ -28,6 +28,35 @@
 #include <stdio.h>
 #include <assert.h>
 
+#ifdef __APPLE__
+/* Defined in platform/mouse_state_mac.m. GLFW's window-relative cursor freezes
+   once the pointer leaves a borderless window mid-drag, stalling the move; the
+   global WindowServer position keeps updating regardless of focus. */
+extern void ca_mac_cursor_screen_pos(double *out_x, double *out_y);
+#endif
+
+/*
+ * Cursor position in screen coordinates (top-left origin).
+ *
+ * win  Window the cursor is being read relative to.
+ * sx   Receives screen-space x.
+ * sy   Receives screen-space y.
+ */
+static void titlebar_cursor_screen(Ca_Window *win, double *sx, double *sy)
+{
+#ifdef __APPLE__
+    (void)win;
+    ca_mac_cursor_screen_pos(sx, sy);
+#else
+    int wx, wy;
+    double cx, cy;
+    glfwGetWindowPos(win->glfw, &wx, &wy);
+    glfwGetCursorPos(win->glfw, &cx, &cy);
+    *sx = (double)wx + cx;
+    *sy = (double)wy + cy;
+#endif
+}
+
 #define TITLE_BAR_HEIGHT_PX       26.0f
 #define TITLE_BAR_SIDE_PADDING_PX 8.0f
 
@@ -64,7 +93,7 @@ static void apply_system_style(Ca_Node *node, Ca_ElementType type,
 /* ------------------------------------------------------------------ */
 
 /*
- * Start a compositor-managed interactive move from the title-bar press.
+ * Record window and cursor screen-space position at the start of a title-bar drag.
  *
  * ev  Drag-start event containing the owning window.
  * ud  Unused callback data.
@@ -72,7 +101,43 @@ static void apply_system_style(Ca_Node *node, Ca_ElementType type,
 static void on_titlebar_drag_start(const Ca_DragEvent *ev, void *ud)
 {
     (void)ud;
-    glfwStartInteractiveMove(ev->window->glfw);
+    Ca_Window *win = ev->window;
+    int wx, wy;
+    glfwGetWindowPos(win->glfw, &wx, &wy);
+    win->titlebar_drag_win_x = wx;
+    win->titlebar_drag_win_y = wy;
+    titlebar_cursor_screen(win, &win->titlebar_drag_screen_x,
+                                &win->titlebar_drag_screen_y);
+}
+
+/*
+ * Move the window to track the cursor delta since drag start.
+ *
+ * ev  Drag-move event containing the owning window.
+ * ud  Unused callback data.
+ */
+static void on_titlebar_drag(const Ca_DragEvent *ev, void *ud)
+{
+    (void)ud;
+    Ca_Window *win = ev->window;
+    double cur_sx, cur_sy;
+    titlebar_cursor_screen(win, &cur_sx, &cur_sy);
+    double dx = cur_sx - win->titlebar_drag_screen_x;
+    double dy = cur_sy - win->titlebar_drag_screen_y;
+    glfwSetWindowPos(win->glfw,
+                     win->titlebar_drag_win_x + (int)dx,
+                     win->titlebar_drag_win_y + (int)dy);
+}
+
+/*
+ * No-op drag-end callback — required so the drag node is eligible for detection.
+ *
+ * ev  Drag-end event (unused).
+ * ud  Unused callback data.
+ */
+static void on_titlebar_drag_end(const Ca_DragEvent *ev, void *ud)
+{
+    (void)ev; (void)ud;
 }
 
 /* ------------------------------------------------------------------ */
@@ -240,6 +305,8 @@ void ca_title_bar_rebuild(Ca_Window *win)
         .height        = TITLE_BAR_HEIGHT_PX,
         .style         = "ca-titlebar-drag",
         .on_drag_start = on_titlebar_drag_start,
+        .on_drag       = on_titlebar_drag,
+        .on_drag_end   = on_titlebar_drag_end,
     });
     drag->desc.flex_grow       = 1.0f;
     drag->desc.overflow_x      = 1;

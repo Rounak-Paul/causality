@@ -1,5 +1,9 @@
 file(GLOB_RECURSE CAUSALITY_SOURCES CONFIGURE_DEPENDS src/*.c)
 
+if(APPLE)
+    list(APPEND CAUSALITY_SOURCES src/platform/mouse_state_mac.m)
+endif()
+
 add_library(causality STATIC ${CAUSALITY_SOURCES})
 
 # Set default symbol visibility to hidden on GCC/Clang so that only
@@ -71,6 +75,7 @@ target_link_libraries(causality
 if(APPLE)
     # VMA is C++ — need the C++ stdlib on Apple
     target_link_libraries(causality PUBLIC c++)
+    target_link_libraries(causality PRIVATE "-framework AppKit")
 elseif(WIN32)
     # Nothing extra needed — MSVC links CRT automatically
 else()

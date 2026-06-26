@@ -931,6 +931,11 @@ struct Ca_Window {
     int            titlebar_restore_y;
     int            titlebar_restore_w;
     int            titlebar_restore_h;
+    /* Title-bar drag-to-move state (manual implementation) */
+    int            titlebar_drag_win_x;    /* window pos at drag start  */
+    int            titlebar_drag_win_y;
+    double         titlebar_drag_screen_x; /* screen-space cursor at drag start */
+    double         titlebar_drag_screen_y;
 
     /* Edge / corner resize state (manual implementation for undecorated windows) */
     bool           resize_active;          /* currently resizing                 */
@@ -941,6 +946,10 @@ struct Ca_Window {
     int            resize_start_win_h;
     double         resize_start_cursor_sx; /* screen-space cursor at drag start   */
     double         resize_start_cursor_sy;
+    int            resize_target_x;        /* geometry computed during drag,      */
+    int            resize_target_y;        /* applied once on release (avoids      */
+    int            resize_target_w;        /* setFrame mid-drag, which cancels     */
+    int            resize_target_h;        /* the borderless mouse-tracking session */
 
     /* Deferred swapchain resize — set by GLFW callbacks, applied at the start
        of the next ca_renderer_frame after in-flight GPU work has completed.

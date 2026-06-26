@@ -6,6 +6,13 @@
 #include "renderer.h"
 #include "ui.h"
 
+#ifdef __APPLE__
+/* Defined in mouse_state_mac.m — query live OS-level mouse state. */
+extern bool ca_mac_left_button_held(void);
+extern void ca_mac_cursor_screen_pos(double *out_x, double *out_y);
+extern void ca_mac_set_window_frame(void *glfw_window, int x, int y, int w, int h);
+#endif
+
 /* ---- GLFW callbacks ---- */
 
 /*
@@ -116,7 +123,10 @@ static void glfw_cursor_enter_cb(GLFWwindow *glfw, int entered)
         /* Move the recorded cursor position out-of-bounds so the next input
            pass cannot hit any node — this guarantees :hover styles clear
            when the pointer leaves the window (GLFW does not synthesise a
-           further cursor-pos event on exit). */
+           further cursor-pos event on exit). Button state is intentionally
+           left untouched: an active drag must keep running while the cursor
+           is outside the window. The live OS button query in the resize and
+           widget input passes detects the real release. */
         win->mouse_x = -1.0;
         win->mouse_y = -1.0;
         /* Wake the event loop so the UI repaints with the cleared hover. */
@@ -164,14 +174,17 @@ static void glfw_window_size_cb(GLFWwindow *glfw, int width, int height)
     ev.resize.height = height;
     ca_event_post(win->instance, &ev);
 
-    /* GLFW window size is in logical screen coordinates. Vulkan swapchains
-       must track framebuffer pixels, otherwise maximized/HiDPI windows can
-       be compositor-scaled and the UI appears blurred. */
+    /* Defer the swapchain recreation to the next render frame so we do not
+       call vkDeviceWaitIdle from inside a GLFW callback (which fires
+       synchronously during glfwSetWindowSize). Blocking the main thread here
+       prevents Cocoa from delivering mouseUp events, permanently sticking
+       mouse button state during a resize drag. */
     int fb_w = 0, fb_h = 0;
     glfwGetFramebufferSize(glfw, &fb_w, &fb_h);
-    ca_renderer_window_resize(win->instance, win, fb_w, fb_h);
+    win->pending_swapchain_resize = true;
+    win->pending_sc_w = fb_w;
+    win->pending_sc_h = fb_h;
 
-    /* Mark the root layout-dirty so ui_update re-flows and repaints */
     if (win->root)
         win->root->dirty |= CA_DIRTY_LAYOUT | CA_DIRTY_CONTENT;
 }
@@ -187,7 +200,10 @@ static void glfw_framebuffer_size_cb(GLFWwindow *glfw, int width, int height)
     Ca_Window *win = (Ca_Window *)glfwGetWindowUserPointer(glfw);
     if (!win) return;
 
-    ca_renderer_window_resize(win->instance, win, width, height);
+    /* Defer — same reason as glfw_window_size_cb. */
+    win->pending_swapchain_resize = true;
+    win->pending_sc_w = width;
+    win->pending_sc_h = height;
     if (win->root)
         win->root->dirty |= CA_DIRTY_LAYOUT | CA_DIRTY_CONTENT;
 }
@@ -368,8 +384,14 @@ static Ca_Window *window_create_in_slot(Ca_Instance *inst, const Ca_WindowDesc *
     snprintf(slot->title, sizeof(slot->title), "%s",
              desc->title ? desc->title : "");
 
-    /* Custom title bar: always create undecorated GLFW windows */
-    glfwWindowHint(GLFW_DECORATED, GLFW_FALSE);
+    /* Custom title bar: always create undecorated GLFW windows.
+       Disable OS-level resizability — causality implements software resize
+       via ca_window_resize_pass. On macOS, NSWindowStyleMaskResizable on a
+       borderless window causes the OS to intercept edge drags and run its own
+       resize loop, swallowing the mouseUp and leaving mouse state permanently
+       stuck. */
+    glfwWindowHint(GLFW_DECORATED,  GLFW_FALSE);
+    glfwWindowHint(GLFW_RESIZABLE,  GLFW_FALSE);
 
     GLFWwindow *glfw = glfwCreateWindow(
         desc->width  > 0 ? desc->width  : 1280,
@@ -702,27 +724,36 @@ void ca_window_resize_pass(Ca_Window *win)
 
     ensure_cursors();
 
+#ifdef __APPLE__
+    /* On macOS, GLFW's cached button state can get stuck when Cocoa fails to
+       deliver mouseUp after a resize drag. Query the WindowServer directly. */
+    bool left_down = ca_mac_left_button_held();
+    if (!left_down) win->mouse_buttons[0] = false;
+#else
     bool left_down = win->mouse_buttons[0];
+#endif
     double cx, cy;
     glfwGetCursorPos(win->glfw, &cx, &cy);
     int win_w, win_h;
     glfwGetWindowSize(win->glfw, &win_w, &win_h);
 
+    /* Live cursor position in screen coordinates. On macOS we query the
+       WindowServer directly because Cocoa stops delivering mouseDragged to a
+       borderless NSView during a resize drag, freezing glfwGetCursorPos. */
+    int wx, wy;
+    glfwGetWindowPos(win->glfw, &wx, &wy);
+    double screen_x, screen_y;
+#ifdef __APPLE__
+    ca_mac_cursor_screen_pos(&screen_x, &screen_y);
+#else
+    screen_x = (double)wx + cx;
+    screen_y = (double)wy + cy;
+#endif
+
     /* --- Continue active resize --- */
     if (win->resize_active) {
-        if (!left_down) {
-            /* Button released — end resize */
-            win->resize_active = false;
-            glfwSetCursor(win->glfw, NULL);
-            return;
-        }
-
-        int wx, wy;
-        glfwGetWindowPos(win->glfw, &wx, &wy);
-        double sx = (double)wx + cx;
-        double sy = (double)wy + cy;
-        double ddx = sx - win->resize_start_cursor_sx;
-        double ddy = sy - win->resize_start_cursor_sy;
+        double ddx = screen_x - win->resize_start_cursor_sx;
+        double ddy = screen_y - win->resize_start_cursor_sy;
 
         int new_x = win->resize_start_win_x;
         int new_y = win->resize_start_win_y;
@@ -751,8 +782,31 @@ void ca_window_resize_pass(Ca_Window *win)
             new_h = RESIZE_MIN_H;
         }
 
+        win->resize_target_x = new_x;
+        win->resize_target_y = new_y;
+        win->resize_target_w = new_w;
+        win->resize_target_h = new_h;
+
+#ifdef __APPLE__
+        /* On macOS, applying the frame mid-drag (any setFrame/setContentSize
+           variant) cancels the borderless window's mouse-tracking session,
+           freezing the cursor and swallowing mouseUp. So we defer the actual
+           resize to button release and only track the target geometry here. */
+        if (!left_down) {
+            ca_mac_set_window_frame(win->glfw,
+                                    win->resize_target_x, win->resize_target_y,
+                                    win->resize_target_w, win->resize_target_h);
+            win->resize_active = false;
+            glfwSetCursor(win->glfw, NULL);
+        }
+#else
         glfwSetWindowPos(win->glfw, new_x, new_y);
         glfwSetWindowSize(win->glfw, new_w, new_h);
+        if (!left_down) {
+            win->resize_active = false;
+            glfwSetCursor(win->glfw, NULL);
+        }
+#endif
         return;
     }
 
@@ -773,16 +827,14 @@ void ca_window_resize_pass(Ca_Window *win)
 
     /* Start resize on mouse press */
     if (left_down && win->mouse_click_this_frame) {
-        int wx, wy;
-        glfwGetWindowPos(win->glfw, &wx, &wy);
         win->resize_active          = true;
         win->resize_edge            = edge;
         win->resize_start_win_x     = wx;
         win->resize_start_win_y     = wy;
         win->resize_start_win_w     = win_w;
         win->resize_start_win_h     = win_h;
-        win->resize_start_cursor_sx = (double)wx + cx;
-        win->resize_start_cursor_sy = (double)wy + cy;
+        win->resize_start_cursor_sx = screen_x;
+        win->resize_start_cursor_sy = screen_y;
     }
 }
 

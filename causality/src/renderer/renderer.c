@@ -497,7 +497,16 @@ void ca_renderer_frame(Ca_Instance *inst)
 
     for (int i = 0; i < CA_MAX_WINDOWS_TOTAL; ++i) {
         Ca_Window *win = &inst->windows[i];
-        if (!win->in_use || win->sc.swapchain == VK_NULL_HANDLE) continue;
+        if (!win->in_use) continue;
+
+        /* Apply any deferred swapchain resize now that we are outside GLFW
+           callbacks — safe to call vkDeviceWaitIdle here. */
+        if (win->pending_swapchain_resize) {
+            win->pending_swapchain_resize = false;
+            ca_renderer_window_resize(inst, win, win->pending_sc_w, win->pending_sc_h);
+        }
+
+        if (win->sc.swapchain == VK_NULL_HANDLE) continue;
         if (win->bg_render_fn || inst->default_bg_render_fn) win->needs_render = true;
         if (!win->needs_render) continue;
         win->needs_render = false;
