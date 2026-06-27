@@ -337,6 +337,7 @@ void ca_title_bar_rebuild(Ca_Window *win)
         .style      = "ca-titlebar-control",
         .on_click   = on_minimize_click,
         .click_data = win,
+        .skip_keyboard_focus = true,
     });
     min_btn->node->dirty |= CA_DIRTY_CONTENT;
     ca_btn_end(); /* min btn */
@@ -351,6 +352,7 @@ void ca_title_bar_rebuild(Ca_Window *win)
         .style      = "ca-titlebar-control",
         .on_click   = on_maximize_click,
         .click_data = win,
+        .skip_keyboard_focus = true,
     });
     max_btn->node->dirty |= CA_DIRTY_CONTENT;
     ca_btn_end(); /* max btn */
@@ -363,6 +365,7 @@ void ca_title_bar_rebuild(Ca_Window *win)
         .style      = "ca-titlebar-control ca-titlebar-close",
         .on_click   = on_close_click,
         .click_data = win,
+        .skip_keyboard_focus = true,
     });
     cls_btn->node->dirty |= CA_DIRTY_CONTENT;
     ca_btn_end(); /* close btn */

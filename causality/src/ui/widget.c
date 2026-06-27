@@ -1027,6 +1027,7 @@ Ca_Button *ca_btn_begin(const Ca_BtnDesc *desc)
     btn->text_color = desc->text_color;
     btn->on_click = desc->on_click;
     btn->click_data = desc->click_data;
+    btn->keyboard_focusable = !desc->skip_keyboard_focus;
 
     if (desc->hidden)   btn->node->desc.hidden   = true;
     if (desc->disabled) btn->node->desc.disabled = true;
@@ -3455,7 +3456,9 @@ static bool is_focusable_node(Ca_Window *win, Ca_Node *n)
 {
     if (is_effectively_disabled(n)) return false;
     for (uint32_t i = 0; i < CA_MAX_BUTTONS_PER_WINDOW; ++i)
-        if (win->button_pool[i].in_use && win->button_pool[i].node == n)
+        if (win->button_pool[i].in_use &&
+            win->button_pool[i].node == n &&
+            win->button_pool[i].keyboard_focusable)
             return true;
     for (uint32_t i = 0; i < CA_MAX_INPUTS_PER_WINDOW; ++i)
         if (win->input_pool[i].in_use && win->input_pool[i].node == n)
@@ -4279,6 +4282,7 @@ void ca_widget_input_pass(Ca_Window *win)
             for (uint32_t i = 0; i < CA_MAX_BUTTONS_PER_WINDOW; ++i) {
                 Ca_Button *btn = &win->button_pool[i];
                 if (!btn->in_use || !btn->node) continue;
+                if (!btn->keyboard_focusable) continue;
                 if (is_effectively_disabled(btn->node)) continue;
                 if (point_in_node(btn->node, mx, my)) {
                     clicked_focus = btn->node;

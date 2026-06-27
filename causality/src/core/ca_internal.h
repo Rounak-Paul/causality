@@ -519,6 +519,7 @@ struct Ca_Button {
     float       last_click_x;
     float       last_click_y;
     bool        last_click_valid;
+    bool        keyboard_focusable;
     bool        in_use;
 };
 

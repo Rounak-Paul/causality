@@ -669,6 +669,7 @@ typedef struct Ca_BtnDesc {
     const char *style;             /* space-separated CSS class names       */
     bool        hidden;            /* display: none — removed from layout   */
     bool        disabled;          /* non-interactive, visually dimmed       */
+    bool        skip_keyboard_focus; /* exclude from Tab focus and key activation */
 } Ca_BtnDesc;
 
 /* <hr> — horizontal rule / separator. */
