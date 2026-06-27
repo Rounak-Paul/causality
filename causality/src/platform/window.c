@@ -10,10 +10,12 @@
 #include "renderer.h"
 #include "ui.h"
 
+#include <limits.h>
 #include <stdlib.h>
 
 #if defined(__linux__)
 #include <GLFW/glfw3native.h>
+#include <X11/Xatom.h>
 #endif
 
 #if defined(_WIN32)
@@ -453,6 +455,82 @@ static void glfw_window_maximize_cb(GLFWwindow *glfw, int maximized)
 
 static int g_glfw_refcount = 0;
 
+static bool window_workarea_for_point(int px, int py,
+                                      int *out_x, int *out_y,
+                                      int *out_w, int *out_h)
+{
+    int monitor_count = 0;
+    GLFWmonitor **monitors = glfwGetMonitors(&monitor_count);
+    GLFWmonitor *target = glfwGetPrimaryMonitor();
+    for (int i = 0; i < monitor_count; ++i) {
+        int x = 0, y = 0, width = 0, height = 0;
+        glfwGetMonitorWorkarea(monitors[i], &x, &y, &width, &height);
+        if (px >= x && px < x + width && py >= y && py < y + height) {
+            target = monitors[i];
+            break;
+        }
+    }
+
+    int gx = 0, gy = 0, gw = 0, gh = 0;
+    glfwGetMonitorWorkarea(target, &gx, &gy, &gw, &gh);
+
+#if defined(__linux__)
+    if (glfwGetPlatform() == GLFW_PLATFORM_X11) {
+        Display *display = glfwGetX11Display();
+        if (display) {
+            Window root = DefaultRootWindow(display);
+            Atom workarea_atom = XInternAtom(display, "_NET_WORKAREA", True);
+            Atom desktop_atom = XInternAtom(display, "_NET_CURRENT_DESKTOP", True);
+            Atom actual_type = None;
+            int actual_format = 0;
+            unsigned long nitems = 0, bytes_after = 0;
+            unsigned char *desktop_data = NULL;
+            unsigned long desktop = 0;
+
+            if (desktop_atom != None &&
+                XGetWindowProperty(display, root, desktop_atom, 0, 1, False,
+                                   XA_CARDINAL, &actual_type, &actual_format,
+                                   &nitems, &bytes_after, &desktop_data) == Success &&
+                desktop_data && actual_format == 32 && nitems >= 1) {
+                desktop = ((unsigned long *)desktop_data)[0];
+            }
+            if (desktop_data) XFree(desktop_data);
+
+            if (workarea_atom != None) {
+                unsigned char *workarea_data = NULL;
+                if (XGetWindowProperty(display, root, workarea_atom, 0,
+                                       LONG_MAX / 4, False, XA_CARDINAL,
+                                       &actual_type, &actual_format, &nitems,
+                                       &bytes_after, &workarea_data) == Success &&
+                    workarea_data && actual_format == 32 && nitems >= 4) {
+                    unsigned long *values = (unsigned long *)workarea_data;
+                    unsigned long desktop_count = nitems / 4;
+                    if (desktop >= desktop_count) desktop = 0;
+                    unsigned long *wa = &values[desktop * 4];
+                    int x = (int)wa[0];
+                    int y = (int)wa[1];
+                    int w = (int)wa[2];
+                    int h = (int)wa[3];
+                    if (w > 0 && h > 0) {
+                        gx = x;
+                        gy = y;
+                        gw = w;
+                        gh = h;
+                    }
+                }
+                if (workarea_data) XFree(workarea_data);
+            }
+        }
+    }
+#endif
+
+    if (out_x) *out_x = gx;
+    if (out_y) *out_y = gy;
+    if (out_w) *out_w = gw;
+    if (out_h) *out_h = gh;
+    return gw > 0 && gh > 0;
+}
+
 /*
  * Initialise the GLFW window system, with reference counting.
  *
@@ -808,21 +886,9 @@ void ca_window_maximize(Ca_Window *window)
 
     const int center_x = window->titlebar_restore_x + window->titlebar_restore_w / 2;
     const int center_y = window->titlebar_restore_y + window->titlebar_restore_h / 2;
-    int monitor_count = 0;
-    GLFWmonitor **monitors = glfwGetMonitors(&monitor_count);
-    GLFWmonitor *target = glfwGetPrimaryMonitor();
-    for (int i = 0; i < monitor_count; ++i) {
-        int x = 0, y = 0, width = 0, height = 0;
-        glfwGetMonitorWorkarea(monitors[i], &x, &y, &width, &height);
-        if (center_x >= x && center_x < x + width &&
-            center_y >= y && center_y < y + height) {
-            target = monitors[i];
-            break;
-        }
-    }
-
     int x = 0, y = 0, width = 0, height = 0;
-    glfwGetMonitorWorkarea(target, &x, &y, &width, &height);
+    if (!window_workarea_for_point(center_x, center_y, &x, &y, &width, &height))
+        return;
     glfwSetWindowPos(window->glfw, x, y);
     glfwSetWindowSize(window->glfw, width, height);
     window->titlebar_maximized = true;
