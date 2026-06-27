@@ -455,19 +455,45 @@ static void glfw_window_maximize_cb(GLFWwindow *glfw, int maximized)
 
 static int g_glfw_refcount = 0;
 
-static bool window_workarea_for_point(int px, int py,
-                                      int *out_x, int *out_y,
-                                      int *out_w, int *out_h)
+static int rect_intersection_area(int ax, int ay, int aw, int ah,
+                                  int bx, int by, int bw, int bh)
 {
+    int left = ax > bx ? ax : bx;
+    int top = ay > by ? ay : by;
+    int right_a = ax + aw;
+    int right_b = bx + bw;
+    int bottom_a = ay + ah;
+    int bottom_b = by + bh;
+    int right = right_a < right_b ? right_a : right_b;
+    int bottom = bottom_a < bottom_b ? bottom_a : bottom_b;
+    if (right <= left || bottom <= top) return 0;
+    return (right - left) * (bottom - top);
+}
+
+static bool window_workarea_for_rect(int win_x, int win_y, int win_w, int win_h,
+                                     int *out_x, int *out_y,
+                                     int *out_w, int *out_h)
+{
+    int center_x = win_x + win_w / 2;
+    int center_y = win_y + win_h / 2;
     int monitor_count = 0;
     GLFWmonitor **monitors = glfwGetMonitors(&monitor_count);
     GLFWmonitor *target = glfwGetPrimaryMonitor();
+    int best_overlap = -1;
     for (int i = 0; i < monitor_count; ++i) {
         int x = 0, y = 0, width = 0, height = 0;
         glfwGetMonitorWorkarea(monitors[i], &x, &y, &width, &height);
-        if (px >= x && px < x + width && py >= y && py < y + height) {
+        if (center_x >= x && center_x < x + width &&
+            center_y >= y && center_y < y + height) {
             target = monitors[i];
+            best_overlap = INT_MAX;
             break;
+        }
+        int overlap = rect_intersection_area(win_x, win_y, win_w, win_h,
+                                             x, y, width, height);
+        if (overlap > best_overlap) {
+            target = monitors[i];
+            best_overlap = overlap;
         }
     }
 
@@ -511,11 +537,15 @@ static bool window_workarea_for_point(int px, int py,
                     int y = (int)wa[1];
                     int w = (int)wa[2];
                     int h = (int)wa[3];
-                    if (w > 0 && h > 0) {
-                        gx = x;
-                        gy = y;
-                        gw = w;
-                        gh = h;
+                    int ix = x > gx ? x : gx;
+                    int iy = y > gy ? y : gy;
+                    int ir = x + w < gx + gw ? x + w : gx + gw;
+                    int ib = y + h < gy + gh ? y + h : gy + gh;
+                    if (ir > ix && ib > iy) {
+                        gx = ix;
+                        gy = iy;
+                        gw = ir - ix;
+                        gh = ib - iy;
                     }
                 }
                 if (workarea_data) XFree(workarea_data);
@@ -884,10 +914,12 @@ void ca_window_maximize(Ca_Window *window)
     glfwGetWindowSize(window->glfw,
                       &window->titlebar_restore_w, &window->titlebar_restore_h);
 
-    const int center_x = window->titlebar_restore_x + window->titlebar_restore_w / 2;
-    const int center_y = window->titlebar_restore_y + window->titlebar_restore_h / 2;
     int x = 0, y = 0, width = 0, height = 0;
-    if (!window_workarea_for_point(center_x, center_y, &x, &y, &width, &height))
+    if (!window_workarea_for_rect(window->titlebar_restore_x,
+                                  window->titlebar_restore_y,
+                                  window->titlebar_restore_w,
+                                  window->titlebar_restore_h,
+                                  &x, &y, &width, &height))
         return;
     glfwSetWindowPos(window->glfw, x, y);
     glfwSetWindowSize(window->glfw, width, height);
