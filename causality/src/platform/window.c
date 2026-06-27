@@ -7,10 +7,12 @@
 #include "ui.h"
 
 #ifdef __APPLE__
-/* Defined in mouse_state_mac.m — query live OS-level mouse state. */
+/* Defined in mouse_state_mac.m — query live OS-level mouse state and drive the
+   resize-preview outline overlay. */
 extern bool ca_mac_left_button_held(void);
 extern void ca_mac_cursor_screen_pos(double *out_x, double *out_y);
-extern void ca_mac_set_window_frame(void *glfw_window, int x, int y, int w, int h);
+extern void ca_mac_resize_preview_show(int x, int y, int w, int h);
+extern void ca_mac_resize_preview_hide(void);
 #endif
 
 /* ---- GLFW callbacks ---- */
@@ -217,12 +219,22 @@ static void glfw_framebuffer_size_cb(GLFWwindow *glfw, int width, int height)
  */
 static void glfw_window_maximize_cb(GLFWwindow *glfw, int maximized)
 {
+#ifdef __APPLE__
+    /* Ignored on macOS: these are borderless windows whose maximize/restore is
+       managed explicitly by ca_window_maximize/ca_window_restore. GLFW derives
+       this callback from -[NSWindow isZoomed], which returns YES for any
+       borderless window large relative to the screen — so a normal manual
+       resize would spuriously flip titlebar_maximized and freeze further
+       resizing (ca_window_resize_pass early-returns when maximized). */
+    (void)glfw; (void)maximized;
+#else
     Ca_Window *win = (Ca_Window *)glfwGetWindowUserPointer(glfw);
     if (!win) return;
 
     win->titlebar_maximized = maximized == GLFW_TRUE;
     win->titlebar_needs_rebuild = true;
     glfwPostEmptyEvent();
+#endif
 }
 
 /* ---- System ---- */
@@ -788,14 +800,17 @@ void ca_window_resize_pass(Ca_Window *win)
         win->resize_target_h = new_h;
 
 #ifdef __APPLE__
-        /* On macOS, applying the frame mid-drag (any setFrame/setContentSize
-           variant) cancels the borderless window's mouse-tracking session,
-           freezing the cursor and swallowing mouseUp. So we defer the actual
-           resize to button release and only track the target geometry here. */
-        if (!left_down) {
-            ca_mac_set_window_frame(win->glfw,
-                                    win->resize_target_x, win->resize_target_y,
-                                    win->resize_target_w, win->resize_target_h);
+        if (left_down) {
+            /* Resizing the real OS window mid-drag cancels the borderless
+               window's mouse-tracking session (cursor freezes, mouseUp lost).
+               Show a preview outline at the target rect instead; the real
+               window is resized once on release. */
+            ca_mac_resize_preview_show(new_x, new_y, new_w, new_h);
+        } else {
+            /* End of drag — hide the preview and apply the final geometry. */
+            ca_mac_resize_preview_hide();
+            glfwSetWindowPos(win->glfw, win->resize_target_x, win->resize_target_y);
+            glfwSetWindowSize(win->glfw, win->resize_target_w, win->resize_target_h);
             win->resize_active = false;
             glfwSetCursor(win->glfw, NULL);
         }
