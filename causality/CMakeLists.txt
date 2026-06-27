@@ -80,7 +80,9 @@ elseif(WIN32)
     # Nothing extra needed — MSVC links CRT automatically
 else()
     # Linux: VMA needs C++ stdlib; dl/m for dlopen/math
+    find_package(X11 REQUIRED)
     target_link_libraries(causality PUBLIC stdc++ dl m)
+    target_link_libraries(causality PRIVATE X11::X11)
 endif()
 
 # Skip precompiled header for the large embedded font data files

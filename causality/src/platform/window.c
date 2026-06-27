@@ -1,10 +1,27 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Sol/Causality contributors.
 
+#if defined(__linux__)
+#define GLFW_EXPOSE_NATIVE_X11
+#endif
+
 #include "window.h"
 #include "event.h"
 #include "renderer.h"
 #include "ui.h"
+
+#include <stdlib.h>
+
+#if defined(__linux__)
+#include <GLFW/glfw3native.h>
+#endif
+
+#if defined(_WIN32)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#endif
 
 #ifdef __APPLE__
 /* Defined in mouse_state_mac.m — query live OS-level mouse state and drive the
@@ -13,6 +30,201 @@ extern bool ca_mac_left_button_held(void);
 extern void ca_mac_cursor_screen_pos(double *out_x, double *out_y);
 extern void ca_mac_resize_preview_show(int x, int y, int w, int h);
 extern void ca_mac_resize_preview_hide(void);
+#endif
+
+#if !defined(__APPLE__)
+#if defined(_WIN32)
+static HWND s_resize_preview_edges[4] = {0};
+static HBRUSH s_resize_preview_brush = NULL;
+
+static LRESULT CALLBACK resize_preview_wndproc(HWND hwnd, UINT msg,
+                                               WPARAM wp, LPARAM lp)
+{
+    if (msg == WM_NCHITTEST) return HTTRANSPARENT;
+    return DefWindowProcW(hwnd, msg, wp, lp);
+}
+
+static bool resize_preview_ensure(void)
+{
+    static bool class_registered = false;
+    if (!class_registered) {
+        WNDCLASSW wc = {0};
+        wc.lpfnWndProc = resize_preview_wndproc;
+        wc.hInstance = GetModuleHandleW(NULL);
+        wc.lpszClassName = L"CausalityResizePreview";
+        s_resize_preview_brush = CreateSolidBrush(RGB(78, 140, 255));
+        wc.hbrBackground = s_resize_preview_brush;
+        if (!RegisterClassW(&wc)) return false;
+        class_registered = true;
+    }
+
+    for (int i = 0; i < 4; ++i) {
+        if (s_resize_preview_edges[i]) continue;
+        s_resize_preview_edges[i] =
+            CreateWindowExW(WS_EX_TOPMOST | WS_EX_TOOLWINDOW |
+                                WS_EX_NOACTIVATE | WS_EX_TRANSPARENT,
+                            L"CausalityResizePreview", L"",
+                            WS_POPUP,
+                            0, 0, 1, 1,
+                            NULL, NULL, GetModuleHandleW(NULL), NULL);
+        if (!s_resize_preview_edges[i]) return false;
+    }
+    return true;
+}
+
+static void resize_preview_show(int x, int y, int w, int h)
+{
+    if (!resize_preview_ensure()) return;
+    if (w < 1) w = 1;
+    if (h < 1) h = 1;
+    const int thickness = 3;
+
+    int edge_rects[4][4] = {
+        {x, y, w, thickness},
+        {x, y + h - thickness, w, thickness},
+        {x, y, thickness, h},
+        {x + w - thickness, y, thickness, h},
+    };
+
+    for (int i = 0; i < 4; ++i) {
+        SetWindowPos(s_resize_preview_edges[i], HWND_TOPMOST,
+                     edge_rects[i][0], edge_rects[i][1],
+                     edge_rects[i][2], edge_rects[i][3],
+                     SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    }
+}
+
+static void resize_preview_hide(void)
+{
+    for (int i = 0; i < 4; ++i) {
+        if (s_resize_preview_edges[i])
+            ShowWindow(s_resize_preview_edges[i], SW_HIDE);
+    }
+}
+
+static void resize_preview_destroy(void)
+{
+    for (int i = 0; i < 4; ++i) {
+        if (!s_resize_preview_edges[i]) continue;
+        DestroyWindow(s_resize_preview_edges[i]);
+        s_resize_preview_edges[i] = NULL;
+    }
+    if (s_resize_preview_brush) {
+        DeleteObject(s_resize_preview_brush);
+        s_resize_preview_brush = NULL;
+    }
+}
+#elif defined(__linux__)
+static Window s_resize_preview_edges[4] = {0};
+static unsigned long s_resize_preview_pixel = 0;
+
+static Display *resize_preview_x11_display(void)
+{
+    if (glfwGetPlatform() != GLFW_PLATFORM_X11) return NULL;
+    return glfwGetX11Display();
+}
+
+static bool resize_preview_ensure(void)
+{
+    Display *display = resize_preview_x11_display();
+    if (!display) return false;
+
+    int screen = DefaultScreen(display);
+    Window root = RootWindow(display, screen);
+    if (s_resize_preview_pixel == 0) {
+        XColor color;
+        XColor exact;
+        Colormap cmap = DefaultColormap(display, screen);
+        if (XAllocNamedColor(display, cmap, "#4E8CFF", &color, &exact))
+            s_resize_preview_pixel = color.pixel;
+        else
+            s_resize_preview_pixel = WhitePixel(display, screen);
+    }
+
+    for (int i = 0; i < 4; ++i) {
+        if (s_resize_preview_edges[i]) continue;
+        XSetWindowAttributes attrs;
+        attrs.override_redirect = True;
+        attrs.save_under = True;
+        attrs.background_pixel = s_resize_preview_pixel;
+        attrs.event_mask = NoEventMask;
+        s_resize_preview_edges[i] =
+            XCreateWindow(display, root, 0, 0, 1, 1, 0,
+                          CopyFromParent, InputOutput, CopyFromParent,
+                          CWOverrideRedirect | CWSaveUnder |
+                              CWBackPixel | CWEventMask,
+                          &attrs);
+        if (!s_resize_preview_edges[i]) return false;
+    }
+    return true;
+}
+
+static void resize_preview_show(int x, int y, int w, int h)
+{
+    Display *display = resize_preview_x11_display();
+    if (!display || !resize_preview_ensure()) return;
+    if (w < 1) w = 1;
+    if (h < 1) h = 1;
+    const int thickness = 3;
+
+    int edge_rects[4][4] = {
+        {x, y, w, thickness},
+        {x, y + h - thickness, w, thickness},
+        {x, y, thickness, h},
+        {x + w - thickness, y, thickness, h},
+    };
+
+    for (int i = 0; i < 4; ++i) {
+        XMoveResizeWindow(display, s_resize_preview_edges[i],
+                          edge_rects[i][0], edge_rects[i][1],
+                          (unsigned int)edge_rects[i][2],
+                          (unsigned int)edge_rects[i][3]);
+        XMapRaised(display, s_resize_preview_edges[i]);
+    }
+    XFlush(display);
+}
+
+static void resize_preview_hide(void)
+{
+    Display *display = resize_preview_x11_display();
+    if (!display) return;
+    for (int i = 0; i < 4; ++i) {
+        if (s_resize_preview_edges[i])
+            XUnmapWindow(display, s_resize_preview_edges[i]);
+    }
+    XFlush(display);
+}
+
+static void resize_preview_destroy(void)
+{
+    Display *display = resize_preview_x11_display();
+    if (!display) return;
+    for (int i = 0; i < 4; ++i) {
+        if (!s_resize_preview_edges[i]) continue;
+        XDestroyWindow(display, s_resize_preview_edges[i]);
+        s_resize_preview_edges[i] = 0;
+    }
+    XFlush(display);
+}
+#else
+static void resize_preview_show(int x, int y, int w, int h)
+{
+    (void)x; (void)y; (void)w; (void)h;
+}
+
+static void resize_preview_hide(void) {}
+static void resize_preview_destroy(void) {}
+#endif
+#else
+static void resize_preview_show(int x, int y, int w, int h)
+{
+    ca_mac_resize_preview_show(x, y, w, h);
+}
+
+static void resize_preview_hide(void)
+{
+    ca_mac_resize_preview_hide();
+}
 #endif
 
 /* ---- GLFW callbacks ---- */
@@ -253,6 +465,14 @@ bool ca_window_system_init(void)
         g_glfw_refcount++;
         return true;
     }
+#if defined(__linux__)
+    /* Custom title-bar movement and preview-resize outlines require global
+       window positioning. Native Wayland intentionally forbids that, so use
+       X11/XWayland when it is available. */
+    const char *display = getenv("DISPLAY");
+    if (display && display[0])
+        glfwInitHint(GLFW_PLATFORM, GLFW_PLATFORM_X11);
+#endif
     if (!glfwInit()) {
         fprintf(stderr, "[causality] glfwInit failed\n");
         return false;
@@ -279,6 +499,11 @@ void ca_window_system_shutdown(Ca_Instance *inst)
     }
     if (g_glfw_refcount > 0)
         --g_glfw_refcount;
+    if (g_glfw_refcount == 0) {
+#if !defined(__APPLE__)
+        resize_preview_destroy();
+#endif
+    }
     /* glfwTerminate() is intentionally omitted.  Calling
        glfwTerminate → glfwInit in rapid succession races with
        MoltenVK / Vulkan-loader background threads on macOS,
@@ -404,6 +629,13 @@ static Ca_Window *window_create_in_slot(Ca_Instance *inst, const Ca_WindowDesc *
        stuck. */
     glfwWindowHint(GLFW_DECORATED,  GLFW_FALSE);
     glfwWindowHint(GLFW_RESIZABLE,  GLFW_FALSE);
+    glfwWindowHint(GLFW_FLOATING,   GLFW_FALSE);
+    glfwWindowHint(GLFW_FOCUS_ON_SHOW, GLFW_TRUE);
+    glfwWindowHint(GLFW_VISIBLE,    GLFW_TRUE);
+    glfwWindowHint(GLFW_TRANSPARENT_FRAMEBUFFER, GLFW_FALSE);
+#ifdef GLFW_MOUSE_PASSTHROUGH
+    glfwWindowHint(GLFW_MOUSE_PASSTHROUGH, GLFW_FALSE);
+#endif
 
     GLFWwindow *glfw = glfwCreateWindow(
         desc->width  > 0 ? desc->width  : 1280,
@@ -567,8 +799,6 @@ void ca_window_close(Ca_Window *window)
 void ca_window_maximize(Ca_Window *window)
 {
     if (!window || !window->in_use || !window->glfw) return;
-
-#ifdef __APPLE__
     if (window->titlebar_maximized) return;
 
     glfwGetWindowPos(window->glfw,
@@ -597,10 +827,6 @@ void ca_window_maximize(Ca_Window *window)
     glfwSetWindowSize(window->glfw, width, height);
     window->titlebar_maximized = true;
     window->titlebar_needs_rebuild = true;
-#else
-    if (glfwGetWindowAttrib(window->glfw, GLFW_MAXIMIZED)) return;
-    glfwMaximizeWindow(window->glfw);
-#endif
     window->needs_render = true;
     ca_instance_wake();
 }
@@ -617,7 +843,6 @@ void ca_window_restore(Ca_Window *window)
 {
     if (!window || !window->in_use || !window->glfw) return;
 
-#ifdef __APPLE__
     if (!window->titlebar_maximized) return;
     if (window->titlebar_restore_w > 0 && window->titlebar_restore_h > 0) {
         glfwSetWindowPos(window->glfw,
@@ -627,9 +852,6 @@ void ca_window_restore(Ca_Window *window)
     }
     window->titlebar_maximized = false;
     window->titlebar_needs_rebuild = true;
-#else
-    glfwRestoreWindow(window->glfw);
-#endif
     window->needs_render = true;
     ca_instance_wake();
 }
@@ -719,6 +941,187 @@ void ca_window_set_default_cursor(Ca_Window *win)
     glfwSetCursor(win->glfw, NULL);
 }
 
+bool ca_window_left_button_held(Ca_Window *win)
+{
+    if (!win || !win->in_use || !win->glfw) return false;
+#ifdef __APPLE__
+    return ca_mac_left_button_held();
+#elif defined(_WIN32)
+    return (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
+#elif defined(__linux__)
+    if (glfwGetPlatform() == GLFW_PLATFORM_X11) {
+        Display *display = glfwGetX11Display();
+        Window root = DefaultRootWindow(display);
+        Window root_return, child_return;
+        int root_x, root_y, win_x, win_y;
+        unsigned int mask = 0;
+        if (display &&
+            XQueryPointer(display, root, &root_return, &child_return,
+                          &root_x, &root_y, &win_x, &win_y, &mask)) {
+            return (mask & Button1Mask) != 0;
+        }
+    }
+    return glfwGetMouseButton(win->glfw, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
+#else
+    return glfwGetMouseButton(win->glfw, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
+#endif
+}
+
+void ca_window_cursor_screen_pos(Ca_Window *win, double *out_x, double *out_y)
+{
+    double sx = 0.0, sy = 0.0;
+    if (!win || !win->in_use || !win->glfw) {
+        if (out_x) *out_x = sx;
+        if (out_y) *out_y = sy;
+        return;
+    }
+
+#ifdef __APPLE__
+    ca_mac_cursor_screen_pos(&sx, &sy);
+#elif defined(_WIN32)
+    POINT p;
+    if (GetCursorPos(&p)) {
+        sx = (double)p.x;
+        sy = (double)p.y;
+    } else {
+        int wx = 0, wy = 0;
+        double cx = 0.0, cy = 0.0;
+        glfwGetWindowPos(win->glfw, &wx, &wy);
+        glfwGetCursorPos(win->glfw, &cx, &cy);
+        sx = (double)wx + cx;
+        sy = (double)wy + cy;
+    }
+#elif defined(__linux__)
+    if (glfwGetPlatform() == GLFW_PLATFORM_X11) {
+        Display *display = glfwGetX11Display();
+        Window root = DefaultRootWindow(display);
+        Window root_return, child_return;
+        int root_x, root_y, win_x, win_y;
+        unsigned int mask = 0;
+        if (display &&
+            XQueryPointer(display, root, &root_return, &child_return,
+                          &root_x, &root_y, &win_x, &win_y, &mask)) {
+            sx = (double)root_x;
+            sy = (double)root_y;
+        } else {
+            int wx = 0, wy = 0;
+            double cx = 0.0, cy = 0.0;
+            glfwGetWindowPos(win->glfw, &wx, &wy);
+            glfwGetCursorPos(win->glfw, &cx, &cy);
+            sx = (double)wx + cx;
+            sy = (double)wy + cy;
+        }
+    } else {
+        int wx = 0, wy = 0;
+        double cx = 0.0, cy = 0.0;
+        glfwGetWindowPos(win->glfw, &wx, &wy);
+        glfwGetCursorPos(win->glfw, &cx, &cy);
+        sx = (double)wx + cx;
+        sy = (double)wy + cy;
+    }
+#else
+    int wx = 0, wy = 0;
+    double cx = 0.0, cy = 0.0;
+    glfwGetWindowPos(win->glfw, &wx, &wy);
+    glfwGetCursorPos(win->glfw, &cx, &cy);
+    sx = (double)wx + cx;
+    sy = (double)wy + cy;
+#endif
+
+    if (out_x) *out_x = sx;
+    if (out_y) *out_y = sy;
+}
+
+bool ca_window_titlebar_drag_pass(Ca_Window *win)
+{
+    if (!win || !win->in_use || !win->glfw || !win->title_bar_node)
+        return false;
+    if (win->titlebar_maximized) {
+        win->titlebar_drag_active = false;
+        win->titlebar_mouse_down = ca_window_left_button_held(win);
+        return false;
+    }
+
+    bool left_down = ca_window_left_button_held(win);
+    double screen_x = 0.0, screen_y = 0.0;
+    ca_window_cursor_screen_pos(win, &screen_x, &screen_y);
+
+    if (win->titlebar_drag_active) {
+        if (left_down) {
+            double dx = screen_x - win->titlebar_drag_screen_x;
+            double dy = screen_y - win->titlebar_drag_screen_y;
+            glfwSetWindowPos(win->glfw,
+                             win->titlebar_drag_win_x + (int)dx,
+                             win->titlebar_drag_win_y + (int)dy);
+            win->titlebar_mouse_down = true;
+            ca_instance_wake();
+            return true;
+        }
+        win->titlebar_drag_active = false;
+        win->titlebar_mouse_down = false;
+        return false;
+    }
+
+    bool pressed_this_pass = left_down && !win->titlebar_mouse_down;
+    win->titlebar_mouse_down = left_down;
+    if (!pressed_this_pass) return false;
+
+    int wx = 0, wy = 0;
+    int win_w = 0, win_h = 0;
+    glfwGetWindowPos(win->glfw, &wx, &wy);
+    glfwGetWindowSize(win->glfw, &win_w, &win_h);
+    double local_x = screen_x - (double)wx;
+    double local_y = screen_y - (double)wy;
+
+    float title_h = win->title_bar_node->desc.height;
+    if (title_h <= 0.0f)
+        title_h = win->title_bar_node->h;
+    if (title_h <= 0.0f)
+        return false;
+
+    if (local_x < 0.0 || local_x >= (double)win_w ||
+        local_y < 0.0 || local_y >= (double)title_h)
+        return false;
+    if (resize_edge_for_pos(win_w, win_h, local_x, local_y) != 0)
+        return false;
+
+    if (win->menubar_pool) {
+        for (uint32_t bi = 0; bi < CA_MAX_MENUBARS_PER_WINDOW; ++bi) {
+            Ca_MenuBar *mb = &win->menubar_pool[bi];
+            if (!mb->in_use || !mb->node) continue;
+            if ((float)local_x >= mb->node->x &&
+                (float)local_x <= mb->node->x + mb->node->w &&
+                (float)local_y >= mb->node->y &&
+                (float)local_y <= mb->node->y + mb->node->h) {
+                return false;
+            }
+            for (int mi = 0; mi < mb->menu_count; ++mi) {
+                Ca_Node *header = mb->menus[mi].header_node;
+                if (!header || !header->in_use) continue;
+                if ((float)local_x >= header->x &&
+                    (float)local_x <= header->x + header->w &&
+                    (float)local_y >= header->y &&
+                    (float)local_y <= header->y + header->h) {
+                    return false;
+                }
+            }
+        }
+    }
+
+    float ui_s = win->ui_scale > 0.0f ? win->ui_scale : 1.0f;
+    double control_zone_w = 104.0 * (double)ui_s;
+    if (local_x >= (double)win_w - control_zone_w)
+        return false;
+
+    win->titlebar_drag_active = true;
+    win->titlebar_drag_win_x = wx;
+    win->titlebar_drag_win_y = wy;
+    win->titlebar_drag_screen_x = screen_x;
+    win->titlebar_drag_screen_y = screen_y;
+    ca_instance_wake();
+    return true;
+}
+
 /*
  * Handle per-frame edge/corner resize logic for undecorated windows.
  *
@@ -736,31 +1139,23 @@ void ca_window_resize_pass(Ca_Window *win)
 
     ensure_cursors();
 
-#ifdef __APPLE__
-    /* On macOS, GLFW's cached button state can get stuck when Cocoa fails to
-       deliver mouseUp after a resize drag. Query the WindowServer directly. */
-    bool left_down = ca_mac_left_button_held();
+    /* Query live button state instead of relying on the per-frame GLFW cache;
+       this keeps borderless drags coherent when the cursor crosses the window
+       edge and a platform stops sending ordinary mouse callbacks. */
+    bool left_down = ca_window_left_button_held(win);
     if (!left_down) win->mouse_buttons[0] = false;
-#else
-    bool left_down = win->mouse_buttons[0];
-#endif
+
     double cx, cy;
     glfwGetCursorPos(win->glfw, &cx, &cy);
     int win_w, win_h;
     glfwGetWindowSize(win->glfw, &win_w, &win_h);
 
-    /* Live cursor position in screen coordinates. On macOS we query the
-       WindowServer directly because Cocoa stops delivering mouseDragged to a
-       borderless NSView during a resize drag, freezing glfwGetCursorPos. */
+    /* Live cursor position in screen coordinates.  Platform helpers use native
+       APIs where available and fall back to window-local GLFW coordinates. */
     int wx, wy;
     glfwGetWindowPos(win->glfw, &wx, &wy);
     double screen_x, screen_y;
-#ifdef __APPLE__
-    ca_mac_cursor_screen_pos(&screen_x, &screen_y);
-#else
-    screen_x = (double)wx + cx;
-    screen_y = (double)wy + cy;
-#endif
+    ca_window_cursor_screen_pos(win, &screen_x, &screen_y);
 
     /* --- Continue active resize --- */
     if (win->resize_active) {
@@ -799,29 +1194,19 @@ void ca_window_resize_pass(Ca_Window *win)
         win->resize_target_w = new_w;
         win->resize_target_h = new_h;
 
-#ifdef __APPLE__
         if (left_down) {
-            /* Resizing the real OS window mid-drag cancels the borderless
-               window's mouse-tracking session (cursor freezes, mouseUp lost).
-               Show a preview outline at the target rect instead; the real
-               window is resized once on release. */
-            ca_mac_resize_preview_show(new_x, new_y, new_w, new_h);
+            /* Resizing the real OS window mid-drag can cancel borderless-window
+               mouse tracking on multiple platforms. Show a preview outline at
+               the target rect instead; the real window is resized on release. */
+            resize_preview_show(new_x, new_y, new_w, new_h);
         } else {
             /* End of drag — hide the preview and apply the final geometry. */
-            ca_mac_resize_preview_hide();
+            resize_preview_hide();
             glfwSetWindowPos(win->glfw, win->resize_target_x, win->resize_target_y);
             glfwSetWindowSize(win->glfw, win->resize_target_w, win->resize_target_h);
             win->resize_active = false;
             glfwSetCursor(win->glfw, NULL);
         }
-#else
-        glfwSetWindowPos(win->glfw, new_x, new_y);
-        glfwSetWindowSize(win->glfw, new_w, new_h);
-        if (!left_down) {
-            win->resize_active = false;
-            glfwSetCursor(win->glfw, NULL);
-        }
-#endif
         return;
     }
 
@@ -850,6 +1235,12 @@ void ca_window_resize_pass(Ca_Window *win)
         win->resize_start_win_h     = win_h;
         win->resize_start_cursor_sx = screen_x;
         win->resize_start_cursor_sy = screen_y;
+        win->resize_target_x        = wx;
+        win->resize_target_y        = wy;
+        win->resize_target_w        = win_w;
+        win->resize_target_h        = win_h;
+        resize_preview_show(wx, wy, win_w, win_h);
+        ca_instance_wake();
     }
 }
 

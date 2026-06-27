@@ -79,3 +79,12 @@ void        ca_window_set_horizontal_drag_cursor(Ca_Window *window);
 
 /** Restores the platform-default cursor for a window. */
 void        ca_window_set_default_cursor(Ca_Window *window);
+
+/** Returns true while the physical left mouse button is held. */
+bool        ca_window_left_button_held(Ca_Window *window);
+
+/** Writes the live cursor position in top-left-origin screen coordinates. */
+void        ca_window_cursor_screen_pos(Ca_Window *window, double *out_x, double *out_y);
+
+/** Handles custom title-bar window movement. Returns true while it owns input. */
+bool        ca_window_titlebar_drag_pass(Ca_Window *window);

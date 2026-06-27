@@ -937,6 +937,8 @@ struct Ca_Window {
     int            titlebar_drag_win_y;
     double         titlebar_drag_screen_x; /* screen-space cursor at drag start */
     double         titlebar_drag_screen_y;
+    bool           titlebar_drag_active;
+    bool           titlebar_mouse_down;
 
     /* Edge / corner resize state (manual implementation for undecorated windows) */
     bool           resize_active;          /* currently resizing                 */

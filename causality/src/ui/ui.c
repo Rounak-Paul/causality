@@ -321,15 +321,19 @@ void ca_ui_update(Ca_Instance *inst)
               normal widget hit-testing on the same click. */
         ca_window_resize_pass(win);
 
+        bool titlebar_dragging = false;
+        if (!win->resize_active)
+            titlebar_dragging = ca_window_titlebar_drag_pass(win);
+
         /* 6. Input pass — hit-test buttons and fire click callbacks.
               Run BEFORE paint so that input-driven dirty flags are
               picked up in the same frame's paint pass.
-              Skip while a resize drag is active so edge clicks don't
-              also trigger widgets underneath.  */
+              Skip while a resize or title-bar drag is active so those
+              clicks don't also trigger widgets underneath.  */
         Ca_Node *prev_hovered = win->hovered_node;
         Ca_Node *prev_focused = win->focused_node;
         Ca_Node *prev_drag    = win->drag_node;
-        if (!win->resize_active)
+        if (!win->resize_active && !titlebar_dragging)
             ca_widget_input_pass(win);
 
         /* Mark interactive state changes so paint catches them.
