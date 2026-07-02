@@ -19,7 +19,6 @@
 typedef struct {
     VkCommandBuffer cmd;
     VkSemaphore     image_available;
-    VkSemaphore     render_finished;
     VkFence         in_flight;
     /* Per-frame storage buffer for instanced rendering */
     VkBuffer        instance_buf;
@@ -36,6 +35,7 @@ typedef struct {
     uint32_t        image_count;
     VkImage         images[CA_MAX_SWAPCHAIN_IMAGES];
     VkImageView     image_views[CA_MAX_SWAPCHAIN_IMAGES];
+    VkSemaphore     image_render_finished[CA_MAX_SWAPCHAIN_IMAGES];
     Ca_Frame        frames[CA_FRAMES_IN_FLIGHT];
     uint32_t        current_frame;
 } Ca_Swapchain;
@@ -92,7 +92,7 @@ typedef struct {
     float viewport[2];
 } Ca_TextPushConst;
 
-/* std430-padded text instance for SSBO (vec4 alignment → 64-byte stride) */
+/* std430-padded text instance for SSBO. Keep stride equal to Ca_RectPushConst. */
 typedef struct {
     float pos[2];
     float size[2];
@@ -100,11 +100,8 @@ typedef struct {
     float color[4];
     float viewport[2];
     float _pad[2];
+    float _pad1[16];
 } Ca_TextInstance;
-
-/* Instance buffer holds all draw commands for one frame.
-   Both rect (64B) and text (64B padded) instances fit in 64-byte slots. */
-#define CA_INSTANCE_BUF_SIZE (CA_MAX_DRAW_CMDS_PER_WINDOW * 64)
 
 /* Forward-declare Ca_Font (full definition lives in renderer/font.h) */
 typedef struct Ca_Font Ca_Font;
@@ -152,6 +149,15 @@ typedef struct {
     float    gradient_cy;
     float    _pad1[2];
 } Ca_RectPushConst;
+
+/* Instance buffer holds one fixed-stride slot per draw command for one frame.
+   Rect and text/image records intentionally share a 128-byte slot size so
+   all pipelines can bind the same storage buffer without dynamic offsets. */
+#define CA_INSTANCE_SLOT_SIZE ((uint32_t)sizeof(Ca_RectPushConst))
+#define CA_INSTANCE_BUF_SIZE  ((uint32_t)(CA_MAX_DRAW_CMDS_PER_WINDOW * sizeof(Ca_RectPushConst)))
+
+_Static_assert(sizeof(Ca_TextInstance) == sizeof(Ca_RectPushConst),
+               "Causality instance SSBO records must use one fixed stride");
 
 /* ======================================================
    EVENTS

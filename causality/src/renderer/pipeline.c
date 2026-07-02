@@ -368,6 +368,7 @@ static const char *TEXT_VERT_GLSL =
     "    vec4 color;\n"
     "    vec2 viewport;\n"
     "    vec2 _pad;\n"
+    "    vec4 _pad1[4];\n"
     "};\n"
     "\n"
     "layout(std430, set = 0, binding = 0) readonly buffer SSB {\n"
@@ -792,16 +793,16 @@ static uint32_t find_memory_type_pipe(VkPhysicalDevice gpu, uint32_t type_bits,
 
 bool ca_ssbo_layout_create(Ca_Instance *inst)
 {
-    /* Query min alignment for dynamic SSBO offsets */
+    /* Query min alignment for debug reporting and future buffer partitioning. */
     VkPhysicalDeviceProperties props;
     vkGetPhysicalDeviceProperties(inst->vk_gpu, &props);
     inst->min_ssbo_align = (uint32_t)props.limits.minStorageBufferOffsetAlignment;
     if (inst->min_ssbo_align == 0) inst->min_ssbo_align = 256;
 
-    /* Descriptor set layout: binding 0 = dynamic storage buffer */
+    /* Descriptor set layout: binding 0 = storage buffer */
     VkDescriptorSetLayoutBinding binding = {
         .binding         = 0,
-        .descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC,
+        .descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
         .descriptorCount = 1,
         .stageFlags      = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
     };
@@ -819,7 +820,7 @@ bool ca_ssbo_layout_create(Ca_Instance *inst)
     /* Descriptor pool: one SSBO set per frame-in-flight per window slot
        (includes reserved internal popup windows). */
     VkDescriptorPoolSize pool_sz = {
-        .type            = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC,
+        .type            = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
         .descriptorCount = CA_MAX_WINDOWS_TOTAL * CA_FRAMES_IN_FLIGHT,
     };
     VkDescriptorPoolCreateInfo pool_ci = {
@@ -903,7 +904,7 @@ bool ca_instance_buf_create(Ca_Instance *inst, Ca_Frame *f)
         .dstSet          = f->ssbo_set,
         .dstBinding      = 0,
         .descriptorCount = 1,
-        .descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC,
+        .descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
         .pBufferInfo     = &buf_info,
     };
     vkUpdateDescriptorSets(inst->vk_device, 1, &write, 0, NULL);

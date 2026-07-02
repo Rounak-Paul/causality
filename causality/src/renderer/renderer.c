@@ -234,17 +234,46 @@ static bool create_logical_device(Ca_Instance *inst)
     }
     free(avail);
 
-    /* Enable dynamic rendering via Vulkan 1.3 features */
-    VkPhysicalDeviceDynamicRenderingFeatures dyn_feat = {
-        .sType            = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_FEATURES,
-        .dynamicRendering = VK_TRUE,
+    VkPhysicalDeviceVulkan13Features available13 = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES,
+    };
+    VkPhysicalDeviceFeatures2 available = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
+        .pNext = &available13,
+    };
+    vkGetPhysicalDeviceFeatures2(inst->vk_gpu, &available);
+    if (!available13.dynamicRendering ||
+        !available13.synchronization2 ||
+        !available13.shaderDemoteToHelperInvocation ||
+        !available.features.samplerAnisotropy ||
+        !available.features.fillModeNonSolid) {
+        fprintf(stderr,
+                "[vk] required Vulkan 1.3 features unavailable "
+                "(dynamicRendering=%u, synchronization2=%u, shaderDemoteToHelperInvocation=%u, "
+                "samplerAnisotropy=%u, fillModeNonSolid=%u)\n",
+                available13.dynamicRendering,
+                available13.synchronization2,
+                available13.shaderDemoteToHelperInvocation,
+                available.features.samplerAnisotropy,
+                available.features.fillModeNonSolid);
+        return false;
+    }
+
+    VkPhysicalDeviceVulkan13Features enabled13 = {
+        .sType                           = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES,
+        .dynamicRendering                = VK_TRUE,
+        .synchronization2                = VK_TRUE,
+        .shaderDemoteToHelperInvocation = VK_TRUE,
     };
     /* dualSrcBlend is no longer required: the text pipeline uses grayscale
        antialiasing with standard premultiplied-alpha blending.          */
     VkPhysicalDeviceFeatures2 features2 = {
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
-        .pNext = &dyn_feat,
-        .features = { 0 },
+        .pNext = &enabled13,
+        .features = {
+            .samplerAnisotropy = VK_TRUE,
+            .fillModeNonSolid  = VK_TRUE,
+        },
     };
 
     VkDeviceCreateInfo ci = {

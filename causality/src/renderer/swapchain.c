@@ -158,7 +158,12 @@ bool ca_swapchain_create(Ca_Instance *inst, Ca_Window *win,
     vkGetSwapchainImagesKHR(inst->vk_device, sc->swapchain, &sc->image_count, NULL);
     vkGetSwapchainImagesKHR(inst->vk_device, sc->swapchain, &sc->image_count, sc->images);
 
-    /* Image views */
+    /* Image views + presentation semaphores. Render-finished semaphores are
+       indexed by acquired swapchain image because presentation may retain them
+       until that specific image is acquired again. */
+    VkSemaphoreCreateInfo sem_ci = {
+        .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO
+    };
     for (uint32_t i = 0; i < sc->image_count; ++i) {
         VkImageViewCreateInfo vci = {
             .sType    = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
@@ -172,21 +177,18 @@ bool ca_swapchain_create(Ca_Instance *inst, Ca_Window *win,
             },
         };
         vkCreateImageView(inst->vk_device, &vci, NULL, &sc->image_views[i]);
+        vkCreateSemaphore(inst->vk_device, &sem_ci, NULL, &sc->image_render_finished[i]);
     }
 
     /* Per-frame sync + command buffers + instance buffers */
     for (uint32_t i = 0; i < CA_FRAMES_IN_FLIGHT; ++i) {
         Ca_Frame *f = &sc->frames[i];
 
-        VkSemaphoreCreateInfo sem_ci = {
-            .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO
-        };
         VkFenceCreateInfo fence_ci = {
             .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
             .flags = VK_FENCE_CREATE_SIGNALED_BIT,
         };
         vkCreateSemaphore(inst->vk_device, &sem_ci, NULL, &f->image_available);
-        vkCreateSemaphore(inst->vk_device, &sem_ci, NULL, &f->render_finished);
         vkCreateFence(inst->vk_device, &fence_ci, NULL, &f->in_flight);
 
         VkCommandBufferAllocateInfo alloc = {
@@ -223,10 +225,8 @@ void ca_swapchain_destroy(Ca_Instance *inst, Ca_Window *win)
         Ca_Frame *f = &sc->frames[i];
         ca_instance_buf_destroy(inst, f);
         vkDestroySemaphore(inst->vk_device, f->image_available, NULL);
-        vkDestroySemaphore(inst->vk_device, f->render_finished, NULL);
         vkDestroyFence(inst->vk_device, f->in_flight, NULL);
         f->image_available = VK_NULL_HANDLE;
-        f->render_finished = VK_NULL_HANDLE;
         f->in_flight       = VK_NULL_HANDLE;
         if (f->cmd != VK_NULL_HANDLE)
             vkFreeCommandBuffers(inst->vk_device, inst->cmd_pool, 1, &f->cmd);
@@ -234,7 +234,9 @@ void ca_swapchain_destroy(Ca_Instance *inst, Ca_Window *win)
     }
 
     for (uint32_t i = 0; i < sc->image_count; ++i) {
+        vkDestroySemaphore(inst->vk_device, sc->image_render_finished[i], NULL);
         vkDestroyImageView(inst->vk_device, sc->image_views[i], NULL);
+        sc->image_render_finished[i] = VK_NULL_HANDLE;
         sc->image_views[i] = VK_NULL_HANDLE;
     }
 
@@ -432,15 +434,13 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
 
     /* ================================================================
        Instanced rendering with scissor-aware batching.
-       Instance data is packed into the per-frame SSBO:
-         Region 0 (offset 0)           : Ca_RectPushConst instances
-         Region 1 (aligned after rects): Ca_TextInstance (text + images)
+       Instance data is packed into fixed-size SSBO slots:
+         Region 0: rect instances
+         Region 1: text/image/viewport instances after the rect range
        Within each section, draws are batched and flushed on scissor change.
        ================================================================ */
 
-#define ALIGN_UP(val, align) (((val) + (align) - 1) & ~((uint32_t)(align) - 1))
-
-    /* Count actual rect commands to compute tight text region offset.
+    /* Count actual rect commands to compute the text region start.
        Avoids over-reserving rect space when most commands are glyphs. */
     uint32_t rect_cmd_count = 0;
     for (uint32_t d = 0; d < win->draw_cmd_count; ++d) {
@@ -448,19 +448,14 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
             win->draw_cmds[d].type == CA_DRAW_RECT)
             rect_cmd_count++;
     }
-    /* Factor 2 for two overlay phases (normal + overlay rects). */
-    uint32_t max_rects = rect_cmd_count;
-    uint32_t text_byte_off = ALIGN_UP(
-        max_rects * (uint32_t)sizeof(Ca_RectPushConst),
-        inst->min_ssbo_align);
-    uint32_t max_ti = (CA_INSTANCE_BUF_SIZE - text_byte_off)
-                    / (uint32_t)sizeof(Ca_TextInstance);
+    uint32_t text_instance_start = rect_cmd_count;
+    if (text_instance_start > CA_MAX_DRAW_CMDS_PER_WINDOW)
+        text_instance_start = CA_MAX_DRAW_CMDS_PER_WINDOW;
 
     Ca_RectPushConst *rect_base = (Ca_RectPushConst *)f->instance_mapped;
-    Ca_TextInstance  *ti_base   =
-        (Ca_TextInstance *)((char *)f->instance_mapped + text_byte_off);
+    Ca_TextInstance  *ti_base   = (Ca_TextInstance *)f->instance_mapped;
     uint32_t          rect_n   = 0;   /* total rect instances written */
-    uint32_t          ti_n     = 0;   /* total text+image instances written */
+    uint32_t          ti_n     = text_instance_start;
     uint32_t          batch_n  = 0;   /* total vkCmdDraw calls (batches) */
 
     VkViewport viewport = {
@@ -479,10 +474,9 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
                               inst->rect_pipeline.pipeline);
             vkCmdSetViewport(f->cmd, 0, 1, &viewport);
 
-            uint32_t dyn_off = 0;
             vkCmdBindDescriptorSets(f->cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
                                     inst->rect_pipeline.layout,
-                                    0, 1, &f->ssbo_set, 1, &dyn_off);
+                                    0, 1, &f->ssbo_set, 0, NULL);
 
             uint32_t batch_start = rect_n;
             VkRect2D cur_sc      = full_scissor;
@@ -584,10 +578,10 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
                                   inst->text_pipeline.pipeline);
                 vkCmdSetViewport(f->cmd, 0, 1, &viewport);
 
-                /* Bind SSBO at set 0 with text region offset */
+                /* Bind shared instance SSBO at set 0. */
                 vkCmdBindDescriptorSets(f->cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
                                         inst->text_pipeline.layout,
-                                        0, 1, &f->ssbo_set, 1, &text_byte_off);
+                                        0, 1, &f->ssbo_set, 0, NULL);
                 /* Bind font atlas at set 1 */
                 vkCmdBindDescriptorSets(f->cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
                                         inst->text_pipeline.layout,
@@ -604,7 +598,7 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
                     if (!cmd->in_use || cmd->type != CA_DRAW_GLYPH || cmd->a < 0.004f)
                         continue;
                     if (cmd_in_overlay_phase(cmd) != want_overlay) continue;
-                    if (ti_n >= max_ti) break;
+                    if (ti_n >= CA_MAX_DRAW_CMDS_PER_WINDOW) break;
 
                     VkRect2D sc_new = full_scissor;
                     if (cmd->has_clip) {
@@ -669,7 +663,7 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
                 /* Bind SSBO at set 0 with text/image region offset */
                 vkCmdBindDescriptorSets(f->cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
                                         inst->text_pipeline.layout,
-                                        0, 1, &f->ssbo_set, 1, &text_byte_off);
+                                        0, 1, &f->ssbo_set, 0, NULL);
 
                 uint32_t batch_start = ti_n;
                 VkRect2D cur_sc      = full_scissor;
@@ -723,7 +717,7 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
                     cur_sc = sc_new;
                     first  = false;
 
-                    if (ti_n >= max_ti) break;
+                    if (ti_n >= CA_MAX_DRAW_CMDS_PER_WINDOW) break;
                     Ca_TextInstance *dst = &ti_base[ti_n++];
                     dst->pos[0] = cmd->x;            dst->pos[1] = cmd->y;
                     dst->size[0] = cmd->w;            dst->size[1] = cmd->h;
@@ -762,7 +756,7 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
                 /* Bind SSBO at set 0 with text/image region offset */
                 vkCmdBindDescriptorSets(f->cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
                                         inst->text_pipeline.layout,
-                                        0, 1, &f->ssbo_set, 1, &text_byte_off);
+                                        0, 1, &f->ssbo_set, 0, NULL);
 
                 uint32_t batch_start = ti_n;
                 VkRect2D cur_sc      = full_scissor;
@@ -817,7 +811,7 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
                     cur_sc = sc_new;
                     first  = false;
 
-                    if (ti_n >= max_ti) break;
+                    if (ti_n >= CA_MAX_DRAW_CMDS_PER_WINDOW) break;
                     Ca_TextInstance *dst = &ti_base[ti_n++];
                     dst->pos[0] = cmd->x;            dst->pos[1] = cmd->y;
                     dst->size[0] = cmd->w;            dst->size[1] = cmd->h;
@@ -856,7 +850,7 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
 
                 vkCmdBindDescriptorSets(f->cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
                                         inst->text_pipeline.layout,
-                                        0, 1, &f->ssbo_set, 1, &text_byte_off);
+                                        0, 1, &f->ssbo_set, 0, NULL);
                 /* Bind blurred image as sampler */
                 vkCmdBindDescriptorSets(f->cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
                                         inst->text_pipeline.layout,
@@ -872,7 +866,7 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
                     if (!cmd->in_use || cmd->type != CA_DRAW_BACKDROP_BLUR)
                         continue;
                     if (cmd_in_overlay_phase(cmd) != want_overlay) continue;
-                    if (ti_n >= max_ti) break;
+                    if (ti_n >= CA_MAX_DRAW_CMDS_PER_WINDOW) break;
 
                     VkRect2D sc_new = full_scissor;
                     if (cmd->has_clip) {
@@ -964,6 +958,7 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
 
     /* Submit */
     VkPipelineStageFlags wait_stage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    VkSemaphore render_finished = sc->image_render_finished[image_index];
     VkSubmitInfo submit = {
         .sType                = VK_STRUCTURE_TYPE_SUBMIT_INFO,
         .waitSemaphoreCount   = 1,
@@ -972,7 +967,7 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
         .commandBufferCount   = 1,
         .pCommandBuffers      = &f->cmd,
         .signalSemaphoreCount = 1,
-        .pSignalSemaphores    = &f->render_finished,
+        .pSignalSemaphores    = &render_finished,
     };
     vkQueueSubmit(inst->gfx_queue, 1, &submit, f->in_flight);
 
@@ -980,7 +975,7 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
     VkPresentInfoKHR present = {
         .sType              = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
         .waitSemaphoreCount = 1,
-        .pWaitSemaphores    = &f->render_finished,
+        .pWaitSemaphores    = &render_finished,
         .swapchainCount     = 1,
         .pSwapchains        = &sc->swapchain,
         .pImageIndices      = &image_index,
