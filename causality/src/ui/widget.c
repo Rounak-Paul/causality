@@ -1496,16 +1496,16 @@ void ca_input_focus(Ca_TextInput *input)
     input->cursor    = (int)strlen(input->text);
 }
 
-/* Returns true if the given GLFW key was pressed (or held) this frame on the
+/* Returns true if the given key was pressed (or held) this frame on the
    window that owns this input.  Useful for callers that want to react to
    Enter / Escape without needing access to Ca_Window internals. */
-bool ca_input_key_pressed(const Ca_TextInput *input, int glfw_key)
+bool ca_input_key_pressed(const Ca_TextInput *input, Ca_Key key)
 {
     if (!input || !input->node) return false;
     Ca_Window *win = input->node->window;
     if (!win) return false;
     for (uint32_t i = 0; i < win->key_count; ++i) {
-        if (win->key_buf[i] == glfw_key && win->key_action_buf[i] != 0)
+        if (win->key_buf[i] == (int)key && win->key_action_buf[i] != 0)
             return true;
     }
     return false;
@@ -3240,7 +3240,7 @@ Ca_Viewport *ca_viewport(const Ca_ViewportDesc *desc)
     Ca_Node *node = ca_node_add(parent, &nd);
     if (!node) { vp->in_use = false; return NULL; }
 
-    VkFormat fmt = desc->format ? desc->format : VK_FORMAT_R8G8B8A8_UNORM;
+    VkFormat fmt = desc->format ? (VkFormat)desc->format : VK_FORMAT_R8G8B8A8_UNORM;
 
     /* Calculate initial pixel dimensions from content scale */
     float content_scale = 1.0f;
@@ -3257,7 +3257,7 @@ Ca_Viewport *ca_viewport(const Ca_ViewportDesc *desc)
     vp->render_data = desc->render_data;
     vp->on_resize   = desc->on_resize;
     vp->resize_data = desc->resize_data;
-    vp->clear_color = desc->clear_color;
+    memcpy(vp->clear_color.float32, desc->clear_color, sizeof desc->clear_color);
     vp->in_use      = true;
     vp->needs_redraw = true;
 

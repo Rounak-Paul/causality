@@ -60,9 +60,9 @@ target_include_directories(causality
 )
 
 target_link_libraries(causality
-    PUBLIC
-        Vulkan::Vulkan     # Vk* types appear in the public causality.h API
     PRIVATE
+        Vulkan::Vulkan     # Vk* types only appear in the opt-in ca_gpu.h header;
+                           # consumers of that header provide Vulkan themselves
         glfw               # internal windowing — not in public headers
         VulkanMemoryAllocator  # internal GPU memory — not in public headers
         glm-header-only    # internal math — not in public headers

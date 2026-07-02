@@ -5,6 +5,7 @@
 #pragma once
 
 #include "causality.h"
+#include "ca_gpu.h"
 #include "causality_config.h"
 #ifdef _WIN32
   #include <windows.h>

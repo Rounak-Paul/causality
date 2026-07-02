@@ -5,7 +5,6 @@
 
 #include <stdbool.h>
 #include <stdint.h>
-#include <vulkan/vulkan.h>
 #include "causality_config.h"
 #include "ca_api.h"
 #include "ca_icons.h"
@@ -163,50 +162,9 @@ CA_API void       ca_window_restore(Ca_Window *window);
 /* Returns true if the window handle is valid and still open. */
 CA_API bool       ca_window_is_open(const Ca_Window *window);
 
-/*
- * Callback invoked each frame to render a background directly into the
- * swapchain image, BEFORE any UI elements are composited.  The swapchain is
- * presented with LOAD_OP_LOAD so this content shows through transparent UI.
- *
- * cmd              Command buffer to record into (already begun).
- * window           Window whose swapchain is being rendered.
- * swapchain_image  VkImage of the current swapchain image (needed for image barriers).
- * swapchain_view   VkImageView of the current swapchain image (COLOR_ATTACHMENT_OPTIMAL).
- * format           VkFormat of the swapchain image.
- * image_usage      Usage flags enabled for the swapchain image.
- * frame_slot       In-flight frame slot whose fence has already completed.
- * width, height    Pixel dimensions of the swapchain image.
- * user_data        Pointer passed to ca_window_set_bg_render.
- */
-typedef bool (*Ca_BgRenderFn)(VkCommandBuffer cmd,
-                              Ca_Window       *window,
-                              VkImage         swapchain_image,
-                              VkImageView     swapchain_view,
-                              VkFormat        format,
-                              VkImageUsageFlags image_usage,
-                              uint32_t        frame_slot,
-                              uint32_t        width,
-                              uint32_t        height,
-                              void           *user_data);
-
-/*
- * Register or replace the per-window background render callback.
- * Pass NULL for fn to disable background rendering.
- *
- * window     Target window.
- * fn         Callback to invoke before each frame's UI render pass (NULL = none).
- * user_data  Passed unchanged to fn.
- */
-CA_API void ca_window_set_bg_render(Ca_Window *window, Ca_BgRenderFn fn, void *user_data);
-
-/*
- * Set the background callback inherited by every window that has no explicit
- * per-window callback. Existing and subsequently created windows both use it.
- * Pass NULL for fn to clear the fallback.
- */
-CA_API void ca_instance_set_bg_render(Ca_Instance *instance,
-                                      Ca_BgRenderFn fn,
-                                      void *user_data);
+/* Background rendering hooks (Ca_BgRenderFn, ca_window_set_bg_render,
+   ca_instance_set_bg_render) expose Vulkan types and therefore live in
+   <ca_gpu.h> — the native graphics integration header. */
 
 /* Clipboard helpers for text content. Clipboard ownership remains with the
    platform backend; returned text is valid until the next clipboard update. */
@@ -387,6 +345,127 @@ CA_API void ca_window_invalidate_status_bar(Ca_Window *window);
 #define CA_RELEASE 0
 #define CA_PRESS   1
 #define CA_REPEAT  2
+
+/* Keyboard key identifiers reported in Ca_Event.key.key and accepted by
+   ca_input_key_pressed().  Values match the platform backend's layout so no
+   translation table is required internally; consumers must always use these
+   named constants, never raw integers. */
+typedef enum Ca_Key {
+    CA_KEY_UNKNOWN        = -1,
+
+    /* Printable */
+    CA_KEY_SPACE          = 32,
+    CA_KEY_APOSTROPHE     = 39,
+    CA_KEY_COMMA          = 44,
+    CA_KEY_MINUS          = 45,
+    CA_KEY_PERIOD         = 46,
+    CA_KEY_SLASH          = 47,
+    CA_KEY_0              = 48,
+    CA_KEY_1              = 49,
+    CA_KEY_2              = 50,
+    CA_KEY_3              = 51,
+    CA_KEY_4              = 52,
+    CA_KEY_5              = 53,
+    CA_KEY_6              = 54,
+    CA_KEY_7              = 55,
+    CA_KEY_8              = 56,
+    CA_KEY_9              = 57,
+    CA_KEY_SEMICOLON      = 59,
+    CA_KEY_EQUAL          = 61,
+    CA_KEY_A              = 65,
+    CA_KEY_B              = 66,
+    CA_KEY_C              = 67,
+    CA_KEY_D              = 68,
+    CA_KEY_E              = 69,
+    CA_KEY_F              = 70,
+    CA_KEY_G              = 71,
+    CA_KEY_H              = 72,
+    CA_KEY_I              = 73,
+    CA_KEY_J              = 74,
+    CA_KEY_K              = 75,
+    CA_KEY_L              = 76,
+    CA_KEY_M              = 77,
+    CA_KEY_N              = 78,
+    CA_KEY_O              = 79,
+    CA_KEY_P              = 80,
+    CA_KEY_Q              = 81,
+    CA_KEY_R              = 82,
+    CA_KEY_S              = 83,
+    CA_KEY_T              = 84,
+    CA_KEY_U              = 85,
+    CA_KEY_V              = 86,
+    CA_KEY_W              = 87,
+    CA_KEY_X              = 88,
+    CA_KEY_Y              = 89,
+    CA_KEY_Z              = 90,
+    CA_KEY_LEFT_BRACKET   = 91,
+    CA_KEY_BACKSLASH      = 92,
+    CA_KEY_RIGHT_BRACKET  = 93,
+    CA_KEY_GRAVE_ACCENT   = 96,
+
+    /* Function */
+    CA_KEY_ESCAPE         = 256,
+    CA_KEY_ENTER          = 257,
+    CA_KEY_TAB            = 258,
+    CA_KEY_BACKSPACE      = 259,
+    CA_KEY_INSERT         = 260,
+    CA_KEY_DELETE         = 261,
+    CA_KEY_RIGHT          = 262,
+    CA_KEY_LEFT           = 263,
+    CA_KEY_DOWN           = 264,
+    CA_KEY_UP             = 265,
+    CA_KEY_PAGE_UP        = 266,
+    CA_KEY_PAGE_DOWN      = 267,
+    CA_KEY_HOME           = 268,
+    CA_KEY_END            = 269,
+    CA_KEY_CAPS_LOCK      = 280,
+    CA_KEY_SCROLL_LOCK    = 281,
+    CA_KEY_NUM_LOCK       = 282,
+    CA_KEY_PRINT_SCREEN   = 283,
+    CA_KEY_PAUSE          = 284,
+    CA_KEY_F1             = 290,
+    CA_KEY_F2             = 291,
+    CA_KEY_F3             = 292,
+    CA_KEY_F4             = 293,
+    CA_KEY_F5             = 294,
+    CA_KEY_F6             = 295,
+    CA_KEY_F7             = 296,
+    CA_KEY_F8             = 297,
+    CA_KEY_F9             = 298,
+    CA_KEY_F10            = 299,
+    CA_KEY_F11            = 300,
+    CA_KEY_F12            = 301,
+
+    /* Keypad */
+    CA_KEY_KP_0           = 320,
+    CA_KEY_KP_1           = 321,
+    CA_KEY_KP_2           = 322,
+    CA_KEY_KP_3           = 323,
+    CA_KEY_KP_4           = 324,
+    CA_KEY_KP_5           = 325,
+    CA_KEY_KP_6           = 326,
+    CA_KEY_KP_7           = 327,
+    CA_KEY_KP_8           = 328,
+    CA_KEY_KP_9           = 329,
+    CA_KEY_KP_DECIMAL     = 330,
+    CA_KEY_KP_DIVIDE      = 331,
+    CA_KEY_KP_MULTIPLY    = 332,
+    CA_KEY_KP_SUBTRACT    = 333,
+    CA_KEY_KP_ADD         = 334,
+    CA_KEY_KP_ENTER       = 335,
+    CA_KEY_KP_EQUAL       = 336,
+
+    /* Modifiers */
+    CA_KEY_LEFT_SHIFT     = 340,
+    CA_KEY_LEFT_CONTROL   = 341,
+    CA_KEY_LEFT_ALT       = 342,
+    CA_KEY_LEFT_SUPER     = 343,
+    CA_KEY_RIGHT_SHIFT    = 344,
+    CA_KEY_RIGHT_CONTROL  = 345,
+    CA_KEY_RIGHT_ALT      = 346,
+    CA_KEY_RIGHT_SUPER    = 347,
+    CA_KEY_MENU           = 348
+} Ca_Key;
 
 typedef enum Ca_EventType {
     CA_EVENT_NONE = 0,
@@ -1067,101 +1146,25 @@ CA_API void ca_instance_set_stylesheet(Ca_Instance *instance, Ca_Stylesheet *ss)
 /* Re-resolve CSS for every live node after replacing a stylesheet. */
 CA_API void ca_instance_refresh_styles(Ca_Instance *instance);
 
-/* ============================================================
-   GPU — Vulkan resource accessors
-   ============================================================
-
-   These expose the Vulkan objects owned by causality so that an
-   external renderer (e.g. a game engine) can share the same GPU
-   context.  The returned handles are owned by causality — do NOT
-   destroy them.
-   ============================================================ */
-
-/* Returns the VkInstance created by Causality. */
-CA_API VkInstance          ca_gpu_instance(Ca_Instance *instance);
-
-/* Returns the VkPhysicalDevice selected during initialisation. */
-CA_API VkPhysicalDevice    ca_gpu_physical_device(Ca_Instance *instance);
-
-/* Returns the VkDevice (logical device). */
-CA_API VkDevice            ca_gpu_device(Ca_Instance *instance);
-
-/*
- * Return the graphics VkQueue and optionally its queue family index.
- *
- * instance      Owning Ca_Instance.
- * family_index  Written with the queue family index; may be NULL.
- * Returns       The graphics VkQueue.
- */
-CA_API VkQueue             ca_gpu_graphics_queue(Ca_Instance *instance, uint32_t *family_index);
-
-/*
- * Return the presentation VkQueue and optionally its queue family index.
- *
- * instance      Owning Ca_Instance.
- * family_index  Written with the queue family index; may be NULL.
- * Returns       The presentation VkQueue.
- */
-CA_API VkQueue             ca_gpu_present_queue(Ca_Instance *instance, uint32_t *family_index);
-
-/* Returns the shared graphics-family command pool (buffers are individually resettable). */
-CA_API VkCommandPool       ca_gpu_command_pool(Ca_Instance *instance);
-
-/*
- * Find a Vulkan memory type index satisfying the given type bits and property flags.
- *
- * instance    Owning Ca_Instance.
- * type_bits   Bitmask of acceptable memory type indices from VkMemoryRequirements.
- * properties  Required memory property flags.
- * Returns     Matching type index, or UINT32_MAX on failure.
- */
-CA_API uint32_t            ca_gpu_find_memory_type(Ca_Instance *instance,
-                                                   uint32_t type_bits,
-                                                   VkMemoryPropertyFlags properties);
-
-/*
- * Allocate and begin a one-shot command buffer for immediate GPU work.
- *
- * instance  Owning Ca_Instance.
- * Returns   A VkCommandBuffer already in the recording state.
- */
-CA_API VkCommandBuffer     ca_gpu_begin_transfer(Ca_Instance *instance);
-
-/*
- * End, submit, wait for, and free a one-shot command buffer.
- *
- * instance  Owning Ca_Instance.
- * cmd       Command buffer returned by ca_gpu_begin_transfer.
- */
-CA_API void                ca_gpu_end_transfer(Ca_Instance *instance, VkCommandBuffer cmd);
-
-/*
- * Compile a GLSL source string to a VkShaderModule via shaderc.
- *
- * device      Logical device to create the module on.
- * glsl_source Null-terminated GLSL source code.
- * stage       Shader stage (e.g. VK_SHADER_STAGE_VERTEX_BIT).
- * Returns     The compiled VkShaderModule, or VK_NULL_HANDLE on failure.
- */
-CA_API VkShaderModule      ca_shader_compile(VkDevice device,
-                                             const char *glsl_source,
-                                             VkShaderStageFlagBits stage);
+/* The GPU resource accessors (ca_gpu_*) and ca_shader_compile expose Vulkan
+   types and therefore live in <ca_gpu.h> — the native graphics integration
+   header. */
 
 /* ============================================================
    VIEWPORT — offscreen render target widget
    ============================================================
 
    A viewport is a widget that displays an offscreen-rendered image.
-   The engine renders into the viewport's VkImage each frame via a
+   The engine renders into the viewport's image each frame via a
    callback, and causality composites the result into the UI layout.
 
    Usage:
 
      void my_render(Ca_Viewport *vp, void *user_data) {
-         VkCommandBuffer cmd = ca_viewport_cmd(vp);
          uint32_t w = ca_viewport_width(vp);
          uint32_t h = ca_viewport_height(vp);
-         // record rendering commands...
+         // record rendering commands (see <ca_gpu.h> for the
+         // native accessors used by external renderers)...
      }
 
      ca_viewport(&(Ca_ViewportDesc){
@@ -1172,10 +1175,11 @@ CA_API VkShaderModule      ca_shader_compile(VkDevice device,
      });
 
    The on_render callback is invoked once per frame before causality
-   composites the UI.  Inside the callback the viewport's VkImage is
+   composites the UI.  Inside the callback the viewport's image is
    already transitioned to COLOR_ATTACHMENT_OPTIMAL.  After the
    callback returns, causality transitions it to SHADER_READ_ONLY
-   for compositing.
+   for compositing.  Accessors returning native GPU handles live in
+   <ca_gpu.h>.
    ============================================================ */
 
 typedef struct Ca_Viewport Ca_Viewport;
@@ -1206,8 +1210,9 @@ typedef struct Ca_ViewportDesc {
     void                *render_data;
     Ca_ViewportResizeFn  on_resize;         /* optional — called on size change  */
     void                *resize_data;
-    VkFormat             format;            /* 0 = VK_FORMAT_R8G8B8A8_UNORM      */
-    VkClearColorValue    clear_color;       /* background clear colour           */
+    uint32_t             format;            /* backend colour format id (VkFormat
+                                               value); 0 = default 8-bit RGBA     */
+    float                clear_color[4];    /* background clear colour (RGBA)    */
     const char          *id, *style;
 } Ca_ViewportDesc;
 
@@ -1219,23 +1224,11 @@ typedef struct Ca_ViewportDesc {
  */
 CA_API Ca_Viewport *ca_viewport(const Ca_ViewportDesc *desc);
 
-/* Returns the command buffer to record into during the on_render callback. */
-CA_API VkCommandBuffer ca_viewport_cmd(Ca_Viewport *viewport);
-
 /* Returns the current pixel width of the viewport image. */
 CA_API uint32_t ca_viewport_width(const Ca_Viewport *viewport);
 
 /* Returns the current pixel height of the viewport image. */
 CA_API uint32_t ca_viewport_height(const Ca_Viewport *viewport);
-
-/* Returns the VkImage backing the viewport (useful for explicit barrier/transition). */
-CA_API VkImage ca_viewport_image(const Ca_Viewport *viewport);
-
-/* Returns the VkImageView for the viewport's colour attachment. */
-CA_API VkImageView ca_viewport_image_view(const Ca_Viewport *viewport);
-
-/* Returns the VkFormat of the viewport's colour attachment. */
-CA_API VkFormat ca_viewport_format(const Ca_Viewport *viewport);
 
 /* Returns the Ca_Instance that owns this viewport. */
 CA_API Ca_Instance *ca_viewport_instance(Ca_Viewport *viewport);
@@ -1319,11 +1312,11 @@ CA_API void ca_input_focus(Ca_TextInput *input);
 /*
  * Report whether a key was pressed this frame while the input was active.
  *
- * input     Target text input.
- * glfw_key  GLFW key constant (e.g. GLFW_KEY_ENTER).
- * Returns   true if the key was pressed this frame.
+ * input    Target text input.
+ * key      Key identifier (e.g. CA_KEY_ENTER).
+ * Returns  true if the key was pressed this frame.
  */
-CA_API bool ca_input_key_pressed(const Ca_TextInput *input, int glfw_key);
+CA_API bool ca_input_key_pressed(const Ca_TextInput *input, Ca_Key key);
 
 /*
  * Directly set a div's layout width in pixels, triggering a layout pass.
