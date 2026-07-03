@@ -118,6 +118,9 @@ CA_API VkQueue             ca_gpu_present_queue(Ca_Instance *instance, uint32_t 
 /* Returns the shared graphics-family command pool (buffers are individually resettable). */
 CA_API VkCommandPool       ca_gpu_command_pool(Ca_Instance *instance);
 
+/* Returns whether Vulkan 1.2 drawIndirectCount was enabled at device creation. */
+CA_API bool                ca_gpu_draw_indirect_count_supported(Ca_Instance *instance);
+
 /*
  * Find a Vulkan memory type index satisfying the given type bits and property flags.
  *

@@ -234,8 +234,12 @@ static bool create_logical_device(Ca_Instance *inst)
     }
     free(avail);
 
+    VkPhysicalDeviceVulkan12Features available12 = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,
+    };
     VkPhysicalDeviceVulkan13Features available13 = {
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES,
+        .pNext = &available12,
     };
     VkPhysicalDeviceFeatures2 available = {
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
@@ -259,8 +263,18 @@ static bool create_logical_device(Ca_Instance *inst)
         return false;
     }
 
+    /* Optional Vulkan 1.2 features: drawIndirectCount lets GPU-driven culling
+       submit only the compacted visible draw count (unsupported on MoltenVK —
+       callers must query ca_gpu_draw_indirect_count_supported and fall back). */
+    inst->draw_indirect_count = available12.drawIndirectCount == VK_TRUE;
+
+    VkPhysicalDeviceVulkan12Features enabled12 = {
+        .sType              = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,
+        .drawIndirectCount  = inst->draw_indirect_count ? VK_TRUE : VK_FALSE,
+    };
     VkPhysicalDeviceVulkan13Features enabled13 = {
         .sType                           = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES,
+        .pNext                           = &enabled12,
         .dynamicRendering                = VK_TRUE,
         .synchronization2                = VK_TRUE,
         .shaderDemoteToHelperInvocation = VK_TRUE,

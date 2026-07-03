@@ -38,6 +38,16 @@ VkDevice ca_gpu_device(Ca_Instance *instance)
 }
 
 /*
+ * Return whether the Vulkan 1.2 drawIndirectCount feature was enabled at
+ * device creation.  False on MoltenVK and other drivers without support;
+ * callers must fall back to fixed-count indirect draws.
+ */
+bool ca_gpu_draw_indirect_count_supported(Ca_Instance *instance)
+{
+    return instance ? instance->draw_indirect_count : false;
+}
+
+/*
  * Return the Vulkan graphics queue and optionally its queue family index.
  *
  * instance      Ca_Instance to query; returns VK_NULL_HANDLE if NULL.
