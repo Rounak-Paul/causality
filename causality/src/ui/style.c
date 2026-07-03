@@ -9,20 +9,20 @@
 #include <ctype.h>
 
 static const char CA_SYSTEM_STYLES_CSS[] =
-    ".ca-titlebar { background: #1e1e24; border-bottom-width: 1px; border-bottom-color: #4c4c58; }"
+    ".ca-titlebar { background: #121212; border-bottom-width: 1px; border-bottom-color: #262626; }"
     ".ca-titlebar-menu { height: 100%; align-items: center; background: transparent; }"
-    ".ca-titlebar-menu-item { height: 100%; padding: 0px 6px; align-items: center; color: #a0a0aa; background: transparent; font-size: 11px; }"
-    ".ca-titlebar-menu-item:hover { background: #182e50; color: #c8c8cc; }"
+    ".ca-titlebar-menu-item { height: 100%; padding: 0px 6px; align-items: center; color: #737373; background: transparent; font-size: 11px; }"
+    ".ca-titlebar-menu-item:hover { background: #1a1a1a; color: #d9d9d9; }"
     ".ca-titlebar-drag { height: 100%; align-items: center; justify-content: center; background: transparent; }"
-    ".ca-titlebar-title { color: #747480; font-size: 11px; text-align: center; }"
+    ".ca-titlebar-title { color: #737373; font-size: 11px; text-align: center; }"
     ".ca-titlebar-controls { height: 100%; gap: 4px; align-items: center; }"
-    ".ca-titlebar-control { width: 24px; height: 20px; color: #c8c8cc; background: transparent; corner-radius: 2px; font-size: 10px; text-align: center; }"
-    ".ca-titlebar-control:hover { background: #182e50; }"
-    ".ca-titlebar-close { color: #a85c64; }"
-    ".ca-titlebar-close:hover { background: #6f3038; color: #f0d8da; }"
-    ".ca-menubar-popup { background: #1e1e24; color: #c8c8cc; corner-radius: 2px; }"
-    ".ca-overlay-hover { background: #182e50; corner-radius: 1px; }"
-    ".ca-overlay-selected { background: #243b5c; color: #c8c8cc; }";
+    ".ca-titlebar-control { width: 24px; height: 20px; color: #d9d9d9; background: transparent; corner-radius: 3px; font-size: 10px; text-align: center; }"
+    ".ca-titlebar-control:hover { background: #1a1a1a; }"
+    ".ca-titlebar-close { color: #cc6666; }"
+    ".ca-titlebar-close:hover { background: #cc6666; color: #0d0d0d; }"
+    ".ca-menubar-popup { background: #121212; color: #d9d9d9; corner-radius: 4px; }"
+    ".ca-overlay-hover { background: #1a1a1a; corner-radius: 3px; }"
+    ".ca-overlay-selected { background: #333333; color: #d9d9d9; }";
 
 /* Create the lower-priority stylesheet used for Causality-owned chrome. */
 Ca_Stylesheet *ca_style_create_system_stylesheet(void)
