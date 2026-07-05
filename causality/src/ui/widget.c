@@ -2910,16 +2910,21 @@ void ca_context_menu(const Ca_CtxMenuDesc *desc)
     assert(g_ctx.active && desc);
 
     Ca_Node *parent = ctx_top();
-    if (parent->child_count == 0) return;
 
     /* When called inside a ca_tree_node_begin/end block the context stack
        top is the tree node container.  Its children[0] is always the header
        row (the actual visible/clickable row), regardless of how many child
        entity nodes were added in previous frames.  Using children[child_count-1]
        would target the last expanded child — wrong.  For every other container
-       the last child is correct (it was just created). */
+       the last child is correct (it was just created).  If the container has
+       no children at all (e.g. a button whose label is its own .text field,
+       with no nested content nodes), attach to the container itself — the
+       hit-test below (point_in_node) works on any node, leaf or not, so this
+       is not a special case at read time, just at attach time. */
     Ca_Node *target;
-    if (parent->widget_type == CA_WIDGET_TREENODE)
+    if (parent->child_count == 0)
+        target = parent;
+    else if (parent->widget_type == CA_WIDGET_TREENODE)
         target = parent->children[0];  /* always the header row */
     else
         target = parent->children[parent->child_count - 1];
