@@ -105,6 +105,117 @@ static bool has_class(const char *class_str, const char *cls)
 }
 
 /* ============================================================
+   POSITION-DEPENDENT SELECTOR CLASSIFICATION (parse-time, once)
+   ============================================================
+   See CA_CSS_MAX_POS_DEP_CLASSES's doc comment in css.h for the "why".
+   Called once from ca_css_parse() after all rules are parsed. */
+
+static bool pseudo_is_structural(Ca_CssPseudoKind kind)
+{
+    switch (kind) {
+        case CA_CSS_PSEUDO_FIRST_CHILD:
+        case CA_CSS_PSEUDO_LAST_CHILD:
+        case CA_CSS_PSEUDO_ONLY_CHILD:
+        case CA_CSS_PSEUDO_FIRST_OF_TYPE:
+        case CA_CSS_PSEUDO_LAST_OF_TYPE:
+        case CA_CSS_PSEUDO_NTH_CHILD:
+        case CA_CSS_PSEUDO_NTH_LAST_CHILD:
+        case CA_CSS_PSEUDO_EMPTY:
+            return true;
+        case CA_CSS_PSEUDO_ROOT:
+            /* NOT structural despite being a "positional" pseudo-class in
+               spirit: :root matches exactly one specific node (the node
+               with no parent) and nothing else ever can, for that node's
+               entire lifetime. It never flips for a fixed node the way
+               :first-child/:nth-child do as siblings are added/removed —
+               so caching a :root rule's contribution is exactly as safe
+               as caching any plain class selector. This one is common
+               (virtually every stylesheet has a :root {} for CSS custom
+               properties, see ROOT_VARS_CSS in ed_style.c) and previously
+               being misclassified as structural-with-no-class defeated the
+               entire per-node cache stylesheet-wide via
+               pos_dep_classless_selector_exists — a real bug, not a
+               theoretical one. */
+            return false;
+        case CA_CSS_PSEUDO_NOT:
+            /* :not(:first-child) etc. is itself structural. */
+            return false; /* not_pseudo checked separately by caller */
+        default:
+            return false;
+    }
+}
+
+static void stylesheet_add_pos_dep_class(Ca_Stylesheet *ss, const char *cls)
+{
+    if (!cls || !cls[0]) return;
+    for (int i = 0; i < ss->pos_dep_class_count; i++)
+        if (strncmp(ss->pos_dep_classes[i], cls, CA_CSS_CLASS_NAME_MAX) == 0)
+            return; /* already recorded */
+    if (ss->pos_dep_class_count >= CA_CSS_MAX_POS_DEP_CLASSES) {
+        /* Set is full — fail safe by disabling the whole cache rather than
+           silently missing a class and serving a stale/wrong style. */
+        ss->pos_dep_classless_selector_exists = true;
+        return;
+    }
+    snprintf(ss->pos_dep_classes[ss->pos_dep_class_count++],
+             CA_CSS_CLASS_NAME_MAX, "%s", cls);
+}
+
+/* Scans every rule's selectors for structural pseudo-classes or multi-part
+   (combinator) chains and records which classes make a node "unsafe to
+   cache" — see the per-node fast path in apply_css(). */
+void ca_style_classify_position_dependent(Ca_Stylesheet *ss)
+{
+    if (!ss) return;
+    ss->pos_dep_class_count = 0;
+    ss->pos_dep_classless_selector_exists = false;
+
+    for (int r = 0; r < ss->rule_count; r++) {
+        Ca_CssRule *rule = &ss->rules[r];
+        for (int s = 0; s < rule->selector_count; s++) {
+            Ca_CssSelector *sel = &rule->selectors[s];
+            if (sel->part_count == 0) continue;
+
+            /* Any combinator chain (part_count > 1) makes the match depend
+               on ancestor/sibling nodes outside this node's own state. */
+            bool position_dependent = sel->part_count > 1;
+
+            const Ca_CssSimpleSel *subject = &sel->parts[sel->part_count - 1];
+            for (int ps = 0; ps < subject->pseudo_count && !position_dependent; ps++) {
+                const Ca_CssPseudo *pc = &subject->pseudos[ps];
+                if (pseudo_is_structural(pc->kind))
+                    position_dependent = true;
+                else if (pc->kind == CA_CSS_PSEUDO_NOT && pseudo_is_structural(pc->not_pseudo))
+                    position_dependent = true;
+            }
+            if (!position_dependent) continue;
+
+            if (subject->class_count == 0) {
+                /* Bare element/id/pseudo subject — can't name a class to
+                   quarantine, so disable caching stylesheet-wide. Matches
+                   ed_style.c's actual usage today (all structural rules
+                   target a specific class), so this is a safety net for
+                   future CSS, not a path expected to trigger currently. */
+                ss->pos_dep_classless_selector_exists = true;
+                continue;
+            }
+            for (int c = 0; c < subject->class_count; c++)
+                stylesheet_add_pos_dep_class(ss, subject->classes[c]);
+        }
+    }
+}
+
+bool ca_style_node_is_cacheable(const Ca_Stylesheet *ss, const char *classes)
+{
+    if (!ss) return true;
+    if (ss->pos_dep_classless_selector_exists) return false;
+    for (int i = 0; i < ss->pos_dep_class_count; i++)
+        if (has_class(classes, ss->pos_dep_classes[i]))
+            return false;
+    return true;
+}
+
+/* ============================================================
    PSEUDO-CLASS STATE QUERIES
    ============================================================ */
 
@@ -819,6 +930,60 @@ void ca_style_resolve_layers(Ca_Stylesheet *defaults,
                              const char *classes,
                              Ca_ResolvedStyle *out)
 {
+    /* Per-node resolved-style cache: if this node's classes and
+       hover/active/focus/focus_within/disabled state are identical to the
+       previous call, and neither stylesheet has a position-dependent
+       selector that could match this node differently based on external
+       (sibling/ancestor) state, the previously resolved style is still
+       exactly correct — skip both O(rules) scans entirely. This is safe
+       specifically because ca_style_node_is_cacheable() is conservative:
+       any selector using a structural pseudo-class or a combinator chain
+       disqualifies the classes it targets (or the whole stylesheet, if it
+       can't be attributed to specific classes) from being cached at all,
+       so a cache hit here can only ever occur for node/state-local rules
+       that this exact fingerprint fully determines. */
+    if (node) {
+        bool hover        = node_is_hovered(node);
+        bool active       = node_is_active(node);
+        bool focus        = node_is_focused(node);
+        bool focus_within = node_is_focus_within(node);
+        bool disabled     = node_is_disabled(node);
+
+        bool cacheable = ca_style_node_is_cacheable(defaults, classes) &&
+                         ca_style_node_is_cacheable(author, classes);
+
+        if (cacheable && node->style_cache_valid &&
+            node->style_cache_hover        == hover &&
+            node->style_cache_active       == active &&
+            node->style_cache_focus        == focus &&
+            node->style_cache_focus_within == focus_within &&
+            node->style_cache_disabled     == disabled &&
+            strncmp(node->style_cache_classes, classes ? classes : "",
+                    CA_NODE_CLASS_MAX) == 0)
+        {
+            *out = node->style_cache;
+            return;
+        }
+
+        style_resolve_sheet(defaults, node, elem_type, classes, out, true);
+        style_resolve_sheet(author, node, elem_type, classes, out, false);
+
+        if (cacheable) {
+            node->style_cache               = *out;
+            snprintf(node->style_cache_classes, CA_NODE_CLASS_MAX, "%s",
+                     classes ? classes : "");
+            node->style_cache_hover         = hover;
+            node->style_cache_active        = active;
+            node->style_cache_focus         = focus;
+            node->style_cache_focus_within  = focus_within;
+            node->style_cache_disabled      = disabled;
+            node->style_cache_valid         = true;
+        } else {
+            node->style_cache_valid = false;
+        }
+        return;
+    }
+
     style_resolve_sheet(defaults, node, elem_type, classes, out, true);
     style_resolve_sheet(author, node, elem_type, classes, out, false);
 }

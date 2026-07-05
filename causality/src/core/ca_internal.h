@@ -7,6 +7,7 @@
 #include "causality.h"
 #include "ca_gpu.h"
 #include "causality_config.h"
+#include "../ui/ca_resolved_style.h"
 #ifdef _WIN32
   #include <windows.h>
 #else
@@ -447,6 +448,20 @@ struct Ca_Node {
     uint8_t       elem_type;       /* Ca_ElementType from style.h     */
     char          classes[CA_NODE_CLASS_MAX]; /* space-separated CSS classes */
     char          id[CA_NODE_ID_MAX];         /* CSS id (without #)          */
+    /* Per-node resolved-style cache (apply_css in style.c). Skips the full
+       O(rules) selector-match scan when this node's classes/pseudo-state
+       fingerprint is unchanged from last call AND the stylesheet has no
+       position-dependent selector targeting these classes (see
+       ca_style_node_is_cacheable / CA_CSS_MAX_POS_DEP_CLASSES in css.h).
+       Was the dominant cost in panels with many rows (e.g. a Hierarchy
+       tree with hundreds of entities) rebuilt every frame — each row paid
+       for a full stylesheet scan twice (container + header) even when
+       nothing about its style inputs had changed. */
+    Ca_ResolvedStyle style_cache;
+    char          style_cache_classes[CA_NODE_CLASS_MAX];
+    bool          style_cache_valid;
+    bool          style_cache_hover, style_cache_active, style_cache_focus,
+                  style_cache_focus_within, style_cache_disabled;
     /* Scroll state (for overflow: scroll) */
     float         scroll_x, scroll_y;
     float         content_w, content_h; /* natural content size        */

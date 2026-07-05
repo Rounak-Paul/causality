@@ -3,6 +3,7 @@
 
 /* css.c — CSS tokenizer + recursive descent parser */
 #include "css.h"
+#include "style.h"
 #include "causality_config.h"
 
 #include <ctype.h>
@@ -2389,6 +2390,7 @@ Ca_Stylesheet *ca_css_parse(const char *css_text)
         ss->rule_count++;
     }
 
+    ca_style_classify_position_dependent(ss);
     return ss;
 }
 

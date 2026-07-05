@@ -56,99 +56,12 @@ typedef enum {
 
 /* ============================================================
    RESOLVED STYLE
-   ============================================================ */
-
-typedef struct {
-    uint64_t set_mask;    /* bitmask of which CA_CSS_PROP_* (low 64) were set by CSS */
-    uint64_t set_mask2;   /* bitmask for props >= 64 */
-
-    /* Sizing */
-    float    width, height;
-    bool     width_pct, height_pct;   /* true when value is a percentage */
-    float    min_width, max_width, min_height, max_height;
-    /* Spacing */
-    float    padding[4];     /* top, right, bottom, left */
-    float    margin[4];
-    float    gap, row_gap, column_gap;
-    /* Visual */
-    float    border_radius;
-    float    border_radius_tl, border_radius_tr, border_radius_br, border_radius_bl;
-    float    opacity;
-    /* Typography */
-    float    font_size;
-    float    line_height;
-    float    letter_spacing;
-    float    word_spacing;
-    bool     font_bold;
-    /* Flex */
-    float    flex_grow, flex_shrink;
-    float    flex_basis;
-    int      flex_order;
-    /* Colors */
-    uint32_t background_color;
-    uint32_t color;
-    /* Layout keywords */
-    int      display;
-    int      flex_direction;
-    int      flex_wrap;
-    int      align_items;
-    int      align_self;
-    int      align_content;
-    int      justify_content;
-    int      justify_self;
-    int      overflow_x, overflow_y;
-    int      text_align;
-    int      text_decoration;
-    int      text_transform;
-    int      white_space;
-    int      font_weight;
-    int      font_style;
-    int      visibility;
-    int      cursor;
-    int      pointer_events;
-    int      user_select;
-    int      scroll_behavior;
-    int      box_sizing;
-    /* Transition */
-    float    transition_duration;
-    uint64_t transition_props;
-    int      transition_easing;
-    /* Border — uniform */
-    float    border_width;
-    uint32_t border_color;
-    int      border_style;
-    /* Border — per-side (using submodule short-name convention) */
-    float    border_top_w, border_right_w, border_bottom_w, border_left_w;
-    uint32_t border_top_c, border_right_c, border_bottom_c, border_left_c;
-    int      border_top_style, border_right_style, border_bottom_style, border_left_style;
-    /* Outline */
-    float    outline_width;
-    uint32_t outline_color;
-    int      outline_style;
-    float    outline_offset;
-    /* Box shadow */
-    float    shadow_offset_x, shadow_offset_y;
-    float    shadow_blur;
-    uint32_t shadow_color;
-    /* Z-index */
-    int      z_index;
-    /* Text wrapping */
-    int      text_wrap;
-    /* Aspect ratio */
-    float    aspect_ratio;
-    /* Gradient background */
-    uint8_t  gradient_type;    /* CA_DRAW_MODE_LINEAR_GRAD / CA_DRAW_MODE_RADIAL_GRAD, 0=none */
-    uint32_t gradient_color2;  /* end color stop (RRGGBBAA) */
-    float    gradient_angle;   /* degrees for linear-gradient */
-    float    gradient_cx, gradient_cy; /* radial center 0..1 */
-    float    scrollbar_width;
-    uint32_t scrollbar_track_color;
-    uint32_t scrollbar_thumb_color;
-    uint32_t scrollbar_thumb_active_color;
-    float    scrollbar_radius;
-    /* Backdrop filter */
-    float    backdrop_blur;
-} Ca_ResolvedStyle;
+   ============================================================
+   Ca_ResolvedStyle itself lives in ca_resolved_style.h — it has zero
+   dependency on Ca_Node, so that header is also included directly by
+   ca_internal.h to give Ca_Node a resolved-style cache field without a
+   circular include (ca_internal.h <- style.h already). */
+#include "ca_resolved_style.h"
 
 /* ============================================================
    API
@@ -199,3 +112,15 @@ void ca_style_resolve_layers(Ca_Stylesheet *defaults,
 void ca_style_apply_to_node(const Ca_ResolvedStyle *style,
                             Ca_NodeDesc *nd,
                             uint32_t *out_color);
+
+/** Scans the stylesheet once for structural/combinator ("position-
+    dependent") selectors and records which classes they target — see
+    CA_CSS_MAX_POS_DEP_CLASSES's doc comment in css.h. Called once by
+    ca_css_parse() right after parsing; not normally called directly. */
+void ca_style_classify_position_dependent(Ca_Stylesheet *ss);
+
+/** True if a node with this class string is safe for apply_css() to serve
+    from its per-node resolved-style cache — i.e. none of its classes are
+    targeted by a position-dependent selector in `ss` (or `ss` has no such
+    selectors at all). NULL ss is always cacheable (nothing to match). */
+bool ca_style_node_is_cacheable(const Ca_Stylesheet *ss, const char *classes);

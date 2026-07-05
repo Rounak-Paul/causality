@@ -424,6 +424,18 @@ typedef struct {
     Ca_CssValue value;
 } Ca_CssVar;
 
+/* Position-dependent selectors (structural pseudo-classes like :nth-child,
+   or any multi-part selector chained via a combinator) can match
+   differently for the SAME node depending on external state — sibling
+   order/count, ancestor structure — that isn't reflected in the node's own
+   classes/id/pseudo-state. A per-node resolved-style cache keyed only on
+   local state would be unsound for those. Computed once at parse time
+   (see classify_position_dependent_selectors in style.c): every class
+   name that appears in the SUBJECT (rightmost) part of any such selector
+   is recorded here. A node whose own classes don't intersect this set is
+   safe to cache; a node that does must always be freshly resolved. */
+#define CA_CSS_MAX_POS_DEP_CLASSES 32
+
 typedef struct Ca_Stylesheet {
     Ca_CssRule rules[CA_CSS_MAX_RULES];
     int        rule_count;
@@ -433,6 +445,14 @@ typedef struct Ca_Stylesheet {
     /* String pool for var-name references inside Ca_CssValue.keyword. */
     char       str_pool[CA_CSS_STR_POOL_BYTES];
     int        str_pool_used;
+    /* See CA_CSS_MAX_POS_DEP_CLASSES doc above. */
+    char       pos_dep_classes[CA_CSS_MAX_POS_DEP_CLASSES][CA_CSS_CLASS_NAME_MAX];
+    int        pos_dep_class_count;
+    /* True if any position-dependent selector's subject has NO class at
+       all (bare element/id/pseudo, e.g. "div:first-child") — in that case
+       the per-class set above can't capture it, so the whole stylesheet
+       falls back to "always resolve fresh" rather than risk missing it. */
+    bool       pos_dep_classless_selector_exists;
 } Ca_Stylesheet;
 
 /* Helpers — intern/resolve strings in the stylesheet pool. */
