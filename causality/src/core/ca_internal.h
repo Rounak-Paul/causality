@@ -720,6 +720,11 @@ struct Ca_Viewport {
     /* Per-frame command buffer (allocated from inst->cmd_pool) */
     VkCommandBuffer      cmd;
     VkFence              render_fence;
+    /* Signalled by the render submit; the swapchain's compositing submit
+       waits on this at the GPU level instead of the CPU blocking on
+       render_fence, so viewport rendering and swapchain command-buffer
+       recording/submission can overlap. */
+    VkSemaphore          render_done;
     /* Callbacks */
     Ca_ViewportRenderFn  on_render;
     void                *render_data;
@@ -728,6 +733,12 @@ struct Ca_Viewport {
     VkClearColorValue    clear_color;
     bool                 in_use;
     bool                 needs_redraw;
+    /* True once this viewport's color_image has actually completed at
+       least one render since it (or its GPU resources) were last created
+       — a freshly created/resized image starts UNDEFINED and only becomes
+       safe to sample after ca_viewport_render_all's first real pass for
+       it; compositing must not bind/sample it before then. */
+    bool                 has_rendered_once;
 };
 
 /* Internal: one entry inside a sub-menu (one level of nesting only) */
@@ -1046,6 +1057,9 @@ struct Ca_Instance {
 
     /* Vulkan */
     VkInstance               vk_instance;
+#ifdef CAUSALITY_VULKAN_VALIDATION
+    VkDebugUtilsMessengerEXT vk_debug_messenger;
+#endif
     VkPhysicalDevice         vk_gpu;
     VkDevice                 vk_device;
     VkQueue                  gfx_queue;

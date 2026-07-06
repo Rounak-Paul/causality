@@ -31,6 +31,7 @@ bool ca_viewport_gpu_create(Ca_Instance *inst, Ca_Viewport *vp,
     vp->width  = width;
     vp->height = height;
     vp->format = format;
+    vp->has_rendered_once = false;
 
     /* Colour image — used as both colour attachment and sampled texture */
     VkImageCreateInfo img_ci = {
@@ -153,13 +154,25 @@ bool ca_viewport_gpu_create(Ca_Instance *inst, Ca_Viewport *vp,
         return false;
     }
 
-    /* Fence for synchronising viewport render with UI composite */
+    /* Fence for reclaiming vp->cmd once the GPU is done with last frame's
+       render — waited on at the START of the next render, not right after
+       submitting this one (see render_done below for how the compositor
+       knows the texture is ready without the CPU blocking on this fence). */
     VkFenceCreateInfo fence_ci = {
         .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
         .flags = VK_FENCE_CREATE_SIGNALED_BIT,
     };
     if (vkCreateFence(inst->vk_device, &fence_ci, NULL, &vp->render_fence) != VK_SUCCESS) {
         fprintf(stderr, "[viewport] vkCreateFence failed\n");
+        ca_viewport_gpu_destroy(inst, vp);
+        return false;
+    }
+
+    /* Semaphore for the GPU-side handoff to swapchain compositing — see
+       ca_viewport_render_all's doc comment. */
+    VkSemaphoreCreateInfo sem_ci = { .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO };
+    if (vkCreateSemaphore(inst->vk_device, &sem_ci, NULL, &vp->render_done) != VK_SUCCESS) {
+        fprintf(stderr, "[viewport] vkCreateSemaphore failed\n");
         ca_viewport_gpu_destroy(inst, vp);
         return false;
     }
@@ -175,6 +188,10 @@ void ca_viewport_gpu_destroy(Ca_Instance *inst, Ca_Viewport *vp)
     if (vp->render_fence != VK_NULL_HANDLE) {
         vkDestroyFence(inst->vk_device, vp->render_fence, NULL);
         vp->render_fence = VK_NULL_HANDLE;
+    }
+    if (vp->render_done != VK_NULL_HANDLE) {
+        vkDestroySemaphore(inst->vk_device, vp->render_done, NULL);
+        vp->render_done = VK_NULL_HANDLE;
     }
     if (vp->cmd != VK_NULL_HANDLE) {
         vkFreeCommandBuffers(inst->vk_device, inst->cmd_pool, 1, &vp->cmd);
@@ -252,8 +269,10 @@ static void transition_viewport_image(VkCommandBuffer cmd, VkImage image,
     vkCmdPipelineBarrier2(cmd, &dep);
 }
 
-void ca_viewport_render_all(Ca_Instance *inst, Ca_Window *win)
+void ca_viewport_render_all(Ca_Instance *inst, Ca_Window *win,
+                            VkSemaphore *out_semaphores, uint32_t *out_count)
 {
+    *out_count = 0;
     if (!win->viewport_pool) return;
 
     for (uint32_t i = 0; i < CA_MAX_VIEWPORTS_PER_WINDOW; ++i) {
@@ -320,15 +339,24 @@ void ca_viewport_render_all(Ca_Instance *inst, Ca_Window *win)
 
         vkEndCommandBuffer(vp->cmd);
 
-        /* Submit and signal the fence */
+        /* Submit asynchronously: render_fence is waited on at the START of
+           this viewport's NEXT render (line ~285 above), reclaiming vp->cmd
+           only once the GPU is actually done with it, not here. render_done
+           is what tells the swapchain compositing submit — a separate
+           command buffer, submitted after this function returns — that the
+           texture is safe to sample, entirely at the GPU level, so the CPU
+           never blocks waiting for this viewport's render to finish. */
         VkSubmitInfo submit = {
-            .sType              = VK_STRUCTURE_TYPE_SUBMIT_INFO,
-            .commandBufferCount = 1,
-            .pCommandBuffers    = &vp->cmd,
+            .sType                = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+            .commandBufferCount   = 1,
+            .pCommandBuffers      = &vp->cmd,
+            .signalSemaphoreCount = 1,
+            .pSignalSemaphores    = &vp->render_done,
         };
         vkQueueSubmit(inst->gfx_queue, 1, &submit, vp->render_fence);
+        vp->has_rendered_once = true;
 
-        /* Wait immediately so the texture is ready for compositing */
-        vkWaitForFences(inst->vk_device, 1, &vp->render_fence, VK_TRUE, UINT64_MAX);
+        if (*out_count < CA_MAX_VIEWPORTS_PER_WINDOW)
+            out_semaphores[(*out_count)++] = vp->render_done;
     }
 }

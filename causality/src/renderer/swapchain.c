@@ -307,8 +307,14 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
     vkResetFences(inst->vk_device, 1, &f->in_flight);
 
     /* Render all active viewports before compositing into the swapchain.
-       This submits its own command buffers and waits synchronously. */
-    ca_viewport_render_all(inst, win);
+       Each redrawn viewport's GPU work is submitted asynchronously — see
+       ca_viewport_render_all's doc comment — so its completion semaphore
+       must be waited on by this frame's own submit below (added to
+       viewport_wait_sems) before compositing samples that viewport's
+       texture; nothing else guarantees the render is done by then. */
+    VkSemaphore viewport_wait_sems[CA_MAX_VIEWPORTS_PER_WINDOW];
+    uint32_t    viewport_wait_count = 0;
+    ca_viewport_render_all(inst, win, viewport_wait_sems, &viewport_wait_count);
 
     vkResetCommandBuffer(f->cmd, 0);
 
@@ -773,7 +779,8 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
                     int16_t vi = cmd->viewport_index;
                     if (vi < 0 || vi >= CA_MAX_VIEWPORTS_PER_WINDOW ||
                         !win->viewport_pool[vi].in_use ||
-                        win->viewport_pool[vi].desc_set == VK_NULL_HANDLE)
+                        win->viewport_pool[vi].desc_set == VK_NULL_HANDLE ||
+                        !win->viewport_pool[vi].has_rendered_once)
                         continue;
 
                     VkRect2D sc_new = full_scissor;
@@ -956,14 +963,26 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
 
     vkEndCommandBuffer(f->cmd);
 
-    /* Submit */
-    VkPipelineStageFlags wait_stage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    /* Submit. Waits on image_available (swapchain image ready to draw
+       into) plus every viewport's render_done semaphore collected above
+       (viewport texture ready to sample during compositing) — the GPU-
+       level replacement for the CPU wait ca_viewport_render_all no longer
+       does. viewport_wait_sems is bounded by CA_MAX_VIEWPORTS_PER_WINDOW,
+       so +1 for image_available always fits. */
+    VkSemaphore          wait_sems[CA_MAX_VIEWPORTS_PER_WINDOW + 1];
+    VkPipelineStageFlags wait_stages[CA_MAX_VIEWPORTS_PER_WINDOW + 1];
+    wait_sems[0]   = f->image_available;
+    wait_stages[0] = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    for (uint32_t i = 0; i < viewport_wait_count; i++) {
+        wait_sems[1 + i]   = viewport_wait_sems[i];
+        wait_stages[1 + i] = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+    }
     VkSemaphore render_finished = sc->image_render_finished[image_index];
     VkSubmitInfo submit = {
         .sType                = VK_STRUCTURE_TYPE_SUBMIT_INFO,
-        .waitSemaphoreCount   = 1,
-        .pWaitSemaphores      = &f->image_available,
-        .pWaitDstStageMask    = &wait_stage,
+        .waitSemaphoreCount   = 1 + viewport_wait_count,
+        .pWaitSemaphores      = wait_sems,
+        .pWaitDstStageMask    = wait_stages,
         .commandBufferCount   = 1,
         .pCommandBuffers      = &f->cmd,
         .signalSemaphoreCount = 1,

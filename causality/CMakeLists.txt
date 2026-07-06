@@ -15,6 +15,13 @@ if(NOT WIN32)
     target_compile_definitions(causality PRIVATE causality_EXPORTS)
 endif()
 
+# Enable the Vulkan validation layer + debug messenger in Debug and
+# RelWithDebInfo builds only — compiled out entirely in Release, matching
+# QS_PROFILE_ENABLED's convention in Quasar/CMakeLists.txt.
+target_compile_definitions(causality PRIVATE
+    $<$<OR:$<CONFIG:Debug>,$<CONFIG:RelWithDebInfo>>:CAUSALITY_VULKAN_VALIDATION>
+)
+
 # shaderc — bundled with the LunarG Vulkan SDK, used for runtime GLSL compilation
 # Derive the SDK root from find_package(Vulkan) or the VULKAN_SDK env var
 set(_VULKAN_SDK_HINT "")

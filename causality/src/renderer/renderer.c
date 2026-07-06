@@ -23,6 +23,25 @@
 
 /* ---- VkInstance creation ---- */
 
+#ifdef CAUSALITY_VULKAN_VALIDATION
+/* Prints every validation message to stderr — this is a temporary local
+   diagnostic aid (gated behind CAUSALITY_VULKAN_VALIDATION, never built
+   into release), not a permanent logging path. */
+static VKAPI_ATTR VkBool32 VKAPI_CALL debug_messenger_callback(
+    VkDebugUtilsMessageSeverityFlagBitsEXT severity,
+    VkDebugUtilsMessageTypeFlagsEXT type,
+    const VkDebugUtilsMessengerCallbackDataEXT *data,
+    void *user_data)
+{
+    (void)type; (void)user_data;
+    const char *level = (severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT)   ? "ERROR" :
+                        (severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT) ? "WARN"  :
+                        (severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT)    ? "INFO"  : "VERBOSE";
+    fprintf(stderr, "[vk-validation][%s] %s\n", level, data->pMessage);
+    return VK_FALSE;
+}
+#endif
+
 static bool create_vk_instance(Ca_Instance *inst, const char *app_name)
 {
     uint32_t     glfw_ext_count = 0;
@@ -49,6 +68,10 @@ static bool create_vk_instance(Ca_Instance *inst, const char *app_name)
 
     if (has_portability)
         extensions[ext_count++] = "VK_KHR_portability_enumeration";
+
+#ifdef CAUSALITY_VULKAN_VALIDATION
+    extensions[ext_count++] = VK_EXT_DEBUG_UTILS_EXTENSION_NAME;
+#endif
 
     VkApplicationInfo app_info = {
         .sType              = VK_STRUCTURE_TYPE_APPLICATION_INFO,
@@ -82,6 +105,28 @@ static bool create_vk_instance(Ca_Instance *inst, const char *app_name)
         fprintf(stderr, "[vk] vkCreateInstance failed\n");
         return false;
     }
+
+#ifdef CAUSALITY_VULKAN_VALIDATION
+    PFN_vkCreateDebugUtilsMessengerEXT create_messenger =
+        (PFN_vkCreateDebugUtilsMessengerEXT)vkGetInstanceProcAddr(
+            inst->vk_instance, "vkCreateDebugUtilsMessengerEXT");
+    if (create_messenger) {
+        VkDebugUtilsMessengerCreateInfoEXT messenger_ci = {
+            .sType           = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT,
+            .messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT |
+                               VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT,
+            .messageType     = VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT |
+                               VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT |
+                               VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT,
+            .pfnUserCallback = debug_messenger_callback,
+        };
+        create_messenger(inst->vk_instance, &messenger_ci, NULL, &inst->vk_debug_messenger);
+    } else {
+        fprintf(stderr, "[vk] vkCreateDebugUtilsMessengerEXT not available — "
+                        "validation messages will only appear via the loader's default handler\n");
+    }
+#endif
+
     return true;
 }
 
@@ -250,16 +295,18 @@ static bool create_logical_device(Ca_Instance *inst)
         !available13.synchronization2 ||
         !available13.shaderDemoteToHelperInvocation ||
         !available.features.samplerAnisotropy ||
-        !available.features.fillModeNonSolid) {
+        !available.features.fillModeNonSolid ||
+        !available.features.multiDrawIndirect) {
         fprintf(stderr,
                 "[vk] required Vulkan 1.3 features unavailable "
                 "(dynamicRendering=%u, synchronization2=%u, shaderDemoteToHelperInvocation=%u, "
-                "samplerAnisotropy=%u, fillModeNonSolid=%u)\n",
+                "samplerAnisotropy=%u, fillModeNonSolid=%u, multiDrawIndirect=%u)\n",
                 available13.dynamicRendering,
                 available13.synchronization2,
                 available13.shaderDemoteToHelperInvocation,
                 available.features.samplerAnisotropy,
-                available.features.fillModeNonSolid);
+                available.features.fillModeNonSolid,
+                available.features.multiDrawIndirect);
         return false;
     }
 
@@ -287,6 +334,7 @@ static bool create_logical_device(Ca_Instance *inst)
         .features = {
             .samplerAnisotropy = VK_TRUE,
             .fillModeNonSolid  = VK_TRUE,
+            .multiDrawIndirect = VK_TRUE,
         },
     };
 
@@ -362,6 +410,17 @@ void ca_renderer_shutdown(Ca_Instance *inst)
     if (inst->vk_device  != VK_NULL_HANDLE)
         vkDestroyDevice(inst->vk_device, NULL);
     inst->vk_device = VK_NULL_HANDLE;
+
+#ifdef CAUSALITY_VULKAN_VALIDATION
+    if (inst->vk_debug_messenger != VK_NULL_HANDLE && inst->vk_instance != VK_NULL_HANDLE) {
+        PFN_vkDestroyDebugUtilsMessengerEXT destroy_messenger =
+            (PFN_vkDestroyDebugUtilsMessengerEXT)vkGetInstanceProcAddr(
+                inst->vk_instance, "vkDestroyDebugUtilsMessengerEXT");
+        if (destroy_messenger)
+            destroy_messenger(inst->vk_instance, inst->vk_debug_messenger, NULL);
+    }
+    inst->vk_debug_messenger = VK_NULL_HANDLE;
+#endif
 
     if (inst->vk_instance != VK_NULL_HANDLE)
         vkDestroyInstance(inst->vk_instance, NULL);
