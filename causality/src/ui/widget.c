@@ -3282,7 +3282,11 @@ Ca_Viewport *ca_viewport(const Ca_ViewportDesc *desc)
 
 VkCommandBuffer ca_viewport_cmd(Ca_Viewport *viewport)
 {
-    return viewport ? viewport->cmd : VK_NULL_HANDLE;
+    /* Only valid called from inside the on_render callback (the only actual
+       caller — see ca_render_trampoline in qs_gpu.c), where frame_index still
+       names the slot currently being recorded — see the frame_index cycling
+       comment in ca_viewport_render_all. */
+    return viewport ? viewport->frame[viewport->frame_index].cmd : VK_NULL_HANDLE;
 }
 
 uint32_t ca_viewport_width(const Ca_Viewport *viewport)
@@ -3297,17 +3301,22 @@ uint32_t ca_viewport_height(const Ca_Viewport *viewport)
 
 VkImage ca_viewport_image(const Ca_Viewport *viewport)
 {
-    return viewport ? viewport->color_image : VK_NULL_HANDLE;
+    return viewport ? viewport->frame[viewport->frame_index].color_image : VK_NULL_HANDLE;
 }
 
 VkImageView ca_viewport_image_view(const Ca_Viewport *viewport)
 {
-    return viewport ? viewport->color_view : VK_NULL_HANDLE;
+    return viewport ? viewport->frame[viewport->frame_index].color_view : VK_NULL_HANDLE;
 }
 
 VkFormat ca_viewport_format(const Ca_Viewport *viewport)
 {
     return viewport ? viewport->format : VK_FORMAT_UNDEFINED;
+}
+
+uint32_t ca_viewport_frame_index(const Ca_Viewport *viewport)
+{
+    return viewport ? viewport->frame_index : 0;
 }
 
 Ca_Instance *ca_viewport_instance(Ca_Viewport *viewport)

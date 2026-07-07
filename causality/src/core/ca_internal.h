@@ -706,25 +706,40 @@ struct Ca_Splitter {
     void         *user_data;
 };
 
-struct Ca_Viewport {
-    Ca_Node             *node;
-    Ca_Instance         *instance;
-    /* GPU resources — offscreen colour attachment */
+/* Per-frame-in-flight GPU resources for one Ca_Viewport slot. Duplicated
+   CA_FRAMES_IN_FLIGHT times so the CPU can start recording slot fi+1's
+   command buffer without waiting for the GPU to finish slot fi's work —
+   mirrors Ca_Swapchain's Ca_Frame (swapchain.c). */
+typedef struct {
     VkImage              color_image;
     VkDeviceMemory       color_memory;
     VkImageView          color_view;
-    VkSampler            sampler;
-    VkDescriptorSet      desc_set;      /* per-viewport descriptor for compositing */
-    VkFormat             format;
-    uint32_t             width, height; /* current pixel dimensions */
-    /* Per-frame command buffer (allocated from inst->cmd_pool) */
-    VkCommandBuffer      cmd;
+    VkDescriptorSet      desc_set;      /* per-slot descriptor for compositing */
+    VkCommandBuffer      cmd;           /* allocated from inst->cmd_pool */
     VkFence              render_fence;
     /* Signalled by the render submit; the swapchain's compositing submit
        waits on this at the GPU level instead of the CPU blocking on
        render_fence, so viewport rendering and swapchain command-buffer
        recording/submission can overlap. */
     VkSemaphore          render_done;
+    /* True once THIS slot's color_image has actually completed at least one
+       render since it (or its GPU resources) were last created — a freshly
+       created/resized image starts UNDEFINED and only becomes safe to
+       sample after ca_viewport_render_all's first real pass for this slot;
+       compositing must not bind/sample it before then. */
+    bool                 has_rendered_once;
+} Ca_ViewportFrame;
+
+struct Ca_Viewport {
+    Ca_Node             *node;
+    Ca_Instance         *instance;
+    /* GPU resources duplicated per frame-in-flight slot — see
+       Ca_ViewportFrame. Sampler is stateless (no per-frame state to race on)
+       so it is NOT duplicated, same as Ca_Swapchain's samplers. */
+    Ca_ViewportFrame      frame[CA_FRAMES_IN_FLIGHT];
+    VkSampler            sampler;
+    VkFormat             format;
+    uint32_t             width, height; /* current pixel dimensions */
     /* Callbacks */
     Ca_ViewportRenderFn  on_render;
     void                *render_data;
@@ -733,12 +748,18 @@ struct Ca_Viewport {
     VkClearColorValue    clear_color;
     bool                 in_use;
     bool                 needs_redraw;
-    /* True once this viewport's color_image has actually completed at
-       least one render since it (or its GPU resources) were last created
-       — a freshly created/resized image starts UNDEFINED and only becomes
-       safe to sample after ca_viewport_render_all's first real pass for
-       it; compositing must not bind/sample it before then. */
-    bool                 has_rendered_once;
+    /* Frame-in-flight slot this viewport's NEXT render will use, cycling
+       0..CA_FRAMES_IN_FLIGHT-1 (mirrors Ca_Swapchain.current_frame). */
+    uint32_t             frame_index;
+    /* Slot that was actually submitted on the most recent
+       ca_viewport_render_all call — i.e. frame[last_rendered_frame] holds
+       the freshest completed-or-in-flight render. Distinct from frame_index
+       (which already points at the NEXT slot to use by the time a caller
+       outside ca_viewport_render_all could observe it): the swapchain
+       compositor needs "what did I just render", not "what will I render
+       next", and back-deriving that via (frame_index - 1) mod N at the
+       compositor call site would be an easy off-by-one to get wrong. */
+    uint32_t             last_rendered_frame;
 };
 
 /* Internal: one entry inside a sub-menu (one level of nesting only) */

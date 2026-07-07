@@ -182,6 +182,12 @@ CA_API VkImageView ca_viewport_image_view(const Ca_Viewport *viewport);
 /* Returns the VkFormat of the viewport's colour attachment. */
 CA_API VkFormat ca_viewport_format(const Ca_Viewport *viewport);
 
+/* Returns the frame-in-flight slot (0..CA_FRAMES_IN_FLIGHT-1) this
+   viewport's CURRENT on_render callback is recording into. Stable for the
+   duration of the callback; call fresh each render rather than caching
+   across frames. */
+CA_API uint32_t ca_viewport_frame_index(const Ca_Viewport *viewport);
+
 #ifdef __cplusplus
 }
 #endif

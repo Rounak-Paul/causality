@@ -778,9 +778,16 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
 
                     int16_t vi = cmd->viewport_index;
                     if (vi < 0 || vi >= CA_MAX_VIEWPORTS_PER_WINDOW ||
-                        !win->viewport_pool[vi].in_use ||
-                        win->viewport_pool[vi].desc_set == VK_NULL_HANDLE ||
-                        !win->viewport_pool[vi].has_rendered_once)
+                        !win->viewport_pool[vi].in_use)
+                        continue;
+                    /* Composite the slot that was actually just rendered
+                       (last_rendered_frame), not whatever frame_index
+                       currently points at — frame_index already names the
+                       NEXT slot ca_viewport_render_all will use by the time
+                       this compositor submit runs. */
+                    Ca_ViewportFrame *vpf =
+                        &win->viewport_pool[vi].frame[win->viewport_pool[vi].last_rendered_frame];
+                    if (vpf->desc_set == VK_NULL_HANDLE || !vpf->has_rendered_once)
                         continue;
 
                     VkRect2D sc_new = full_scissor;
@@ -811,7 +818,7 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
                     if (vp_change) {
                         vkCmdBindDescriptorSets(f->cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
                                                 inst->text_pipeline.layout,
-                                                1, 1, &win->viewport_pool[vi].desc_set,
+                                                1, 1, &vpf->desc_set,
                                                 0, NULL);
                         cur_vp_idx = vi;
                     }
