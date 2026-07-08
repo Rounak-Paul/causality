@@ -77,6 +77,16 @@ typedef struct Ca_InstanceDesc {
     /* Default UI scale inherited by every window created on this instance.
        0.0 / 1.0 both mean no scaling.  Clamped to [0.25, 4.0] at init. */
     float       default_ui_scale;
+    /* Disables vsync for every swapchain created on this instance. false
+       (default, including a zero-initialized {0} desc — the idiom used
+       throughout this codebase) = VK_PRESENT_MODE_FIFO_KHR, paced by the
+       display compositor, no tearing, matches prior behaviour exactly.
+       true = the fastest present mode the surface supports without vsync
+       (VK_PRESENT_MODE_MAILBOX_KHR if available, else
+       VK_PRESENT_MODE_IMMEDIATE_KHR, else falls back to FIFO if neither
+       is supported). Named negatively so `{0}` never silently changes
+       existing callers' presentation behaviour. */
+    bool        disable_vsync;
 } Ca_InstanceDesc;
 
 /*

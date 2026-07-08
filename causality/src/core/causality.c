@@ -55,6 +55,7 @@ Ca_Instance *ca_instance_create(const Ca_InstanceDesc *desc)
         if (s > 4.0f)  s = 4.0f;
         inst->default_ui_scale = s; /* 0 means "unset" → windows default to 1.0 */
     }
+    inst->disable_vsync = desc && desc->disable_vsync;
 
     if (!ca_renderer_init(inst, desc)) {
         ca_ui_shutdown(inst);

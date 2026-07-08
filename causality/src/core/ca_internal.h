@@ -1099,6 +1099,7 @@ struct Ca_Instance {
     uint32_t                 gpu_heap_count;
     VkPresentModeKHR         present_mode;      /* current present mode */
     bool                     draw_indirect_count; /* Vulkan 1.2 drawIndirectCount enabled */
+    bool                     disable_vsync;     /* from Ca_InstanceDesc — see choose_present_mode() */
 
     /* Event ring-buffer */
     Ca_Event         event_queue[CA_EVENT_QUEUE_CAPACITY];

@@ -65,20 +65,38 @@ static VkSurfaceFormatKHR choose_surface_format(VkPhysicalDevice gpu,
 }
 
 /**
- * Selects the compositor-paced presentation mode for a window surface.
+ * Selects the presentation mode for a window surface.
  *
  * @param gpu Physical device associated with the surface.
  * @param surface Window surface whose swapchain is being configured.
- * @return FIFO presentation mode, which Vulkan guarantees is supported.
+ * @param disable_vsync When false (default), always FIFO — compositor-paced,
+ *        no tearing, guaranteed supported by every Vulkan implementation.
+ *        When true, prefers MAILBOX (triple-buffered, no tearing, submits at
+ *        the GPU's max rate) and falls back to IMMEDIATE (may tear) or FIFO
+ *        if neither is supported by this surface.
+ * @return The selected presentation mode.
  */
 static VkPresentModeKHR choose_present_mode(VkPhysicalDevice gpu,
-                                            VkSurfaceKHR surface)
+                                            VkSurfaceKHR surface,
+                                            bool disable_vsync)
 {
-    (void)gpu;
-    (void)surface;
-    /* FIFO is guaranteed by Vulkan and paced by the display compositor.
-       MAILBOX lets continuously animated UI submit at the GPU's maximum rate,
-       wasting power on frames the display can never show. */
+    if (!disable_vsync)
+        return VK_PRESENT_MODE_FIFO_KHR;
+
+    uint32_t count = 0;
+    vkGetPhysicalDeviceSurfacePresentModesKHR(gpu, surface, &count, NULL);
+    if (count == 0 || count > 16) return VK_PRESENT_MODE_FIFO_KHR;
+
+    VkPresentModeKHR modes[16];
+    vkGetPhysicalDeviceSurfacePresentModesKHR(gpu, surface, &count, modes);
+
+    bool has_mailbox = false, has_immediate = false;
+    for (uint32_t i = 0; i < count; i++) {
+        if (modes[i] == VK_PRESENT_MODE_MAILBOX_KHR)   has_mailbox   = true;
+        if (modes[i] == VK_PRESENT_MODE_IMMEDIATE_KHR) has_immediate = true;
+    }
+    if (has_mailbox)   return VK_PRESENT_MODE_MAILBOX_KHR;
+    if (has_immediate) return VK_PRESENT_MODE_IMMEDIATE_KHR;
     return VK_PRESENT_MODE_FIFO_KHR;
 }
 
@@ -107,7 +125,7 @@ bool ca_swapchain_create(Ca_Instance *inst, Ca_Window *win,
     vkGetPhysicalDeviceSurfaceCapabilitiesKHR(inst->vk_gpu, win->surface, &caps);
 
     VkSurfaceFormatKHR fmt  = choose_surface_format(inst->vk_gpu, win->surface);
-    VkPresentModeKHR   mode = choose_present_mode(inst->vk_gpu, win->surface);
+    VkPresentModeKHR   mode = choose_present_mode(inst->vk_gpu, win->surface, inst->disable_vsync);
     VkExtent2D         ext  = choose_extent(&caps, width, height);
 
     uint32_t img_count = caps.minImageCount + 1;
