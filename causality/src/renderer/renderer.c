@@ -96,13 +96,35 @@ static bool create_vk_instance(Ca_Instance *inst, const char *app_name)
     };
 
 #ifdef CAUSALITY_VULKAN_VALIDATION
+    /* VK_LAYER_KHRONOS_validation ships with the LunarG Vulkan SDK, not
+       with the base loader/ICDs — only request it if it's actually
+       installed, so Debug builds still start on machines without the SDK. */
     const char *layers[] = { "VK_LAYER_KHRONOS_validation" };
-    ci.enabledLayerCount   = 1;
-    ci.ppEnabledLayerNames = layers;
+    bool has_validation_layer = false;
+    uint32_t avail_layer_count = 0;
+    vkEnumerateInstanceLayerProperties(&avail_layer_count, NULL);
+    VkLayerProperties *avail_layers =
+        (VkLayerProperties *)CA_MALLOC(avail_layer_count * sizeof(VkLayerProperties));
+    vkEnumerateInstanceLayerProperties(&avail_layer_count, avail_layers);
+    for (uint32_t i = 0; i < avail_layer_count; ++i) {
+        if (strcmp(avail_layers[i].layerName, layers[0]) == 0)
+            has_validation_layer = true;
+    }
+    CA_FREE(avail_layers);
+
+    if (has_validation_layer) {
+        ci.enabledLayerCount   = 1;
+        ci.ppEnabledLayerNames = layers;
+    } else {
+        fprintf(stderr, "[vk] VK_LAYER_KHRONOS_validation not found — "
+                        "install the LunarG Vulkan SDK to enable validation; "
+                        "continuing without it\n");
+    }
 #endif
 
-    if (vkCreateInstance(&ci, NULL, &inst->vk_instance) != VK_SUCCESS) {
-        fprintf(stderr, "[vk] vkCreateInstance failed\n");
+    VkResult vr = vkCreateInstance(&ci, NULL, &inst->vk_instance);
+    if (vr != VK_SUCCESS) {
+        fprintf(stderr, "[vk] vkCreateInstance failed: %d\n", vr);
         return false;
     }
 
