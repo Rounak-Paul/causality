@@ -195,6 +195,33 @@ static void free_subtree(Ca_Node *node)
         if (w->drag_node           == node) w->drag_node           = NULL;
         if (w->user_drag_node      == node) w->user_drag_node      = NULL;
         if (w->scrollbar_drag_node == node) w->scrollbar_drag_node = NULL;
+
+        /* Tooltips and context menus attach to an *external* node (e.g. a
+           tree-node header row) by raw pointer, tracked in a separate pool
+           rather than owned 1:1 like other widgets — release_widget() below
+           can't reach them. Left unreleased, a freed/reused node slot
+           (e.g. after a reconcile recycles it for an unrelated widget in a
+           different panel) keeps matching win->hovered_node by pointer
+           equality, so a stale tooltip/menu bound to the old owner renders
+           over whatever now occupies that memory. */
+        if (w->tooltip_pool) {
+            for (uint32_t i = 0; i < CA_MAX_TOOLTIPS_PER_WINDOW; ++i) {
+                Ca_Tooltip *tt = &w->tooltip_pool[i];
+                if (tt->in_use && tt->node == node) {
+                    tt->in_use = false;
+                    tt->node   = NULL;
+                }
+            }
+        }
+        if (w->ctxmenu_pool) {
+            for (uint32_t i = 0; i < CA_MAX_CTXMENUS_PER_WINDOW; ++i) {
+                Ca_CtxMenu *cm = &w->ctxmenu_pool[i];
+                if (cm->in_use && cm->node == node) {
+                    cm->in_use = false;
+                    cm->node   = NULL;
+                }
+            }
+        }
     }
     release_widget(node);
     /* Free the heap-allocated children pointer array (the child nodes
