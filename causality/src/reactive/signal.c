@@ -83,6 +83,19 @@ typedef struct {
     int32_t    pending[CA_MAX_EFFECTS_PER_INSTANCE];
     uint32_t   pending_count;
 
+    /* Indices of effects created via ca_frame_effect. Lets
+       ca_reactive_run_frame_effects iterate only the live frame-effects
+       every tick instead of scanning the whole (CA_MAX_EFFECTS_PER_INSTANCE)
+       effect pool to find the handful that are flagged — the per-tick
+       cost now scales with how many frame-effects are actually
+       registered, not with pool capacity. Sized to
+       CA_MAX_FRAME_EFFECTS_PER_INSTANCE (much smaller than the general
+       effect pool — frame-effects are rare by design), not
+       CA_MAX_EFFECTS_PER_INSTANCE, to avoid trading an 8192-slot scan for
+       an 8192-slot array. */
+    int32_t    frame_effects[CA_MAX_FRAME_EFFECTS_PER_INSTANCE];
+    uint32_t   frame_effect_count;
+
     /* Untrack guard: when > 0, reads do not subscribe. */
     int        untrack_depth;
 } Ca_Reactive;
@@ -306,6 +319,10 @@ void ca_reactive_flush(Ca_Instance *inst)
  * Called once per ca_instance_tick, independent of the signal-dep pending
  * queue that ca_reactive_flush drains — a frame effect re-runs every tick
  * whether or not any signal it reads changed (or even if it reads none).
+ * Iterates r->frame_effects (populated by ca_frame_effect, pruned by
+ * ca_effect_destroy) rather than scanning the full effect pool, so this
+ * scales with how many frame-effects are actually registered, not with
+ * CA_MAX_EFFECTS_PER_INSTANCE.
  *
  * inst  Instance whose frame effects are to be run.
  */
@@ -313,8 +330,8 @@ void ca_reactive_run_frame_effects(Ca_Instance *inst)
 {
     Ca_Reactive *r = get_reactive(inst);
     if (!r) return;
-    for (uint32_t i = 0; i < CA_MAX_EFFECTS_PER_INSTANCE; ++i) {
-        Ca_Effect *e = &r->effects[i];
+    for (uint32_t i = 0; i < r->frame_effect_count; ++i) {
+        Ca_Effect *e = &r->effects[r->frame_effects[i]];
         if (e->in_use && e->is_frame_effect)
             run_effect(r, e);
     }
@@ -579,7 +596,11 @@ Ca_Effect *ca_effect(Ca_Instance *inst, Ca_EffectFn fn, void *user_data)
 Ca_Effect *ca_frame_effect(Ca_Instance *inst, Ca_EffectFn fn, void *user_data)
 {
     Ca_Effect *e = ca_effect(inst, fn, user_data);
-    if (e) e->is_frame_effect = true;
+    if (!e) return NULL;
+    e->is_frame_effect = true;
+    Ca_Reactive *r = get_reactive(inst);
+    if (r && r->frame_effect_count < CA_MAX_FRAME_EFFECTS_PER_INSTANCE)
+        r->frame_effects[r->frame_effect_count++] = effect_index(r, e);
     return e;
 }
 
@@ -592,7 +613,19 @@ void ca_effect_destroy(Ca_Effect *eff)
 {
     if (!eff || !eff->in_use) return;
     Ca_Reactive *r = get_reactive(eff->inst);
-    if (r) clear_effect_deps(r, eff);
+    if (r) {
+        clear_effect_deps(r, eff);
+        if (eff->is_frame_effect) {
+            /* Swap-remove this effect's index out of frame_effects. */
+            int32_t target = effect_index(r, eff);
+            for (uint32_t i = 0; i < r->frame_effect_count; ++i) {
+                if (r->frame_effects[i] == target) {
+                    r->frame_effects[i] = r->frame_effects[--r->frame_effect_count];
+                    break;
+                }
+            }
+        }
+    }
     memset(eff, 0, sizeof(*eff));
 }
 

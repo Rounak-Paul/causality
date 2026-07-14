@@ -55,6 +55,14 @@
 #  define CA_MAX_SIGNAL_DEPS 64
 #endif
 
+/* Ceiling on live ca_frame_effect registrations per instance — these are
+   rare by design (genuinely external, non-signal state: live telemetry
+   panels and similar), unlike ordinary ca_effect, so this is sized much
+   smaller than CA_MAX_EFFECTS_PER_INSTANCE rather than reusing it. */
+#ifndef CA_MAX_FRAME_EFFECTS_PER_INSTANCE
+#  define CA_MAX_FRAME_EFFECTS_PER_INSTANCE 64
+#endif
+
 /* ---- Widget pools (per window) ---- */
 
 #ifndef CA_MAX_LABELS_PER_WINDOW
