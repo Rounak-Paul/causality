@@ -13,6 +13,7 @@
 
 /* Forward decls into the reactive subsystem (src/reactive/signal.c). */
 void ca_reactive_flush(Ca_Instance *inst);
+void ca_reactive_run_frame_effects(Ca_Instance *inst);
 void ca_reactive_release_instance(Ca_Instance *inst);
 void ca_popup_system_init(Ca_Instance *inst);
 void ca_popup_system_tick(Ca_Instance *inst);
@@ -102,7 +103,8 @@ void ca_instance_destroy(Ca_Instance *instance)
  * Advance one application frame.
  *
  * Processes OS window events, ticks the popup manager, flushes reactive
- * effects, runs the UI update pass, and submits a renderer frame.
+ * effects, runs every registered frame effect, runs the UI update pass,
+ * and submits a renderer frame.
  *
  * instance  Instance to tick.
  * Returns   true while at least one window is open; false when all are closed.
@@ -113,6 +115,8 @@ bool ca_instance_tick(Ca_Instance *instance)
     ca_popup_system_tick(instance);
     /* Run reactive effects scheduled since the previous tick. */
     ca_reactive_flush(instance);
+    /* Run every ca_frame_effect unconditionally, every tick. */
+    ca_reactive_run_frame_effects(instance);
     ca_ui_update(instance);
     ca_renderer_frame(instance);
     return true;

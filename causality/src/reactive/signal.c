@@ -43,6 +43,12 @@ struct Ca_Effect {
     bool         in_use;
     bool         scheduled;       /* queued for next flush */
 
+    /* True for effects created via ca_frame_effect: re-run unconditionally
+       every ca_instance_tick by ca_reactive_run_frame_effects, regardless
+       of tracked deps (it may have none — the whole point is state outside
+       causality's signal graph). */
+    bool         is_frame_effect;
+
     /* Signals this effect currently subscribes to. */
     Ca_Signal   *deps[CA_MAX_SIGNAL_DEPS];
     uint32_t     dep_count;
@@ -149,6 +155,9 @@ void ca_reactive_release_instance(Ca_Instance *inst) { release_reactive(inst); }
 
 /* Public hook so causality.c can flush pending effects each tick. */
 void ca_reactive_flush(Ca_Instance *inst);
+
+/* Public hook so causality.c can run every ca_frame_effect each tick. */
+void ca_reactive_run_frame_effects(Ca_Instance *inst);
 
 /* ============================================================
    Internal helpers
@@ -288,6 +297,26 @@ void ca_reactive_flush(Ca_Instance *inst)
         int32_t idx = r->pending[--r->pending_count];
         Ca_Effect *e = &r->effects[idx];
         run_effect(r, e);
+    }
+}
+
+/*
+ * Run every ca_frame_effect registered on an instance, unconditionally.
+ *
+ * Called once per ca_instance_tick, independent of the signal-dep pending
+ * queue that ca_reactive_flush drains — a frame effect re-runs every tick
+ * whether or not any signal it reads changed (or even if it reads none).
+ *
+ * inst  Instance whose frame effects are to be run.
+ */
+void ca_reactive_run_frame_effects(Ca_Instance *inst)
+{
+    Ca_Reactive *r = get_reactive(inst);
+    if (!r) return;
+    for (uint32_t i = 0; i < CA_MAX_EFFECTS_PER_INSTANCE; ++i) {
+        Ca_Effect *e = &r->effects[i];
+        if (e->in_use && e->is_frame_effect)
+            run_effect(r, e);
     }
 }
 
@@ -536,6 +565,22 @@ Ca_Effect *ca_effect(Ca_Instance *inst, Ca_EffectFn fn, void *user_data)
     fprintf(stderr, "[causality] ca_effect: pool exhausted (%d)\n",
             CA_MAX_EFFECTS_PER_INSTANCE);
     return NULL;
+}
+
+/*
+ * Create an effect that re-runs unconditionally on every ca_instance_tick
+ * — see ca_reactive.h for when to reach for this over plain ca_effect.
+ *
+ * inst       Owning instance.
+ * fn         Effect body; must not be NULL.
+ * user_data  Opaque argument forwarded to fn.
+ * Returns    New Ca_Effect, or NULL if the pool is exhausted or fn is NULL.
+ */
+Ca_Effect *ca_frame_effect(Ca_Instance *inst, Ca_EffectFn fn, void *user_data)
+{
+    Ca_Effect *e = ca_effect(inst, fn, user_data);
+    if (e) e->is_frame_effect = true;
+    return e;
 }
 
 /*

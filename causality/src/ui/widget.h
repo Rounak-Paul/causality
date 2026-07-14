@@ -28,3 +28,12 @@ void ca_widget_reapply_css(Ca_Node *node);
 
 /* Re-resolve every CSS-owned field, including layout, after a stylesheet swap. */
 void ca_widget_refresh_css(Ca_Node *node);
+
+/* Mirrors node->scroll_y into its lazily-created scroll_y_signal (see
+   ca_get_scroll_y_signal), if one has ever been requested. No-op for
+   nodes nothing has ever asked to observe reactively. Called from every
+   scroll_y mutation site, including layout.c's auto-clamp when shrinking
+   content pulls scroll_y back into range — a scroll change from any
+   source must be visible to ca_div_set_builder consumers subscribed via
+   ca_get_scroll_y_signal, not just user-drag/wheel mutations. */
+void ca_node_sync_scroll_y_signal(Ca_Node *node);

@@ -187,6 +187,10 @@ static void free_subtree(Ca_Node *node)
         ca_effect_destroy(node->builder_effect);
         node->builder_effect = NULL;
     }
+    if (node->scroll_y_signal) {
+        ca_signal_destroy(node->scroll_y_signal);
+        node->scroll_y_signal = NULL;
+    }
     /* Clear any window-level pointers that reference this node, otherwise
        input handlers will dereference a freed slot next frame (UAF). */
     if (node->window) {

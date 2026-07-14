@@ -968,6 +968,28 @@ CA_API float ca_get_scroll_y(Ca_Window *window, const char *id);
  */
 CA_API void  ca_set_scroll_y(Ca_Window *window, const char *id, float y);
 
+/*
+ * Return a Ca_Signal mirroring a scroll container's vertical offset,
+ * lazily creating it on first call. The signal is updated (via
+ * ca_signal_set_float — a no-op when the value is unchanged) at every
+ * scroll_y mutation: mouse wheel, scrollbar drag, ca_set_scroll_y,
+ * ca_scroll_to_top/bottom. Read it with ca_signal_get_float inside a
+ * ca_div_set_builder body to make a rebuild depend on scroll position —
+ * e.g. root-row virtualization that only needs to recompute its visible
+ * slice when the user actually scrolls, not on every tick.
+ *
+ * Signal writes flush on the NEXT ca_instance_tick (same as any other
+ * signal), so a builder depending on this reacts one frame after the
+ * scroll event that moved it — consistent with how every other
+ * signal-driven rebuild in this codebase already behaves.
+ *
+ * window  Window owning the container.
+ * id      CSS id of the scroll container.
+ * Returns The container's scroll-Y signal, or NULL if no container with
+ *         that id exists.
+ */
+CA_API Ca_Signal *ca_get_scroll_y_signal(Ca_Window *window, const char *id);
+
 /* ---- Window callbacks ---- */
 
 /*

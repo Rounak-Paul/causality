@@ -166,6 +166,29 @@ CA_API void ca_effect_destroy(Ca_Effect *eff);
 /* Force the effect to re-run on the next tick, re-tracking its dependencies. */
 CA_API void ca_effect_invalidate(Ca_Effect *eff);
 
+/*
+ * Register an effect that re-runs unconditionally on every
+ * ca_instance_tick, regardless of which signals (if any) it reads —
+ * for genuinely external, continuously-changing state with no signal
+ * source (live engine telemetry: frame timing, GPU/CPU stats, and
+ * similar). The body may call ca_set_text / ca_set_* and other direct
+ * widget mutators (safe outside a build context); it must NOT call
+ * ca_reconcile_begin, ca_div_clear, ca_div_begin or anything else that
+ * requires an active widget build context — use ca_div_set_builder
+ * (optionally combined with a plain ca_signal write from a
+ * ca_frame_effect) for that instead.
+ *
+ * Ordinary ca_effect is almost always the right choice — reach for this
+ * only when the effect's own body has no signal to depend on because the
+ * state it reads lives outside causality entirely.
+ *
+ * inst       Owning Ca_Instance.
+ * fn         Effect body; runs once immediately and again every tick.
+ * user_data  Passed to fn on each run.
+ * Returns    Ca_Effect handle that can be passed to ca_effect_destroy.
+ */
+CA_API Ca_Effect *ca_frame_effect(Ca_Instance *inst, Ca_EffectFn fn, void *user_data);
+
 /* ---- Computed ---- */
 
 /*

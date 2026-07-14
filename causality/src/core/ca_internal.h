@@ -467,6 +467,14 @@ struct Ca_Node {
     float         content_w, content_h; /* natural content size        */
     bool          scrollbar_x_visible;
     bool          scrollbar_y_visible;
+    /* Lazily created by ca_get_scroll_y_signal() the first time a caller
+       asks to observe this node's scroll position reactively. Mirrored
+       (via ca_signal_set_float, a no-op when unchanged) at every scroll_y
+       mutation site — mouse wheel, scrollbar drag, ca_set_scroll_y,
+       ca_scroll_to_top/bottom — so a ca_div_set_builder can depend on
+       scroll position the same way it depends on any other signal,
+       instead of polling ca_get_scroll_y every frame. */
+    Ca_Signal    *scroll_y_signal;
     /* Transition animations */
     Ca_Transition transitions[CA_MAX_TRANSITIONS_PER_NODE];
     float         transition_duration;   /* default duration from CSS (sec) */

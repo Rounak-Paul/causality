@@ -6,6 +6,7 @@
 #include "css.h"
 #include "font.h"
 #include "scrollbar.h"
+#include "widget.h"
 
 static float node_ui_scale(const Ca_Node *node)
 {
@@ -805,10 +806,17 @@ static void layout_node(Ca_Node *node, float x, float y, float avail_w, float av
 
     /* Auto-clamp scroll offsets: if content shrank (e.g. children hidden)
        the old scroll_y may now exceed the scrollable range, leaving
-       content positioned above the visible clip area. */
+       content positioned above the visible clip area. Must mirror into
+       scroll_y_signal on the y clamp — a ca_div_set_builder subscribed
+       via ca_get_scroll_y_signal (e.g. root-row virtualization) otherwise
+       keeps computing its visible slice from the stale pre-clamp value
+       until the user happens to scroll again. */
     if (node->desc.overflow_y >= 1) {
         float max_sy = ca_scrollbar_max_y(node);
-        if (node->scroll_y > max_sy) node->scroll_y = max_sy;
+        if (node->scroll_y > max_sy) {
+            node->scroll_y = max_sy;
+            ca_node_sync_scroll_y_signal(node);
+        }
     }
     if (node->desc.overflow_x >= 1) {
         float max_sx = ca_scrollbar_max_x(node);

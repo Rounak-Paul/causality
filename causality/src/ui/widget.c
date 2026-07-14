@@ -1796,12 +1796,23 @@ static Ca_Node *find_node_by_id(Ca_Window *window, const char *id)
     return NULL;
 }
 
+/* Mirrors n->scroll_y into its lazily-created scroll_y_signal, if one has
+   ever been requested via ca_get_scroll_y_signal. No-op (and no signal
+   allocation) for nodes nothing has ever asked to observe reactively —
+   the overwhelming majority of scroll containers in a typical UI. */
+void ca_node_sync_scroll_y_signal(Ca_Node *n)
+{
+    if (n && n->scroll_y_signal)
+        ca_signal_set_float(n->scroll_y_signal, n->scroll_y);
+}
+
 void ca_scroll_to_top(Ca_Window *window, const char *id)
 {
     Ca_Node *n = find_node_by_id(window, id);
     if (!n) return;
     n->scroll_y = 0.0f;
     n->dirty |= CA_DIRTY_LAYOUT;
+    ca_node_sync_scroll_y_signal(n);
 }
 
 void ca_scroll_to_bottom(Ca_Window *window, const char *id)
@@ -1810,6 +1821,7 @@ void ca_scroll_to_bottom(Ca_Window *window, const char *id)
     if (!n) return;
     n->scroll_y = ca_scrollbar_max_y(n);
     n->dirty |= CA_DIRTY_LAYOUT;
+    ca_node_sync_scroll_y_signal(n);
 }
 
 float ca_get_scroll_y(Ca_Window *window, const char *id)
@@ -1827,6 +1839,16 @@ void ca_set_scroll_y(Ca_Window *window, const char *id, float y)
     if (y > max_scroll)    y = max_scroll;
     n->scroll_y    = y;
     n->dirty      |= CA_DIRTY_LAYOUT;
+    ca_node_sync_scroll_y_signal(n);
+}
+
+Ca_Signal *ca_get_scroll_y_signal(Ca_Window *window, const char *id)
+{
+    Ca_Node *n = find_node_by_id(window, id);
+    if (!n) return NULL;
+    if (!n->scroll_y_signal)
+        n->scroll_y_signal = ca_signal_float(window->instance, n->scroll_y);
+    return n->scroll_y_signal;
 }
 
 /*
@@ -3793,6 +3815,7 @@ void ca_widget_input_pass(Ca_Window *win)
                 if (new_scroll != n->scroll_y) {
                     n->scroll_y = new_scroll;
                     n->dirty |= CA_DIRTY_LAYOUT | CA_DIRTY_CONTENT;
+                    ca_node_sync_scroll_y_signal(n);
                 }
             } else {
                 float track_w = ca_scrollbar_viewport_width(n) -
@@ -3957,6 +3980,7 @@ void ca_widget_input_pass(Ca_Window *win)
                     if (scroll_target->scroll_y < 0) scroll_target->scroll_y = 0;
                     if (scroll_target->scroll_y > max_scroll) scroll_target->scroll_y = max_scroll;
                     scroll_target->dirty |= CA_DIRTY_LAYOUT | CA_DIRTY_CONTENT;
+                    ca_node_sync_scroll_y_signal(scroll_target);
                 }
             }
         }
