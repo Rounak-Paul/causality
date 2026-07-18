@@ -4344,32 +4344,38 @@ void ca_widget_input_pass(Ca_Window *win)
             if (win->focused_node) win->focused_node->dirty |= CA_DIRTY_CONTENT;
         }
 
-        /* Fire button callbacks — z-aware: when buttons overlap, only fire
-           the one(s) at the highest z_index so overlay widgets don't leak
-           clicks through to content rendered beneath them. */
+        /* Fire one button callback — z-aware and area-aware.  Earlier this
+           fired every button at the winning z-index under the cursor; when
+           toolbar nodes were rebuilt or overlapped, multiple mutually
+           exclusive buttons could run in one click and the later callback
+           would overwrite the earlier state.  Match hover picking: highest
+           stacking context first, then the most specific/smallest node. */
         if (win->button_pool) {
-            /* Pass 1: find the maximum z_index among matching buttons. */
             int16_t top_z = INT16_MIN;
+            Ca_Button *best_btn = NULL;
+            float best_area = 1e18f;
             for (uint32_t i = 0; i < CA_MAX_BUTTONS_PER_WINDOW; ++i) {
                 Ca_Button *btn = &win->button_pool[i];
                 if (!btn->in_use || !btn->on_click || !btn->node) continue;
                 if (is_effectively_disabled(btn->node)) continue;
                 if (!point_in_node(btn->node, mx, my)) continue;
-                if (btn->node->desc.z_index > top_z)
+                if (btn->node->desc.z_index > top_z) {
                     top_z = btn->node->desc.z_index;
-            }
-            /* Pass 2: fire only buttons at the winning z_index. */
-            for (uint32_t i = 0; i < CA_MAX_BUTTONS_PER_WINDOW; ++i) {
-                Ca_Button *btn = &win->button_pool[i];
-                if (!btn->in_use || !btn->on_click || !btn->node) continue;
-                if (is_effectively_disabled(btn->node)) continue;
-                if (btn->node->desc.z_index != top_z) continue;
-                if (point_in_node(btn->node, mx, my)) {
-                    btn->last_click_x     = mx - btn->node->x;
-                    btn->last_click_y     = my - btn->node->y;
-                    btn->last_click_valid = true;
-                    btn->on_click(btn, btn->click_data);
+                    best_area = btn->node->w * btn->node->h;
+                    best_btn = btn;
+                } else if (btn->node->desc.z_index == top_z) {
+                    float area = btn->node->w * btn->node->h;
+                    if (!best_btn || area < best_area) {
+                        best_area = area;
+                        best_btn = btn;
+                    }
                 }
+            }
+            if (best_btn) {
+                best_btn->last_click_x     = mx - best_btn->node->x;
+                best_btn->last_click_y     = my - best_btn->node->y;
+                best_btn->last_click_valid = true;
+                best_btn->on_click(best_btn, best_btn->click_data);
             }
         }
 
