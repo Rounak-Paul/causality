@@ -2647,20 +2647,10 @@ void ca_table_cell(const Ca_TextDesc *desc)
    PUBLIC — Tooltip (attach to previously created element)
    ============================================================ */
 
-Ca_Tooltip *ca_tooltip(const Ca_TooltipDesc *desc)
+static Ca_Tooltip *tooltip_for_node(Ca_Node *target, const Ca_TooltipDesc *desc)
 {
     assert(g_ctx.active && desc);
-
-    Ca_Node *parent = ctx_top();
-    if (parent->child_count == 0) return NULL;
-
-    /* When called inside a ca_tree_node_begin/end block, attach to the header
-       row (children[0]) — same convention as ca_context_menu. */
-    Ca_Node *target;
-    if (parent->widget_type == CA_WIDGET_TREENODE)
-        target = parent->children[0];
-    else
-        target = parent->children[parent->child_count - 1];
+    if (!target) return NULL;
 
     /* Reuse an existing tooltip already bound to this node so that
        reconcile rebuilds don't exhaust the pool each frame. */
@@ -2702,6 +2692,32 @@ Ca_Tooltip *ca_tooltip(const Ca_TooltipDesc *desc)
     }
 
     return tt;
+}
+
+Ca_Tooltip *ca_tooltip(const Ca_TooltipDesc *desc)
+{
+    assert(g_ctx.active && desc);
+
+    Ca_Node *parent = ctx_top();
+    if (parent->child_count == 0) return NULL;
+
+    /* When called inside a ca_tree_node_begin/end block, attach to the header
+       row (children[0]) — same convention as ca_context_menu. */
+    Ca_Node *target;
+    if (parent->widget_type == CA_WIDGET_TREENODE)
+        target = parent->children[0];
+    else
+        target = parent->children[parent->child_count - 1];
+
+    return tooltip_for_node(target, desc);
+}
+
+Ca_Tooltip *ca_tooltip_for_widget(void *widget, const Ca_TooltipDesc *desc)
+{
+    assert(g_ctx.active && desc);
+    if (!widget) return NULL;
+    Ca_Node *target = *(Ca_Node **)widget;
+    return tooltip_for_node(target, desc);
 }
 
 void ca_tooltip_set_text(Ca_Tooltip *tooltip, const char *text)

@@ -398,6 +398,15 @@ CA_API void ca_table_cell(const Ca_TextDesc *desc);
 CA_API Ca_Tooltip *ca_tooltip(const Ca_TooltipDesc *desc);
 
 /*
+ * Attach a tooltip directly to a widget handle.
+ *
+ * widget  Target widget handle, or NULL.
+ * desc    Tooltip text and optional id/style.
+ * Returns Handle to the created Ca_Tooltip.
+ */
+CA_API Ca_Tooltip *ca_tooltip_for_widget(void *widget, const Ca_TooltipDesc *desc);
+
+/*
  * Update the text of an existing tooltip without rebuilding its target widget.
  *
  * tooltip  Target Ca_Tooltip.
