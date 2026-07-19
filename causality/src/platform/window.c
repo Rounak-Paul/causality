@@ -480,9 +480,11 @@ static bool window_workarea_for_rect(int win_x, int win_y, int win_w, int win_h,
     GLFWmonitor **monitors = glfwGetMonitors(&monitor_count);
     GLFWmonitor *target = glfwGetPrimaryMonitor();
     int best_overlap = -1;
-    for (int i = 0; i < monitor_count; ++i) {
+    for (int i = 0; monitors && i < monitor_count; ++i) {
+        if (!monitors[i]) continue;
         int x = 0, y = 0, width = 0, height = 0;
         glfwGetMonitorWorkarea(monitors[i], &x, &y, &width, &height);
+        if (width <= 0 || height <= 0) continue;
         if (center_x >= x && center_x < x + width &&
             center_y >= y && center_y < y + height) {
             target = monitors[i];
@@ -497,8 +499,17 @@ static bool window_workarea_for_rect(int win_x, int win_y, int win_w, int win_h,
         }
     }
 
+    if (!target) return false;
+
     int gx = 0, gy = 0, gw = 0, gh = 0;
     glfwGetMonitorWorkarea(target, &gx, &gy, &gw, &gh);
+    if (gw <= 0 || gh <= 0) {
+        const GLFWvidmode *mode = glfwGetVideoMode(target);
+        if (!mode || mode->width <= 0 || mode->height <= 0) return false;
+        glfwGetMonitorPos(target, &gx, &gy);
+        gw = mode->width;
+        gh = mode->height;
+    }
 
 #if defined(__linux__)
     if (glfwGetPlatform() == GLFW_PLATFORM_X11) {
