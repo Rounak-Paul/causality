@@ -337,9 +337,46 @@ static bool create_logical_device(Ca_Instance *inst)
        callers must query ca_gpu_draw_indirect_count_supported and fall back). */
     inst->draw_indirect_count = available12.drawIndirectCount == VK_TRUE;
 
+    /* Optional Vulkan 1.2 descriptor-indexing features: together these let a
+       shader hold ONE large "bindless" sampler array binding (update-after-
+       bind, partially-bound, indexed dynamically at runtime via a UBO/push-
+       constant-supplied index) instead of one fixed binding per texture —
+       needed once a material wants more textures bound than the device's
+       maxPerStageDescriptorSamplers limit allows through fixed bindings
+       (e.g. terrain's 8 layers x 5 PBR maps). All four bits must be present
+       together; soft-fail (log + continue with bindless disabled) rather
+       than refusing device creation, since only terrain currently needs
+       this and it has a non-bindless fallback path. */
+    bool bindless_bits =
+        available12.descriptorIndexing == VK_TRUE &&
+        available12.shaderSampledImageArrayNonUniformIndexing == VK_TRUE &&
+        available12.descriptorBindingPartiallyBound == VK_TRUE &&
+        available12.descriptorBindingVariableDescriptorCount == VK_TRUE &&
+        available12.descriptorBindingSampledImageUpdateAfterBind == VK_TRUE &&
+        available12.runtimeDescriptorArray == VK_TRUE;
+    inst->descriptor_indexing_supported = bindless_bits;
+    fprintf(stderr,
+            "[vk] descriptor indexing (bindless) support: descriptorIndexing=%u "
+            "shaderSampledImageArrayNonUniformIndexing=%u descriptorBindingPartiallyBound=%u "
+            "descriptorBindingVariableDescriptorCount=%u descriptorBindingSampledImageUpdateAfterBind=%u "
+            "runtimeDescriptorArray=%u -> %s\n",
+            available12.descriptorIndexing,
+            available12.shaderSampledImageArrayNonUniformIndexing,
+            available12.descriptorBindingPartiallyBound,
+            available12.descriptorBindingVariableDescriptorCount,
+            available12.descriptorBindingSampledImageUpdateAfterBind,
+            available12.runtimeDescriptorArray,
+            bindless_bits ? "ENABLED" : "DISABLED");
+
     VkPhysicalDeviceVulkan12Features enabled12 = {
         .sType              = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,
         .drawIndirectCount  = inst->draw_indirect_count ? VK_TRUE : VK_FALSE,
+        .descriptorIndexing                              = bindless_bits ? VK_TRUE : VK_FALSE,
+        .shaderSampledImageArrayNonUniformIndexing        = bindless_bits ? VK_TRUE : VK_FALSE,
+        .descriptorBindingPartiallyBound                  = bindless_bits ? VK_TRUE : VK_FALSE,
+        .descriptorBindingVariableDescriptorCount         = bindless_bits ? VK_TRUE : VK_FALSE,
+        .descriptorBindingSampledImageUpdateAfterBind     = bindless_bits ? VK_TRUE : VK_FALSE,
+        .runtimeDescriptorArray                           = bindless_bits ? VK_TRUE : VK_FALSE,
     };
     VkPhysicalDeviceVulkan13Features enabled13 = {
         .sType                           = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES,

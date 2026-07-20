@@ -121,6 +121,11 @@ CA_API VkCommandPool       ca_gpu_command_pool(Ca_Instance *instance);
 /* Returns whether Vulkan 1.2 drawIndirectCount was enabled at device creation. */
 CA_API bool                ca_gpu_draw_indirect_count_supported(Ca_Instance *instance);
 
+/* Returns whether Vulkan 1.2 descriptor indexing (bindless textures) was
+   enabled at device creation — see ca_internal.h's descriptor_indexing_supported
+   doc comment for the exact feature bits this requires. */
+CA_API bool                ca_gpu_bindless_supported(Ca_Instance *instance);
+
 /*
  * Find a Vulkan memory type index satisfying the given type bits and property flags.
  *

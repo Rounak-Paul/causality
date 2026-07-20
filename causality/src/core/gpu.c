@@ -48,6 +48,18 @@ bool ca_gpu_draw_indirect_count_supported(Ca_Instance *instance)
 }
 
 /*
+ * Return whether the Vulkan 1.2 descriptor-indexing feature set (bindless
+ * textures: update-after-bind + partially-bound + non-uniform dynamic
+ * indexing) was enabled at device creation. False on drivers missing any
+ * one of the required bits; callers must fall back to fixed per-texture
+ * descriptor bindings.
+ */
+bool ca_gpu_bindless_supported(Ca_Instance *instance)
+{
+    return instance ? instance->descriptor_indexing_supported : false;
+}
+
+/*
  * Return the Vulkan graphics queue and optionally its queue family index.
  *
  * instance      Ca_Instance to query; returns VK_NULL_HANDLE if NULL.
