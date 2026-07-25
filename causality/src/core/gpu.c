@@ -176,3 +176,17 @@ void ca_gpu_end_transfer(Ca_Instance *instance, VkCommandBuffer cmd)
     vkQueueWaitIdle(instance->gfx_queue);
     vkFreeCommandBuffers(instance->vk_device, instance->cmd_pool, 1, &cmd);
 }
+
+/*
+ * Registers the external renderer's device-resource predestroy hook — see
+ * ca_gpu_set_predestroy_callback's doc comment in ca_gpu.h. Only one
+ * callback is held; a later call replaces the previous one.
+ */
+void ca_gpu_set_predestroy_callback(Ca_Instance *instance,
+                                     void (*fn)(void *user_data),
+                                     void *user_data)
+{
+    if (!instance) return;
+    instance->gpu_predestroy_fn   = fn;
+    instance->gpu_predestroy_data = user_data;
+}

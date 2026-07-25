@@ -450,6 +450,13 @@ void ca_renderer_shutdown(Ca_Instance *inst)
     if (inst->vk_device == VK_NULL_HANDLE) return;
     vkDeviceWaitIdle(inst->vk_device);
 
+    /* Give the external renderer sharing this device (if any) a chance to
+       flush its own deferred/frame-delayed resource teardown now that the
+       device is confirmed idle — otherwise those resources are still
+       destroyed by the time vkDestroyDevice below runs, tripping
+       validation's "child objects not destroyed" check. */
+    if (inst->gpu_predestroy_fn) inst->gpu_predestroy_fn(inst->gpu_predestroy_data);
+
     ca_image_pool_shutdown(inst);
     ca_blur_pipeline_destroy(inst);
     ca_image_pipeline_destroy(inst);

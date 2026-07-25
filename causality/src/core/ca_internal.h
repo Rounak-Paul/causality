@@ -1110,6 +1110,11 @@ struct Ca_Instance {
     bool                     descriptor_indexing_supported; /* Vulkan 1.2 bindless features enabled — see ca_gpu_bindless_supported */
     bool                     disable_vsync;     /* from Ca_InstanceDesc — see choose_present_mode() */
 
+    /* External renderer's device-resource predestroy hook — see
+       ca_gpu_set_predestroy_callback in ca_gpu.h. */
+    void (*gpu_predestroy_fn)(void *user_data);
+    void  *gpu_predestroy_data;
+
     /* Event ring-buffer */
     Ca_Event         event_queue[CA_EVENT_QUEUE_CAPACITY];
     uint32_t         event_head;

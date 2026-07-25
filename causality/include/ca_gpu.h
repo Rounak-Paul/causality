@@ -193,6 +193,27 @@ CA_API VkFormat ca_viewport_format(const Ca_Viewport *viewport);
    across frames. */
 CA_API uint32_t ca_viewport_frame_index(const Ca_Viewport *viewport);
 
+/* ============================================================
+   DEVICE TEARDOWN HOOK
+   ============================================================ */
+
+/*
+ * Registers a callback invoked once, right before the VkDevice is
+ * destroyed (after causality's own vkDeviceWaitIdle, so the device is
+ * already idle when it fires). An external renderer sharing this GPU
+ * context (ca_gpu_device) may itself own deferred/frame-delayed Vulkan
+ * resource teardown (e.g. buffers freed a few frames after the app
+ * requested it, to avoid a same-frame device stall) — without this hook
+ * such resources would still be queued, and therefore never actually
+ * destroyed, at the moment causality tears down the device, tripping
+ * validation's "child objects not destroyed" check. Only one callback is
+ * held at a time; a NULL fn clears it. Not for general per-frame use —
+ * this fires exactly once, at shutdown.
+ */
+CA_API void ca_gpu_set_predestroy_callback(Ca_Instance *instance,
+                                            void (*fn)(void *user_data),
+                                            void *user_data);
+
 #ifdef __cplusplus
 }
 #endif
