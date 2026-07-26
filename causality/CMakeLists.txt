@@ -80,8 +80,10 @@ target_link_libraries(causality
 
 # Platform-specific link libraries
 if(APPLE)
-    # VMA is C++ — need the C++ stdlib on Apple
-    target_link_libraries(causality PUBLIC c++)
+    # C-only consumers need VMA/shaderc's C++ runtime explicitly. C++ link
+    # drivers already add it, so propagating another -lc++ only produces a
+    # duplicate-library warning.
+    target_link_libraries(causality PUBLIC $<$<LINK_LANGUAGE:C>:c++>)
     target_link_libraries(causality PRIVATE "-framework AppKit")
 elseif(WIN32)
     # Nothing extra needed — MSVC links CRT automatically
