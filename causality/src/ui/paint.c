@@ -3,6 +3,7 @@
 
 /* paint.c — CPU-side draw command generation */
 #include "paint.h"
+#include "node.h"
 #include "font.h"
 #include "ca_theme.h"
 #include "style.h"
@@ -218,7 +219,7 @@ static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, Cli
 
     /* ---- Backdrop blur — frosted glass effect ---- */
     if (node->desc.backdrop_blur > 0.0f &&
-        win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
+        ca_window_reserve_draw_commands(win, (size_t)win->draw_cmd_count + 1u)) {
         Ca_DrawCmd *cmd = &win->draw_cmds[win->draw_cmd_count++];
         memset(cmd, 0, sizeof(*cmd));
         cmd->type                 = CA_DRAW_BACKDROP_BLUR;
@@ -239,7 +240,7 @@ static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, Cli
 
     /* ---- Box shadow — GPU SDF Gaussian blur ---- */
     if (node->desc.shadow_color != 0 &&
-        win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
+        ca_window_reserve_draw_commands(win, (size_t)win->draw_cmd_count + 1u)) {
         float sr, sg, sb, sa;
         unpack_color(node->desc.shadow_color, &sr, &sg, &sb, &sa);
         float blur   = node->desc.shadow_blur;
@@ -265,7 +266,7 @@ static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, Cli
     }
 
     /* ---- Background rect (or gradient) ---- */
-    if (win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
+    if (ca_window_reserve_draw_commands(win, (size_t)win->draw_cmd_count + 1u)) {
         node->draw_cmd_idx = (int32_t)win->draw_cmd_count;
         Ca_DrawCmd *cmd    = &win->draw_cmds[win->draw_cmd_count++];
         memset(cmd, 0, sizeof(*cmd));
@@ -320,7 +321,7 @@ static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, Cli
         for (int ei = 0; ei < 4; ei++) {
             float ew = edges[ei].w;
             if (ew <= 0.0f || edges[ei].c == 0) continue;
-            if (win->draw_cmd_count >= CA_MAX_DRAW_CMDS_PER_WINDOW) break;
+            if (!ca_window_reserve_draw_commands(win, (size_t)win->draw_cmd_count + 1u)) break;
             float er, eg, eb, ea;
             unpack_color(edges[ei].c, &er, &eg, &eb, &ea);
             Ca_DrawCmd *ec = &win->draw_cmds[win->draw_cmd_count++];
@@ -357,7 +358,7 @@ static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, Cli
         float or_, og, ob, oa;
         unpack_color(node->desc.outline_color, &or_, &og, &ob, &oa);
         for (int oi = 0; oi < 4; oi++) {
-            if (win->draw_cmd_count >= CA_MAX_DRAW_CMDS_PER_WINDOW) break;
+            if (!ca_window_reserve_draw_commands(win, (size_t)win->draw_cmd_count + 1u)) break;
             Ca_DrawCmd *oc = &win->draw_cmds[win->draw_cmd_count++];
             memset(oc, 0, sizeof(*oc));
             oc->type    = CA_DRAW_RECT;
@@ -412,7 +413,7 @@ static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, Cli
         float bx = node->x + 1.0f * ui_s;
         float by = node->y + (node->h - bs) * 0.5f;
         /* Box background */
-        if (win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
+        if (ca_window_reserve_draw_commands(win, (size_t)win->draw_cmd_count + 1u)) {
             Ca_DrawCmd *c = &win->draw_cmds[win->draw_cmd_count++];
             memset(c, 0, sizeof(*c));
             c->type = CA_DRAW_RECT;
@@ -423,7 +424,7 @@ static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, Cli
             c->in_use = true;
         }
         /* Checkmark */
-        if (cb->checked && win->draw_cmd_count + 1 < CA_MAX_DRAW_CMDS_PER_WINDOW) {
+        if (cb->checked && ca_window_reserve_draw_commands(win, (size_t)win->draw_cmd_count + 2u)) {
             float cx = bx + bs * 0.25f, cy = by + bs * 0.5f;
             Ca_DrawCmd *c1 = &win->draw_cmds[win->draw_cmd_count++];
             memset(c1, 0, sizeof(*c1));
@@ -455,7 +456,7 @@ static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, Cli
         float bx = node->x + 1.0f * ui_s;
         float by = node->y + (node->h - bs) * 0.5f;
         /* Outer circle */
-        if (win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
+        if (ca_window_reserve_draw_commands(win, (size_t)win->draw_cmd_count + 1u)) {
             Ca_DrawCmd *c = &win->draw_cmds[win->draw_cmd_count++];
             memset(c, 0, sizeof(*c));
             c->type = CA_DRAW_RECT;
@@ -465,7 +466,7 @@ static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, Cli
             c->in_use = true;
         }
         /* Inner dot when selected */
-        if (r->value && win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
+        if (r->value && ca_window_reserve_draw_commands(win, (size_t)win->draw_cmd_count + 1u)) {
             float ds = bs * 0.5f;
             Ca_DrawCmd *c = &win->draw_cmds[win->draw_cmd_count++];
             memset(c, 0, sizeof(*c));
@@ -494,7 +495,7 @@ static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, Cli
         float pct = (sl->max_val > sl->min_val)
             ? (sl->value - sl->min_val) / (sl->max_val - sl->min_val) : 0;
         /* Track background */
-        if (win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
+        if (ca_window_reserve_draw_commands(win, (size_t)win->draw_cmd_count + 1u)) {
             Ca_DrawCmd *c = &win->draw_cmds[win->draw_cmd_count++];
             memset(c, 0, sizeof(*c));
             c->type = CA_DRAW_RECT;
@@ -505,7 +506,7 @@ static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, Cli
         }
         /* Fill */
         float fill_w = node->w * pct;
-        if (fill_w > 0 && win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
+        if (fill_w > 0 && ca_window_reserve_draw_commands(win, (size_t)win->draw_cmd_count + 1u)) {
             Ca_DrawCmd *c = &win->draw_cmds[win->draw_cmd_count++];
             memset(c, 0, sizeof(*c));
             c->type = CA_DRAW_RECT;
@@ -515,7 +516,7 @@ static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, Cli
             c->in_use = true;
         }
         /* Thumb */
-        if (win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
+        if (ca_window_reserve_draw_commands(win, (size_t)win->draw_cmd_count + 1u)) {
             float thumb_sz = 14.0f * ui_s;
             float tx = node->x + fill_w - thumb_sz * 0.5f;
             float ty = node->y + (node->h - thumb_sz) * 0.5f;
@@ -533,7 +534,7 @@ static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, Cli
         Ca_Toggle *t = (Ca_Toggle *)node->widget;
         if (!t || !t->in_use) break;
         /* Track */
-        if (win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
+        if (ca_window_reserve_draw_commands(win, (size_t)win->draw_cmd_count + 1u)) {
             Ca_DrawCmd *c = &win->draw_cmds[win->draw_cmd_count++];
             memset(c, 0, sizeof(*c));
             c->type = CA_DRAW_RECT;
@@ -544,7 +545,7 @@ static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, Cli
             c->in_use = true;
         }
         /* Thumb */
-        if (win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
+        if (ca_window_reserve_draw_commands(win, (size_t)win->draw_cmd_count + 1u)) {
             float inset = 2.0f * ui_s;
             float thumb_d = node->h - inset * 2;
             float tx = t->on ? (node->x + node->w - thumb_d - inset) : (node->x + inset);
@@ -564,7 +565,7 @@ static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, Cli
         if (!p || !p->in_use) break;
         float rad = node->h * 0.5f;
         /* Track */
-        if (win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
+        if (ca_window_reserve_draw_commands(win, (size_t)win->draw_cmd_count + 1u)) {
             Ca_DrawCmd *c = &win->draw_cmds[win->draw_cmd_count++];
             memset(c, 0, sizeof(*c));
             c->type = CA_DRAW_RECT;
@@ -575,7 +576,7 @@ static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, Cli
         }
         /* Fill */
         float fw = node->w * p->value;
-        if (fw > 0 && win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
+        if (fw > 0 && ca_window_reserve_draw_commands(win, (size_t)win->draw_cmd_count + 1u)) {
             float fr, fg, fb, fa;
             unpack_color(p->bar_color, &fr, &fg, &fb, &fa);
             Ca_DrawCmd *c = &win->draw_cmds[win->draw_cmd_count++];
@@ -595,7 +596,7 @@ static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, Cli
         if (sel->selected >= 0 && sel->selected < sel->option_count)
             paint_text(win, font, node, sel->options[sel->selected], 0);
         /* Down arrow indicator */
-        if (win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
+        if (ca_window_reserve_draw_commands(win, (size_t)win->draw_cmd_count + 1u)) {
             float asz = 6.0f;
             Ca_DrawCmd *c = &win->draw_cmds[win->draw_cmd_count++];
             memset(c, 0, sizeof(*c));
@@ -709,7 +710,7 @@ static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, Cli
         }
         bool active = win->hovered_node == node || sp->dragging;
         uint32_t color = active ? sp->bar_hover_color : sp->bar_color;
-        if (win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
+        if (ca_window_reserve_draw_commands(win, (size_t)win->draw_cmd_count + 1u)) {
             Ca_DrawCmd *cmd = &win->draw_cmds[win->draw_cmd_count++];
             memset(cmd, 0, sizeof(*cmd));
             cmd->type   = CA_DRAW_RECT;
@@ -726,9 +727,12 @@ static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, Cli
     case CA_WIDGET_IMAGE: {
         Ca_Image *img = (Ca_Image *)node->widget;
         if (!img || !img->in_use) break;
-        if (win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
+        if (ca_window_reserve_draw_commands(win, (size_t)win->draw_cmd_count + 1u)) {
             Ca_Instance *inst = win->instance;
-            int16_t img_idx = (int16_t)(img - inst->images);
+            size_t image_index = 0;
+            if (!ca_pool_index(&inst->images, img, &image_index) ||
+                image_index > UINT32_MAX)
+                break;
             Ca_DrawCmd *cmd = &win->draw_cmds[win->draw_cmd_count++];
             memset(cmd, 0, sizeof(*cmd));
             cmd->type        = CA_DRAW_IMAGE;
@@ -738,7 +742,7 @@ static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, Cli
             cmd->h           = node->h;
             cmd->r = 1; cmd->g = 1; cmd->b = 1; cmd->a = 1;
             cmd->u0 = 0; cmd->v0 = 0; cmd->u1 = 1; cmd->v1 = 1;
-            cmd->image_index = img_idx;
+            cmd->image_index = (uint32_t)image_index;
             cmd->z_index     = node->desc.z_index;
             cmd->in_use      = true;
             set_clip(cmd, clip);
@@ -748,8 +752,11 @@ static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, Cli
     case CA_WIDGET_VIEWPORT: {
         Ca_Viewport *vp = (Ca_Viewport *)node->widget;
         if (!vp || !vp->in_use) break;
-        if (win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
-            int16_t vp_idx = (int16_t)(vp - win->viewport_pool);
+        if (ca_window_reserve_draw_commands(win, (size_t)win->draw_cmd_count + 1u)) {
+            size_t pool_index = 0;
+            if (!ca_pool_index(&win->viewport_pool, vp, &pool_index) ||
+                pool_index > UINT32_MAX)
+                break;
             Ca_DrawCmd *cmd = &win->draw_cmds[win->draw_cmd_count++];
             memset(cmd, 0, sizeof(*cmd));
             cmd->type           = CA_DRAW_VIEWPORT;
@@ -759,7 +766,7 @@ static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, Cli
             cmd->h              = node->h;
             cmd->r = 1; cmd->g = 1; cmd->b = 1; cmd->a = 1;
             cmd->u0 = 0; cmd->v0 = 0; cmd->u1 = 1; cmd->v1 = 1;
-            cmd->viewport_index = vp_idx;
+            cmd->viewport_index = (uint32_t)pool_index;
             cmd->z_index        = node->desc.z_index;
             cmd->in_use         = true;
             set_clip(cmd, clip);
@@ -803,7 +810,7 @@ static void paint_scrollbars(Ca_Window *win, Ca_Node *node, ClipRect clip)
         bool dragging_y = (win->scrollbar_drag_node == node && win->scrollbar_drag_y);
 
         /* Track — dark inset fill */
-        if (win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
+        if (ca_window_reserve_draw_commands(win, (size_t)win->draw_cmd_count + 1u)) {
             Ca_DrawCmd *cmd = &win->draw_cmds[win->draw_cmd_count++];
             memset(cmd, 0, sizeof(*cmd));
             cmd->type = CA_DRAW_RECT;
@@ -819,7 +826,7 @@ static void paint_scrollbars(Ca_Window *win, Ca_Node *node, ClipRect clip)
             set_clip(cmd, clip);
         }
         /* Thumb */
-        if (win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
+        if (ca_window_reserve_draw_commands(win, (size_t)win->draw_cmd_count + 1u)) {
             Ca_DrawCmd *cmd = &win->draw_cmds[win->draw_cmd_count++];
             memset(cmd, 0, sizeof(*cmd));
             cmd->type = CA_DRAW_RECT;
@@ -868,7 +875,7 @@ static void paint_scrollbars(Ca_Window *win, Ca_Node *node, ClipRect clip)
                                    : CA_THEME_SCROLLBAR_TRACK;
 
         /* Track */
-        if (win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
+        if (ca_window_reserve_draw_commands(win, (size_t)win->draw_cmd_count + 1u)) {
             Ca_DrawCmd *cmd = &win->draw_cmds[win->draw_cmd_count++];
             memset(cmd, 0, sizeof(*cmd));
             cmd->type          = CA_DRAW_RECT;
@@ -882,7 +889,7 @@ static void paint_scrollbars(Ca_Window *win, Ca_Node *node, ClipRect clip)
             set_clip(cmd, clip);
         }
         /* Thumb */
-        if (win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
+        if (ca_window_reserve_draw_commands(win, (size_t)win->draw_cmd_count + 1u)) {
             Ca_DrawCmd *cmd = &win->draw_cmds[win->draw_cmd_count++];
             memset(cmd, 0, sizeof(*cmd));
             cmd->type          = CA_DRAW_RECT;
@@ -1022,7 +1029,7 @@ static void paint_text_wrapped(Ca_Window *win, Ca_Font *font,
             Ca_FontTier *glyph_tier = tier;
             Ca_Glyph *pc = ca_font_glyph_from_tier(tier, cp, &glyph_tier);
             if (!pc) continue;
-            if (win->draw_cmd_count >= CA_MAX_DRAW_CMDS_PER_WINDOW) goto done;
+            if (!ca_window_reserve_draw_commands(win, (size_t)win->draw_cmd_count + 1u)) goto done;
 
             Ca_GlyphQuad q;
             float glyph_cs_eff = ca_font_glyph_cs_eff(glyph_tier, desired_size, cs);
@@ -1129,7 +1136,7 @@ static void paint_text(Ca_Window *win, Ca_Font *font,
         Ca_FontTier *glyph_tier = tier;
         Ca_Glyph *pc = ca_font_glyph_from_tier(tier, cp, &glyph_tier);
         if (!pc) continue;
-        if (win->draw_cmd_count >= CA_MAX_DRAW_CMDS_PER_WINDOW) break;
+        if (!ca_window_reserve_draw_commands(win, (size_t)win->draw_cmd_count + 1u)) break;
 
         Ca_GlyphQuad q;
         float glyph_cs_eff = ca_font_glyph_cs_eff(glyph_tier, desired_size, cs);
@@ -1203,7 +1210,7 @@ static void paint_text_left(Ca_Window *win, Ca_Font *font,
         Ca_FontTier *glyph_tier = tier;
         Ca_Glyph *pc = ca_font_glyph_from_tier(tier, cp, &glyph_tier);
         if (!pc) continue;
-        if (win->draw_cmd_count >= CA_MAX_DRAW_CMDS_PER_WINDOW) break;
+        if (!ca_window_reserve_draw_commands(win, (size_t)win->draw_cmd_count + 1u)) break;
 
         Ca_GlyphQuad q;
         float glyph_cs_eff = ca_font_glyph_cs_eff(glyph_tier, desired_size, cs);
@@ -1260,7 +1267,7 @@ static float measure_text_advance(Ca_Font *font, const char *text, int byte_coun
 static void paint_cursor(Ca_Window *win, Ca_Font *font,
                          Ca_Node *node, const char *text, int cursor_pos)
 {
-    if (win->draw_cmd_count >= CA_MAX_DRAW_CMDS_PER_WINDOW) return;
+    if (!ca_window_reserve_draw_commands(win, (size_t)win->draw_cmd_count + 1u)) return;
 
     float advance = measure_text_advance(font, text, cursor_pos,
                                          font->content_scale, win->ui_scale,
@@ -1305,7 +1312,7 @@ static void paint_focus_ring(Ca_Window *win, Ca_Node *node)
     };
 
     for (int i = 0; i < 4; ++i) {
-        if (win->draw_cmd_count >= CA_MAX_DRAW_CMDS_PER_WINDOW) break;
+        if (!ca_window_reserve_draw_commands(win, (size_t)win->draw_cmd_count + 1u)) break;
         Ca_DrawCmd *cmd = &win->draw_cmds[win->draw_cmd_count++];
         memset(cmd, 0, sizeof(*cmd));
         cmd->type   = CA_DRAW_RECT;
@@ -1338,9 +1345,9 @@ static void cache_commands(Ca_Window *win, Ca_Node *node,
                &win->draw_cmds[draw_start],
                count * sizeof(Ca_DrawCmd));
     } else {
-        /* Allocate fresh space at end of cache pool */
-        if (win->paint_cache_used + count > CA_MAX_DRAW_CMDS_PER_WINDOW) {
-            /* Cache full — commands are already in draw_cmds, just skip caching */
+        if (count > UINT32_MAX - win->paint_cache_used ||
+            !ca_window_reserve_paint_cache(
+                win, (size_t)win->paint_cache_used + count)) {
             *cc = 0;
             return;
         }
@@ -1368,16 +1375,22 @@ void ca_paint_cache_compact(Ca_Window *win)
     /* Span descriptor — points back into the node so we can update offsets */
     typedef struct { uint32_t start; uint32_t count; uint32_t *p_start; } CacheSpan;
 
-    /* Worst case: every in-use node has both pre and post entries */
-    CacheSpan spans[CA_MAX_NODES_PER_WINDOW * 2];
-    uint32_t span_count = 0;
+    size_t node_slots = ca_pool_slot_count(&win->node_pool);
+    if (node_slots > SIZE_MAX / 2u) return;
+    size_t maximum_spans = node_slots * 2u;
+    if (win->paint_cache_spans.element_size == 0 &&
+        !ca_dyn_array_init(&win->paint_cache_spans, sizeof(CacheSpan)))
+        return;
+    if (!ca_dyn_array_resize(&win->paint_cache_spans, maximum_spans)) return;
+    CacheSpan *spans = win->paint_cache_spans.data;
+    size_t span_count = 0;
 
-    for (uint32_t i = 0; i < CA_MAX_NODES_PER_WINDOW; ++i) {
-        Ca_Node *n = &win->node_pool[i];
+    for (size_t i = 0; i < node_slots; ++i) {
+        Ca_Node *n = CA_POOL_AT(win->node_pool, Ca_Node, i);
         if (!n->in_use) continue;
-        if (n->cache_count > 0 && span_count < CA_MAX_NODES_PER_WINDOW * 2)
+        if (n->cache_count > 0 && span_count < maximum_spans)
             spans[span_count++] = (CacheSpan){ n->cache_start, n->cache_count, &n->cache_start };
-        if (n->cache_post_count > 0 && span_count < CA_MAX_NODES_PER_WINDOW * 2)
+        if (n->cache_post_count > 0 && span_count < maximum_spans)
             spans[span_count++] = (CacheSpan){ n->cache_post_start, n->cache_post_count, &n->cache_post_start };
     }
 
@@ -1387,9 +1400,9 @@ void ca_paint_cache_compact(Ca_Window *win)
     }
 
     /* Insertion sort by start position (runs only during infrequent compaction) */
-    for (uint32_t i = 1; i < span_count; ++i) {
+    for (size_t i = 1; i < span_count; ++i) {
         CacheSpan tmp = spans[i];
-        uint32_t j = i;
+        size_t j = i;
         while (j > 0 && spans[j - 1].start > tmp.start) {
             spans[j] = spans[j - 1];
             j--;
@@ -1400,7 +1413,7 @@ void ca_paint_cache_compact(Ca_Window *win)
     /* Compact forward — dest <= source always holds because we
        process spans in ascending start order. */
     uint32_t dest = 0;
-    for (uint32_t i = 0; i < span_count; ++i) {
+    for (size_t i = 0; i < span_count; ++i) {
         if (spans[i].start != dest) {
             memmove(&win->paint_cache[dest],
                     &win->paint_cache[spans[i].start],
@@ -1491,7 +1504,7 @@ static void paint_tree_cached(Ca_Instance *inst, Ca_Window *win,
         if (win->debug_overlay && !win->dbg_force_repaint)
             node->dbg_repainted = true;
     } else if (node->cache_count > 0 &&
-               win->draw_cmd_count + node->cache_count <= CA_MAX_DRAW_CMDS_PER_WINDOW)
+               ca_window_reserve_draw_commands(win, (size_t)win->draw_cmd_count + node->cache_count))
     {
         uint32_t replay_start = win->draw_cmd_count;
         memcpy(&win->draw_cmds[win->draw_cmd_count],
@@ -1524,7 +1537,7 @@ static void paint_tree_cached(Ca_Instance *inst, Ca_Window *win,
         apply_inherited_z(win, sb_start, sb_count, effective_z);
         cache_commands(win, node, sb_start, sb_count, true);
     } else if (node->cache_post_count > 0 &&
-               win->draw_cmd_count + node->cache_post_count <= CA_MAX_DRAW_CMDS_PER_WINDOW)
+               ca_window_reserve_draw_commands(win, (size_t)win->draw_cmd_count + node->cache_post_count))
     {
         uint32_t sb_replay = win->draw_cmd_count;
         memcpy(&win->draw_cmds[win->draw_cmd_count],
@@ -1549,9 +1562,9 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
     const bool use_fallback_chrome = inst->stylesheet == NULL;
 
     /* ---- Select dropdown overlays ---- */
-    if (win->select_pool && font) {
-        for (uint32_t i = 0; i < CA_MAX_SELECTS_PER_WINDOW; ++i) {
-            Ca_Select *sel = &win->select_pool[i];
+    if (ca_pool_slot_count(&win->select_pool) > 0 && font) {
+        for (uint32_t i = 0; i < ca_pool_slot_count(&win->select_pool); ++i) {
+            Ca_Select *sel = CA_POOL_AT(win->select_pool, Ca_Select, i);
             if (!sel->in_use || !sel->node) continue;
             /* If the host widget (or any ancestor panel) is hidden, force-close
                the dropdown so it doesn't ghost-render at stale coordinates. */
@@ -1582,7 +1595,7 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
             if (scroll < 0) scroll = 0;
 
             /* Dropdown background — height capped to visible rows */
-            if (win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
+            if (ca_window_reserve_draw_commands(win, (size_t)win->draw_cmd_count + 1u)) {
                 Ca_DrawCmd *c = &win->draw_cmds[win->draw_cmd_count++];
                 memset(c, 0, sizeof(*c));
                 c->type = CA_DRAW_RECT;
@@ -1624,7 +1637,7 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
                 float oy = drop_y + opt_h * (float)vi;
                 bool is_selected = (oi == sel->selected);
                 bool is_hovered  = (oi == sel->hover_item);
-                if ((is_selected || is_hovered) && win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
+                if ((is_selected || is_hovered) && ca_window_reserve_draw_commands(win, (size_t)win->draw_cmd_count + 1u)) {
                     Ca_DrawCmd *c = &win->draw_cmds[win->draw_cmd_count++];
                     memset(c, 0, sizeof(*c));
                     c->type = CA_DRAW_RECT;
@@ -1647,7 +1660,8 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
     }
 
     /* ---- Tooltips ---- */
-    if (win->tooltip_pool && font && win->hovered_node) {
+    if (ca_pool_slot_count(&win->tooltip_pool) > 0 && font &&
+        win->hovered_node) {
         float cs   = font->content_scale / ui_s;
 
         /* Logical window size for bounds clamping (same coordinate space as
@@ -1656,8 +1670,8 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
         if (win->glfw)
             glfwGetWindowSize(win->glfw, &tooltip_win_w, &tooltip_win_h);
 
-        for (uint32_t i = 0; i < CA_MAX_TOOLTIPS_PER_WINDOW; ++i) {
-            Ca_Tooltip *tt = &win->tooltip_pool[i];
+        for (uint32_t i = 0; i < ca_pool_slot_count(&win->tooltip_pool); ++i) {
+            Ca_Tooltip *tt = CA_POOL_AT(win->tooltip_pool, Ca_Tooltip, i);
             if (!tt->in_use || !tt->node || tt->text[0] == '\0') continue;
             Ca_Node *hover = win->hovered_node;
             bool match = false;
@@ -1702,7 +1716,7 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
             if (tip_x < 0.0f) tip_x = 0.0f;
             if (tip_y < 0.0f) tip_y = 0.0f;
 
-            if (win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
+            if (ca_window_reserve_draw_commands(win, (size_t)win->draw_cmd_count + 1u)) {
                 Ca_DrawCmd *c = &win->draw_cmds[win->draw_cmd_count++];
                 memset(c, 0, sizeof(*c));
                 c->type = CA_DRAW_RECT;
@@ -1732,14 +1746,14 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
     }
 
     /* ---- Context menus ---- */
-    if (win->ctxmenu_pool && font) {
+    if (ca_pool_slot_count(&win->ctxmenu_pool) > 0 && font) {
         const float item_h  = 24.0f * ui_s;
         const float sep_h   =  8.0f * ui_s;
         const float pad_x   = 12.0f * ui_s;
         const float menu_w  = 180.0f * ui_s;
 
-        for (uint32_t i = 0; i < CA_MAX_CTXMENUS_PER_WINDOW; ++i) {
-            Ca_CtxMenu *cm = &win->ctxmenu_pool[i];
+        for (uint32_t i = 0; i < ca_pool_slot_count(&win->ctxmenu_pool); ++i) {
+            Ca_CtxMenu *cm = CA_POOL_AT(win->ctxmenu_pool, Ca_CtxMenu, i);
             if (!cm->in_use || !cm->open || cm->item_count <= 0) continue;
             if (cm->node && node_is_ancestor_hidden(cm->node)) continue;
             const OverlayCssStyle menu_style = overlay_css_style(
@@ -1767,7 +1781,7 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
             if (my_pos < 0) my_pos = 0;
 
             /* Background */
-            if (win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
+            if (ca_window_reserve_draw_commands(win, (size_t)win->draw_cmd_count + 1u)) {
                 Ca_DrawCmd *c = &win->draw_cmds[win->draw_cmd_count++];
                 memset(c, 0, sizeof(*c));
                 c->type = CA_DRAW_RECT;
@@ -1791,7 +1805,7 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
                 if (is_sep) {
                     /* Separator line */
                     if (use_fallback_chrome &&
-                        win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
+                        ca_window_reserve_draw_commands(win, (size_t)win->draw_cmd_count + 1u)) {
                         Ca_DrawCmd *c = &win->draw_cmds[win->draw_cmd_count++];
                         memset(c, 0, sizeof(*c));
                         c->type = CA_DRAW_RECT;
@@ -1810,7 +1824,7 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
                                 win->mouse_x   <= (double)(mx_pos + menu_w) &&
                                 (double)iy     <= win->mouse_y &&
                                 win->mouse_y   <= (double)(iy + item_h));
-                if (hovered && win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
+                if (hovered && ca_window_reserve_draw_commands(win, (size_t)win->draw_cmd_count + 1u)) {
                     Ca_DrawCmd *c = &win->draw_cmds[win->draw_cmd_count++];
                     memset(c, 0, sizeof(*c));
                     c->type = CA_DRAW_RECT;
@@ -1844,9 +1858,9 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
     }
 
     /* ---- Menu bar dropdowns ---- */
-    if (win->menubar_pool && font) {
-        for (uint32_t i = 0; i < CA_MAX_MENUBARS_PER_WINDOW; ++i) {
-            Ca_MenuBar *mb = &win->menubar_pool[i];
+    if (ca_pool_slot_count(&win->menubar_pool) > 0 && font) {
+        for (uint32_t i = 0; i < ca_pool_slot_count(&win->menubar_pool); ++i) {
+            Ca_MenuBar *mb = CA_POOL_AT(win->menubar_pool, Ca_MenuBar, i);
             if (!mb->in_use || !mb->node || mb->active_menu < 0) continue;
 
             /* Highlight the active header */
@@ -1863,7 +1877,7 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
                 win, mb->node, "ca-overlay-selected", mb->header_highlight,
                 mb->text_color, 0.0f);
 
-            if (win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
+            if (ca_window_reserve_draw_commands(win, (size_t)win->draw_cmd_count + 1u)) {
                 Ca_DrawCmd *c = &win->draw_cmds[win->draw_cmd_count++];
                 memset(c, 0, sizeof(*c));
                 c->type = CA_DRAW_RECT;
@@ -1905,7 +1919,7 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
                                          &drop_x, &drop_y);
 
             /* Dropdown background */
-            if (win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
+            if (ca_window_reserve_draw_commands(win, (size_t)win->draw_cmd_count + 1u)) {
                 Ca_DrawCmd *c = &win->draw_cmds[win->draw_cmd_count++];
                 memset(c, 0, sizeof(*c));
                 c->type = CA_DRAW_RECT;
@@ -1931,7 +1945,7 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
                 /* --- Separator --- */
                 if (am->items[ii].separator) {
                     if (use_fallback_chrome &&
-                        win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
+                        ca_window_reserve_draw_commands(win, (size_t)win->draw_cmd_count + 1u)) {
                         Ca_DrawCmd *c = &win->draw_cmds[win->draw_cmd_count++];
                         memset(c, 0, sizeof(*c));
                         c->type = CA_DRAW_RECT;
@@ -1949,7 +1963,7 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
 
                 /* Hover highlight — also highlight when this item's sub-menu is open */
                 if (mb->hover_item == ii || am->active_sub == ii) {
-                    if (win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
+                    if (ca_window_reserve_draw_commands(win, (size_t)win->draw_cmd_count + 1u)) {
                         Ca_DrawCmd *c = &win->draw_cmds[win->draw_cmd_count++];
                         memset(c, 0, sizeof(*c));
                         c->type = CA_DRAW_RECT;
@@ -2019,7 +2033,7 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
                                             &sub_x, &sub_y);
 
                 /* Sub-menu background */
-                if (win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
+                if (ca_window_reserve_draw_commands(win, (size_t)win->draw_cmd_count + 1u)) {
                     Ca_DrawCmd *c = &win->draw_cmds[win->draw_cmd_count++];
                     memset(c, 0, sizeof(*c));
                     c->type = CA_DRAW_RECT;
@@ -2044,7 +2058,7 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
 
                     /* Hover highlight */
                     if (mb->hover_sub_item == si) {
-                        if (win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
+                        if (ca_window_reserve_draw_commands(win, (size_t)win->draw_cmd_count + 1u)) {
                             Ca_DrawCmd *c = &win->draw_cmds[win->draw_cmd_count++];
                             memset(c, 0, sizeof(*c));
                             c->type = CA_DRAW_RECT;
@@ -2081,11 +2095,11 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
     }
 
     /* ---- Modals ---- */
-    if (win->modal_pool) {
-        for (uint32_t i = 0; i < CA_MAX_MODALS_PER_WINDOW; ++i) {
-            Ca_Modal *m = &win->modal_pool[i];
+    if (ca_pool_slot_count(&win->modal_pool) > 0) {
+        for (uint32_t i = 0; i < ca_pool_slot_count(&win->modal_pool); ++i) {
+            Ca_Modal *m = CA_POOL_AT(win->modal_pool, Ca_Modal, i);
             if (!m->in_use || !m->visible) continue;
-            if (win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
+            if (ca_window_reserve_draw_commands(win, (size_t)win->draw_cmd_count + 1u)) {
                 int lw, lh;
                 glfwGetWindowSize(win->glfw, &lw, &lh);
                 float or_r, or_g, or_b, or_a;
@@ -2113,12 +2127,12 @@ static void paint_debug_overlay(Ca_Instance *inst, Ca_Window *win)
 
     /* --- Paint-flash: green tinted rect over nodes repainted THIS frame --- */
     uint32_t repainted_count = 0;
-    if (win->node_pool) {
-        for (uint32_t i = 0; i < CA_MAX_NODES_PER_WINDOW; ++i) {
-            Ca_Node *n = &win->node_pool[i];
+    if (ca_pool_slot_count(&win->node_pool) > 0) {
+        for (uint32_t i = 0; i < ca_pool_slot_count(&win->node_pool); ++i) {
+            Ca_Node *n = CA_POOL_AT(win->node_pool, Ca_Node, i);
             if (!n->in_use || !n->dbg_repainted) continue;
             if (n->w < 1.0f || n->h < 1.0f) continue;
-            if (win->draw_cmd_count >= CA_MAX_DRAW_CMDS_PER_WINDOW) break;
+            if (!ca_window_reserve_draw_commands(win, (size_t)win->draw_cmd_count + 1u)) break;
 
             /* Green tint overlay on repainted node */
             Ca_DrawCmd *c = &win->draw_cmds[win->draw_cmd_count++];
@@ -2132,7 +2146,7 @@ static void paint_debug_overlay(Ca_Instance *inst, Ca_Window *win)
             c->overlay = true;
 
             /* Green border to make it clearly visible */
-            if (win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
+            if (ca_window_reserve_draw_commands(win, (size_t)win->draw_cmd_count + 1u)) {
                 Ca_DrawCmd *b = &win->draw_cmds[win->draw_cmd_count++];
                 memset(b, 0, sizeof(*b));
                 b->type = CA_DRAW_RECT;
@@ -2162,9 +2176,9 @@ static void paint_debug_overlay(Ca_Instance *inst, Ca_Window *win)
 
     /* Count active nodes */
     uint32_t node_count = 0;
-    if (win->node_pool) {
-        for (uint32_t i = 0; i < CA_MAX_NODES_PER_WINDOW; ++i)
-            if (win->node_pool[i].in_use) node_count++;
+    if (ca_pool_slot_count(&win->node_pool) > 0) {
+        for (uint32_t i = 0; i < ca_pool_slot_count(&win->node_pool); ++i)
+            if (CA_POOL_AT(win->node_pool, Ca_Node, i)->in_use) node_count++;
     }
     win->dbg_node_count = node_count;
 
@@ -2231,7 +2245,7 @@ static void paint_debug_overlay(Ca_Instance *inst, Ca_Window *win)
     float panel_y = pad;
 
     /* Background rect */
-    if (win->draw_cmd_count < CA_MAX_DRAW_CMDS_PER_WINDOW) {
+    if (ca_window_reserve_draw_commands(win, (size_t)win->draw_cmd_count + 1u)) {
         Ca_DrawCmd *c = &win->draw_cmds[win->draw_cmd_count++];
         memset(c, 0, sizeof(*c));
         c->type = CA_DRAW_RECT;
@@ -2326,7 +2340,7 @@ static void paint_debug_overlay(Ca_Instance *inst, Ca_Window *win)
     /* ---- UI Tree ---- */
     DBG_HDR("UI Tree");
     DBG_LINE("  Nodes: %u / %u  |  Repainted: %u",
-             node_count, (uint32_t)CA_MAX_NODES_PER_WINDOW, repainted_count);
+             node_count, (uint32_t)ca_pool_slot_count(&win->node_pool), repainted_count);
     DBG_LINE("  Layouts: %u  Dirty: %u  Transitions: %u",
              win->dbg_layout_count, win->dbg_dirty_count,
              win->dbg_transition_count);
@@ -2356,9 +2370,10 @@ void ca_paint_pass(Ca_Instance *inst, Ca_Window *win)
     Ca_Font *font = inst->font;
     if (font) {
         /* Cursor for focused text input */
-        if (win->focused_node && win->input_pool) {
-            for (uint32_t i = 0; i < CA_MAX_INPUTS_PER_WINDOW; ++i) {
-                Ca_TextInput *inp = &win->input_pool[i];
+        if (win->focused_node &&
+            ca_pool_slot_count(&win->input_pool) > 0) {
+            for (uint32_t i = 0; i < ca_pool_slot_count(&win->input_pool); ++i) {
+                Ca_TextInput *inp = CA_POOL_AT(win->input_pool, Ca_TextInput, i);
                 if (inp->in_use && inp->node == win->focused_node) {
                     paint_cursor(win, font, inp->node, inp->text, inp->cursor);
                     break;

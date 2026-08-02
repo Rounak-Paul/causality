@@ -115,7 +115,7 @@ void ca_style_apply_to_node(const Ca_ResolvedStyle *style,
 
 /** Scans the stylesheet once for structural/combinator ("position-
     dependent") selectors and records which classes they target — see
-    CA_CSS_MAX_POS_DEP_CLASSES's doc comment in css.h. Called once by
+    the position-dependent selector classification notes in css.h. Called once by
     ca_css_parse() right after parsing; not normally called directly. */
 void ca_style_classify_position_dependent(Ca_Stylesheet *ss);
 

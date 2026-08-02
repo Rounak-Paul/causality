@@ -55,7 +55,6 @@ extern "C" {
    LIMITS
    ============================================================ */
 
-#define CA_NG_MAX_NODES  256
 #define CA_NG_KEY_LEN     64
 
 /* ============================================================
@@ -73,6 +72,7 @@ typedef struct Ca_NgNodeState {
     int   output_count;
     bool  valid;
     Ca_NodeGraph *_ng;        /* back-pointer to owning graph (set on first use) */
+    int   _index;
 } Ca_NgNodeState;
 
 /* ============================================================
@@ -84,7 +84,7 @@ struct Ca_NodeGraph {
     float zoom;                          /* canvas zoom factor (1.0 = 100%) */
     float _pan_drag_start_x;             /* pan at canvas drag start */
     float _pan_drag_start_y;
-    Ca_NgNodeState nodes[CA_NG_MAX_NODES];
+    Ca_DynArray _nodes;                  /* stable Ca_NgNodeState pointers */
     int   node_count;
     int   selected_node;                 /* index into nodes[], -1 = none */
 
@@ -113,7 +113,7 @@ typedef struct Ca_NodeGraphDesc {
     uint32_t    grid_color;      /* grid line colour (0 = default subtle) */
 
     /* Called when the user selects a node by clicking its header.
-       node_idx is the index into ng->nodes[].  Pass NULL to ignore. */
+       node_idx can be resolved with ca_node_graph_state. Pass NULL to ignore. */
     void (*on_node_select)(Ca_NodeGraph *ng, int node_idx, void *user_data);
     void  *select_data;
 } Ca_NodeGraphDesc;
@@ -145,7 +145,19 @@ typedef struct Ca_NgWireDesc {
 
 /* Zero-initialises the Ca_NodeGraph struct and resets selected_node to -1.
    Call once before the first ca_node_graph_begin. */
-CA_API void ca_node_graph_init(Ca_NodeGraph *ng);
+CA_API bool ca_node_graph_init(Ca_NodeGraph *ng);
+
+/** Releases all node state owned by a graph and resets it for reuse. */
+CA_API void ca_node_graph_destroy(Ca_NodeGraph *ng);
+
+/** Returns persistent state for a node index, or NULL when out of range. */
+CA_API Ca_NgNodeState *ca_node_graph_state(Ca_NodeGraph *ng, int node_idx);
+
+/** Finds or creates persistent graph-node state for a stable key. */
+CA_API Ca_NgNodeState *ca_node_graph_add_state(Ca_NodeGraph *ng,
+                                                const char *key,
+                                                float initial_x,
+                                                float initial_y);
 
 /* Begin building the node graph canvas.
    host_div: the stable Ca_Div whose builder will be invalidated when node

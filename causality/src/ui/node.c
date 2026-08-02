@@ -3,129 +3,204 @@
 
 /* node.c — node pool, tree building, and subscription wiring */
 #include "node.h"
+#include "menu_storage.h"
 
 #include <string.h>
 #include <assert.h>
 
-void ca_node_system_init(Ca_Window *win)
+/** Initializes pointer-stable, demand-grown UI object pools for a window. */
+bool ca_node_system_init(Ca_Window *win)
 {
-    win->node_pool      = (Ca_Node *)CA_CALLOC(CA_MAX_NODES_PER_WINDOW, sizeof(Ca_Node));
-    win->draw_cmds      = (Ca_DrawCmd *)CA_CALLOC(CA_MAX_DRAW_CMDS_PER_WINDOW, sizeof(Ca_DrawCmd));
-    win->label_pool     = (Ca_Label *)CA_CALLOC(CA_MAX_LABELS_PER_WINDOW,  sizeof(Ca_Label));
-    win->button_pool    = (Ca_Button *)CA_CALLOC(CA_MAX_BUTTONS_PER_WINDOW, sizeof(Ca_Button));
-    win->input_pool     = (Ca_TextInput *)CA_CALLOC(CA_MAX_INPUTS_PER_WINDOW, sizeof(Ca_TextInput));
-    win->checkbox_pool  = (Ca_Checkbox *)CA_CALLOC(CA_MAX_CHECKBOXES_PER_WINDOW, sizeof(Ca_Checkbox));
-    win->radio_pool     = (Ca_Radio *)CA_CALLOC(CA_MAX_RADIOS_PER_WINDOW, sizeof(Ca_Radio));
-    win->slider_pool    = (Ca_Slider *)CA_CALLOC(CA_MAX_SLIDERS_PER_WINDOW, sizeof(Ca_Slider));
-    win->toggle_pool    = (Ca_Toggle *)CA_CALLOC(CA_MAX_TOGGLES_PER_WINDOW, sizeof(Ca_Toggle));
-    win->progress_pool  = (Ca_Progress *)CA_CALLOC(CA_MAX_PROGRESS_PER_WINDOW, sizeof(Ca_Progress));
-    win->select_pool    = (Ca_Select *)CA_CALLOC(CA_MAX_SELECTS_PER_WINDOW, sizeof(Ca_Select));
-    win->tabbar_pool    = (Ca_TabBar *)CA_CALLOC(CA_MAX_TABBARS_PER_WINDOW, sizeof(Ca_TabBar));
-    win->treenode_pool  = (Ca_TreeNode *)CA_CALLOC(CA_MAX_TREENODES_PER_WINDOW, sizeof(Ca_TreeNode));
-    win->table_pool     = (Ca_Table *)CA_CALLOC(CA_MAX_TABLES_PER_WINDOW, sizeof(Ca_Table));
-    win->tooltip_pool   = (Ca_Tooltip *)CA_CALLOC(CA_MAX_TOOLTIPS_PER_WINDOW, sizeof(Ca_Tooltip));
-    win->ctxmenu_pool   = (Ca_CtxMenu *)CA_CALLOC(CA_MAX_CTXMENUS_PER_WINDOW, sizeof(Ca_CtxMenu));
-    win->modal_pool     = (Ca_Modal *)CA_CALLOC(CA_MAX_MODALS_PER_WINDOW, sizeof(Ca_Modal));
-    win->splitter_pool   = (Ca_Splitter *)CA_CALLOC(CA_MAX_SPLITTERS_PER_WINDOW, sizeof(Ca_Splitter));
-    win->viewport_pool   = (Ca_Viewport *)CA_CALLOC(CA_MAX_VIEWPORTS_PER_WINDOW, sizeof(Ca_Viewport));
-    win->menubar_pool    = (Ca_MenuBar *)CA_CALLOC(CA_MAX_MENUBARS_PER_WINDOW, sizeof(Ca_MenuBar));
+    win->draw_cmd_storage = (Ca_DynArray)CA_DYN_ARRAY_INIT(Ca_DrawCmd);
+    win->sorted_index_storage = (Ca_DynArray)CA_DYN_ARRAY_INIT(uint32_t);
+    win->paint_cache_storage = (Ca_DynArray)CA_DYN_ARRAY_INIT(Ca_DrawCmd);
+    win->layout_scratch_storage = (Ca_DynArray)CA_DYN_ARRAY_INIT(float);
+    win->char_storage = (Ca_DynArray)CA_DYN_ARRAY_INIT(uint32_t);
+    win->key_storage = (Ca_DynArray)CA_DYN_ARRAY_INIT(int);
+    win->key_action_storage = (Ca_DynArray)CA_DYN_ARRAY_INIT(int);
+    win->key_mods_storage = (Ca_DynArray)CA_DYN_ARRAY_INIT(int);
+    win->draw_cmds = NULL;
+    win->sorted_idx = NULL;
+    win->paint_cache = NULL;
+    win->layout_scratch = NULL;
+    win->char_buf = NULL;
+    win->key_buf = NULL;
+    win->key_action_buf = NULL;
+    win->key_mods_buf = NULL;
+    bool pools_ready =
+        ca_pool_init(&win->node_pool, sizeof(Ca_Node),
+                     ca_pool_recommended_chunk_capacity(sizeof(Ca_Node))) &&
+        ca_pool_init(&win->label_pool, sizeof(Ca_Label),
+                     ca_pool_recommended_chunk_capacity(sizeof(Ca_Label))) &&
+        ca_pool_init(&win->button_pool, sizeof(Ca_Button),
+                     ca_pool_recommended_chunk_capacity(sizeof(Ca_Button))) &&
+        ca_pool_init(&win->input_pool, sizeof(Ca_TextInput),
+                     ca_pool_recommended_chunk_capacity(sizeof(Ca_TextInput))) &&
+        ca_pool_init(&win->checkbox_pool, sizeof(Ca_Checkbox),
+                     ca_pool_recommended_chunk_capacity(sizeof(Ca_Checkbox))) &&
+        ca_pool_init(&win->radio_pool, sizeof(Ca_Radio),
+                     ca_pool_recommended_chunk_capacity(sizeof(Ca_Radio))) &&
+        ca_pool_init(&win->slider_pool, sizeof(Ca_Slider),
+                     ca_pool_recommended_chunk_capacity(sizeof(Ca_Slider))) &&
+        ca_pool_init(&win->toggle_pool, sizeof(Ca_Toggle),
+                     ca_pool_recommended_chunk_capacity(sizeof(Ca_Toggle))) &&
+        ca_pool_init(&win->progress_pool, sizeof(Ca_Progress),
+                     ca_pool_recommended_chunk_capacity(sizeof(Ca_Progress))) &&
+        ca_pool_init(&win->select_pool, sizeof(Ca_Select),
+                     ca_pool_recommended_chunk_capacity(sizeof(Ca_Select))) &&
+        ca_pool_init(&win->tabbar_pool, sizeof(Ca_TabBar),
+                     ca_pool_recommended_chunk_capacity(sizeof(Ca_TabBar))) &&
+        ca_pool_init(&win->treenode_pool, sizeof(Ca_TreeNode),
+                     ca_pool_recommended_chunk_capacity(sizeof(Ca_TreeNode))) &&
+        ca_pool_init(&win->table_pool, sizeof(Ca_Table),
+                     ca_pool_recommended_chunk_capacity(sizeof(Ca_Table))) &&
+        ca_pool_init(&win->tooltip_pool, sizeof(Ca_Tooltip),
+                     ca_pool_recommended_chunk_capacity(sizeof(Ca_Tooltip))) &&
+        ca_pool_init(&win->ctxmenu_pool, sizeof(Ca_CtxMenu),
+                     ca_pool_recommended_chunk_capacity(sizeof(Ca_CtxMenu))) &&
+        ca_pool_init(&win->modal_pool, sizeof(Ca_Modal),
+                     ca_pool_recommended_chunk_capacity(sizeof(Ca_Modal))) &&
+        ca_pool_init(&win->splitter_pool, sizeof(Ca_Splitter),
+                     ca_pool_recommended_chunk_capacity(sizeof(Ca_Splitter))) &&
+        ca_pool_init(&win->viewport_pool, sizeof(Ca_Viewport),
+                     ca_pool_recommended_chunk_capacity(sizeof(Ca_Viewport))) &&
+        ca_pool_init(&win->menubar_pool, sizeof(Ca_MenuBar),
+                     ca_pool_recommended_chunk_capacity(sizeof(Ca_MenuBar)));
+    if (!pools_ready) {
+        ca_node_system_shutdown(win);
+        return false;
+    }
     win->root           = NULL;
     win->draw_cmd_count = 0;
-    win->sorted_idx      = (uint32_t *)CA_CALLOC(CA_MAX_DRAW_CMDS_PER_WINDOW, sizeof(uint32_t));
-    win->paint_cache     = (Ca_DrawCmd *)CA_CALLOC(CA_MAX_DRAW_CMDS_PER_WINDOW, sizeof(Ca_DrawCmd));
     win->paint_cache_used = 0;
-    win->layout_scratch  = (float *)CA_CALLOC((size_t)CA_MAX_NODES_PER_WINDOW * 7u, sizeof(float));
-    win->layout_scratch_capacity = CA_MAX_NODES_PER_WINDOW;
+    win->layout_scratch_capacity = 0;
     win->layout_scratch_used = 0;
     win->hovered_node   = NULL;
     win->drag_node      = NULL;
 
-    /* Pre-set all draw_cmd_idx to -1 (0 is a valid slot index) */
-    for (uint32_t i = 0; i < CA_MAX_NODES_PER_WINDOW; ++i)
-        win->node_pool[i].draw_cmd_idx = -1;
+    return true;
 }
 
+/** Releases all demand-grown UI storage owned by a window. */
 void ca_node_system_shutdown(Ca_Window *win)
 {
-    /* Free dynamic text buffers before releasing the label pool */
-    for (uint32_t i = 0; i < CA_MAX_LABELS_PER_WINDOW; ++i)
-        CA_FREE(win->label_pool[i].dyn_text);
-
-    /* Free heap-allocated children arrays before releasing the node pool.
-       ca_node_clear keeps arrays alive for reuse, so they are NOT freed
-       by free_subtree and must be cleaned up here at shutdown. */
-    if (win->node_pool) {
-        for (uint32_t i = 0; i < CA_MAX_NODES_PER_WINDOW; ++i) {
-            if (win->node_pool[i].builder_effect)
-                ca_effect_destroy(win->node_pool[i].builder_effect);
-            CA_FREE(win->node_pool[i].children);
-        }
+    for (size_t i = 0; i < ca_pool_slot_count(&win->label_pool); ++i) {
+        Ca_Label *label = CA_POOL_AT(win->label_pool, Ca_Label, i);
+        CA_FREE(label->dyn_text);
     }
-    CA_FREE(win->node_pool);
-    CA_FREE(win->draw_cmds);
-    CA_FREE(win->sorted_idx);
-    CA_FREE(win->label_pool);
-    CA_FREE(win->button_pool);
-    CA_FREE(win->input_pool);
-    CA_FREE(win->checkbox_pool);
-    CA_FREE(win->radio_pool);
-    CA_FREE(win->slider_pool);
-    CA_FREE(win->toggle_pool);
-    CA_FREE(win->progress_pool);
-    CA_FREE(win->select_pool);
-    CA_FREE(win->tabbar_pool);
-    CA_FREE(win->treenode_pool);
-    CA_FREE(win->table_pool);
-    CA_FREE(win->tooltip_pool);
-    CA_FREE(win->ctxmenu_pool);
-    CA_FREE(win->modal_pool);
-    CA_FREE(win->splitter_pool);
-    CA_FREE(win->viewport_pool);
-    CA_FREE(win->menubar_pool);
-    CA_FREE(win->paint_cache);
-    CA_FREE(win->layout_scratch);
-    win->node_pool      = NULL;
+    for (size_t i = 0; i < ca_pool_slot_count(&win->node_pool); ++i) {
+        Ca_Node *node = CA_POOL_AT(win->node_pool, Ca_Node, i);
+        if (node->builder_effect) ca_effect_destroy(node->builder_effect);
+        ca_dyn_array_destroy(&node->transition_storage);
+        CA_FREE(node->children);
+    }
+    for (size_t i = 0; i < ca_pool_slot_count(&win->select_pool); ++i) {
+        Ca_Select *select = CA_POOL_AT(win->select_pool, Ca_Select, i);
+        ca_dyn_array_destroy(&select->option_storage);
+    }
+    for (size_t i = 0; i < ca_pool_slot_count(&win->tabbar_pool); ++i) {
+        Ca_TabBar *tab_bar = CA_POOL_AT(win->tabbar_pool, Ca_TabBar, i);
+        ca_dyn_array_destroy(&tab_bar->label_storage);
+        ca_dyn_array_destroy(&tab_bar->tab_node_storage);
+    }
+    for (size_t i = 0; i < ca_pool_slot_count(&win->table_pool); ++i) {
+        Ca_Table *table = CA_POOL_AT(win->table_pool, Ca_Table, i);
+        ca_dyn_array_destroy(&table->column_width_storage);
+    }
+    for (size_t i = 0; i < ca_pool_slot_count(&win->ctxmenu_pool); ++i) {
+        Ca_CtxMenu *menu = CA_POOL_AT(win->ctxmenu_pool, Ca_CtxMenu, i);
+        ca_dyn_array_destroy(&menu->item_storage);
+    }
+    for (size_t i = 0; i < ca_pool_slot_count(&win->menubar_pool); ++i) {
+        Ca_MenuBar *menu_bar = CA_POOL_AT(win->menubar_pool, Ca_MenuBar, i);
+        ca_menu_storage_destroy(&menu_bar->menu_storage, &menu_bar->menus);
+    }
+    ca_pool_destroy(&win->node_pool, NULL, NULL);
+    ca_dyn_array_destroy(&win->draw_cmd_storage);
+    ca_dyn_array_destroy(&win->sorted_index_storage);
+    ca_pool_destroy(&win->label_pool, NULL, NULL);
+    ca_pool_destroy(&win->button_pool, NULL, NULL);
+    ca_pool_destroy(&win->input_pool, NULL, NULL);
+    ca_pool_destroy(&win->checkbox_pool, NULL, NULL);
+    ca_pool_destroy(&win->radio_pool, NULL, NULL);
+    ca_pool_destroy(&win->slider_pool, NULL, NULL);
+    ca_pool_destroy(&win->toggle_pool, NULL, NULL);
+    ca_pool_destroy(&win->progress_pool, NULL, NULL);
+    ca_pool_destroy(&win->select_pool, NULL, NULL);
+    ca_pool_destroy(&win->tabbar_pool, NULL, NULL);
+    ca_pool_destroy(&win->treenode_pool, NULL, NULL);
+    ca_pool_destroy(&win->table_pool, NULL, NULL);
+    ca_pool_destroy(&win->tooltip_pool, NULL, NULL);
+    ca_pool_destroy(&win->ctxmenu_pool, NULL, NULL);
+    ca_pool_destroy(&win->modal_pool, NULL, NULL);
+    ca_pool_destroy(&win->splitter_pool, NULL, NULL);
+    ca_pool_destroy(&win->viewport_pool, NULL, NULL);
+    ca_pool_destroy(&win->menubar_pool, NULL, NULL);
+    ca_dyn_array_destroy(&win->paint_cache_storage);
+    ca_dyn_array_destroy(&win->layout_scratch_storage);
+    ca_dyn_array_destroy(&win->paint_cache_spans);
+    ca_dyn_array_destroy(&win->char_storage);
+    ca_dyn_array_destroy(&win->key_storage);
+    ca_dyn_array_destroy(&win->key_action_storage);
+    ca_dyn_array_destroy(&win->key_mods_storage);
     win->draw_cmds      = NULL;
     win->sorted_idx     = NULL;
     win->paint_cache    = NULL;
     win->layout_scratch = NULL;
+    win->char_buf = NULL;
+    win->key_buf = NULL;
+    win->key_action_buf = NULL;
+    win->key_mods_buf = NULL;
     win->layout_scratch_capacity = 0;
     win->layout_scratch_used = 0;
-    win->label_pool     = NULL;
-    win->button_pool    = NULL;
-    win->input_pool     = NULL;
-    win->checkbox_pool  = NULL;
-    win->radio_pool     = NULL;
-    win->slider_pool    = NULL;
-    win->toggle_pool    = NULL;
-    win->progress_pool  = NULL;
-    win->select_pool    = NULL;
-    win->tabbar_pool    = NULL;
-    win->treenode_pool  = NULL;
-    win->table_pool     = NULL;
-    win->tooltip_pool   = NULL;
-    win->ctxmenu_pool   = NULL;
-    win->modal_pool     = NULL;
-    win->splitter_pool   = NULL;
-    win->viewport_pool   = NULL;
-    win->menubar_pool    = NULL;
     win->root           = NULL;
     win->draw_cmd_count = 0;
 }
 
+bool ca_window_reserve_draw_commands(Ca_Window *win, size_t minimum)
+{
+    if (!win || minimum > UINT32_MAX ||
+        !ca_dyn_array_reserve(&win->draw_cmd_storage, minimum))
+        return false;
+    win->draw_cmds = win->draw_cmd_storage.data;
+    return true;
+}
+
+bool ca_window_reserve_sorted_indices(Ca_Window *win, size_t minimum)
+{
+    if (!win || minimum > UINT32_MAX ||
+        !ca_dyn_array_reserve(&win->sorted_index_storage, minimum))
+        return false;
+    win->sorted_idx = win->sorted_index_storage.data;
+    return true;
+}
+
+bool ca_window_reserve_paint_cache(Ca_Window *win, size_t minimum)
+{
+    if (!win || minimum > UINT32_MAX ||
+        !ca_dyn_array_reserve(&win->paint_cache_storage, minimum))
+        return false;
+    win->paint_cache = win->paint_cache_storage.data;
+    return true;
+}
+
 /* ---- Helpers ---- */
 
-/* Grow a node's children array to fit at least `needed` entries.
-   Starts at 8 and doubles, capped by CA_MAX_NODE_CHILDREN.
-   Returns false on OOM. */
+/** Grows a node's child pointer array without an application-size limit. */
 static bool node_grow_children(Ca_Node *parent, uint32_t needed)
 {
     if (needed <= parent->child_capacity) return true;
-    uint32_t cap = parent->child_capacity ? parent->child_capacity * 2u : 8u;
-    while (cap < needed) cap *= 2u;
-    if (cap > CA_MAX_NODE_CHILDREN) cap = CA_MAX_NODE_CHILDREN;
-    if (needed > cap) return false; /* hard cap exceeded */
-    Ca_Node **nc = (Ca_Node **)CA_REALLOC(parent->children, cap * sizeof(Ca_Node *));
+    uint32_t cap = parent->child_capacity ? parent->child_capacity : 8u;
+    while (cap < needed) {
+        if (cap > UINT32_MAX / 2u) {
+            cap = needed;
+            break;
+        }
+        cap *= 2u;
+    }
+    if ((size_t)cap > SIZE_MAX / sizeof(Ca_Node *)) return false;
+    Ca_Node **nc = CA_REALLOC(parent->children,
+                              (size_t)cap * sizeof(Ca_Node *));
     if (!nc) return false;
     parent->children = nc;
     parent->child_capacity = cap;
@@ -134,46 +209,60 @@ static bool node_grow_children(Ca_Node *parent, uint32_t needed)
 
 static Ca_Node *alloc_node(Ca_Window *win)
 {
-    for (uint32_t i = 0; i < CA_MAX_NODES_PER_WINDOW; ++i) {
-        Ca_Node *n = &win->node_pool[i];
-        if (!n->in_use) {
-            memset(n, 0, sizeof(*n));
-            /* children and child_capacity are zero-initialised by the
-               memset; the array is allocated lazily in node_grow_children. */
-            n->draw_cmd_idx = -1;
-            return n;
-        }
-    }
-    fprintf(stderr, "[causality] ca_node pool exhausted (max %d)\n", CA_MAX_NODES_PER_WINDOW);
-    return NULL;
+    Ca_Node *node = ca_pool_acquire(&win->node_pool);
+    if (!node) return NULL;
+    node->draw_cmd_idx = -1;
+    return node;
 }
 
 static void release_widget(Ca_Node *node)
 {
     if (!node->widget) return;
+    Ca_Window *window = node->window;
     switch (node->widget_type) {
     case CA_WIDGET_LABEL: {
         Ca_Label *lbl = (Ca_Label *)node->widget;
         CA_FREE(lbl->dyn_text);
         lbl->dyn_text = NULL;
-        lbl->in_use = false;
+        ca_pool_release(&window->label_pool, lbl);
         break;
     }
-    case CA_WIDGET_BUTTON:    ((Ca_Button *)node->widget)->in_use = false; break;
-    case CA_WIDGET_TEXT_INPUT: ((Ca_TextInput *)node->widget)->in_use = false; break;
-    case CA_WIDGET_CHECKBOX:  ((Ca_Checkbox *)node->widget)->in_use = false; break;
-    case CA_WIDGET_RADIO:     ((Ca_Radio *)node->widget)->in_use = false; break;
-    case CA_WIDGET_SLIDER:    ((Ca_Slider *)node->widget)->in_use = false; break;
-    case CA_WIDGET_TOGGLE:    ((Ca_Toggle *)node->widget)->in_use = false; break;
-    case CA_WIDGET_PROGRESS:  ((Ca_Progress *)node->widget)->in_use = false; break;
-    case CA_WIDGET_SELECT:    ((Ca_Select *)node->widget)->in_use = false; break;
-    case CA_WIDGET_TABBAR:    ((Ca_TabBar *)node->widget)->in_use = false; break;
-    case CA_WIDGET_TREENODE:  ((Ca_TreeNode *)node->widget)->in_use = false; break;
-    case CA_WIDGET_TABLE:     ((Ca_Table *)node->widget)->in_use = false; break;
-    case CA_WIDGET_SPLITTER:  ((Ca_Splitter *)node->widget)->in_use = false; break;
-    case CA_WIDGET_VIEWPORT:  ((Ca_Viewport *)node->widget)->in_use = false; break;
-    case CA_WIDGET_MODAL:     ((Ca_Modal   *)node->widget)->in_use  = false; break;
-    case CA_WIDGET_MENUBAR:   ((Ca_MenuBar *)node->widget)->in_use  = false; break;
+    case CA_WIDGET_BUTTON: ca_pool_release(&window->button_pool, node->widget); break;
+    case CA_WIDGET_TEXT_INPUT: ca_pool_release(&window->input_pool, node->widget); break;
+    case CA_WIDGET_CHECKBOX: ca_pool_release(&window->checkbox_pool, node->widget); break;
+    case CA_WIDGET_RADIO: ca_pool_release(&window->radio_pool, node->widget); break;
+    case CA_WIDGET_SLIDER: ca_pool_release(&window->slider_pool, node->widget); break;
+    case CA_WIDGET_TOGGLE: ca_pool_release(&window->toggle_pool, node->widget); break;
+    case CA_WIDGET_PROGRESS: ca_pool_release(&window->progress_pool, node->widget); break;
+    case CA_WIDGET_SELECT: {
+        Ca_Select *select = node->widget;
+        ca_dyn_array_destroy(&select->option_storage);
+        ca_pool_release(&window->select_pool, select);
+        break;
+    }
+    case CA_WIDGET_TABBAR: {
+        Ca_TabBar *tab_bar = node->widget;
+        ca_dyn_array_destroy(&tab_bar->label_storage);
+        ca_dyn_array_destroy(&tab_bar->tab_node_storage);
+        ca_pool_release(&window->tabbar_pool, tab_bar);
+        break;
+    }
+    case CA_WIDGET_TREENODE: ca_pool_release(&window->treenode_pool, node->widget); break;
+    case CA_WIDGET_TABLE: {
+        Ca_Table *table = node->widget;
+        ca_dyn_array_destroy(&table->column_width_storage);
+        ca_pool_release(&window->table_pool, table);
+        break;
+    }
+    case CA_WIDGET_SPLITTER: ca_pool_release(&window->splitter_pool, node->widget); break;
+    case CA_WIDGET_VIEWPORT: ca_pool_release(&window->viewport_pool, node->widget); break;
+    case CA_WIDGET_MODAL: ca_pool_release(&window->modal_pool, node->widget); break;
+    case CA_WIDGET_MENUBAR: {
+        Ca_MenuBar *menu_bar = node->widget;
+        ca_menu_storage_destroy(&menu_bar->menu_storage, &menu_bar->menus);
+        ca_pool_release(&window->menubar_pool, menu_bar);
+        break;
+    }
     default: break;
     }
 }
@@ -191,6 +280,7 @@ static void free_subtree(Ca_Node *node)
         ca_signal_destroy(node->scroll_y_signal);
         node->scroll_y_signal = NULL;
     }
+    ca_dyn_array_destroy(&node->transition_storage);
     /* Clear any window-level pointers that reference this node, otherwise
        input handlers will dereference a freed slot next frame (UAF). */
     if (node->window) {
@@ -208,21 +298,20 @@ static void free_subtree(Ca_Node *node)
            different panel) keeps matching win->hovered_node by pointer
            equality, so a stale tooltip/menu bound to the old owner renders
            over whatever now occupies that memory. */
-        if (w->tooltip_pool) {
-            for (uint32_t i = 0; i < CA_MAX_TOOLTIPS_PER_WINDOW; ++i) {
-                Ca_Tooltip *tt = &w->tooltip_pool[i];
+        {
+            for (size_t i = 0; i < ca_pool_slot_count(&w->tooltip_pool); ++i) {
+                Ca_Tooltip *tt = CA_POOL_AT(w->tooltip_pool, Ca_Tooltip, i);
                 if (tt->in_use && tt->node == node) {
-                    tt->in_use = false;
-                    tt->node   = NULL;
+                    ca_pool_release(&w->tooltip_pool, tt);
                 }
             }
         }
-        if (w->ctxmenu_pool) {
-            for (uint32_t i = 0; i < CA_MAX_CTXMENUS_PER_WINDOW; ++i) {
-                Ca_CtxMenu *cm = &w->ctxmenu_pool[i];
+        {
+            for (size_t i = 0; i < ca_pool_slot_count(&w->ctxmenu_pool); ++i) {
+                Ca_CtxMenu *cm = CA_POOL_AT(w->ctxmenu_pool, Ca_CtxMenu, i);
                 if (cm->in_use && cm->node == node) {
-                    cm->in_use = false;
-                    cm->node   = NULL;
+                    ca_dyn_array_destroy(&cm->item_storage);
+                    ca_pool_release(&w->ctxmenu_pool, cm);
                 }
             }
         }
@@ -231,8 +320,7 @@ static void free_subtree(Ca_Node *node)
     /* Free the heap-allocated children pointer array (the child nodes
        themselves were already freed by the recursive calls above). */
     CA_FREE(node->children);
-    memset(node, 0, sizeof(*node));
-    node->draw_cmd_idx = -1;
+    if (node->window) ca_pool_release(&node->window->node_pool, node);
 }
 
 bool layout_desc_changed(const Ca_NodeDesc *a, const Ca_NodeDesc *b)
@@ -315,8 +403,8 @@ void ca_node_propagate_layout(Ca_Window *win)
     bool changed = true;
     while (changed) {
         changed = false;
-        for (uint32_t i = 0; i < CA_MAX_NODES_PER_WINDOW; ++i) {
-            Ca_Node *n = &win->node_pool[i];
+        for (size_t i = 0; i < ca_pool_slot_count(&win->node_pool); ++i) {
+            Ca_Node *n = CA_POOL_AT(win->node_pool, Ca_Node, i);
             if (!n->in_use || !n->parent) continue;
             if (n->dirty & (CA_DIRTY_LAYOUT | CA_DIRTY_CHILDREN)) {
                 if (!(n->parent->dirty & CA_DIRTY_LAYOUT)) {
@@ -348,11 +436,6 @@ Ca_Node *ca_node_root(Ca_Window *window)
 Ca_Node *ca_node_add(Ca_Node *parent, const Ca_NodeDesc *desc)
 {
     assert(parent && parent->in_use && desc);
-
-    if (parent->child_count >= CA_MAX_NODE_CHILDREN) {
-        fprintf(stderr, "[causality] ca_node_add: child limit reached (%d)\n", CA_MAX_NODE_CHILDREN);
-        return NULL;
-    }
 
     if (!node_grow_children(parent, parent->child_count + 1u)) {
         fprintf(stderr, "[causality] ca_node_add: OOM growing children\n");

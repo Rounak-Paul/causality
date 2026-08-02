@@ -24,6 +24,7 @@
 #include "ca_theme.h"
 #include "font.h"
 #include "scrollbar.h"
+#include "menu_storage.h"
 #include "../../include/ca_reactive.h"
 #include "viewport.h"
 #include "../platform/window.h"
@@ -135,56 +136,37 @@ static float s(float v);
 
 static Ca_Label *alloc_label(Ca_Window *win)
 {
-    for (uint32_t i = 0; i < CA_MAX_LABELS_PER_WINDOW; ++i) {
-        if (!win->label_pool[i].in_use)
-            return &win->label_pool[i];
-    }
-    fprintf(stderr, "[causality] label pool exhausted (max %d)\n", CA_MAX_LABELS_PER_WINDOW);
-    return NULL;
+    return ca_pool_acquire(&win->label_pool);
 }
 
 static Ca_Button *alloc_button(Ca_Window *win)
 {
-    for (uint32_t i = 0; i < CA_MAX_BUTTONS_PER_WINDOW; ++i) {
-        if (!win->button_pool[i].in_use)
-            return &win->button_pool[i];
-    }
-    fprintf(stderr, "[causality] button pool exhausted (max %d)\n", CA_MAX_BUTTONS_PER_WINDOW);
-    return NULL;
+    return ca_pool_acquire(&win->button_pool);
 }
 
 static Ca_TextInput *alloc_input(Ca_Window *win)
 {
-    for (uint32_t i = 0; i < CA_MAX_INPUTS_PER_WINDOW; ++i) {
-        if (!win->input_pool[i].in_use)
-            return &win->input_pool[i];
-    }
-    fprintf(stderr, "[causality] input pool exhausted (max %d)\n", CA_MAX_INPUTS_PER_WINDOW);
-    return NULL;
+    return ca_pool_acquire(&win->input_pool);
 }
 
-#define ALLOC_POOL_FN(name, type, pool, max_const)              \
-static type *alloc_##name(Ca_Window *win) {                     \
-    for (uint32_t i = 0; i < max_const; ++i) {                 \
-        if (!win->pool[i].in_use) return &win->pool[i];        \
-    }                                                           \
-    fprintf(stderr, "[causality] " #name " pool exhausted\n"); \
-    return NULL;                                                \
+#define ALLOC_POOL_FN(name, type, pool)        \
+static type *alloc_##name(Ca_Window *win) {    \
+    return ca_pool_acquire(&win->pool);        \
 }
-ALLOC_POOL_FN(checkbox,  Ca_Checkbox,  checkbox_pool,  CA_MAX_CHECKBOXES_PER_WINDOW)
-ALLOC_POOL_FN(radio,     Ca_Radio,     radio_pool,     CA_MAX_RADIOS_PER_WINDOW)
-ALLOC_POOL_FN(slider,    Ca_Slider,    slider_pool,    CA_MAX_SLIDERS_PER_WINDOW)
-ALLOC_POOL_FN(toggle,    Ca_Toggle,    toggle_pool,    CA_MAX_TOGGLES_PER_WINDOW)
-ALLOC_POOL_FN(progress,  Ca_Progress,  progress_pool,  CA_MAX_PROGRESS_PER_WINDOW)
-ALLOC_POOL_FN(select,    Ca_Select,    select_pool,    CA_MAX_SELECTS_PER_WINDOW)
-ALLOC_POOL_FN(tabbar,    Ca_TabBar,    tabbar_pool,    CA_MAX_TABBARS_PER_WINDOW)
-ALLOC_POOL_FN(treenode,  Ca_TreeNode,  treenode_pool,  CA_MAX_TREENODES_PER_WINDOW)
-ALLOC_POOL_FN(table,     Ca_Table,     table_pool,     CA_MAX_TABLES_PER_WINDOW)
-ALLOC_POOL_FN(tooltip,   Ca_Tooltip,   tooltip_pool,   CA_MAX_TOOLTIPS_PER_WINDOW)
-ALLOC_POOL_FN(ctxmenu,   Ca_CtxMenu,   ctxmenu_pool,   CA_MAX_CTXMENUS_PER_WINDOW)
-ALLOC_POOL_FN(modal,     Ca_Modal,     modal_pool,     CA_MAX_MODALS_PER_WINDOW)
-ALLOC_POOL_FN(splitter,  Ca_Splitter,  splitter_pool,  CA_MAX_SPLITTERS_PER_WINDOW)
-ALLOC_POOL_FN(menubar,   Ca_MenuBar,   menubar_pool,   CA_MAX_MENUBARS_PER_WINDOW)
+ALLOC_POOL_FN(checkbox,  Ca_Checkbox,  checkbox_pool)
+ALLOC_POOL_FN(radio,     Ca_Radio,     radio_pool)
+ALLOC_POOL_FN(slider,    Ca_Slider,    slider_pool)
+ALLOC_POOL_FN(toggle,    Ca_Toggle,    toggle_pool)
+ALLOC_POOL_FN(progress,  Ca_Progress,  progress_pool)
+ALLOC_POOL_FN(select,    Ca_Select,    select_pool)
+ALLOC_POOL_FN(tabbar,    Ca_TabBar,    tabbar_pool)
+ALLOC_POOL_FN(treenode,  Ca_TreeNode,  treenode_pool)
+ALLOC_POOL_FN(table,     Ca_Table,     table_pool)
+ALLOC_POOL_FN(tooltip,   Ca_Tooltip,   tooltip_pool)
+ALLOC_POOL_FN(ctxmenu,   Ca_CtxMenu,   ctxmenu_pool)
+ALLOC_POOL_FN(modal,     Ca_Modal,     modal_pool)
+ALLOC_POOL_FN(splitter,  Ca_Splitter,  splitter_pool)
+ALLOC_POOL_FN(menubar,   Ca_MenuBar,   menubar_pool)
 
 /* ============================================================
    INTERNAL — reactive field helpers
@@ -297,20 +279,42 @@ static Ca_Button *add_button(Ca_Window *win, Ca_Node *parent, const Ca_BtnDesc *
    IMPLICIT PARENT STACK — stores Ca_Node* directly
    ============================================================ */
 
-#define CA_STACK_MAX 64
+typedef struct Ca_BuildFrame {
+    Ca_Node *node;
+    uint32_t child_cursor;
+    bool reconcile;
+} Ca_BuildFrame;
 
 typedef struct Ca_BuildContext {
+    Ca_Instance *instance;
     Ca_Window *window;
-    Ca_Node   *stack[CA_STACK_MAX];
-    uint16_t   child_cursor[CA_STACK_MAX];
-    bool       reconcile[CA_STACK_MAX];
+    Ca_DynArray frame_storage;
+    Ca_BuildFrame *frames;
     char       next_key[CA_NODE_ID_MAX];
+    char       consumed_key[CA_NODE_ID_MAX];
     int        depth;    /* index of top; -1 = empty */
     bool       active;
     bool       auto_ctx; /* true when ca_div_clear auto-entered the context */
 } Ca_BuildContext;
 
 static Ca_BuildContext g_ctx;
+
+/** Resets a build context while retaining its demand-grown frame storage. */
+static void ctx_reset(Ca_Window *window)
+{
+    Ca_DynArray storage = g_ctx.frame_storage;
+    if (storage.element_size == 0)
+        storage = (Ca_DynArray)CA_DYN_ARRAY_INIT(Ca_BuildFrame);
+    else
+        ca_dyn_array_clear(&storage);
+    memset(&g_ctx, 0, sizeof(g_ctx));
+    g_ctx.frame_storage = storage;
+    g_ctx.frames = storage.data;
+    g_ctx.instance = window ? window->instance : NULL;
+    g_ctx.window = window;
+    g_ctx.depth = -1;
+    g_ctx.active = true;
+}
 
 /* Pending pre-CSS desc snapshot: set in claim_child/ca_ui_begin just before
    node->desc is overwritten with the (sparse, pre-CSS) new descriptor.
@@ -319,58 +323,70 @@ static Ca_BuildContext g_ctx;
 static Ca_NodeDesc  s_pre_css_desc;
 static Ca_Node     *s_pre_css_node;
 
+/** Releases retained build state before its owning instance destroys windows. */
+void ca_widget_ctx_release_instance(Ca_Instance *instance)
+{
+    if (!instance || g_ctx.instance != instance)
+        return;
+    ca_dyn_array_destroy(&g_ctx.frame_storage);
+    memset(&g_ctx, 0, sizeof(g_ctx));
+    memset(&s_pre_css_desc, 0, sizeof(s_pre_css_desc));
+    s_pre_css_node = NULL;
+}
+
 static Ca_Node *ctx_top(void)
 {
     assert(g_ctx.active && g_ctx.depth >= 0);
-    return g_ctx.stack[g_ctx.depth];
+    return g_ctx.frames[g_ctx.depth].node;
 }
 
 static bool ctx_top_reconcile(void)
 {
-    return g_ctx.active && g_ctx.depth >= 0 && g_ctx.reconcile[g_ctx.depth];
+    return g_ctx.active && g_ctx.depth >= 0 &&
+           g_ctx.frames[g_ctx.depth].reconcile;
 }
 
-static uint16_t *ctx_top_cursor(void)
+static uint32_t *ctx_top_cursor(void)
 {
     assert(g_ctx.active && g_ctx.depth >= 0);
-    return &g_ctx.child_cursor[g_ctx.depth];
+    return &g_ctx.frames[g_ctx.depth].child_cursor;
 }
 
 static void ctx_push(Ca_Node *node)
 {
-    assert(g_ctx.depth + 1 < CA_STACK_MAX);
-    ++g_ctx.depth;
-    g_ctx.stack[g_ctx.depth] = node;
-    g_ctx.child_cursor[g_ctx.depth] = 0;
-    g_ctx.reconcile[g_ctx.depth] = false;
+    Ca_BuildFrame frame = { .node = node };
+    if (!ca_dyn_array_push(&g_ctx.frame_storage, &frame)) return;
+    g_ctx.frames = g_ctx.frame_storage.data;
+    g_ctx.depth = (int)g_ctx.frame_storage.count - 1;
 }
 
 static void ctx_push_mode(Ca_Node *node, bool reconcile)
 {
-    assert(g_ctx.depth + 1 < CA_STACK_MAX);
-    ++g_ctx.depth;
-    g_ctx.stack[g_ctx.depth] = node;
-    g_ctx.child_cursor[g_ctx.depth] = 0;
-    g_ctx.reconcile[g_ctx.depth] = reconcile;
+    Ca_BuildFrame frame = { .node = node, .reconcile = reconcile };
+    if (!ca_dyn_array_push(&g_ctx.frame_storage, &frame)) return;
+    g_ctx.frames = g_ctx.frame_storage.data;
+    g_ctx.depth = (int)g_ctx.frame_storage.count - 1;
 }
 
 static void ctx_pop(void)
 {
     assert(g_ctx.depth >= 0);
-    if (g_ctx.reconcile[g_ctx.depth]) {
-        Ca_Node *node = g_ctx.stack[g_ctx.depth];
-        ca_node_trim_children(node, g_ctx.child_cursor[g_ctx.depth]);
+    if (g_ctx.frames[g_ctx.depth].reconcile) {
+        Ca_Node *node = g_ctx.frames[g_ctx.depth].node;
+        ca_node_trim_children(node, g_ctx.frames[g_ctx.depth].child_cursor);
     }
-    --g_ctx.depth;
+    ca_dyn_array_pop(&g_ctx.frame_storage, NULL);
+    g_ctx.frames = g_ctx.frame_storage.data;
+    g_ctx.depth = (int)g_ctx.frame_storage.count - 1;
 }
 
 static const char *consume_next_key(void)
 {
     if (!g_ctx.next_key[0]) return NULL;
-    static char key_buf[CA_NODE_ID_MAX];
-    snprintf(key_buf, sizeof(key_buf), "%s", g_ctx.next_key);
+    snprintf(g_ctx.consumed_key, sizeof(g_ctx.consumed_key), "%s",
+             g_ctx.next_key);
     g_ctx.next_key[0] = '\0';
-    return key_buf;
+    return g_ctx.consumed_key;
 }
 
 static void reorder_child_to_cursor(Ca_Node *parent, uint32_t from, uint32_t to)
@@ -410,7 +426,7 @@ static Ca_Node *claim_child(const Ca_NodeDesc *nd, uint8_t widget_type,
                             bool *out_reused)
 {
     Ca_Node *parent = ctx_top();
-    uint16_t *cursor = ctx_top_cursor();
+    uint32_t *cursor = ctx_top_cursor();
     uint32_t idx = *cursor;
     Ca_Node *node = NULL;
     *out_reused = false;
@@ -758,10 +774,7 @@ void ca_ui_begin(Ca_Window *window, const Ca_DivDesc *root_desc)
     assert(window);
     assert(!g_ctx.active && "ca_ui_begin called without matching ca_ui_end");
 
-    memset(&g_ctx, 0, sizeof(g_ctx));
-    g_ctx.window = window;
-    g_ctx.depth  = -1;
-    g_ctx.active = true;
+    ctx_reset(window);
     g_ctx.next_key[0] = '\0';
 
     Ca_NodeDesc nd = div_to_nd(root_desc);
@@ -814,9 +827,7 @@ void ca_ui_end(void)
 void ca_widget_ctx_enter(Ca_Window *win)
 {
     assert(win);
-    g_ctx.window = win;
-    g_ctx.depth  = -1;
-    g_ctx.active = true;
+    ctx_reset(win);
     g_ctx.next_key[0] = '\0';
 }
 
@@ -1257,18 +1268,8 @@ static void maybe_transition(Ca_Node *node, Ca_CssPropId prop,
     if (node->transition_duration <= 0.0f) return;
     if (prop < 64 && !(node->transition_props & (1ULL << prop))) return;
 
-    /* Find or allocate a transition slot */
-    Ca_Transition *slot = NULL;
-    for (int i = 0; i < CA_MAX_TRANSITIONS_PER_NODE; ++i) {
-        if (node->transitions[i].active && node->transitions[i].prop == (uint8_t)prop) {
-            slot = &node->transitions[i]; break;
-        }
-    }
-    if (!slot) {
-        for (int i = 0; i < CA_MAX_TRANSITIONS_PER_NODE; ++i) {
-            if (!node->transitions[i].active) { slot = &node->transitions[i]; break; }
-        }
-    }
+    Ca_Transition *slot =
+        ca_node_transition_acquire(node, (uint8_t)prop);
     if (!slot) return;
 
     slot->prop       = (uint8_t)prop;
@@ -1696,9 +1697,7 @@ void ca_div_clear(Ca_Div *div)
     /* Auto-enter a build context if not inside ca_ui_begin / ca_ui_end. */
     if (!g_ctx.active) {
         assert(node->window);
-        g_ctx.window   = node->window;
-        g_ctx.depth    = -1;
-        g_ctx.active   = true;
+        ctx_reset(node->window);
         g_ctx.auto_ctx = true;
         g_ctx.next_key[0] = '\0';
     }
@@ -1742,16 +1741,15 @@ static void div_builder_effect_fn(void *user)
     const Ca_NodeDesc suspended_pre_css_desc = s_pre_css_desc;
     Ca_Node *const suspended_pre_css_node = s_pre_css_node;
 
-    memset(&g_ctx, 0, sizeof(g_ctx));
-    g_ctx.window = node->window;
-    g_ctx.depth = -1;
-    g_ctx.active = true;
+    g_ctx = (Ca_BuildContext){0};
+    ctx_reset(node->window);
 
     ca_reconcile_begin((Ca_Div *)node);
     node->builder_fn((Ca_Div *)node, node->builder_data);
     ca_div_end();
     assert(g_ctx.depth == -1);
 
+    ca_dyn_array_destroy(&g_ctx.frame_storage);
     g_ctx = suspended_ctx;
     s_pre_css_desc = suspended_pre_css_desc;
     s_pre_css_node = suspended_pre_css_node;
@@ -1787,9 +1785,10 @@ void ca_div_invalidate(Ca_Div *div)
 
 static Ca_Node *find_node_by_id(Ca_Window *window, const char *id)
 {
-    if (!window || !id || !window->node_pool) return NULL;
-    for (uint32_t i = 0; i < CA_MAX_NODES_PER_WINDOW; ++i) {
-        Ca_Node *n = &window->node_pool[i];
+    if (!window || !id || ca_pool_slot_count(&window->node_pool) == 0)
+        return NULL;
+    for (size_t i = 0; i < ca_pool_slot_count(&window->node_pool); ++i) {
+        Ca_Node *n = CA_POOL_AT(window->node_pool, Ca_Node, i);
         if (n->in_use && n->id[0] && strcmp(n->id, id) == 0)
             return n;
     }
@@ -1977,9 +1976,9 @@ Ca_Radio *ca_radio(const Ca_RadioDesc *desc)
 
 int ca_radio_group_get(Ca_Window *win, int group)
 {
-    if (!win || !win->radio_pool) return -1;
-    for (uint32_t i = 0; i < CA_MAX_RADIOS_PER_WINDOW; ++i) {
-        Ca_Radio *r = &win->radio_pool[i];
+    if (!win || ca_pool_slot_count(&win->radio_pool) == 0) return -1;
+    for (uint32_t i = 0; i < ca_pool_slot_count(&win->radio_pool); ++i) {
+        Ca_Radio *r = CA_POOL_AT(win->radio_pool, Ca_Radio, i);
         if (r->in_use && r->group == group) {
             /* Find the selected one — we check all in paint pass, but return
                the first marked selected during last click pass */
@@ -1989,8 +1988,8 @@ int ca_radio_group_get(Ca_Window *win, int group)
        The "selected" state is that exactly one radio per group is checked.
        We store this by checking which radio's node is flagged. For simplicity,
        we track selection per-radio and return the value of the first checked. */
-    for (uint32_t i = 0; i < CA_MAX_RADIOS_PER_WINDOW; ++i) {
-        Ca_Radio *r = &win->radio_pool[i];
+    for (uint32_t i = 0; i < ca_pool_slot_count(&win->radio_pool); ++i) {
+        Ca_Radio *r = CA_POOL_AT(win->radio_pool, Ca_Radio, i);
         if (r->in_use && r->group == group && r->value == 1)
             return (int)i;
     }
@@ -2201,7 +2200,11 @@ Ca_Select *ca_select(const Ca_SelectDesc *desc)
     if (!sel) {
         sel = alloc_select(g_ctx.window);
         if (!sel) return NULL;
-        memset(sel, 0, sizeof(*sel));
+        if (!ca_dyn_array_init(&sel->option_storage,
+                               sizeof(Ca_OptionText))) {
+            ca_pool_release(&g_ctx.window->select_pool, sel);
+            return NULL;
+        }
         sel->in_use = true;
         node->widget_type = CA_WIDGET_SELECT;
         node->widget = sel;
@@ -2213,8 +2216,11 @@ Ca_Select *ca_select(const Ca_SelectDesc *desc)
     if (!reused)
         sel->open = false;
     {
-        int new_count = desc->option_count;
-        if (new_count > CA_MAX_SELECT_OPTIONS) new_count = CA_MAX_SELECT_OPTIONS;
+        int new_count = desc->option_count > 0 && desc->options
+            ? desc->option_count : 0;
+        if (!ca_dyn_array_resize(&sel->option_storage, (size_t)new_count))
+            return sel;
+        sel->options = sel->option_storage.data;
         WIDGET_SET(node, reused, sel->option_count, new_count);
         for (int i = 0; i < sel->option_count; ++i)
             WIDGET_SET_TEXT(node, reused, sel->options[i], CA_OPTION_TEXT_MAX, desc->options[i]);
@@ -2284,7 +2290,14 @@ Ca_TabBar *ca_tabs(const Ca_TabBarDesc *desc)
     if (!tb) {
         tb = alloc_tabbar(g_ctx.window);
         if (!tb) return NULL;
-        memset(tb, 0, sizeof(*tb));
+        if (!ca_dyn_array_init(&tb->tab_node_storage, sizeof(Ca_Node *)) ||
+            !ca_dyn_array_init(&tb->label_storage,
+                               sizeof(Ca_OptionText))) {
+            ca_dyn_array_destroy(&tb->label_storage);
+            ca_dyn_array_destroy(&tb->tab_node_storage);
+            ca_pool_release(&g_ctx.window->tabbar_pool, tb);
+            return NULL;
+        }
         tb->in_use = true;
         node->widget_type = CA_WIDGET_TABBAR;
         node->widget = tb;
@@ -2294,8 +2307,15 @@ Ca_TabBar *ca_tabs(const Ca_TabBarDesc *desc)
     tb->in_use = true;
     WIDGET_SET(node, reused, tb->active, desc->active);
     {
-        int new_count = desc->count;
-        if (new_count > CA_MAX_TAB_LABELS) new_count = CA_MAX_TAB_LABELS;
+        int new_count = desc->count > 0 && desc->labels ? desc->count : 0;
+        if (!ca_dyn_array_reserve(&tb->tab_node_storage,
+                                  (size_t)new_count) ||
+            !ca_dyn_array_reserve(&tb->label_storage, (size_t)new_count) ||
+            !ca_dyn_array_resize(&tb->tab_node_storage, (size_t)new_count) ||
+            !ca_dyn_array_resize(&tb->label_storage, (size_t)new_count))
+            return tb;
+        tb->tab_nodes = tb->tab_node_storage.data;
+        tb->labels = tb->label_storage.data;
         WIDGET_SET(node, reused, tb->count, new_count);
         for (int i = 0; i < tb->count; ++i) {
             WIDGET_SET_TEXT(node, reused, tb->labels[i], CA_OPTION_TEXT_MAX, desc->labels[i]);
@@ -2545,7 +2565,10 @@ void ca_table_begin(const Ca_TableDesc *desc)
     if (!tbl) {
         tbl = alloc_table(g_ctx.window);
         if (!tbl) return;
-        memset(tbl, 0, sizeof(*tbl));
+        if (!ca_dyn_array_init(&tbl->column_width_storage, sizeof(float))) {
+            ca_pool_release(&g_ctx.window->table_pool, tbl);
+            return;
+        }
         tbl->in_use = true;
         node->widget_type = CA_WIDGET_TABLE;
         node->widget = tbl;
@@ -2553,8 +2576,11 @@ void ca_table_begin(const Ca_TableDesc *desc)
 
     tbl->node = node;
     tbl->in_use = true;
-    tbl->column_count = desc->column_count;
-    if (tbl->column_count > 16) tbl->column_count = 16;
+    tbl->column_count = desc->column_count > 0 ? desc->column_count : 0;
+    if (!ca_dyn_array_resize(&tbl->column_width_storage,
+                             (size_t)tbl->column_count))
+        return;
+    tbl->column_widths = tbl->column_width_storage.data;
     for (int i = 0; i < tbl->column_count; ++i)
         tbl->column_widths[i] = desc->column_widths ? s(desc->column_widths[i]) : s(80.0f);
 
@@ -2603,8 +2629,8 @@ void ca_table_cell(const Ca_TextDesc *desc)
     if (tbl_node && tbl_node->elem_type == CA_ELEM_TABLE) {
         /* Find this table's pool entry to get column widths */
         Ca_Window *win = g_ctx.window;
-        for (uint32_t i = 0; i < CA_MAX_TABLES_PER_WINDOW; ++i) {
-            Ca_Table *t = &win->table_pool[i];
+        for (uint32_t i = 0; i < ca_pool_slot_count(&win->table_pool); ++i) {
+            Ca_Table *t = CA_POOL_AT(win->table_pool, Ca_Table, i);
             if (t->in_use && t->node == tbl_node) {
                 int col = (int)row->child_count;
                 if (col < t->column_count) cell_w = t->column_widths[col];
@@ -2656,9 +2682,9 @@ static Ca_Tooltip *tooltip_for_node(Ca_Node *target, const Ca_TooltipDesc *desc)
        reconcile rebuilds don't exhaust the pool each frame. */
     Ca_Tooltip *tt = NULL;
     Ca_Window  *win = g_ctx.window;
-    if (win && win->tooltip_pool) {
-        for (uint32_t i = 0; i < CA_MAX_TOOLTIPS_PER_WINDOW; ++i) {
-            Ca_Tooltip *t = &win->tooltip_pool[i];
+    if (win && ca_pool_slot_count(&win->tooltip_pool) > 0) {
+        for (uint32_t i = 0; i < ca_pool_slot_count(&win->tooltip_pool); ++i) {
+            Ca_Tooltip *t = CA_POOL_AT(win->tooltip_pool, Ca_Tooltip, i);
             if (t->in_use && t->node == target) { tt = t; break; }
         }
     }
@@ -2806,9 +2832,12 @@ Ca_MenuBar *ca_menu_bar(const Ca_MenuBarDesc *desc)
     mb->active_menu = -1;
     mb->hover_item = -1;
     mb->hover_sub_item = -1;
-    mb->menu_count = desc->menu_count;
-    if (mb->menu_count > CA_MAX_MENUS_PER_BAR)
-        mb->menu_count = CA_MAX_MENUS_PER_BAR;
+    int requested_menus = desc->menu_count > 0 && desc->menus
+        ? desc->menu_count : 0;
+    if (!ca_menu_storage_resize(&mb->menu_storage, &mb->menus,
+                                (size_t)requested_menus))
+        return mb;
+    mb->menu_count = requested_menus;
 
     /* Theme colors — use caller-provided or sensible defaults */
     mb->header_highlight = desc->header_highlight ? desc->header_highlight : CA_THEME_BG_OVERLAY;
@@ -2834,9 +2863,10 @@ Ca_MenuBar *ca_menu_bar(const Ca_MenuBarDesc *desc)
 
         if (mdesc->label)
             snprintf(menu->label, CA_MENU_LABEL_MAX, "%s", mdesc->label);
-        menu->item_count = mdesc->item_count;
-        if (menu->item_count > CA_MAX_ITEMS_PER_MENU)
-            menu->item_count = CA_MAX_ITEMS_PER_MENU;
+        int item_count = mdesc->item_count > 0 && mdesc->items
+            ? mdesc->item_count : 0;
+        if (!ca_menu_item_storage_resize(menu, (size_t)item_count))
+            continue;
         menu->active_sub = -1;
         for (int ii = 0; ii < menu->item_count; ++ii) {
             if (mdesc->items[ii].label)
@@ -2845,9 +2875,12 @@ Ca_MenuBar *ca_menu_bar(const Ca_MenuBarDesc *desc)
             menu->items[ii].action      = mdesc->items[ii].action;
             menu->items[ii].action_data = mdesc->items[ii].action_data;
             menu->items[ii].separator   = mdesc->items[ii].separator;
-            int nsub = mdesc->items[ii].sub_item_count;
-            if (nsub > CA_MAX_SUB_ITEMS_PER_ITEM) nsub = CA_MAX_SUB_ITEMS_PER_ITEM;
-            menu->items[ii].sub_item_count = nsub;
+            int nsub = mdesc->items[ii].sub_item_count > 0 &&
+                       mdesc->items[ii].sub_items
+                ? mdesc->items[ii].sub_item_count : 0;
+            if (!ca_menu_sub_item_storage_resize(&menu->items[ii],
+                                                 (size_t)nsub))
+                continue;
             if (nsub > 0 && mdesc->items[ii].sub_items) {
                 for (int si = 0; si < nsub; si++) {
                     const Ca_MenuItemDesc *sd = &mdesc->items[ii].sub_items[si];
@@ -2972,14 +3005,21 @@ void ca_context_menu(const Ca_CtxMenuDesc *desc)
        same reused node — without reuse the pool exhausts quickly). */
     Ca_CtxMenu *cm = NULL;
     Ca_Window  *win = g_ctx.window;
-    if (win && win->ctxmenu_pool) {
-        for (uint32_t i = 0; i < CA_MAX_CTXMENUS_PER_WINDOW; ++i) {
-            Ca_CtxMenu *c = &win->ctxmenu_pool[i];
+    if (win && ca_pool_slot_count(&win->ctxmenu_pool) > 0) {
+        for (uint32_t i = 0; i < ca_pool_slot_count(&win->ctxmenu_pool); ++i) {
+            Ca_CtxMenu *c = CA_POOL_AT(win->ctxmenu_pool, Ca_CtxMenu, i);
             if (c->in_use && c->node == target) { cm = c; break; }
         }
     }
     bool reused = (cm != NULL);
-    if (!cm) cm = alloc_ctxmenu(win);
+    if (!cm) {
+        cm = alloc_ctxmenu(win);
+        if (cm && !ca_dyn_array_init(&cm->item_storage,
+                                     sizeof(Ca_OptionText))) {
+            ca_pool_release(&win->ctxmenu_pool, cm);
+            cm = NULL;
+        }
+    }
     if (!cm) return;
 
     cm->node = target;
@@ -2988,9 +3028,12 @@ void ca_context_menu(const Ca_CtxMenuDesc *desc)
         cm->open = false;
         cm->hover_index = -1;
     }
-    cm->item_count = desc->item_count;
-    if (cm->item_count > CA_MAX_CTXMENU_ITEMS)
-        cm->item_count = CA_MAX_CTXMENU_ITEMS;
+    cm->item_count = desc->item_count > 0 && desc->items
+        ? desc->item_count : 0;
+    if (!ca_dyn_array_resize(&cm->item_storage,
+                             (size_t)cm->item_count))
+        return;
+    cm->items = cm->item_storage.data;
     for (int i = 0; i < cm->item_count; ++i) {
         if (desc->items[i])
             snprintf(cm->items[i], CA_OPTION_TEXT_MAX, "%s", desc->items[i]);
@@ -3004,14 +3047,14 @@ void ca_context_menu(const Ca_CtxMenuDesc *desc)
 static void update_context_menu_hover(Ca_Window *win, float mx, float my,
                                       float ui_s)
 {
-    if (!win || !win->ctxmenu_pool) return;
+    if (!win || ca_pool_slot_count(&win->ctxmenu_pool) == 0) return;
 
     const float item_h = 24.0f * ui_s;
     const float sep_h = 8.0f * ui_s;
     const float menu_w = 180.0f * ui_s;
 
-    for (uint32_t i = 0; i < CA_MAX_CTXMENUS_PER_WINDOW; ++i) {
-        Ca_CtxMenu *cm = &win->ctxmenu_pool[i];
+    for (uint32_t i = 0; i < ca_pool_slot_count(&win->ctxmenu_pool); ++i) {
+        Ca_CtxMenu *cm = CA_POOL_AT(win->ctxmenu_pool, Ca_CtxMenu, i);
         if (!cm->in_use || !cm->open) {
             continue;
         }
@@ -3248,13 +3291,7 @@ void ca_image(const Ca_ImageDesc *desc)
 
 static Ca_Viewport *alloc_viewport(Ca_Window *win)
 {
-    for (uint32_t i = 0; i < CA_MAX_VIEWPORTS_PER_WINDOW; ++i) {
-        if (!win->viewport_pool[i].in_use)
-            return &win->viewport_pool[i];
-    }
-    fprintf(stderr, "[causality] viewport pool exhausted (max %d)\n",
-            CA_MAX_VIEWPORTS_PER_WINDOW);
-    return NULL;
+    return ca_pool_acquire(&win->viewport_pool);
 }
 
 Ca_Viewport *ca_viewport(const Ca_ViewportDesc *desc)
@@ -3281,7 +3318,10 @@ Ca_Viewport *ca_viewport(const Ca_ViewportDesc *desc)
     if (h == 0) nd.flex_grow = 1.0f;
 
     Ca_Node *node = ca_node_add(parent, &nd);
-    if (!node) { vp->in_use = false; return NULL; }
+    if (!node) {
+        ca_pool_release(&win->viewport_pool, vp);
+        return NULL;
+    }
 
     VkFormat fmt = desc->format ? (VkFormat)desc->format : VK_FORMAT_R8G8B8A8_UNORM;
 
@@ -3305,7 +3345,8 @@ Ca_Viewport *ca_viewport(const Ca_ViewportDesc *desc)
     vp->needs_redraw = true;
 
     if (!ca_viewport_gpu_create(win->instance, vp, px_w, px_h, fmt)) {
-        vp->in_use = false;
+        ca_pool_release(&win->viewport_pool, vp);
+        ca_node_remove(node);
         return NULL;
     }
 
@@ -3502,13 +3543,13 @@ static bool is_effectively_disabled(Ca_Node *n)
 static bool is_focusable_node(Ca_Window *win, Ca_Node *n)
 {
     if (is_effectively_disabled(n)) return false;
-    for (uint32_t i = 0; i < CA_MAX_BUTTONS_PER_WINDOW; ++i)
-        if (win->button_pool[i].in_use &&
-            win->button_pool[i].node == n &&
-            win->button_pool[i].keyboard_focusable)
+    for (uint32_t i = 0; i < ca_pool_slot_count(&win->button_pool); ++i)
+        if (CA_POOL_AT(win->button_pool, Ca_Button, i)->in_use &&
+            CA_POOL_AT(win->button_pool, Ca_Button, i)->node == n &&
+            CA_POOL_AT(win->button_pool, Ca_Button, i)->keyboard_focusable)
             return true;
-    for (uint32_t i = 0; i < CA_MAX_INPUTS_PER_WINDOW; ++i)
-        if (win->input_pool[i].in_use && win->input_pool[i].node == n)
+    for (uint32_t i = 0; i < ca_pool_slot_count(&win->input_pool); ++i)
+        if (CA_POOL_AT(win->input_pool, Ca_TextInput, i)->in_use && CA_POOL_AT(win->input_pool, Ca_TextInput, i)->node == n)
             return true;
     return false;
 }
@@ -3516,32 +3557,35 @@ static bool is_focusable_node(Ca_Window *win, Ca_Node *n)
 /* Find the Ca_TextInput for a given node (or NULL) */
 static Ca_TextInput *input_for_node(Ca_Window *win, Ca_Node *n)
 {
-    if (!win->input_pool) return NULL;
-    for (uint32_t i = 0; i < CA_MAX_INPUTS_PER_WINDOW; ++i)
-        if (win->input_pool[i].in_use && win->input_pool[i].node == n)
-            return &win->input_pool[i];
+    if (ca_pool_slot_count(&win->input_pool) == 0) return NULL;
+    for (uint32_t i = 0; i < ca_pool_slot_count(&win->input_pool); ++i)
+        if (CA_POOL_AT(win->input_pool, Ca_TextInput, i)->in_use && CA_POOL_AT(win->input_pool, Ca_TextInput, i)->node == n)
+            return CA_POOL_AT(win->input_pool, Ca_TextInput, i);
     return NULL;
 }
 
 /* Find the Ca_Button for a given node (or NULL) */
 static Ca_Button *button_for_node(Ca_Window *win, Ca_Node *n)
 {
-    if (!win->button_pool) return NULL;
-    for (uint32_t i = 0; i < CA_MAX_BUTTONS_PER_WINDOW; ++i)
-        if (win->button_pool[i].in_use && win->button_pool[i].node == n)
-            return &win->button_pool[i];
+    if (ca_pool_slot_count(&win->button_pool) == 0) return NULL;
+    for (uint32_t i = 0; i < ca_pool_slot_count(&win->button_pool); ++i)
+        if (CA_POOL_AT(win->button_pool, Ca_Button, i)->in_use && CA_POOL_AT(win->button_pool, Ca_Button, i)->node == n)
+            return CA_POOL_AT(win->button_pool, Ca_Button, i);
     return NULL;
 }
 
-/* Collect all focusable nodes in document order */
-static void collect_focusable(Ca_Node *node, Ca_Node **out, int *count, int max,
-                              Ca_Window *win)
+/** Collects all focusable nodes in document order into growable storage. */
+static bool collect_focusable(Ca_Node *node, Ca_DynArray *out, Ca_Window *win)
 {
-    if (!node || !node->in_use || node->desc.hidden || node->desc.disabled) return;
-    if (is_focusable_node(win, node) && *count < max)
-        out[(*count)++] = node;
-    for (uint32_t i = 0; i < node->child_count; ++i)
-        collect_focusable(node->children[i], out, count, max, win);
+    if (!node || !node->in_use || node->desc.hidden || node->desc.disabled)
+        return true;
+    if (is_focusable_node(win, node) && !ca_dyn_array_push(out, &node))
+        return false;
+    for (uint32_t i = 0; i < node->child_count; ++i) {
+        if (!collect_focusable(node->children[i], out, win))
+            return false;
+    }
+    return true;
 }
 
 /* Encode a Unicode codepoint as UTF-8, return bytes written (1-4) */
@@ -3720,7 +3764,7 @@ void ca_widget_input_pass(Ca_Window *win)
        Geometry matches paint_scrollbars. CSS may replace the fallback width;
        both axes retain proportional thumbs and the existing minimum sizes.
     */
-    if (win->node_pool) {
+    if (ca_pool_slot_count(&win->node_pool) > 0) {
         const float SB_X_MARGIN = 2.0f * ui_s;
         const float SB_HIT_EXPAND = 2.0f * ui_s;
 
@@ -3731,8 +3775,8 @@ void ca_widget_input_pass(Ca_Window *win)
             Ca_Node *best = NULL;
             bool best_y = true;
 
-            for (uint32_t i = 0; i < CA_MAX_NODES_PER_WINDOW; ++i) {
-                Ca_Node *n = &win->node_pool[i];
+            for (uint32_t i = 0; i < ca_pool_slot_count(&win->node_pool); ++i) {
+                Ca_Node *n = CA_POOL_AT(win->node_pool, Ca_Node, i);
                 if (!n->in_use || node_is_ancestor_hidden(n)) continue;
 
                 /* Y scrollbar */
@@ -3868,7 +3912,7 @@ void ca_widget_input_pass(Ca_Window *win)
     }
 
     /* --- Draggable numeric inputs --- */
-    if (win->input_pool) {
+    if (ca_pool_slot_count(&win->input_pool) > 0) {
         if (win->numeric_drag_input &&
             (!win->numeric_drag_input->in_use ||
              !win->numeric_drag_input->node ||
@@ -3880,8 +3924,8 @@ void ca_widget_input_pass(Ca_Window *win)
 
         if (left_down && win->mouse_click_this_frame &&
             !win->numeric_drag_input) {
-            for (uint32_t i = 0; i < CA_MAX_INPUTS_PER_WINDOW; ++i) {
-                Ca_TextInput *input = &win->input_pool[i];
+            for (uint32_t i = 0; i < ca_pool_slot_count(&win->input_pool); ++i) {
+                Ca_TextInput *input = CA_POOL_AT(win->input_pool, Ca_TextInput, i);
                 if (!input->in_use || !input->node ||
                     input->input_mode == CA_INPUT_TEXT ||
                     is_effectively_disabled(input->node))
@@ -3925,14 +3969,16 @@ void ca_widget_input_pass(Ca_Window *win)
     }
 
     /* --- Scroll wheel handling (skipped if dragging scrollbar) --- */
-    if (win->scroll_this_frame && win->node_pool && !win->scrollbar_drag_node) {
+    if (win->scroll_this_frame &&
+        ca_pool_slot_count(&win->node_pool) > 0 &&
+        !win->scrollbar_drag_node) {
         const float SCROLL_SPEED = 30.0f * ui_s;
 
         /* First: if any select dropdown is open and the cursor is over it, scroll its list */
         bool select_scroll_consumed = false;
-        if (win->select_pool) {
-            for (uint32_t i = 0; i < CA_MAX_SELECTS_PER_WINDOW; ++i) {
-                Ca_Select *sel = &win->select_pool[i];
+        if (ca_pool_slot_count(&win->select_pool) > 0) {
+            for (uint32_t i = 0; i < ca_pool_slot_count(&win->select_pool); ++i) {
+                Ca_Select *sel = CA_POOL_AT(win->select_pool, Ca_Select, i);
                 if (!sel->in_use || !sel->node || !sel->open) continue;
                 /* Force-close if the host panel is hidden */
                 if (node_is_ancestor_hidden(sel->node)) {
@@ -3969,8 +4015,8 @@ void ca_widget_input_pass(Ca_Window *win)
             /* First try custom scroll callbacks (e.g. node graph canvas zoom) */
             Ca_Node *scroll_cb_node = NULL;
             float min_area = 1e30f;
-            for (uint32_t i = 0; i < CA_MAX_NODES_PER_WINDOW; ++i) {
-                Ca_Node *n = &win->node_pool[i];
+            for (uint32_t i = 0; i < ca_pool_slot_count(&win->node_pool); ++i) {
+                Ca_Node *n = CA_POOL_AT(win->node_pool, Ca_Node, i);
                 if (!n->in_use || !n->scroll_fn) continue;
                 if (!point_in_node(n, mx, my)) continue;
                 float area = n->w * n->h;
@@ -3982,8 +4028,8 @@ void ca_widget_input_pass(Ca_Window *win)
             } else {
                 /* Standard overflow scroll containers */
                 Ca_Node *scroll_target = NULL;
-                for (uint32_t i = 0; i < CA_MAX_NODES_PER_WINDOW; ++i) {
-                    Ca_Node *n = &win->node_pool[i];
+                for (uint32_t i = 0; i < ca_pool_slot_count(&win->node_pool); ++i) {
+                    Ca_Node *n = CA_POOL_AT(win->node_pool, Ca_Node, i);
                     if (!n->in_use) continue;
                     if (n->desc.overflow_y < 2) continue;
                     if (!point_in_node(n, mx, my)) continue;
@@ -4007,23 +4053,27 @@ void ca_widget_input_pass(Ca_Window *win)
         int key = win->key_buf[ki];
         if (key != 258 /* GLFW_KEY_TAB */) continue;
 
-        Ca_Node *focusable[256];
-        int fcount = 0;
-        if (win->root)
-            collect_focusable(win->root, focusable, &fcount, 256, win);
-        if (fcount == 0) break;
+        Ca_DynArray focusable_storage = CA_DYN_ARRAY_INIT(Ca_Node *);
+        bool collected = !win->root ||
+                         collect_focusable(win->root, &focusable_storage, win);
+        Ca_Node **focusable = focusable_storage.data;
+        size_t fcount = focusable_storage.count;
+        if (!collected || fcount == 0) {
+            ca_dyn_array_destroy(&focusable_storage);
+            break;
+        }
 
         bool shift = (win->key_mods_buf[ki] & 0x0001) != 0; /* GLFW_MOD_SHIFT */
-        int cur_idx = -1;
-        for (int i = 0; i < fcount; ++i) {
+        size_t cur_idx = SIZE_MAX;
+        for (size_t i = 0; i < fcount; ++i) {
             if (focusable[i] == win->focused_node) { cur_idx = i; break; }
         }
 
-        int next_idx;
+        size_t next_idx;
         if (shift)
-            next_idx = (cur_idx <= 0) ? fcount - 1 : cur_idx - 1;
+            next_idx = (cur_idx == SIZE_MAX || cur_idx == 0) ? fcount - 1 : cur_idx - 1;
         else
-            next_idx = (cur_idx < 0 || cur_idx >= fcount - 1) ? 0 : cur_idx + 1;
+            next_idx = (cur_idx == SIZE_MAX || cur_idx >= fcount - 1) ? 0 : cur_idx + 1;
 
         Ca_Node *old_focus = win->focused_node;
         win->focused_node = focusable[next_idx];
@@ -4031,6 +4081,7 @@ void ca_widget_input_pass(Ca_Window *win)
             if (old_focus) old_focus->dirty |= CA_DIRTY_CONTENT;
             win->focused_node->dirty |= CA_DIRTY_CONTENT;
         }
+        ca_dyn_array_destroy(&focusable_storage);
         break; /* consume only the first Tab */
     }
 
@@ -4061,9 +4112,9 @@ void ca_widget_input_pass(Ca_Window *win)
     }
 
     /* --- Menu bar sub-menu hover tracking (runs every frame) --- */
-    if (win->menubar_pool) {
-        for (uint32_t i = 0; i < CA_MAX_MENUBARS_PER_WINDOW; ++i) {
-            Ca_MenuBar *mb = &win->menubar_pool[i];
+    if (ca_pool_slot_count(&win->menubar_pool) > 0) {
+        for (uint32_t i = 0; i < ca_pool_slot_count(&win->menubar_pool); ++i) {
+            Ca_MenuBar *mb = CA_POOL_AT(win->menubar_pool, Ca_MenuBar, i);
             if (!mb->in_use || !mb->node || mb->active_menu < 0) continue;
             Ca_MenuBarMenu *am = &mb->menus[mb->active_menu];
             Ca_Node *hdr = am->header_node;
@@ -4134,9 +4185,9 @@ void ca_widget_input_pass(Ca_Window *win)
     if (win->mouse_click_this_frame) {
         /* Overlay priority: open menu dropdown captures all clicks */
         bool click_consumed = false;
-        if (win->menubar_pool) {
-            for (uint32_t i = 0; i < CA_MAX_MENUBARS_PER_WINDOW && !click_consumed; ++i) {
-                Ca_MenuBar *mb = &win->menubar_pool[i];
+        if (ca_pool_slot_count(&win->menubar_pool) > 0) {
+            for (uint32_t i = 0; i < ca_pool_slot_count(&win->menubar_pool) && !click_consumed; ++i) {
+                Ca_MenuBar *mb = CA_POOL_AT(win->menubar_pool, Ca_MenuBar, i);
                 if (!mb->in_use || !mb->node || mb->active_menu < 0) continue;
 
                 click_consumed = true;
@@ -4252,7 +4303,8 @@ void ca_widget_input_pass(Ca_Window *win)
             }
         }
 
-        if (!click_consumed && win->ctxmenu_pool) {
+        if (!click_consumed &&
+            ca_pool_slot_count(&win->ctxmenu_pool) > 0) {
             /* Context menu item clicks — checked before normal widget clicks.
                One menu can be open at a time.  If the click lands on a menu
                item we fire the callback and consume the event; if it lands
@@ -4261,8 +4313,8 @@ void ca_widget_input_pass(Ca_Window *win)
             const float CTX_ITEM_H = 24.0f * ui_s;
             const float CTX_SEP_H  =  8.0f * ui_s;
             const float CTX_MENU_W = 180.0f * ui_s;
-            for (uint32_t i = 0; i < CA_MAX_CTXMENUS_PER_WINDOW; ++i) {
-                Ca_CtxMenu *cm = &win->ctxmenu_pool[i];
+            for (uint32_t i = 0; i < ca_pool_slot_count(&win->ctxmenu_pool); ++i) {
+                Ca_CtxMenu *cm = CA_POOL_AT(win->ctxmenu_pool, Ca_CtxMenu, i);
                 if (!cm->in_use || !cm->open) continue;
 
                 /* Compute menu height (mirrors paint.c logic) */
@@ -4311,9 +4363,9 @@ void ca_widget_input_pass(Ca_Window *win)
         /* Click on an input or button focuses it */
         Ca_Node *clicked_focus = NULL;
 
-        if (win->input_pool) {
-            for (uint32_t i = 0; i < CA_MAX_INPUTS_PER_WINDOW; ++i) {
-                Ca_TextInput *inp = &win->input_pool[i];
+        if (ca_pool_slot_count(&win->input_pool) > 0) {
+            for (uint32_t i = 0; i < ca_pool_slot_count(&win->input_pool); ++i) {
+                Ca_TextInput *inp = CA_POOL_AT(win->input_pool, Ca_TextInput, i);
                 if (!inp->in_use || !inp->node) continue;
                 if (is_effectively_disabled(inp->node)) continue;
                 if (point_in_node(inp->node, mx, my)) {
@@ -4323,9 +4375,10 @@ void ca_widget_input_pass(Ca_Window *win)
             }
         }
 
-        if (!clicked_focus && win->button_pool) {
-            for (uint32_t i = 0; i < CA_MAX_BUTTONS_PER_WINDOW; ++i) {
-                Ca_Button *btn = &win->button_pool[i];
+        if (!clicked_focus &&
+            ca_pool_slot_count(&win->button_pool) > 0) {
+            for (uint32_t i = 0; i < ca_pool_slot_count(&win->button_pool); ++i) {
+                Ca_Button *btn = CA_POOL_AT(win->button_pool, Ca_Button, i);
                 if (!btn->in_use || !btn->node) continue;
                 if (!btn->keyboard_focusable) continue;
                 if (is_effectively_disabled(btn->node)) continue;
@@ -4350,12 +4403,12 @@ void ca_widget_input_pass(Ca_Window *win)
            exclusive buttons could run in one click and the later callback
            would overwrite the earlier state.  Match hover picking: highest
            stacking context first, then the most specific/smallest node. */
-        if (win->button_pool) {
+        if (ca_pool_slot_count(&win->button_pool) > 0) {
             int16_t top_z = INT16_MIN;
             Ca_Button *best_btn = NULL;
             float best_area = 1e18f;
-            for (uint32_t i = 0; i < CA_MAX_BUTTONS_PER_WINDOW; ++i) {
-                Ca_Button *btn = &win->button_pool[i];
+            for (uint32_t i = 0; i < ca_pool_slot_count(&win->button_pool); ++i) {
+                Ca_Button *btn = CA_POOL_AT(win->button_pool, Ca_Button, i);
                 if (!btn->in_use || !btn->on_click || !btn->node) continue;
                 if (is_effectively_disabled(btn->node)) continue;
                 if (!point_in_node(btn->node, mx, my)) continue;
@@ -4380,9 +4433,9 @@ void ca_widget_input_pass(Ca_Window *win)
         }
 
         /* Checkbox toggle */
-        if (win->checkbox_pool) {
-            for (uint32_t i = 0; i < CA_MAX_CHECKBOXES_PER_WINDOW; ++i) {
-                Ca_Checkbox *cb = &win->checkbox_pool[i];
+        if (ca_pool_slot_count(&win->checkbox_pool) > 0) {
+            for (uint32_t i = 0; i < ca_pool_slot_count(&win->checkbox_pool); ++i) {
+                Ca_Checkbox *cb = CA_POOL_AT(win->checkbox_pool, Ca_Checkbox, i);
                 if (!cb->in_use || !cb->node) continue;
                 if (is_effectively_disabled(cb->node)) continue;
                 if (point_in_node(cb->node, mx, my)) {
@@ -4394,15 +4447,15 @@ void ca_widget_input_pass(Ca_Window *win)
         }
 
         /* Radio select */
-        if (win->radio_pool) {
-            for (uint32_t i = 0; i < CA_MAX_RADIOS_PER_WINDOW; ++i) {
-                Ca_Radio *r = &win->radio_pool[i];
+        if (ca_pool_slot_count(&win->radio_pool) > 0) {
+            for (uint32_t i = 0; i < ca_pool_slot_count(&win->radio_pool); ++i) {
+                Ca_Radio *r = CA_POOL_AT(win->radio_pool, Ca_Radio, i);
                 if (!r->in_use || !r->node) continue;
                 if (is_effectively_disabled(r->node)) continue;
                 if (point_in_node(r->node, mx, my)) {
                     /* Deselect all radios in the same group */
-                    for (uint32_t j = 0; j < CA_MAX_RADIOS_PER_WINDOW; ++j) {
-                        Ca_Radio *o = &win->radio_pool[j];
+                    for (uint32_t j = 0; j < ca_pool_slot_count(&win->radio_pool); ++j) {
+                        Ca_Radio *o = CA_POOL_AT(win->radio_pool, Ca_Radio, j);
                         if (o->in_use && o->group == r->group && o->value) {
                             o->value = 0;
                             o->node->dirty |= CA_DIRTY_CONTENT;
@@ -4416,9 +4469,9 @@ void ca_widget_input_pass(Ca_Window *win)
         }
 
         /* Toggle */
-        if (win->toggle_pool) {
-            for (uint32_t i = 0; i < CA_MAX_TOGGLES_PER_WINDOW; ++i) {
-                Ca_Toggle *t = &win->toggle_pool[i];
+        if (ca_pool_slot_count(&win->toggle_pool) > 0) {
+            for (uint32_t i = 0; i < ca_pool_slot_count(&win->toggle_pool); ++i) {
+                Ca_Toggle *t = CA_POOL_AT(win->toggle_pool, Ca_Toggle, i);
                 if (!t->in_use || !t->node) continue;
                 if (is_effectively_disabled(t->node)) continue;
                 if (point_in_node(t->node, mx, my)) {
@@ -4430,10 +4483,10 @@ void ca_widget_input_pass(Ca_Window *win)
         }
 
         /* Select dropdown — toggle open/close, or pick option */
-        if (win->select_pool) {
+        if (ca_pool_slot_count(&win->select_pool) > 0) {
             bool select_handled = false;
-            for (uint32_t i = 0; i < CA_MAX_SELECTS_PER_WINDOW; ++i) {
-                Ca_Select *sel = &win->select_pool[i];
+            for (uint32_t i = 0; i < ca_pool_slot_count(&win->select_pool); ++i) {
+                Ca_Select *sel = CA_POOL_AT(win->select_pool, Ca_Select, i);
                 if (!sel->in_use || !sel->node) continue;
                 if (is_effectively_disabled(sel->node)) continue;
                 /* Force-close and skip selects inside hidden panels */
@@ -4492,9 +4545,9 @@ void ca_widget_input_pass(Ca_Window *win)
         }
 
         /* Menu bar header clicks (no dropdown is open) */
-        if (win->menubar_pool) {
-            for (uint32_t i = 0; i < CA_MAX_MENUBARS_PER_WINDOW; ++i) {
-                Ca_MenuBar *mb = &win->menubar_pool[i];
+        if (ca_pool_slot_count(&win->menubar_pool) > 0) {
+            for (uint32_t i = 0; i < ca_pool_slot_count(&win->menubar_pool); ++i) {
+                Ca_MenuBar *mb = CA_POOL_AT(win->menubar_pool, Ca_MenuBar, i);
                 if (!mb->in_use || !mb->node || mb->active_menu >= 0) continue;
                 for (int mi = 0; mi < mb->menu_count; ++mi) {
                     if (mb->menus[mi].header_node &&
@@ -4510,9 +4563,9 @@ void ca_widget_input_pass(Ca_Window *win)
         }
 
         /* Tab bar clicks */
-        if (win->tabbar_pool) {
-            for (uint32_t i = 0; i < CA_MAX_TABBARS_PER_WINDOW; ++i) {
-                Ca_TabBar *tb = &win->tabbar_pool[i];
+        if (ca_pool_slot_count(&win->tabbar_pool) > 0) {
+            for (uint32_t i = 0; i < ca_pool_slot_count(&win->tabbar_pool); ++i) {
+                Ca_TabBar *tb = CA_POOL_AT(win->tabbar_pool, Ca_TabBar, i);
                 if (!tb->in_use || !tb->node) continue;
                 if (is_effectively_disabled(tb->node)) continue;
                 for (int ti = 0; ti < tb->count; ++ti) {
@@ -4536,9 +4589,9 @@ void ca_widget_input_pass(Ca_Window *win)
         }
 
         /* Tree node expand/collapse */
-        if (win->treenode_pool) {
-            for (uint32_t i = 0; i < CA_MAX_TREENODES_PER_WINDOW; ++i) {
-                Ca_TreeNode *tn = &win->treenode_pool[i];
+        if (ca_pool_slot_count(&win->treenode_pool) > 0) {
+            for (uint32_t i = 0; i < ca_pool_slot_count(&win->treenode_pool); ++i) {
+                Ca_TreeNode *tn = CA_POOL_AT(win->treenode_pool, Ca_TreeNode, i);
                 if (!tn->in_use || !tn->node) continue;
                 if (is_effectively_disabled(tn->node)) continue;
                 /* Click on the first child (header row) */
@@ -4566,13 +4619,13 @@ void ca_widget_input_pass(Ca_Window *win)
     }
 
     /* --- Right-click for context menus --- */
-    if (win->ctxmenu_pool) {
+    if (ca_pool_slot_count(&win->ctxmenu_pool) > 0) {
         static bool prev_right = false;
         bool right_now = win->mouse_buttons[1];
         if (right_now && !prev_right) {
             /* Close any currently-open context menu first */
-            for (uint32_t i = 0; i < CA_MAX_CTXMENUS_PER_WINDOW; ++i) {
-                Ca_CtxMenu *cm = &win->ctxmenu_pool[i];
+            for (uint32_t i = 0; i < ca_pool_slot_count(&win->ctxmenu_pool); ++i) {
+                Ca_CtxMenu *cm = CA_POOL_AT(win->ctxmenu_pool, Ca_CtxMenu, i);
                 if (cm->in_use && cm->open) {
                     cm->open = false;
                     cm->hover_index = -1;
@@ -4583,8 +4636,8 @@ void ca_widget_input_pass(Ca_Window *win)
                This ensures a tree-node menu wins over its parent container. */
             Ca_CtxMenu *best      = NULL;
             float       best_area = 1e30f;
-            for (uint32_t i = 0; i < CA_MAX_CTXMENUS_PER_WINDOW; ++i) {
-                Ca_CtxMenu *cm = &win->ctxmenu_pool[i];
+            for (uint32_t i = 0; i < ca_pool_slot_count(&win->ctxmenu_pool); ++i) {
+                Ca_CtxMenu *cm = CA_POOL_AT(win->ctxmenu_pool, Ca_CtxMenu, i);
                 if (!cm->in_use || !cm->node) continue;
                 if (node_is_ancestor_hidden(cm->node)) continue;
                 if (is_effectively_disabled(cm->node)) continue;
@@ -4612,12 +4665,12 @@ void ca_widget_input_pass(Ca_Window *win)
     update_context_menu_hover(win, mx, my, ui_s);
 
     /* --- Slider drag handling --- */
-    if (win->slider_pool) {
+    if (ca_pool_slot_count(&win->slider_pool) > 0) {
         bool left_down = win->mouse_buttons[0];
         if (left_down && !win->drag_node) {
             /* Check if we're starting a drag on a slider */
-            for (uint32_t i = 0; i < CA_MAX_SLIDERS_PER_WINDOW; ++i) {
-                Ca_Slider *sl = &win->slider_pool[i];
+            for (uint32_t i = 0; i < ca_pool_slot_count(&win->slider_pool); ++i) {
+                Ca_Slider *sl = CA_POOL_AT(win->slider_pool, Ca_Slider, i);
                 if (!sl->in_use || !sl->node) continue;
                 if (is_effectively_disabled(sl->node)) continue;
                 if (point_in_node(sl->node, mx, my)) {
@@ -4630,8 +4683,8 @@ void ca_widget_input_pass(Ca_Window *win)
         }
         if (win->drag_node && left_down) {
             /* Update slider value from drag */
-            for (uint32_t i = 0; i < CA_MAX_SLIDERS_PER_WINDOW; ++i) {
-                Ca_Slider *sl = &win->slider_pool[i];
+            for (uint32_t i = 0; i < ca_pool_slot_count(&win->slider_pool); ++i) {
+                Ca_Slider *sl = CA_POOL_AT(win->slider_pool, Ca_Slider, i);
                 if (!sl->in_use || sl->node != win->drag_node) continue;
                 float range = sl->max_val - sl->min_val;
                 float pct = (mx - sl->node->x) / sl->node->w;
@@ -4652,13 +4705,13 @@ void ca_widget_input_pass(Ca_Window *win)
     }
 
     /* --- Splitter drag handling --- */
-    if (win->splitter_pool) {
+    if (ca_pool_slot_count(&win->splitter_pool) > 0) {
         bool left_down = win->mouse_buttons[0];
 
         /* Start splitter drag */
         if (left_down && win->mouse_click_this_frame) {
-            for (uint32_t i = 0; i < CA_MAX_SPLITTERS_PER_WINDOW; ++i) {
-                Ca_Splitter *sp = &win->splitter_pool[i];
+            for (uint32_t i = 0; i < ca_pool_slot_count(&win->splitter_pool); ++i) {
+                Ca_Splitter *sp = CA_POOL_AT(win->splitter_pool, Ca_Splitter, i);
                 if (!sp->in_use || !sp->node) continue;
                 Ca_Node *n = sp->node;
                 /* Compute the divider bar rect */
@@ -4685,8 +4738,8 @@ void ca_widget_input_pass(Ca_Window *win)
         }
 
         /* Update splitter ratio during drag */
-        for (uint32_t i = 0; i < CA_MAX_SPLITTERS_PER_WINDOW; ++i) {
-            Ca_Splitter *sp = &win->splitter_pool[i];
+        for (uint32_t i = 0; i < ca_pool_slot_count(&win->splitter_pool); ++i) {
+            Ca_Splitter *sp = CA_POOL_AT(win->splitter_pool, Ca_Splitter, i);
             if (!sp->in_use || !sp->dragging) continue;
             if (!left_down) {
                 sp->dragging = false;
@@ -4716,9 +4769,9 @@ void ca_widget_input_pass(Ca_Window *win)
             /* Find the topmost draggable node under the cursor. */
             Ca_Node *best = NULL;
             int best_z = -32768;
-            if (win->node_pool) {
-                for (uint32_t i = 0; i < CA_MAX_NODES_PER_WINDOW; ++i) {
-                    Ca_Node *n = &win->node_pool[i];
+            if (ca_pool_slot_count(&win->node_pool) > 0) {
+                for (uint32_t i = 0; i < ca_pool_slot_count(&win->node_pool); ++i) {
+                    Ca_Node *n = CA_POOL_AT(win->node_pool, Ca_Node, i);
                     if (!n->in_use || node_is_ancestor_hidden(n)) continue;
                     if (is_effectively_disabled(n)) continue;
                     if (!n->drag_fn_start && !n->drag_fn_move && !n->drag_fn_end) continue;
@@ -4807,9 +4860,9 @@ void ca_widget_input_pass(Ca_Window *win)
     bool over_overlay = false;
 
     /* Ca_Select open dropdown */
-    if (!over_overlay && win->select_pool) {
-        for (uint32_t i = 0; i < CA_MAX_SELECTS_PER_WINDOW && !over_overlay; ++i) {
-            Ca_Select *sel = &win->select_pool[i];
+    if (!over_overlay && ca_pool_slot_count(&win->select_pool) > 0) {
+        for (uint32_t i = 0; i < ca_pool_slot_count(&win->select_pool) && !over_overlay; ++i) {
+            Ca_Select *sel = CA_POOL_AT(win->select_pool, Ca_Select, i);
             if (!sel->in_use || !sel->open || !sel->node) continue;
             Ca_Node *sn = sel->node;
             int visible = sel->option_count < CA_SELECT_MAX_VISIBLE
@@ -4823,12 +4876,12 @@ void ca_widget_input_pass(Ca_Window *win)
     }
 
     /* Ca_CtxMenu open */
-    if (!over_overlay && win->ctxmenu_pool) {
+    if (!over_overlay && ca_pool_slot_count(&win->ctxmenu_pool) > 0) {
         const float cm_item_h = 24.0f * ui_s;
         const float cm_sep_h  =  8.0f * ui_s;
         const float cm_menu_w = 180.0f * ui_s;
-        for (uint32_t i = 0; i < CA_MAX_CTXMENUS_PER_WINDOW && !over_overlay; ++i) {
-            Ca_CtxMenu *cm = &win->ctxmenu_pool[i];
+        for (uint32_t i = 0; i < ca_pool_slot_count(&win->ctxmenu_pool) && !over_overlay; ++i) {
+            Ca_CtxMenu *cm = CA_POOL_AT(win->ctxmenu_pool, Ca_CtxMenu, i);
             if (!cm->in_use || !cm->open) continue;
             if (cm->node && node_is_ancestor_hidden(cm->node)) continue;
             float menu_h = 6.0f * ui_s;
@@ -4849,12 +4902,12 @@ void ca_widget_input_pass(Ca_Window *win)
     }
 
     /* Ca_MenuBar active dropdown (and sub-menu) */
-    if (!over_overlay && win->menubar_pool) {
+    if (!over_overlay && ca_pool_slot_count(&win->menubar_pool) > 0) {
         const float mb_item_h = 24.0f * ui_s;
         const float mb_sep_h  =  8.0f * ui_s;
         const float mb_menu_w = 180.0f * ui_s;
-        for (uint32_t i = 0; i < CA_MAX_MENUBARS_PER_WINDOW && !over_overlay; ++i) {
-            Ca_MenuBar *mb = &win->menubar_pool[i];
+        for (uint32_t i = 0; i < ca_pool_slot_count(&win->menubar_pool) && !over_overlay; ++i) {
+            Ca_MenuBar *mb = CA_POOL_AT(win->menubar_pool, Ca_MenuBar, i);
             if (!mb->in_use || mb->active_menu < 0) continue;
             Ca_MenuBarMenu *am = &mb->menus[mb->active_menu];
             Ca_Node *hdr = am->header_node;
@@ -4889,14 +4942,14 @@ void ca_widget_input_pass(Ca_Window *win)
     }
 
     /* Ca_Modal visible — overlay covers the full window */
-    if (!over_overlay && win->modal_pool) {
-        for (uint32_t i = 0; i < CA_MAX_MODALS_PER_WINDOW && !over_overlay; ++i) {
-            Ca_Modal *m = &win->modal_pool[i];
+    if (!over_overlay && ca_pool_slot_count(&win->modal_pool) > 0) {
+        for (uint32_t i = 0; i < ca_pool_slot_count(&win->modal_pool) && !over_overlay; ++i) {
+            Ca_Modal *m = CA_POOL_AT(win->modal_pool, Ca_Modal, i);
             if (m->in_use && m->visible) over_overlay = true;
         }
     }
 
-    if (!over_overlay && win->node_pool) {
+    if (!over_overlay && ca_pool_slot_count(&win->node_pool) > 0) {
         /* Find the deepest / smallest node under the cursor (most specific hit).
            When two nodes have identical area (common for an auto-sized
            parent that wraps a single child — e.g. a tree-node container
@@ -4923,8 +4976,8 @@ void ca_widget_input_pass(Ca_Window *win)
            are excluded so they cannot inflate max_ez and block everything
            else when no popup is active. */
         int16_t max_ez = 0;
-        for (uint32_t i = 0; i < CA_MAX_NODES_PER_WINDOW; ++i) {
-            Ca_Node *n = &win->node_pool[i];
+        for (uint32_t i = 0; i < ca_pool_slot_count(&win->node_pool); ++i) {
+            Ca_Node *n = CA_POOL_AT(win->node_pool, Ca_Node, i);
             if (!HOVER_CANDIDATE(n)) continue;
             int16_t ez = node_effective_z(n);
             if (ez > max_ez) max_ez = ez;
@@ -4932,8 +4985,8 @@ void ca_widget_input_pass(Ca_Window *win)
 
         /* Pass 2 — among nodes whose effective z matches max_ez, pick the
            most-specific one using the original area + descendant logic. */
-        for (uint32_t i = 0; i < CA_MAX_NODES_PER_WINDOW; ++i) {
-            Ca_Node *n = &win->node_pool[i];
+        for (uint32_t i = 0; i < ca_pool_slot_count(&win->node_pool); ++i) {
+            Ca_Node *n = CA_POOL_AT(win->node_pool, Ca_Node, i);
             if (!HOVER_CANDIDATE(n)) continue;
             if (node_effective_z(n) != max_ez) continue;
             float area = n->w * n->h;
@@ -4972,9 +5025,9 @@ void ca_widget_input_pass(Ca_Window *win)
        Dropdown items are overlay draw commands (not Ca_Nodes), so hovered_node
        never changes while the cursor is over them — without this, paint_overlays
        only runs when something else marks a node dirty, causing on_hover to stall. */
-    if (win->select_pool) {
-        for (uint32_t i = 0; i < CA_MAX_SELECTS_PER_WINDOW; ++i) {
-            Ca_Select *sel = &win->select_pool[i];
+    if (ca_pool_slot_count(&win->select_pool) > 0) {
+        for (uint32_t i = 0; i < ca_pool_slot_count(&win->select_pool); ++i) {
+            Ca_Select *sel = CA_POOL_AT(win->select_pool, Ca_Select, i);
             if (sel->in_use && sel->open && sel->node)
                 sel->node->dirty |= CA_DIRTY_CONTENT;
         }

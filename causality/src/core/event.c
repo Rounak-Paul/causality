@@ -10,11 +10,19 @@
  *
  * inst  Instance whose event system is being initialised.
  */
-void ca_event_init(Ca_Instance *inst)
+bool ca_event_init(Ca_Instance *inst)
 {
+    if (!inst ||
+        !ca_dyn_array_init(&inst->event_queue, sizeof(Ca_Event)) ||
+        !ca_dyn_array_init(&inst->event_dispatch_queue, sizeof(Ca_Event)))
+        return false;
     inst->event_mutex = ca_mutex_create();
-    inst->event_head = 0;
-    inst->event_tail = 0;
+    if (!inst->event_mutex) {
+        ca_dyn_array_destroy(&inst->event_dispatch_queue);
+        ca_dyn_array_destroy(&inst->event_queue);
+        return false;
+    }
+    return true;
 }
 
 /*
@@ -28,6 +36,8 @@ void ca_event_shutdown(Ca_Instance *inst)
 {
     ca_mutex_destroy(inst->event_mutex);
     inst->event_mutex = NULL;
+    ca_dyn_array_destroy(&inst->event_dispatch_queue);
+    ca_dyn_array_destroy(&inst->event_queue);
 }
 
 /*
@@ -41,15 +51,12 @@ void ca_event_shutdown(Ca_Instance *inst)
  */
 void ca_event_post(Ca_Instance *inst, const Ca_Event *event)
 {
+    if (!inst || !event || !inst->event_mutex) return;
     ca_mutex_lock(inst->event_mutex);
-    uint32_t next = (inst->event_tail + 1) % CA_EVENT_QUEUE_CAPACITY;
-    if (next != inst->event_head) {
-        inst->event_queue[inst->event_tail] = *event;
-        inst->event_tail = next;
-    } else {
-        fprintf(stderr, "[causality] event queue full, dropping event\n");
-    }
+    bool queued = ca_dyn_array_push(&inst->event_queue, event);
     ca_mutex_unlock(inst->event_mutex);
+    if (!queued)
+        fprintf(stderr, "[causality] event queue allocation failed\n");
 }
 
 /*
@@ -63,21 +70,20 @@ void ca_event_post(Ca_Instance *inst, const Ca_Event *event)
  */
 void ca_event_dispatch(Ca_Instance *inst)
 {
-    /* Snapshot under lock, then process without holding the lock */
+    if (!inst || !inst->event_mutex) return;
     ca_mutex_lock(inst->event_mutex);
-    uint32_t head = inst->event_head;
-    uint32_t tail = inst->event_tail;
-    inst->event_head = tail; /* consume all */
+    ca_dyn_array_swap(&inst->event_queue, &inst->event_dispatch_queue);
     ca_mutex_unlock(inst->event_mutex);
 
-    while (head != tail) {
-        const Ca_Event *ev = &inst->event_queue[head];
+    for (size_t i = 0; i < inst->event_dispatch_queue.count; ++i) {
+        const Ca_Event *ev =
+            ca_dyn_array_at_const(&inst->event_dispatch_queue, i);
         if (ev->type > CA_EVENT_NONE && ev->type < CA_EVENT_TYPE_COUNT) {
             const Ca_EventHandler *h = &inst->handlers[ev->type];
             if (h->fn) h->fn(ev, h->user_data);
         }
-        head = (head + 1) % CA_EVENT_QUEUE_CAPACITY;
     }
+    ca_dyn_array_clear(&inst->event_dispatch_queue);
 }
 
 /*

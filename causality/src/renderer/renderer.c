@@ -46,32 +46,63 @@ static bool create_vk_instance(Ca_Instance *inst, const char *app_name)
 {
     uint32_t     glfw_ext_count = 0;
     const char **glfw_exts      = glfwGetRequiredInstanceExtensions(&glfw_ext_count);
+    if (!glfw_exts || glfw_ext_count == 0) {
+        fprintf(stderr, "[vk] GLFW returned no required instance extensions\n");
+        return false;
+    }
 
-    /* Copy GLFW extensions, add portability enumeration if present */
-    const char *extensions[32];
-    uint32_t    ext_count = 0;
-    for (uint32_t i = 0; i < glfw_ext_count; ++i)
-        extensions[ext_count++] = glfw_exts[i];
+    Ca_DynArray extension_storage = CA_DYN_ARRAY_INIT(const char *);
+    if (!ca_dyn_array_append(&extension_storage, glfw_exts, glfw_ext_count))
+        return false;
 
     /* Check and opt-in to VK_KHR_portability_enumeration (required on macOS) */
     bool has_portability = false;
     uint32_t avail_ext_count = 0;
-    vkEnumerateInstanceExtensionProperties(NULL, &avail_ext_count, NULL);
-    VkExtensionProperties *avail_exts =
-        (VkExtensionProperties *)CA_MALLOC(avail_ext_count * sizeof(VkExtensionProperties));
-    vkEnumerateInstanceExtensionProperties(NULL, &avail_ext_count, avail_exts);
+    VkResult vr = vkEnumerateInstanceExtensionProperties(NULL, &avail_ext_count, NULL);
+    if (vr != VK_SUCCESS) {
+        fprintf(stderr, "[vk] extension count query failed: %d\n", vr);
+        ca_dyn_array_destroy(&extension_storage);
+        return false;
+    }
+    Ca_DynArray available_extension_storage = CA_DYN_ARRAY_INIT(VkExtensionProperties);
+    if (!ca_dyn_array_resize(&available_extension_storage, avail_ext_count)) {
+        ca_dyn_array_destroy(&extension_storage);
+        return false;
+    }
+    VkExtensionProperties *avail_exts = available_extension_storage.data;
+    vr = vkEnumerateInstanceExtensionProperties(NULL, &avail_ext_count, avail_exts);
+    if (vr != VK_SUCCESS && vr != VK_INCOMPLETE) {
+        fprintf(stderr, "[vk] extension query failed: %d\n", vr);
+        ca_dyn_array_destroy(&available_extension_storage);
+        ca_dyn_array_destroy(&extension_storage);
+        return false;
+    }
     for (uint32_t i = 0; i < avail_ext_count; ++i) {
         if (strcmp(avail_exts[i].extensionName, "VK_KHR_portability_enumeration") == 0)
             has_portability = true;
     }
-    CA_FREE(avail_exts);
+    ca_dyn_array_destroy(&available_extension_storage);
 
-    if (has_portability)
-        extensions[ext_count++] = "VK_KHR_portability_enumeration";
+    if (has_portability) {
+        const char *portability = "VK_KHR_portability_enumeration";
+        if (!ca_dyn_array_push(&extension_storage, &portability)) {
+            ca_dyn_array_destroy(&extension_storage);
+            return false;
+        }
+    }
 
 #ifdef CAUSALITY_VULKAN_VALIDATION
-    extensions[ext_count++] = VK_EXT_DEBUG_UTILS_EXTENSION_NAME;
+    const char *debug_utils = VK_EXT_DEBUG_UTILS_EXTENSION_NAME;
+    if (!ca_dyn_array_push(&extension_storage, &debug_utils)) {
+        ca_dyn_array_destroy(&extension_storage);
+        return false;
+    }
 #endif
+
+    if (extension_storage.count > UINT32_MAX) {
+        ca_dyn_array_destroy(&extension_storage);
+        return false;
+    }
 
     VkApplicationInfo app_info = {
         .sType              = VK_STRUCTURE_TYPE_APPLICATION_INFO,
@@ -91,8 +122,8 @@ static bool create_vk_instance(Ca_Instance *inst, const char *app_name)
                                        ? VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR
                                        : 0,
         .pApplicationInfo        = &app_info,
-        .enabledExtensionCount   = ext_count,
-        .ppEnabledExtensionNames = extensions,
+        .enabledExtensionCount   = (uint32_t)extension_storage.count,
+        .ppEnabledExtensionNames = extension_storage.data,
     };
 
 #ifdef CAUSALITY_VULKAN_VALIDATION
@@ -102,15 +133,30 @@ static bool create_vk_instance(Ca_Instance *inst, const char *app_name)
     const char *layers[] = { "VK_LAYER_KHRONOS_validation" };
     bool has_validation_layer = false;
     uint32_t avail_layer_count = 0;
-    vkEnumerateInstanceLayerProperties(&avail_layer_count, NULL);
-    VkLayerProperties *avail_layers =
-        (VkLayerProperties *)CA_MALLOC(avail_layer_count * sizeof(VkLayerProperties));
-    vkEnumerateInstanceLayerProperties(&avail_layer_count, avail_layers);
+    vr = vkEnumerateInstanceLayerProperties(&avail_layer_count, NULL);
+    if (vr != VK_SUCCESS) {
+        fprintf(stderr, "[vk] validation layer count query failed: %d\n", vr);
+        ca_dyn_array_destroy(&extension_storage);
+        return false;
+    }
+    Ca_DynArray available_layer_storage = CA_DYN_ARRAY_INIT(VkLayerProperties);
+    if (!ca_dyn_array_resize(&available_layer_storage, avail_layer_count)) {
+        ca_dyn_array_destroy(&extension_storage);
+        return false;
+    }
+    VkLayerProperties *avail_layers = available_layer_storage.data;
+    vr = vkEnumerateInstanceLayerProperties(&avail_layer_count, avail_layers);
+    if (vr != VK_SUCCESS && vr != VK_INCOMPLETE) {
+        fprintf(stderr, "[vk] validation layer query failed: %d\n", vr);
+        ca_dyn_array_destroy(&available_layer_storage);
+        ca_dyn_array_destroy(&extension_storage);
+        return false;
+    }
     for (uint32_t i = 0; i < avail_layer_count; ++i) {
         if (strcmp(avail_layers[i].layerName, layers[0]) == 0)
             has_validation_layer = true;
     }
-    CA_FREE(avail_layers);
+    ca_dyn_array_destroy(&available_layer_storage);
 
     if (has_validation_layer) {
         ci.enabledLayerCount   = 1;
@@ -122,7 +168,8 @@ static bool create_vk_instance(Ca_Instance *inst, const char *app_name)
     }
 #endif
 
-    VkResult vr = vkCreateInstance(&ci, NULL, &inst->vk_instance);
+    vr = vkCreateInstance(&ci, NULL, &inst->vk_instance);
+    ca_dyn_array_destroy(&extension_storage);
     if (vr != VK_SUCCESS) {
         fprintf(stderr, "[vk] vkCreateInstance failed: %d\n", vr);
         return false;
@@ -589,13 +636,16 @@ bool ca_renderer_window_init(Ca_Instance *inst, Ca_Window *win)
             ca_text_pipeline_update_font(inst);
 
         /* Image descriptor pool — shares text pipeline's descriptor set layout */
-        ca_image_pool_init(inst);
+        if (!ca_image_pool_init(inst))
+            return false;
 
         /* Image pipeline — RGBA textured quads (shares text pipeline layout) */
-        ca_image_pipeline_create(inst, win->sc.format);
+        if (!ca_image_pipeline_create(inst, win->sc.format))
+            return false;
 
         /* Backdrop blur pipeline */
-        ca_blur_pipeline_create(inst, win->sc.format);
+        if (!ca_blur_pipeline_create(inst, win->sc.format))
+            return false;
     }
 
     /* Create per-frame instance buffers if they don't exist yet.
@@ -623,10 +673,10 @@ void ca_renderer_window_shutdown(Ca_Instance *inst, Ca_Window *win)
     ca_blur_window_destroy(inst, win);
 
     /* Destroy viewport GPU resources before tearing down the swapchain */
-    if (win->viewport_pool) {
-        for (int i = 0; i < CA_MAX_VIEWPORTS_PER_WINDOW; ++i) {
-            if (win->viewport_pool[i].in_use)
-                ca_viewport_gpu_destroy(inst, &win->viewport_pool[i]);
+    if (ca_pool_slot_count(&win->viewport_pool) > 0) {
+        for (int i = 0; i < ca_pool_slot_count(&win->viewport_pool); ++i) {
+            if (CA_POOL_AT(win->viewport_pool, Ca_Viewport, i)->in_use)
+                ca_viewport_gpu_destroy(inst, CA_POOL_AT(win->viewport_pool, Ca_Viewport, i));
         }
     }
 
@@ -663,8 +713,8 @@ void ca_renderer_frame(Ca_Instance *inst)
     if (inst && inst->font)
         ca_font_flush_uploads(inst, inst->font);
 
-    for (int i = 0; i < CA_MAX_WINDOWS_TOTAL; ++i) {
-        Ca_Window *win = &inst->windows[i];
+    for (size_t i = 0; i < ca_pool_slot_count(&inst->windows); ++i) {
+        Ca_Window *win = CA_POOL_AT(inst->windows, Ca_Window, i);
         if (!win->in_use) continue;
 
         /* Apply any deferred swapchain resize now that we are outside GLFW

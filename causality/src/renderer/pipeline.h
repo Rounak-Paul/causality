@@ -13,6 +13,8 @@ void ca_ssbo_layout_destroy(Ca_Instance *inst);
 
 /* Create per-frame instance buffer + descriptor set for a swapchain frame */
 bool ca_instance_buf_create(Ca_Instance *inst, Ca_Frame *f);
+bool ca_instance_buf_ensure(Ca_Instance *inst, Ca_Frame *f,
+                            uint32_t minimum_slots);
 void ca_instance_buf_destroy(Ca_Instance *inst, Ca_Frame *f);
 
 /* ---- Rect pipeline ---- */

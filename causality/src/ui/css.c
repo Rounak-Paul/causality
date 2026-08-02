@@ -267,6 +267,7 @@ typedef struct {
     /* True while parsing declarations of a rule whose selector list is
        exactly `:root`. Custom properties are only hoisted then. */
     bool           in_root_rule;
+    bool           allocation_failed;
 } Parser;
 
 static void parser_init(Parser *p, const char *src)
@@ -275,6 +276,7 @@ static void parser_init(Parser *p, const char *src)
     p->buf_count    = 0;
     p->ss           = NULL;
     p->in_root_rule = false;
+    p->allocation_failed = false;
 }
 
 static Token parser_next(Parser *p)
@@ -724,7 +726,11 @@ int ca_css_intern(Ca_Stylesheet *ss, const char *s)
         i += sl + 1;
         if (sl == rem) break; /* shouldn't happen — pool always NUL-terminated */
     }
-    if (ss->str_pool_used + len + 1 > CA_CSS_STR_POOL_BYTES) return -1;
+    if ((size_t)ss->str_pool_used > SIZE_MAX - (size_t)len - 1u ||
+        !ca_dyn_array_resize(&ss->str_pool_storage,
+                             (size_t)ss->str_pool_used + (size_t)len + 1u))
+        return -1;
+    ss->str_pool = ss->str_pool_storage.data;
     int offset = ss->str_pool_used;
     memcpy(ss->str_pool + offset, s, len + 1);
     ss->str_pool_used += len + 1;
@@ -1142,8 +1148,10 @@ static Ca_CssValue parse_value(Parser *p, Ca_CssPropId prop)
                 else if (tt.type == TOK_EOF) break;
             }
             int offset = -1;
-            if (p->ss && varname[0])
+            if (p->ss && varname[0]) {
                 offset = ca_css_intern(p->ss, varname);
+                if (offset < 0) p->allocation_failed = true;
+            }
             val.type    = CA_CSS_VAL_VAR;
             val.keyword = offset;
             return val;
@@ -1247,8 +1255,15 @@ static Ca_CssValue parse_value(Parser *p, Ca_CssPropId prop)
 
 static void add_decl(Ca_CssRule *rule, Ca_CssPropId prop, Ca_CssValue val)
 {
-    if (rule->decl_count >= CA_CSS_MAX_DECLS_PER_RULE) return;
-    Ca_CssDecl *d = &rule->decls[rule->decl_count++];
+    if (rule->allocation_failed) return;
+    Ca_CssDecl declaration = {0};
+    if (!ca_dyn_array_push(&rule->decl_storage, &declaration)) {
+        rule->allocation_failed = true;
+        return;
+    }
+    rule->decls = rule->decl_storage.data;
+    rule->decl_count = (int)rule->decl_storage.count;
+    Ca_CssDecl *d = &rule->decls[rule->decl_count - 1];
     d->prop      = prop;
     d->value     = val;
     d->important = false;
@@ -1510,9 +1525,15 @@ static void parse_declarations(Parser *p, Ca_CssRule *rule)
            Only hoisted to the stylesheet's vars table when inside :root. */
         if (prop_name[0] == '-' && prop_name[1] == '-' && prop_name[2] != '\0') {
             Ca_CssValue val = parse_value(p, CA_CSS_PROP_NONE);
-            if (p->in_root_rule && p->ss &&
-                p->ss->var_count < CA_CSS_MAX_VARS) {
-                Ca_CssVar *v = &p->ss->vars[p->ss->var_count++];
+            if (p->in_root_rule && p->ss) {
+                Ca_CssVar variable = {0};
+                if (!ca_dyn_array_push(&p->ss->var_storage, &variable)) {
+                    p->allocation_failed = true;
+                    continue;
+                }
+                p->ss->vars = p->ss->var_storage.data;
+                p->ss->var_count = (int)p->ss->var_storage.count;
+                Ca_CssVar *v = &p->ss->vars[p->ss->var_count - 1];
                 snprintf(v->name, sizeof(v->name), "%s", prop_name);
                 v->value = val;
             }
@@ -2011,9 +2032,50 @@ static void parse_declarations(Parser *p, Ca_CssRule *rule)
    PARSE SELECTORS
    ============================================================ */
 
-static void parse_simple_selector(Parser *p, Ca_CssSimpleSel *sel)
+/** Releases storage owned by one parsed simple selector. */
+static void simple_selector_destroy(Ca_CssSimpleSel *selector)
 {
-    memset(sel, 0, sizeof(*sel));
+    if (!selector) return;
+    ca_dyn_array_destroy(&selector->class_storage);
+    ca_dyn_array_destroy(&selector->pseudo_storage);
+    selector->classes = NULL;
+    selector->class_count = 0;
+    selector->pseudos = NULL;
+    selector->pseudo_count = 0;
+}
+
+/** Releases a selector chain and every simple selector it owns. */
+static void selector_destroy(Ca_CssSelector *selector)
+{
+    if (!selector) return;
+    for (size_t i = 0; i < selector->part_storage.count; ++i)
+        simple_selector_destroy(&selector->parts[i]);
+    ca_dyn_array_destroy(&selector->part_storage);
+    selector->parts = NULL;
+    selector->part_count = 0;
+}
+
+/** Releases all nested storage owned by a stylesheet rule. */
+static void rule_destroy(Ca_CssRule *rule)
+{
+    if (!rule) return;
+    for (size_t i = 0; i < rule->selector_storage.count; ++i)
+        selector_destroy(&rule->selectors[i]);
+    ca_dyn_array_destroy(&rule->selector_storage);
+    ca_dyn_array_destroy(&rule->decl_storage);
+    rule->selectors = NULL;
+    rule->selector_count = 0;
+    rule->decls = NULL;
+    rule->decl_count = 0;
+}
+
+/** Parses one simple selector into failure-atomic growable storage. */
+static bool parse_simple_selector(Parser *p, Ca_CssSimpleSel *sel)
+{
+    *sel = (Ca_CssSimpleSel){0};
+    sel->class_storage =
+        (Ca_DynArray)CA_DYN_ARRAY_INIT(char[CA_CSS_CLASS_NAME_MAX]);
+    sel->pseudo_storage = (Ca_DynArray)CA_DYN_ARRAY_INIT(Ca_CssPseudo);
 
     Token t = parser_peek(p);
 
@@ -2041,9 +2103,15 @@ static void parse_simple_selector(Parser *p, Ca_CssSimpleSel *sel)
     while (parser_peek(p).type == TOK_DOT) {
         parser_next(p); /* consume dot */
         t = parser_next(p);
-        if (t.type == TOK_IDENT && sel->class_count < CA_CSS_MAX_CLASSES_SEL) {
-            snprintf(sel->classes[sel->class_count], CA_CSS_CLASS_NAME_MAX, "%s", t.text);
-            sel->class_count++;
+        if (t.type == TOK_IDENT) {
+            char class_name[CA_CSS_CLASS_NAME_MAX] = {0};
+            snprintf(class_name, sizeof(class_name), "%s", t.text);
+            if (!ca_dyn_array_push(&sel->class_storage, class_name)) {
+                simple_selector_destroy(sel);
+                return false;
+            }
+            sel->classes = sel->class_storage.data;
+            sel->class_count = (int)sel->class_storage.count;
         }
     }
 
@@ -2060,22 +2128,8 @@ static void parse_simple_selector(Parser *p, Ca_CssSimpleSel *sel)
         Token ptok = parser_next(p);
         if (ptok.type != TOK_IDENT && ptok.type != TOK_FUNCTION) break;
 
-        if (sel->pseudo_count >= CA_CSS_MAX_PSEUDOS_PER_PART) {
-            /* Drop excess */
-            if (ptok.type == TOK_FUNCTION) {
-                int depth = 1;
-                while (depth > 0) {
-                    Token tt = parser_next(p);
-                    if (tt.type == TOK_LPAREN || tt.type == TOK_FUNCTION) depth++;
-                    else if (tt.type == TOK_RPAREN) depth--;
-                    else if (tt.type == TOK_EOF) break;
-                }
-            }
-            continue;
-        }
-
-        Ca_CssPseudo *ps = &sel->pseudos[sel->pseudo_count];
-        memset(ps, 0, sizeof(*ps));
+        Ca_CssPseudo parsed_pseudo = {0};
+        Ca_CssPseudo *ps = &parsed_pseudo;
 
         if (ptok.type == TOK_FUNCTION) {
             if (strcasecmp(ptok.text, "nth-child") == 0 ||
@@ -2201,7 +2255,10 @@ static void parse_simple_selector(Parser *p, Ca_CssSimpleSel *sel)
                 }
                 continue; /* don't store */
             }
-            sel->pseudo_count++;
+            if (!ca_dyn_array_push(&sel->pseudo_storage, ps)) {
+                simple_selector_destroy(sel);
+                return false;
+            }
         } else {
             /* Simple identifier pseudo */
             if      (strcasecmp(ptok.text, "hover")        == 0) ps->kind = CA_CSS_PSEUDO_HOVER;
@@ -2219,106 +2276,101 @@ static void parse_simple_selector(Parser *p, Ca_CssSimpleSel *sel)
             else if (strcasecmp(ptok.text, "root")         == 0) ps->kind = CA_CSS_PSEUDO_ROOT;
             else if (strcasecmp(ptok.text, "empty")        == 0) ps->kind = CA_CSS_PSEUDO_EMPTY;
             else continue; /* unknown \u2014 don't store */
-            sel->pseudo_count++;
+            if (!ca_dyn_array_push(&sel->pseudo_storage, ps)) {
+                simple_selector_destroy(sel);
+                return false;
+            }
         }
+        sel->pseudos = sel->pseudo_storage.data;
+        sel->pseudo_count = (int)sel->pseudo_storage.count;
     }
+    return true;
 }
 
-static void parse_selector(Parser *p, Ca_CssSelector *sel)
+/** Parses and appends one owned simple-selector part to a selector chain. */
+static bool selector_append_part(Parser *p, Ca_CssSelector *selector,
+                                 Ca_CssCombinator combinator)
 {
-    memset(sel, 0, sizeof(*sel));
+    Ca_CssSimpleSel part;
+    if (!parse_simple_selector(p, &part))
+        return false;
+    part.combinator = combinator;
+    if (!ca_dyn_array_push(&selector->part_storage, &part)) {
+        simple_selector_destroy(&part);
+        return false;
+    }
+    selector->parts = selector->part_storage.data;
+    selector->part_count = (int)selector->part_storage.count;
+    return true;
+}
 
-    parse_simple_selector(p, &sel->parts[0]);
-    sel->part_count = 1;
+/** Parses a compound selector chain into growable owned storage. */
+static bool parse_selector(Parser *p, Ca_CssSelector *sel)
+{
+    *sel = (Ca_CssSelector){0};
+    sel->part_storage = (Ca_DynArray)CA_DYN_ARRAY_INIT(Ca_CssSimpleSel);
+    if (!selector_append_part(p, sel, CA_CSS_COMB_NONE))
+        return false;
 
-    while (sel->part_count < CA_CSS_MAX_CHAIN) {
+    while (true) {
         Token t = parser_peek(p);
+        Ca_CssCombinator combinator;
 
-        /* Check for combinator */
-        if (t.type == TOK_GT) {
+        if (t.type == TOK_GT || t.type == TOK_PLUS || t.type == TOK_TILDE) {
             parser_next(p);
             skip_ws(p);
-            Ca_CssSimpleSel *part = &sel->parts[sel->part_count];
-            parse_simple_selector(p, part);
-            part->combinator = CA_CSS_COMB_CHILD;
-            sel->part_count++;
-        } else if (t.type == TOK_PLUS) {
-            parser_next(p);
-            skip_ws(p);
-            Ca_CssSimpleSel *part = &sel->parts[sel->part_count];
-            parse_simple_selector(p, part);
-            part->combinator = CA_CSS_COMB_NEXT_SIBLING;
-            sel->part_count++;
-        } else if (t.type == TOK_TILDE) {
-            parser_next(p);
-            skip_ws(p);
-            Ca_CssSimpleSel *part = &sel->parts[sel->part_count];
-            parse_simple_selector(p, part);
-            part->combinator = CA_CSS_COMB_SUBSEQ_SIBLING;
-            sel->part_count++;
+            combinator = t.type == TOK_GT ? CA_CSS_COMB_CHILD :
+                         t.type == TOK_PLUS ? CA_CSS_COMB_NEXT_SIBLING :
+                                              CA_CSS_COMB_SUBSEQ_SIBLING;
         } else if (t.type == TOK_WS) {
             parser_next(p);
-            /* Check if next is a combinator or selector start */
-            Token nxt = parser_peek(p);
-            if (nxt.type == TOK_GT) {
-                /* > with spaces around it */
+            Token next = parser_peek(p);
+            if (next.type == TOK_GT || next.type == TOK_PLUS || next.type == TOK_TILDE) {
                 parser_next(p);
                 skip_ws(p);
-                Ca_CssSimpleSel *part = &sel->parts[sel->part_count];
-                parse_simple_selector(p, part);
-                part->combinator = CA_CSS_COMB_CHILD;
-                sel->part_count++;
-            } else if (nxt.type == TOK_PLUS) {
-                parser_next(p); skip_ws(p);
-                Ca_CssSimpleSel *part = &sel->parts[sel->part_count];
-                parse_simple_selector(p, part);
-                part->combinator = CA_CSS_COMB_NEXT_SIBLING;
-                sel->part_count++;
-            } else if (nxt.type == TOK_TILDE) {
-                parser_next(p); skip_ws(p);
-                Ca_CssSimpleSel *part = &sel->parts[sel->part_count];
-                parse_simple_selector(p, part);
-                part->combinator = CA_CSS_COMB_SUBSEQ_SIBLING;
-                sel->part_count++;
-            } else if (nxt.type == TOK_IDENT || nxt.type == TOK_DOT ||
-                       nxt.type == TOK_STAR || nxt.type == TOK_HASH ||
-                       nxt.type == TOK_COLON) {
-                /* Descendant combinator */
-                Ca_CssSimpleSel *part = &sel->parts[sel->part_count];
-                parse_simple_selector(p, part);
-                part->combinator = CA_CSS_COMB_DESCENDANT;
-                sel->part_count++;
+                combinator = next.type == TOK_GT ? CA_CSS_COMB_CHILD :
+                             next.type == TOK_PLUS ? CA_CSS_COMB_NEXT_SIBLING :
+                                                    CA_CSS_COMB_SUBSEQ_SIBLING;
+            } else if (next.type == TOK_IDENT || next.type == TOK_DOT ||
+                       next.type == TOK_STAR || next.type == TOK_HASH ||
+                       next.type == TOK_COLON) {
+                combinator = CA_CSS_COMB_DESCENDANT;
             } else {
                 break;
             }
         } else {
             break;
         }
+
+        if (!selector_append_part(p, sel, combinator)) {
+            selector_destroy(sel);
+            return false;
+        }
     }
+    return true;
 }
 
-static void parse_selector_list(Parser *p, Ca_CssRule *rule)
+/** Parses a comma-separated selector list with owned nested storage. */
+static bool parse_selector_list(Parser *p, Ca_CssRule *rule)
 {
     rule->selector_count = 0;
+    while (true) {
+        Ca_CssSelector selector;
+        if (!parse_selector(p, &selector))
+            return false;
+        if (!ca_dyn_array_push(&rule->selector_storage, &selector)) {
+            selector_destroy(&selector);
+            return false;
+        }
+        rule->selectors = rule->selector_storage.data;
+        rule->selector_count = (int)rule->selector_storage.count;
 
-    if (rule->selector_count < CA_CSS_MAX_SELECTORS_PER_RULE) {
-        parse_selector(p, &rule->selectors[rule->selector_count]);
-        rule->selector_count++;
-    }
-
-    while (1) {
         skip_ws(p);
         Token t = parser_peek(p);
-        if (t.type == TOK_COMMA) {
-            parser_next(p);
-            skip_ws(p);
-            if (rule->selector_count < CA_CSS_MAX_SELECTORS_PER_RULE) {
-                parse_selector(p, &rule->selectors[rule->selector_count]);
-                rule->selector_count++;
-            }
-        } else {
-            break;
-        }
+        if (t.type != TOK_COMMA)
+            return true;
+        parser_next(p);
+        skip_ws(p);
     }
 }
 
@@ -2332,6 +2384,11 @@ Ca_Stylesheet *ca_css_parse(const char *css_text)
 
     Ca_Stylesheet *ss = (Ca_Stylesheet *)CA_CALLOC(1, sizeof(Ca_Stylesheet));
     if (!ss) return NULL;
+    ss->rule_storage = (Ca_DynArray)CA_DYN_ARRAY_INIT(Ca_CssRule);
+    ss->var_storage = (Ca_DynArray)CA_DYN_ARRAY_INIT(Ca_CssVar);
+    ss->str_pool_storage = (Ca_DynArray)CA_DYN_ARRAY_INIT(char);
+    ss->pos_dep_class_storage =
+        (Ca_DynArray)CA_DYN_ARRAY_INIT(char[CA_CSS_CLASS_NAME_MAX]);
 
     Parser p;
     parser_init(&p, css_text);
@@ -2344,16 +2401,18 @@ Ca_Stylesheet *ca_css_parse(const char *css_text)
         Token t = parser_peek(&p);
         if (t.type == TOK_EOF) break;
 
-        if (ss->rule_count >= CA_CSS_MAX_RULES) {
-            fprintf(stderr, "[css] max rules exceeded (%d)\n", CA_CSS_MAX_RULES);
-            break;
-        }
-
-        Ca_CssRule *rule = &ss->rules[ss->rule_count];
-        memset(rule, 0, sizeof(*rule));
+        Ca_CssRule parsed_rule = {0};
+        parsed_rule.selector_storage =
+            (Ca_DynArray)CA_DYN_ARRAY_INIT(Ca_CssSelector);
+        parsed_rule.decl_storage = (Ca_DynArray)CA_DYN_ARRAY_INIT(Ca_CssDecl);
+        Ca_CssRule *rule = &parsed_rule;
 
         /* Parse selector list */
-        parse_selector_list(&p, rule);
+        if (!parse_selector_list(&p, rule)) {
+            rule_destroy(rule);
+            ca_css_destroy(ss);
+            return NULL;
+        }
 
         /* Detect :root rule (any selector whose only part is :root). */
         p.in_root_rule = false;
@@ -2379,15 +2438,29 @@ Ca_Stylesheet *ca_css_parse(const char *css_text)
                 parser_next(&p);
                 t = parser_peek(&p);
             }
-            if (t.type == TOK_EOF) break;
+            if (t.type == TOK_EOF) {
+                rule_destroy(rule);
+                break;
+            }
         }
         parser_next(&p); /* consume '{' */
 
         /* Parse declarations */
         parse_declarations(&p, rule);
+        if (rule->allocation_failed || p.allocation_failed) {
+            rule_destroy(rule);
+            ca_css_destroy(ss);
+            return NULL;
+        }
 
         rule->source_order = order++;
-        ss->rule_count++;
+        if (!ca_dyn_array_push(&ss->rule_storage, rule)) {
+            rule_destroy(rule);
+            ca_css_destroy(ss);
+            return NULL;
+        }
+        ss->rules = ss->rule_storage.data;
+        ss->rule_count = (int)ss->rule_storage.count;
     }
 
     ca_style_classify_position_dependent(ss);
@@ -2396,5 +2469,12 @@ Ca_Stylesheet *ca_css_parse(const char *css_text)
 
 void ca_css_destroy(Ca_Stylesheet *ss)
 {
+    if (!ss) return;
+    for (size_t i = 0; i < ss->rule_storage.count; ++i)
+        rule_destroy(&ss->rules[i]);
+    ca_dyn_array_destroy(&ss->rule_storage);
+    ca_dyn_array_destroy(&ss->var_storage);
+    ca_dyn_array_destroy(&ss->str_pool_storage);
+    ca_dyn_array_destroy(&ss->pos_dep_class_storage);
     CA_FREE(ss);
 }

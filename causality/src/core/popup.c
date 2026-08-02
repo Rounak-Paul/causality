@@ -6,14 +6,6 @@
 
 #include <string.h>
 
-typedef struct Ca_PopupEntry {
-    char             title[CA_POPUP_TITLE_MAX];
-    char             message[CA_POPUP_TEXT_MAX];
-    Ca_PopupButtons  buttons;
-    Ca_PopupResultFn on_result;
-    void            *result_data;
-} Ca_PopupEntry;
-
 /*
  * Copy and sanitise a Ca_PopupDesc into an internal Ca_PopupEntry.
  *
@@ -59,15 +51,7 @@ static void popup_emit_result(const Ca_PopupEntry *entry, Ca_PopupResult result)
 static bool popup_queue_push(Ca_Instance *inst, const Ca_PopupEntry *entry)
 {
     if (!inst || !entry) return false;
-    if (inst->popup_queue_count >= CA_POPUP_QUEUE_MAX)
-        return false;
-    int idx = inst->popup_queue_count++;
-    snprintf(inst->popup_queue[idx].title, sizeof(inst->popup_queue[idx].title), "%s", entry->title);
-    snprintf(inst->popup_queue[idx].message, sizeof(inst->popup_queue[idx].message), "%s", entry->message);
-    inst->popup_queue[idx].buttons = entry->buttons;
-    inst->popup_queue[idx].on_result = entry->on_result;
-    inst->popup_queue[idx].result_data = entry->result_data;
-    return true;
+    return ca_dyn_array_push(&inst->popup_queue, entry);
 }
 
 /*
@@ -83,17 +67,7 @@ static bool popup_queue_push(Ca_Instance *inst, const Ca_PopupEntry *entry)
 static bool popup_queue_push_front(Ca_Instance *inst, const Ca_PopupEntry *entry)
 {
     if (!inst || !entry) return false;
-    if (inst->popup_queue_count >= CA_POPUP_QUEUE_MAX)
-        return false;
-    memmove(&inst->popup_queue[1], &inst->popup_queue[0],
-            (size_t)inst->popup_queue_count * sizeof(inst->popup_queue[0]));
-    snprintf(inst->popup_queue[0].title, sizeof(inst->popup_queue[0].title), "%s", entry->title);
-    snprintf(inst->popup_queue[0].message, sizeof(inst->popup_queue[0].message), "%s", entry->message);
-    inst->popup_queue[0].buttons = entry->buttons;
-    inst->popup_queue[0].on_result = entry->on_result;
-    inst->popup_queue[0].result_data = entry->result_data;
-    inst->popup_queue_count++;
-    return true;
+    return ca_dyn_array_insert(&inst->popup_queue, 0, entry, 1);
 }
 
 /*
@@ -108,16 +82,9 @@ static bool popup_queue_push_front(Ca_Instance *inst, const Ca_PopupEntry *entry
  */
 static bool popup_queue_pop(Ca_Instance *inst, Ca_PopupEntry *out)
 {
-    if (!inst || !out || inst->popup_queue_count <= 0) return false;
-    snprintf(out->title, sizeof(out->title), "%s", inst->popup_queue[0].title);
-    snprintf(out->message, sizeof(out->message), "%s", inst->popup_queue[0].message);
-    out->buttons = inst->popup_queue[0].buttons;
-    out->on_result = inst->popup_queue[0].on_result;
-    out->result_data = inst->popup_queue[0].result_data;
-    memmove(&inst->popup_queue[0], &inst->popup_queue[1],
-            (size_t)(inst->popup_queue_count - 1) * sizeof(inst->popup_queue[0]));
-    inst->popup_queue_count--;
-    return true;
+    if (!inst || !out || inst->popup_queue.count == 0) return false;
+    *out = *(Ca_PopupEntry *)ca_dyn_array_front(&inst->popup_queue);
+    return ca_dyn_array_erase(&inst->popup_queue, 0, 1);
 }
 
 /*
@@ -332,14 +299,16 @@ static bool popup_activate(Ca_Instance *inst, const Ca_PopupEntry *entry)
  *
  * inst  Instance to initialise; no-op if NULL.
  */
-void ca_popup_system_init(Ca_Instance *inst)
+bool ca_popup_system_init(Ca_Instance *inst)
 {
-    if (!inst) return;
-    inst->popup_queue_count = 0;
+    if (!inst || !ca_dyn_array_init(&inst->popup_queue,
+                                    sizeof(Ca_PopupEntry)))
+        return false;
     inst->popup_active = false;
     inst->popup_window = NULL;
     inst->popup_pending_result = CA_POPUP_RESULT_NONE;
     memset(&inst->popup_current, 0, sizeof(inst->popup_current));
+    return true;
 }
 
 /*
@@ -375,7 +344,7 @@ void ca_popup_system_tick(Ca_Instance *inst)
         popup_emit_result(&entry, r);
     }
 
-    if (!inst->popup_active && inst->popup_queue_count > 0) {
+    if (!inst->popup_active && inst->popup_queue.count > 0) {
         Ca_PopupEntry next;
         if (popup_queue_pop(inst, &next))
             (void)popup_activate(inst, &next);
@@ -404,17 +373,13 @@ void ca_popup_system_shutdown(Ca_Instance *inst)
         popup_emit_result(&entry, CA_POPUP_RESULT_CLOSED);
     }
 
-    for (int i = 0; i < inst->popup_queue_count; i++) {
-        Ca_PopupEntry entry;
-        snprintf(entry.title, sizeof(entry.title), "%s", inst->popup_queue[i].title);
-        snprintf(entry.message, sizeof(entry.message), "%s", inst->popup_queue[i].message);
-        entry.buttons = inst->popup_queue[i].buttons;
-        entry.on_result = inst->popup_queue[i].on_result;
-        entry.result_data = inst->popup_queue[i].result_data;
-        popup_emit_result(&entry, CA_POPUP_RESULT_CLOSED);
+    for (size_t i = 0; i < inst->popup_queue.count; ++i) {
+        const Ca_PopupEntry *entry =
+            ca_dyn_array_at_const(&inst->popup_queue, i);
+        popup_emit_result(entry, CA_POPUP_RESULT_CLOSED);
     }
 
-    inst->popup_queue_count = 0;
+    ca_dyn_array_destroy(&inst->popup_queue);
     inst->popup_active = false;
     inst->popup_window = NULL;
     inst->popup_pending_result = CA_POPUP_RESULT_NONE;
@@ -479,5 +444,5 @@ bool ca_popup_is_active(const Ca_Instance *instance)
 void ca_popup_clear_queue(Ca_Instance *instance)
 {
     if (!instance) return;
-    instance->popup_queue_count = 0;
+    ca_dyn_array_clear(&instance->popup_queue);
 }

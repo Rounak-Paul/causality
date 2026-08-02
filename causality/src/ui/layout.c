@@ -328,8 +328,6 @@ typedef struct {
     float    cross_size;     /* max cross-axis size among children in this line */
 } FlexLine;
 
-#define MAX_FLEX_LINES 64
-
 typedef struct {
     uint32_t mark;
     float *child_hypo_main;
@@ -556,7 +554,14 @@ static void layout_node(Ca_Node *node, float x, float y, float avail_w, float av
     }
 
     /* Build flex lines */
-    FlexLine lines[MAX_FLEX_LINES];
+    Ca_DynArray flex_line_storage = CA_DYN_ARRAY_INIT(FlexLine);
+    size_t maximum_line_count = node->child_count > 0
+        ? node->child_count : 1u;
+    if (!ca_dyn_array_resize(&flex_line_storage, maximum_line_count)) {
+        layout_scratch_destroy(node->window, &scratch);
+        goto out_of_flow;
+    }
+    FlexLine *lines = flex_line_storage.data;
     uint32_t line_count = 0;
 
     if (!do_wrap) {
@@ -599,7 +604,7 @@ static void layout_node(Ca_Node *node, float x, float y, float avail_w, float av
             if (ms <= 0.0f) ms = 20.0f * node_ui_scale(child); /* minimum for wrapping purposes */
 
             float added = ms + (line_vis > 0 ? gap : 0);
-            if (line_vis > 0 && line_used + added > avail_main && line_count + 1 < MAX_FLEX_LINES) {
+            if (line_vis > 0 && line_used + added > avail_main) {
                 /* Finish current line, start a new one */
                 ln->count = line_vis;
                 ln->total_fixed += (line_vis > 1) ? gap * (float)(line_vis - 1) : 0;
@@ -837,6 +842,7 @@ static void layout_node(Ca_Node *node, float x, float y, float avail_w, float av
     }
 
     layout_scratch_destroy(node->window, &scratch);
+    ca_dyn_array_destroy(&flex_line_storage);
 
 out_of_flow:
     /* Position absolute/fixed children (they are out of the flex flow) */
@@ -870,6 +876,13 @@ out_of_flow:
 void ca_layout_pass(Ca_Window *win)
 {
     if (!win->root) return;
+    size_t node_slots = ca_pool_slot_count(&win->node_pool);
+    if (node_slots > UINT32_MAX || node_slots > SIZE_MAX / 7u ||
+        !ca_dyn_array_reserve(&win->layout_scratch_storage,
+                              node_slots * 7u))
+        return;
+    win->layout_scratch = win->layout_scratch_storage.data;
+    win->layout_scratch_capacity = (uint32_t)node_slots;
     win->layout_scratch_used = 0;
 
     /* Use logical (window) size so widget coordinates stay in the same
@@ -882,8 +895,8 @@ void ca_layout_pass(Ca_Window *win)
         layout_node(win->root, 0.0f, 0.0f, (float)lw, (float)lh);
 
         bool visibility_changed = false;
-        for (uint32_t i = 0; i < CA_MAX_NODES_PER_WINDOW; ++i) {
-            Ca_Node *node = &win->node_pool[i];
+        for (uint32_t i = 0; i < ca_pool_slot_count(&win->node_pool); ++i) {
+            Ca_Node *node = CA_POOL_AT(win->node_pool, Ca_Node, i);
             if (!node->in_use) continue;
 
             bool show_x = false;

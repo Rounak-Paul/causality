@@ -32,9 +32,6 @@
 #define CA_FONT_PAGE_SIZE      1024
 #define CA_FONT_MAX_PAGES      ((CA_FONT_ATLAS_W / CA_FONT_PAGE_SIZE) * \
                                 (CA_FONT_ATLAS_H / CA_FONT_PAGE_SIZE))
-#define CA_FONT_MAX_DIRTY_RECTS 512
-#define CA_FONT_EXTRA_GLYPHS_PER_PAGE 2048
-#define CA_FONT_EXTRA_LOOKUP_CAPACITY 4096
 
 /* Per-glyph atlas record.  Fields mirror what stb_truetype's packedchar
    exposed, so the layout/paint call-sites translate one-to-one.  All
@@ -69,11 +66,10 @@ typedef struct Ca_FontTier {
     float         baked_px;
     Ca_GlyphRange ranges[CA_FONT_RANGE_COUNT];
     Ca_Glyph     *chardata_block;
+    Ca_DynArray   extra_glyph_storage;
+    Ca_DynArray   extra_lookup_storage;
     Ca_FontExtraGlyph *extra_glyphs;
-    uint16_t     *extra_lookup;
-    uint16_t      extra_count;
-    uint16_t      extra_capacity;
-    uint16_t      extra_lookup_capacity;
+    uint32_t     *extra_lookup;
     float         ascent;
     float         descent;
     float         line_gap;
@@ -108,8 +104,7 @@ typedef struct Ca_Font {
     uint64_t    frame_counter;
     uint64_t    atlas_generation;
     unsigned char *atlas_rgba;
-    Ca_FontDirtyRect dirty_rects[CA_FONT_MAX_DIRTY_RECTS];
-    uint32_t    dirty_rect_count;
+    Ca_DynArray dirty_rect_storage;
     bool        dirty_full;
     void       *ft_library;
     void       *regular_face;

@@ -793,6 +793,7 @@ static uint32_t find_memory_type_pipe(VkPhysicalDevice gpu, uint32_t type_bits,
 
 bool ca_ssbo_layout_create(Ca_Instance *inst)
 {
+    ca_dyn_array_init(&inst->ssbo_desc_pools, sizeof(VkDescriptorPool));
     /* Query min alignment for debug reporting and future buffer partitioning. */
     VkPhysicalDeviceProperties props;
     vkGetPhysicalDeviceProperties(inst->vk_gpu, &props);
@@ -814,25 +815,7 @@ bool ca_ssbo_layout_create(Ca_Instance *inst)
     if (vkCreateDescriptorSetLayout(inst->vk_device, &ci, NULL,
                                     &inst->ssbo_desc_layout) != VK_SUCCESS) {
         fprintf(stderr, "[pipeline] SSBO descriptor set layout creation failed\n");
-        return false;
-    }
-
-    /* Descriptor pool: one SSBO set per frame-in-flight per window slot
-       (includes reserved internal popup windows). */
-    VkDescriptorPoolSize pool_sz = {
-        .type            = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-        .descriptorCount = CA_MAX_WINDOWS_TOTAL * CA_FRAMES_IN_FLIGHT,
-    };
-    VkDescriptorPoolCreateInfo pool_ci = {
-        .sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
-        .flags         = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT,
-        .maxSets       = CA_MAX_WINDOWS_TOTAL * CA_FRAMES_IN_FLIGHT,
-        .poolSizeCount = 1,
-        .pPoolSizes    = &pool_sz,
-    };
-    if (vkCreateDescriptorPool(inst->vk_device, &pool_ci, NULL,
-                               &inst->ssbo_desc_pool) != VK_SUCCESS) {
-        fprintf(stderr, "[pipeline] SSBO descriptor pool creation failed\n");
+        ca_dyn_array_destroy(&inst->ssbo_desc_pools);
         return false;
     }
 
@@ -842,32 +825,96 @@ bool ca_ssbo_layout_create(Ca_Instance *inst)
 
 void ca_ssbo_layout_destroy(Ca_Instance *inst)
 {
-    if (inst->ssbo_desc_pool != VK_NULL_HANDLE) {
-        vkDestroyDescriptorPool(inst->vk_device, inst->ssbo_desc_pool, NULL);
-        inst->ssbo_desc_pool = VK_NULL_HANDLE;
+    VkDescriptorPool *pools = (VkDescriptorPool *)inst->ssbo_desc_pools.data;
+    for (size_t i = 0; i < inst->ssbo_desc_pools.count; ++i) {
+        if (pools[i] != VK_NULL_HANDLE)
+            vkDestroyDescriptorPool(inst->vk_device, pools[i], NULL);
     }
+    ca_dyn_array_destroy(&inst->ssbo_desc_pools);
     if (inst->ssbo_desc_layout != VK_NULL_HANDLE) {
         vkDestroyDescriptorSetLayout(inst->vk_device, inst->ssbo_desc_layout, NULL);
         inst->ssbo_desc_layout = VK_NULL_HANDLE;
     }
 }
 
-bool ca_instance_buf_create(Ca_Instance *inst, Ca_Frame *f)
+enum { CA_SSBO_DESCRIPTOR_POOL_CHUNK = 64 };
+
+/** Allocate one SSBO descriptor from a reusable growable pool set. */
+static bool ssbo_descriptor_allocate(Ca_Instance *inst, Ca_Frame *frame)
 {
-    /* Create host-visible coherent buffer for instance data */
+    VkDescriptorPool *pools = (VkDescriptorPool *)inst->ssbo_desc_pools.data;
+    for (size_t i = 0; i < inst->ssbo_desc_pools.count; ++i) {
+        VkDescriptorSetAllocateInfo info = {
+            .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+            .descriptorPool = pools[i],
+            .descriptorSetCount = 1,
+            .pSetLayouts = &inst->ssbo_desc_layout,
+        };
+        VkResult result = vkAllocateDescriptorSets(inst->vk_device, &info,
+                                                    &frame->ssbo_set);
+        if (result == VK_SUCCESS) {
+            frame->ssbo_pool = pools[i];
+            return true;
+        }
+        if (result != VK_ERROR_OUT_OF_POOL_MEMORY &&
+            result != VK_ERROR_FRAGMENTED_POOL)
+            return false;
+    }
+
+    VkDescriptorPoolSize pool_size = {
+        .type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+        .descriptorCount = CA_SSBO_DESCRIPTOR_POOL_CHUNK,
+    };
+    VkDescriptorPoolCreateInfo pool_info = {
+        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+        .flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT,
+        .maxSets = CA_SSBO_DESCRIPTOR_POOL_CHUNK,
+        .poolSizeCount = 1,
+        .pPoolSizes = &pool_size,
+    };
+    VkDescriptorPool pool = VK_NULL_HANDLE;
+    if (vkCreateDescriptorPool(inst->vk_device, &pool_info, NULL, &pool) !=
+        VK_SUCCESS)
+        return false;
+    if (!ca_dyn_array_push(&inst->ssbo_desc_pools, &pool)) {
+        vkDestroyDescriptorPool(inst->vk_device, pool, NULL);
+        return false;
+    }
+    VkDescriptorSetAllocateInfo info = {
+        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+        .descriptorPool = pool,
+        .descriptorSetCount = 1,
+        .pSetLayouts = &inst->ssbo_desc_layout,
+    };
+    if (vkAllocateDescriptorSets(inst->vk_device, &info, &frame->ssbo_set) !=
+        VK_SUCCESS)
+        return false;
+    frame->ssbo_pool = pool;
+    return true;
+}
+
+/** Allocates a mapped SSBO without publishing partial frame state. */
+static bool instance_buffer_allocate(Ca_Instance *inst, VkDeviceSize size,
+                                     VkBuffer *out_buffer,
+                                     VkDeviceMemory *out_memory,
+                                     void **out_mapped)
+{
+    *out_buffer = VK_NULL_HANDLE;
+    *out_memory = VK_NULL_HANDLE;
+    *out_mapped = NULL;
     VkBufferCreateInfo buf_ci = {
         .sType       = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-        .size        = CA_INSTANCE_BUF_SIZE,
+        .size        = size,
         .usage       = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
         .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
     };
-    if (vkCreateBuffer(inst->vk_device, &buf_ci, NULL, &f->instance_buf) != VK_SUCCESS) {
+    if (vkCreateBuffer(inst->vk_device, &buf_ci, NULL, out_buffer) != VK_SUCCESS) {
         fprintf(stderr, "[pipeline] instance buffer creation failed\n");
         return false;
     }
 
     VkMemoryRequirements req;
-    vkGetBufferMemoryRequirements(inst->vk_device, f->instance_buf, &req);
+    vkGetBufferMemoryRequirements(inst->vk_device, *out_buffer, &req);
     VkMemoryAllocateInfo mem_ai = {
         .sType           = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
         .allocationSize  = req.size,
@@ -875,29 +922,71 @@ bool ca_instance_buf_create(Ca_Instance *inst, Ca_Frame *f)
                                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
                                VK_MEMORY_PROPERTY_HOST_COHERENT_BIT),
     };
-    if (vkAllocateMemory(inst->vk_device, &mem_ai, NULL, &f->instance_mem) != VK_SUCCESS) {
+    if (vkAllocateMemory(inst->vk_device, &mem_ai, NULL, out_memory) != VK_SUCCESS) {
         fprintf(stderr, "[pipeline] instance buffer memory alloc failed\n");
+        vkDestroyBuffer(inst->vk_device, *out_buffer, NULL);
+        *out_buffer = VK_NULL_HANDLE;
         return false;
     }
-    vkBindBufferMemory(inst->vk_device, f->instance_buf, f->instance_mem, 0);
-    vkMapMemory(inst->vk_device, f->instance_mem, 0, CA_INSTANCE_BUF_SIZE, 0,
-                &f->instance_mapped);
-
-    /* Allocate and write descriptor set pointing to this buffer */
-    VkDescriptorSetAllocateInfo ds_ai = {
-        .sType              = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
-        .descriptorPool     = inst->ssbo_desc_pool,
-        .descriptorSetCount = 1,
-        .pSetLayouts        = &inst->ssbo_desc_layout,
-    };
-    if (vkAllocateDescriptorSets(inst->vk_device, &ds_ai, &f->ssbo_set) != VK_SUCCESS) {
-        fprintf(stderr, "[pipeline] SSBO descriptor set alloc failed\n");
+    if (vkBindBufferMemory(inst->vk_device, *out_buffer, *out_memory, 0) !=
+            VK_SUCCESS ||
+        vkMapMemory(inst->vk_device, *out_memory, 0, size, 0, out_mapped) !=
+            VK_SUCCESS) {
+        fprintf(stderr, "[pipeline] instance buffer bind/map failed\n");
+        vkFreeMemory(inst->vk_device, *out_memory, NULL);
+        vkDestroyBuffer(inst->vk_device, *out_buffer, NULL);
+        *out_buffer = VK_NULL_HANDLE;
+        *out_memory = VK_NULL_HANDLE;
+        *out_mapped = NULL;
         return false;
+    }
+    return true;
+}
+
+bool ca_instance_buf_ensure(Ca_Instance *inst, Ca_Frame *f,
+                            uint32_t minimum_slots)
+{
+    if (!inst || !f) return false;
+    if (minimum_slots == 0) minimum_slots = 1;
+    if (f->instance_buf != VK_NULL_HANDLE &&
+        f->instance_capacity >= minimum_slots)
+        return true;
+
+    uint32_t capacity = f->instance_capacity > 0
+        ? f->instance_capacity : 256u;
+    while (capacity < minimum_slots) {
+        uint32_t growth = capacity / 2u;
+        if (growth < 256u) growth = 256u;
+        if (capacity > UINT32_MAX - growth) {
+            capacity = minimum_slots;
+            break;
+        }
+        capacity += growth;
+    }
+    if ((VkDeviceSize)capacity > UINT64_MAX / CA_INSTANCE_SLOT_SIZE)
+        return false;
+    VkDeviceSize size = (VkDeviceSize)capacity * CA_INSTANCE_SLOT_SIZE;
+
+    VkBuffer new_buffer;
+    VkDeviceMemory new_memory;
+    void *new_mapped;
+    if (!instance_buffer_allocate(inst, size, &new_buffer, &new_memory,
+                                  &new_mapped))
+        return false;
+
+    if (f->ssbo_set == VK_NULL_HANDLE) {
+        if (!ssbo_descriptor_allocate(inst, f)) {
+            fprintf(stderr, "[pipeline] SSBO descriptor set alloc failed\n");
+            vkUnmapMemory(inst->vk_device, new_memory);
+            vkFreeMemory(inst->vk_device, new_memory, NULL);
+            vkDestroyBuffer(inst->vk_device, new_buffer, NULL);
+            return false;
+        }
     }
     VkDescriptorBufferInfo buf_info = {
-        .buffer = f->instance_buf,
+        .buffer = new_buffer,
         .offset = 0,
-        .range  = CA_INSTANCE_BUF_SIZE,
+        .range  = size,
     };
     VkWriteDescriptorSet write = {
         .sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
@@ -908,7 +997,23 @@ bool ca_instance_buf_create(Ca_Instance *inst, Ca_Frame *f)
         .pBufferInfo     = &buf_info,
     };
     vkUpdateDescriptorSets(inst->vk_device, 1, &write, 0, NULL);
+
+    if (f->instance_mapped)
+        vkUnmapMemory(inst->vk_device, f->instance_mem);
+    if (f->instance_buf != VK_NULL_HANDLE)
+        vkDestroyBuffer(inst->vk_device, f->instance_buf, NULL);
+    if (f->instance_mem != VK_NULL_HANDLE)
+        vkFreeMemory(inst->vk_device, f->instance_mem, NULL);
+    f->instance_buf = new_buffer;
+    f->instance_mem = new_memory;
+    f->instance_mapped = new_mapped;
+    f->instance_capacity = capacity;
     return true;
+}
+
+bool ca_instance_buf_create(Ca_Instance *inst, Ca_Frame *f)
+{
+    return ca_instance_buf_ensure(inst, f, 256u);
 }
 
 void ca_instance_buf_destroy(Ca_Instance *inst, Ca_Frame *f)
@@ -918,9 +1023,9 @@ void ca_instance_buf_destroy(Ca_Instance *inst, Ca_Frame *f)
         f->instance_mapped = NULL;
     }
     if (f->ssbo_set != VK_NULL_HANDLE) {
-        vkFreeDescriptorSets(inst->vk_device, inst->ssbo_desc_pool,
-                             1, &f->ssbo_set);
+        vkFreeDescriptorSets(inst->vk_device, f->ssbo_pool, 1, &f->ssbo_set);
         f->ssbo_set = VK_NULL_HANDLE;
+        f->ssbo_pool = VK_NULL_HANDLE;
     }
     if (f->instance_buf != VK_NULL_HANDLE) {
         vkDestroyBuffer(inst->vk_device, f->instance_buf, NULL);
@@ -930,4 +1035,5 @@ void ca_instance_buf_destroy(Ca_Instance *inst, Ca_Frame *f)
         vkFreeMemory(inst->vk_device, f->instance_mem, NULL);
         f->instance_mem = VK_NULL_HANDLE;
     }
+    f->instance_capacity = 0;
 }

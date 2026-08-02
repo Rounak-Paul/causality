@@ -560,13 +560,12 @@ static void font_mark_dirty(Ca_Font *font, uint16_t x, uint16_t y,
 {
     if (!font || w == 0 || h == 0) return;
     if (font->dirty_full) return;
-    if (font->dirty_rect_count >= CA_FONT_MAX_DIRTY_RECTS) {
+    Ca_FontDirtyRect rect = { x, y, w, h };
+    if (!ca_dyn_array_push(&font->dirty_rect_storage, &rect)) {
         font->dirty_full = true;
-        font->dirty_rect_count = 0;
+        ca_dyn_array_clear(&font->dirty_rect_storage);
         return;
     }
-    font->dirty_rects[font->dirty_rect_count++] =
-        (Ca_FontDirtyRect){ x, y, w, h };
 }
 
 /*
@@ -581,12 +580,12 @@ static void font_invalidate_paint_caches(Ca_Font *font)
 {
     Ca_Instance *inst = font ? font->owner : NULL;
     if (!inst) return;
-    for (int wi = 0; wi < CA_MAX_WINDOWS_TOTAL; wi++) {
-        Ca_Window *win = &inst->windows[wi];
-        if (!win->in_use || !win->node_pool) continue;
+    for (size_t wi = 0; wi < ca_pool_slot_count(&inst->windows); ++wi) {
+        Ca_Window *win = CA_POOL_AT(inst->windows, Ca_Window, wi);
+        if (!win->in_use || ca_pool_slot_count(&win->node_pool) == 0) continue;
         win->paint_cache_used = 0;
-        for (uint32_t ni = 0; ni < CA_MAX_NODES_PER_WINDOW; ni++) {
-            Ca_Node *node = &win->node_pool[ni];
+        for (uint32_t ni = 0; ni < ca_pool_slot_count(&win->node_pool); ni++) {
+            Ca_Node *node = CA_POOL_AT(win->node_pool, Ca_Node, ni);
             if (!node->in_use) continue;
             node->dirty |= CA_DIRTY_CONTENT;
             node->cache_count = 0;
@@ -617,12 +616,9 @@ static void font_init_ranges(Ca_FontTier *tier)
         tier->ranges[r].chardata        = tier->chardata_block + offset;
         offset += g_range_defs[r].count;
     }
-    tier->extra_capacity = CA_FONT_EXTRA_GLYPHS_PER_PAGE;
-    tier->extra_lookup_capacity = CA_FONT_EXTRA_LOOKUP_CAPACITY;
-    tier->extra_glyphs = (Ca_FontExtraGlyph *)CA_CALLOC(
-        tier->extra_capacity, sizeof(Ca_FontExtraGlyph));
-    tier->extra_lookup = (uint16_t *)CA_CALLOC(
-        tier->extra_lookup_capacity, sizeof(uint16_t));
+    tier->extra_glyph_storage =
+        (Ca_DynArray)CA_DYN_ARRAY_INIT(Ca_FontExtraGlyph);
+    tier->extra_lookup_storage = (Ca_DynArray)CA_DYN_ARRAY_INIT(uint32_t);
 }
 
 /*
@@ -653,13 +649,12 @@ static void font_clear_page(Ca_Font *font, Ca_FontTier *tier, bool clear_pixels)
         int cpt = chars_for_ranges(CA_FONT_RANGE_COUNT);
         memset(tier->chardata_block, 0, (size_t)cpt * sizeof(Ca_Glyph));
     }
-    if (tier->extra_glyphs)
-        memset(tier->extra_glyphs, 0,
-               (size_t)tier->extra_capacity * sizeof(Ca_FontExtraGlyph));
-    if (tier->extra_lookup)
-        memset(tier->extra_lookup, 0,
-               (size_t)tier->extra_lookup_capacity * sizeof(uint16_t));
-    tier->extra_count = 0;
+    ca_dyn_array_clear(&tier->extra_glyph_storage);
+    tier->extra_glyphs = tier->extra_glyph_storage.data;
+    if (tier->extra_lookup_storage.data)
+        memset(tier->extra_lookup_storage.data, 0,
+               tier->extra_lookup_storage.count * sizeof(uint32_t));
+    tier->extra_lookup = tier->extra_lookup_storage.data;
     tier->shelf_x = tier->shelf_y = tier->shelf_h = 0;
     tier->packed = false;
 }
@@ -726,17 +721,17 @@ static bool font_init_page(Ca_Font *font, Ca_FontTier *tier,
     tier->baked_px     = (float)(int)(tier->baked_px + 0.5f);
     tier->last_used_frame = font->frame_counter;
     font_init_ranges(tier);
-    if (!tier->chardata_block || !tier->extra_glyphs || !tier->extra_lookup) {
+    if (!tier->chardata_block) {
         CA_FREE(tier->chardata_block);
-        CA_FREE(tier->extra_glyphs);
-        CA_FREE(tier->extra_lookup);
+        ca_dyn_array_destroy(&tier->extra_glyph_storage);
+        ca_dyn_array_destroy(&tier->extra_lookup_storage);
         memset(tier, 0, sizeof(*tier));
         return false;
     }
     if (!font_set_page_metrics(font, tier)) {
         CA_FREE(tier->chardata_block);
-        CA_FREE(tier->extra_glyphs);
-        CA_FREE(tier->extra_lookup);
+        ca_dyn_array_destroy(&tier->extra_glyph_storage);
+        ca_dyn_array_destroy(&tier->extra_lookup_storage);
         memset(tier, 0, sizeof(*tier));
         return false;
     }
@@ -807,8 +802,8 @@ static Ca_FontTier *font_alloc_page(Ca_Font *font, uint32_t key, uint8_t style)
     if (was_dynamic)
         font_invalidate_paint_caches(font);
     CA_FREE(tier->chardata_block);
-    CA_FREE(tier->extra_glyphs);
-    CA_FREE(tier->extra_lookup);
+    ca_dyn_array_destroy(&tier->extra_glyph_storage);
+    ca_dyn_array_destroy(&tier->extra_lookup_storage);
     return font_init_page(font, tier, key, style, (uint16_t)victim, was_dynamic)
         ? tier : NULL;
 }
@@ -1015,6 +1010,28 @@ static bool font_page_alloc(Ca_FontTier *tier, int w, int h, int *out_x, int *ou
 
 static bool font_render_glyph(Ca_FontTier *tier, uint32_t cp, Ca_Glyph *g);
 
+/** Rebuilds a tier's glyph lookup table at the requested power-of-two size. */
+static bool font_extra_lookup_rehash(Ca_FontTier *tier, size_t capacity)
+{
+    Ca_DynArray replacement = CA_DYN_ARRAY_INIT(uint32_t);
+    if (!ca_dyn_array_resize(&replacement, capacity)) return false;
+    uint32_t *lookup = replacement.data;
+    Ca_FontExtraGlyph *glyphs = tier->extra_glyph_storage.data;
+    for (size_t i = 0; i < tier->extra_glyph_storage.count; ++i) {
+        size_t pos = ((size_t)glyphs[i].codepoint * 2654435761u) % capacity;
+        while (lookup[pos] != 0u) pos = (pos + 1u) % capacity;
+        if (i >= UINT32_MAX) {
+            ca_dyn_array_destroy(&replacement);
+            return false;
+        }
+        lookup[pos] = (uint32_t)i + 1u;
+    }
+    ca_dyn_array_swap(&tier->extra_lookup_storage, &replacement);
+    ca_dyn_array_destroy(&replacement);
+    tier->extra_lookup = tier->extra_lookup_storage.data;
+    return true;
+}
+
 /*
  * Look up (or create) a glyph slot for a codepoint in the extra hash table.
  *
@@ -1028,29 +1045,41 @@ static bool font_render_glyph(Ca_FontTier *tier, uint32_t cp, Ca_Glyph *g);
  */
 static Ca_Glyph *font_extra_glyph(Ca_FontTier *tier, uint32_t cp, bool create)
 {
-    if (!tier || !tier->extra_glyphs || !tier->extra_lookup ||
-        tier->extra_lookup_capacity == 0u)
-        return NULL;
+    if (!tier) return NULL;
+    if (create && (tier->extra_lookup_storage.count == 0u ||
+        (tier->extra_glyph_storage.count + 1u) * 10u >
+            tier->extra_lookup_storage.count * 7u)) {
+        size_t capacity = tier->extra_lookup_storage.count > 0u
+            ? tier->extra_lookup_storage.count * 2u : 64u;
+        if (capacity < tier->extra_lookup_storage.count ||
+            !font_extra_lookup_rehash(tier, capacity))
+            return NULL;
+    }
+    if (!tier->extra_lookup_storage.data) return NULL;
 
-    uint32_t pos = (cp * 2654435761u) % tier->extra_lookup_capacity;
-    for (uint16_t probe = 0; probe < tier->extra_lookup_capacity; probe++) {
-        uint16_t entry = tier->extra_lookup[pos];
+    size_t lookup_capacity = tier->extra_lookup_storage.count;
+    size_t pos = ((size_t)cp * 2654435761u) % lookup_capacity;
+    for (size_t probe = 0; probe < lookup_capacity; ++probe) {
+        uint32_t entry = tier->extra_lookup[pos];
         if (entry != 0u) {
             Ca_FontExtraGlyph *slot = &tier->extra_glyphs[entry - 1u];
             if (slot->codepoint == cp)
                 return &slot->glyph;
         } else {
-            if (!create || tier->extra_count >= tier->extra_capacity)
+            if (!create || tier->extra_glyph_storage.count >= UINT32_MAX)
                 return NULL;
-            uint16_t new_entry = (uint16_t)(tier->extra_count + 1u);
-            Ca_FontExtraGlyph *slot = &tier->extra_glyphs[tier->extra_count++];
-            memset(slot, 0, sizeof(*slot));
+            Ca_FontExtraGlyph new_glyph = {0};
+            if (!ca_dyn_array_push(&tier->extra_glyph_storage, &new_glyph))
+                return NULL;
+            tier->extra_glyphs = tier->extra_glyph_storage.data;
+            uint32_t new_entry = (uint32_t)tier->extra_glyph_storage.count;
+            Ca_FontExtraGlyph *slot = &tier->extra_glyphs[new_entry - 1u];
             slot->codepoint = cp;
             tier->extra_lookup[pos] = new_entry;
             return &slot->glyph;
         }
         pos++;
-        if (pos >= tier->extra_lookup_capacity) pos = 0u;
+        if (pos >= lookup_capacity) pos = 0u;
     }
     return NULL;
 }
@@ -1369,11 +1398,13 @@ void ca_font_flush_uploads(Ca_Instance *inst, Ca_Font *font)
 {
     if (!inst || !font || !font->atlas_rgba || font->image == VK_NULL_HANDLE)
         return;
-    uint32_t rect_count = font->dirty_full ? 1u : font->dirty_rect_count;
+    uint32_t rect_count = font->dirty_full
+        ? 1u : (uint32_t)font->dirty_rect_storage.count;
     if (rect_count == 0) return;
 
     Ca_FontDirtyRect full = { 0, 0, (uint16_t)font->atlas_w, (uint16_t)font->atlas_h };
-    Ca_FontDirtyRect *rects = font->dirty_full ? &full : font->dirty_rects;
+    Ca_FontDirtyRect *rects = font->dirty_full
+        ? &full : font->dirty_rect_storage.data;
 
     VkDeviceSize total = 0;
     for (uint32_t i = 0; i < rect_count; i++)
@@ -1495,7 +1526,7 @@ void ca_font_flush_uploads(Ca_Instance *inst, Ca_Font *font)
     CA_FREE(copies);
     vkDestroyBuffer(inst->vk_device, staging_buf, NULL);
     vkFreeMemory(inst->vk_device, staging_mem, NULL);
-    font->dirty_rect_count = 0;
+    ca_dyn_array_clear(&font->dirty_rect_storage);
     font->dirty_full = false;
     font->atlas_generation++;
 }
@@ -1528,6 +1559,8 @@ static bool font_create_internal(Ca_Instance *inst, GLFWwindow *glfw_win,
                                  size_t               bold_size)
 {
     memset(out_font, 0, sizeof(*out_font));
+    out_font->dirty_rect_storage =
+        (Ca_DynArray)CA_DYN_ARRAY_INIT(Ca_FontDirtyRect);
 
     float cx = 1.0f;
     glfwGetWindowContentScale(glfw_win, &cx, NULL);
@@ -1740,8 +1773,8 @@ void ca_font_destroy(Ca_Instance *inst, Ca_Font *font)
         vkFreeMemory(inst->vk_device, font->memory, NULL);
     for (int i = 0; i < CA_FONT_MAX_PAGES; i++) {
         CA_FREE(font->pages[i].chardata_block);
-        CA_FREE(font->pages[i].extra_glyphs);
-        CA_FREE(font->pages[i].extra_lookup);
+        ca_dyn_array_destroy(&font->pages[i].extra_glyph_storage);
+        ca_dyn_array_destroy(&font->pages[i].extra_lookup_storage);
     }
     if (font->bold_face)
         FT_Done_Face((FT_Face)font->bold_face);
@@ -1755,5 +1788,6 @@ void ca_font_destroy(Ca_Instance *inst, Ca_Font *font)
     CA_FREE(font->bold_data);
     CA_FREE(font->icon_data);
     CA_FREE(font->atlas_rgba);
+    ca_dyn_array_destroy(&font->dirty_rect_storage);
     memset(font, 0, sizeof(*font));
 }

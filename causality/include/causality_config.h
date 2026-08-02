@@ -1,11 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Causality contributors.
 //
-// causality_config.h — compile-time tunables.
-//
-// All limits below have safe defaults. Override any of them by defining
-// the macro on the compiler command line (e.g. -DCA_MAX_NODES_PER_WINDOW=8192)
-// or by defining it before this header is included.
+// causality_config.h — fixed protocol values, text policies, and allocators.
 
 #pragma once
 
@@ -13,126 +9,6 @@
 
 #ifndef CA_FRAMES_IN_FLIGHT
 #  define CA_FRAMES_IN_FLIGHT 2
-#endif
-
-#ifndef CA_MAX_SWAPCHAIN_IMAGES
-#  define CA_MAX_SWAPCHAIN_IMAGES 8
-#endif
-
-/* ---- Per-window pools ---- */
-
-#ifndef CA_MAX_NODES_PER_WINDOW
-#  define CA_MAX_NODES_PER_WINDOW 16384
-#endif
-
-#ifndef CA_MAX_NODE_CHILDREN
-#  define CA_MAX_NODE_CHILDREN 16384
-#endif
-
-#ifndef CA_MAX_DRAW_CMDS_PER_WINDOW
-#  define CA_MAX_DRAW_CMDS_PER_WINDOW 32768
-#endif
-
-#ifndef CA_MAX_TRANSITIONS_PER_NODE
-#  define CA_MAX_TRANSITIONS_PER_NODE 4
-#endif
-
-/* ---- Reactive signals ---- */
-
-#ifndef CA_MAX_SIGNAL_SUBSCRIBERS
-#  define CA_MAX_SIGNAL_SUBSCRIBERS 64
-#endif
-
-#ifndef CA_MAX_SIGNALS_PER_INSTANCE
-#  define CA_MAX_SIGNALS_PER_INSTANCE 16384
-#endif
-
-#ifndef CA_MAX_EFFECTS_PER_INSTANCE
-#  define CA_MAX_EFFECTS_PER_INSTANCE 8192
-#endif
-
-#ifndef CA_MAX_SIGNAL_DEPS
-#  define CA_MAX_SIGNAL_DEPS 64
-#endif
-
-/* Ceiling on live ca_frame_effect registrations per instance — these are
-   rare by design (genuinely external, non-signal state: live telemetry
-   panels and similar), unlike ordinary ca_effect, so this is sized much
-   smaller than CA_MAX_EFFECTS_PER_INSTANCE rather than reusing it. */
-#ifndef CA_MAX_FRAME_EFFECTS_PER_INSTANCE
-#  define CA_MAX_FRAME_EFFECTS_PER_INSTANCE 64
-#endif
-
-/* ---- Widget pools (per window) ---- */
-
-#ifndef CA_MAX_LABELS_PER_WINDOW
-#  define CA_MAX_LABELS_PER_WINDOW 16384
-#endif
-#ifndef CA_MAX_BUTTONS_PER_WINDOW
-#  define CA_MAX_BUTTONS_PER_WINDOW 8192
-#endif
-#ifndef CA_MAX_INPUTS_PER_WINDOW
-#  define CA_MAX_INPUTS_PER_WINDOW 2048
-#endif
-#ifndef CA_MAX_CHECKBOXES_PER_WINDOW
-#  define CA_MAX_CHECKBOXES_PER_WINDOW 2048
-#endif
-#ifndef CA_MAX_RADIOS_PER_WINDOW
-#  define CA_MAX_RADIOS_PER_WINDOW 1024
-#endif
-#ifndef CA_MAX_SLIDERS_PER_WINDOW
-#  define CA_MAX_SLIDERS_PER_WINDOW 1024
-#endif
-#ifndef CA_MAX_TOGGLES_PER_WINDOW
-#  define CA_MAX_TOGGLES_PER_WINDOW 1024
-#endif
-#ifndef CA_MAX_PROGRESS_PER_WINDOW
-#  define CA_MAX_PROGRESS_PER_WINDOW 512
-#endif
-#ifndef CA_MAX_SELECTS_PER_WINDOW
-#  define CA_MAX_SELECTS_PER_WINDOW 512
-#endif
-#ifndef CA_MAX_TABBARS_PER_WINDOW
-#  define CA_MAX_TABBARS_PER_WINDOW 128
-#endif
-#ifndef CA_MAX_TREENODES_PER_WINDOW
-#  define CA_MAX_TREENODES_PER_WINDOW 16384
-#endif
-#ifndef CA_MAX_TABLES_PER_WINDOW
-#  define CA_MAX_TABLES_PER_WINDOW 256
-#endif
-#ifndef CA_MAX_TOOLTIPS_PER_WINDOW
-#  define CA_MAX_TOOLTIPS_PER_WINDOW 8192
-#endif
-#ifndef CA_MAX_CTXMENUS_PER_WINDOW
-#  define CA_MAX_CTXMENUS_PER_WINDOW 8192
-#endif
-#ifndef CA_MAX_MODALS_PER_WINDOW
-#  define CA_MAX_MODALS_PER_WINDOW 16
-#endif
-#ifndef CA_MAX_SPLITTERS_PER_WINDOW
-#  define CA_MAX_SPLITTERS_PER_WINDOW 64
-#endif
-#ifndef CA_MAX_VIEWPORTS_PER_WINDOW
-#  define CA_MAX_VIEWPORTS_PER_WINDOW 16
-#endif
-#ifndef CA_MAX_MENUBARS_PER_WINDOW
-#  define CA_MAX_MENUBARS_PER_WINDOW 4
-#endif
-
-/* ---- App-level (system) menu bar ---- */
-
-/* Maximum top-level menus registered via ca_instance_set_app_menus(). */
-#ifndef CA_MAX_APP_MENUS
-#  define CA_MAX_APP_MENUS 16
-#endif
-/* Maximum items per top-level app menu (including sub-items). */
-#ifndef CA_MAX_APP_MENU_ITEMS
-#  define CA_MAX_APP_MENU_ITEMS 32
-#endif
-/* Maximum sub-items per app menu item. */
-#ifndef CA_MAX_APP_MENU_SUB_ITEMS
-#  define CA_MAX_APP_MENU_SUB_ITEMS 16
 #endif
 
 /* ---- Text storage ---- */
@@ -149,10 +25,6 @@
 #ifndef CA_OPTION_TEXT_MAX
 #  define CA_OPTION_TEXT_MAX 128
 #endif
-#ifndef CA_CHAR_BUF_MAX
-#  define CA_CHAR_BUF_MAX 32
-#endif
-
 /* ---- Allocator hooks ---- */
 /*
  * All internal Causality heap allocations go through the following function

@@ -7,6 +7,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include "ca_api.h"
+#include "ca_array.h"
 
 /* ============================================================
    CSS VALUE TYPES
@@ -320,7 +321,6 @@ typedef struct {
    CSS SELECTORS
    ============================================================ */
 
-#define CA_CSS_MAX_CLASSES_SEL 8
 #define CA_CSS_CLASS_NAME_MAX  64
 
 typedef enum {
@@ -369,55 +369,50 @@ typedef struct {
     Ca_CssPseudoKind not_pseudo;            /* e.g. :not(:hover) */
 } Ca_CssPseudo;
 
-#define CA_CSS_MAX_PSEUDOS_PER_PART 4
-
 /* A single simple selector (e.g. div#my-id.foo.bar:hover:not(.disabled)) */
 typedef struct {
-    char     element[32];
-    char     id[CA_CSS_CLASS_NAME_MAX]; /* e.g. #my-id → "my-id" */
-    char     classes[CA_CSS_MAX_CLASSES_SEL][CA_CSS_CLASS_NAME_MAX];
-    int      class_count;
-    Ca_CssPseudo pseudos[CA_CSS_MAX_PSEUDOS_PER_PART];
-    int      pseudo_count;
+    char        element[32];
+    char        id[CA_CSS_CLASS_NAME_MAX]; /* e.g. #my-id → "my-id" */
+    Ca_DynArray class_storage;
+    char      (*classes)[CA_CSS_CLASS_NAME_MAX];
+    int         class_count;
+    Ca_DynArray pseudo_storage;
+    Ca_CssPseudo *pseudos;
+    int         pseudo_count;
     Ca_CssCombinator combinator;  /* how this relates to PREVIOUS part */
 } Ca_CssSimpleSel;
 
 /* A compound selector = chain of simple selectors
    (read right-to-left: parts[part_count-1] is the subject) */
-#define CA_CSS_MAX_CHAIN 8
-
 typedef struct {
-    Ca_CssSimpleSel parts[CA_CSS_MAX_CHAIN];
-    int             part_count;
+    Ca_DynArray     part_storage;
+    Ca_CssSimpleSel *parts;
+    int              part_count;
 } Ca_CssSelector;
 
 /* ============================================================
    CSS RULE
    ============================================================ */
 
-#define CA_CSS_MAX_SELECTORS_PER_RULE 16
-#define CA_CSS_MAX_DECLS_PER_RULE     96
-
 typedef struct {
-    Ca_CssSelector selectors[CA_CSS_MAX_SELECTORS_PER_RULE];
+    Ca_DynArray    selector_storage;
+    Ca_CssSelector *selectors;
     int            selector_count;
-    Ca_CssDecl     decls[CA_CSS_MAX_DECLS_PER_RULE];
+    Ca_DynArray    decl_storage;
+    Ca_CssDecl    *decls;
     int            decl_count;
     int            source_order;
+    bool           allocation_failed;
 } Ca_CssRule;
 
 /* ============================================================
    CSS STYLESHEET
    ============================================================ */
 
-#define CA_CSS_MAX_RULES 1024
-
 /* Custom-property storage. Root-scoped only (:root { --name: value; }).
    Per-element overrides would require per-node resolution tables — out of
    scope for this revision. */
-#define CA_CSS_MAX_VARS       128
 #define CA_CSS_VAR_NAME_MAX   64
-#define CA_CSS_STR_POOL_BYTES 8192
 
 typedef struct {
     char        name[CA_CSS_VAR_NAME_MAX];
@@ -434,19 +429,21 @@ typedef struct {
    name that appears in the SUBJECT (rightmost) part of any such selector
    is recorded here. A node whose own classes don't intersect this set is
    safe to cache; a node that does must always be freshly resolved. */
-#define CA_CSS_MAX_POS_DEP_CLASSES 32
-
 typedef struct Ca_Stylesheet {
-    Ca_CssRule rules[CA_CSS_MAX_RULES];
+    Ca_DynArray rule_storage;
+    Ca_CssRule *rules;
     int        rule_count;
     /* Root-scoped custom properties (var(--name) targets). */
-    Ca_CssVar  vars[CA_CSS_MAX_VARS];
+    Ca_DynArray var_storage;
+    Ca_CssVar  *vars;
     int        var_count;
     /* String pool for var-name references inside Ca_CssValue.keyword. */
-    char       str_pool[CA_CSS_STR_POOL_BYTES];
+    Ca_DynArray str_pool_storage;
+    char       *str_pool;
     int        str_pool_used;
-    /* See CA_CSS_MAX_POS_DEP_CLASSES doc above. */
-    char       pos_dep_classes[CA_CSS_MAX_POS_DEP_CLASSES][CA_CSS_CLASS_NAME_MAX];
+    /* See the position-dependent selector classification notes above. */
+    Ca_DynArray pos_dep_class_storage;
+    char       (*pos_dep_classes)[CA_CSS_CLASS_NAME_MAX];
     int        pos_dep_class_count;
     /* True if any position-dependent selector's subject has NO class at
        all (bare element/id/pseudo, e.g. "div:first-child") — in that case

@@ -107,7 +107,7 @@ static bool has_class(const char *class_str, const char *cls)
 /* ============================================================
    POSITION-DEPENDENT SELECTOR CLASSIFICATION (parse-time, once)
    ============================================================
-   See CA_CSS_MAX_POS_DEP_CLASSES's doc comment in css.h for the "why".
+   See the position-dependent selector classification notes in css.h.
    Called once from ca_css_parse() after all rules are parsed. */
 
 static bool pseudo_is_structural(Ca_CssPseudoKind kind)
@@ -151,14 +151,14 @@ static void stylesheet_add_pos_dep_class(Ca_Stylesheet *ss, const char *cls)
     for (int i = 0; i < ss->pos_dep_class_count; i++)
         if (strncmp(ss->pos_dep_classes[i], cls, CA_CSS_CLASS_NAME_MAX) == 0)
             return; /* already recorded */
-    if (ss->pos_dep_class_count >= CA_CSS_MAX_POS_DEP_CLASSES) {
-        /* Set is full — fail safe by disabling the whole cache rather than
-           silently missing a class and serving a stale/wrong style. */
+    char entry[CA_CSS_CLASS_NAME_MAX] = {0};
+    snprintf(entry, sizeof(entry), "%s", cls);
+    if (!ca_dyn_array_push(&ss->pos_dep_class_storage, entry)) {
         ss->pos_dep_classless_selector_exists = true;
         return;
     }
-    snprintf(ss->pos_dep_classes[ss->pos_dep_class_count++],
-             CA_CSS_CLASS_NAME_MAX, "%s", cls);
+    ss->pos_dep_classes = ss->pos_dep_class_storage.data;
+    ss->pos_dep_class_count = (int)ss->pos_dep_class_storage.count;
 }
 
 /* Scans every rule's selectors for structural pseudo-classes or multi-part
@@ -167,6 +167,8 @@ static void stylesheet_add_pos_dep_class(Ca_Stylesheet *ss, const char *cls)
 void ca_style_classify_position_dependent(Ca_Stylesheet *ss)
 {
     if (!ss) return;
+    ca_dyn_array_clear(&ss->pos_dep_class_storage);
+    ss->pos_dep_classes = NULL;
     ss->pos_dep_class_count = 0;
     ss->pos_dep_classless_selector_exists = false;
 
@@ -531,8 +533,6 @@ typedef struct {
     int decl_count;
 } MatchedRule;
 
-#define MAX_MATCHED_RULES 128
-
 static int compare_matched(const void *a, const void *b)
 {
     const MatchedRule *ma = (const MatchedRule *)a;
@@ -594,7 +594,9 @@ static void style_resolve_sheet(Ca_Stylesheet *ss,
     if (!ss) return;
 
     /* Collect all matching rules */
-    MatchedRule matched[MAX_MATCHED_RULES];
+    Ca_DynArray matched_storage = CA_DYN_ARRAY_INIT(MatchedRule);
+    if (!ca_dyn_array_resize(&matched_storage, (size_t)ss->rule_count)) return;
+    MatchedRule *matched = matched_storage.data;
     int match_count = 0;
 
     for (int r = 0; r < ss->rule_count; ++r) {
@@ -602,19 +604,20 @@ static void style_resolve_sheet(Ca_Stylesheet *ss,
 
         for (int s = 0; s < rule->selector_count; ++s) {
             if (match_selector(&rule->selectors[s], node, elem_type, classes)) {
-                if (match_count < MAX_MATCHED_RULES) {
-                    matched[match_count].specificity  = calc_specificity(&rule->selectors[s]);
-                    matched[match_count].source_order = rule->source_order;
-                    matched[match_count].decls        = rule->decls;
-                    matched[match_count].decl_count   = rule->decl_count;
-                    match_count++;
-                }
+                matched[match_count].specificity  = calc_specificity(&rule->selectors[s]);
+                matched[match_count].source_order = rule->source_order;
+                matched[match_count].decls        = rule->decls;
+                matched[match_count].decl_count   = rule->decl_count;
+                match_count++;
                 break; /* One match per rule is enough */
             }
         }
     }
 
-    if (match_count == 0) return;
+    if (match_count == 0) {
+        ca_dyn_array_destroy(&matched_storage);
+        return;
+    }
 
     /* Sort by specificity (ascending) then source order (ascending).
        Later entries override earlier ones, which is correct CSS cascade. */
@@ -912,6 +915,7 @@ static void style_resolve_sheet(Ca_Stylesheet *ss,
         }
     }
     } /* end pass loop */
+    ca_dyn_array_destroy(&matched_storage);
 }
 
 void ca_style_resolve(Ca_Stylesheet *ss,

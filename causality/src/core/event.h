@@ -13,7 +13,7 @@
  *
  * inst  Instance whose event system is being initialized.
  */
-void ca_event_init(Ca_Instance *inst);
+bool ca_event_init(Ca_Instance *inst);
 
 /*
  * Tear down the event subsystem for an instance.

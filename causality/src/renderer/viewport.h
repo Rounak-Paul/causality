@@ -26,7 +26,7 @@ bool ca_viewport_gpu_resize(Ca_Instance *inst, Ca_Viewport *vp,
    on all of them at the GPU level (e.g. as additional submit wait
    semaphores) before any command buffer that samples a viewport's texture
    (the compositing pass) executes, since nothing else guarantees the
-   render has finished by then. out_semaphores must have room for at least
-   CA_MAX_VIEWPORTS_PER_WINDOW entries. */
+   render has finished by then. The output array is cleared and grown as
+   needed. */
 void ca_viewport_render_all(Ca_Instance *inst, Ca_Window *win,
-                            VkSemaphore *out_semaphores, uint32_t *out_count);
+                            Ca_DynArray *out_semaphores);

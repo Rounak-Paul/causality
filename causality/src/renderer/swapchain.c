@@ -6,6 +6,7 @@
 #include "pipeline.h"
 #include "viewport.h"
 #include "blur.h"
+#include "node.h"
 #include <string.h>
 
 /* ---- Helpers ---- */
@@ -85,17 +86,25 @@ static VkPresentModeKHR choose_present_mode(VkPhysicalDevice gpu,
 
     uint32_t count = 0;
     vkGetPhysicalDeviceSurfacePresentModesKHR(gpu, surface, &count, NULL);
-    if (count == 0 || count > 16) return VK_PRESENT_MODE_FIFO_KHR;
+    if (count == 0) return VK_PRESENT_MODE_FIFO_KHR;
 
-    VkPresentModeKHR modes[16];
-    vkGetPhysicalDeviceSurfacePresentModesKHR(gpu, surface, &count, modes);
+    Ca_DynArray mode_storage = CA_DYN_ARRAY_INIT(VkPresentModeKHR);
+    if (!ca_dyn_array_resize(&mode_storage, count))
+        return VK_PRESENT_MODE_FIFO_KHR;
+    VkPresentModeKHR *modes = mode_storage.data;
+    if (vkGetPhysicalDeviceSurfacePresentModesKHR(gpu, surface, &count,
+                                                   modes) != VK_SUCCESS) {
+        ca_dyn_array_destroy(&mode_storage);
+        return VK_PRESENT_MODE_FIFO_KHR;
+    }
 
     bool has_mailbox = false, has_immediate = false;
     for (uint32_t i = 0; i < count; i++) {
         if (modes[i] == VK_PRESENT_MODE_MAILBOX_KHR)   has_mailbox   = true;
         if (modes[i] == VK_PRESENT_MODE_IMMEDIATE_KHR) has_immediate = true;
     }
-    if (has_mailbox)   return VK_PRESENT_MODE_MAILBOX_KHR;
+    ca_dyn_array_destroy(&mode_storage);
+    if (has_mailbox) return VK_PRESENT_MODE_MAILBOX_KHR;
     if (has_immediate) return VK_PRESENT_MODE_IMMEDIATE_KHR;
     return VK_PRESENT_MODE_FIFO_KHR;
 }
@@ -131,8 +140,6 @@ bool ca_swapchain_create(Ca_Instance *inst, Ca_Window *win,
     uint32_t img_count = caps.minImageCount + 1;
     if (caps.maxImageCount > 0 && img_count > caps.maxImageCount)
         img_count = caps.maxImageCount;
-    if (img_count > CA_MAX_SWAPCHAIN_IMAGES)
-        img_count = CA_MAX_SWAPCHAIN_IMAGES;
 
     uint32_t queue_families[2] = { inst->gfx_family, inst->present_family };
     bool     same              = inst->gfx_family == inst->present_family;
@@ -172,9 +179,41 @@ bool ca_swapchain_create(Ca_Instance *inst, Ca_Window *win,
     sc->image_usage = image_usage;
     sc->extent = ext;
 
-    /* Retrieve images */
-    vkGetSwapchainImagesKHR(inst->vk_device, sc->swapchain, &sc->image_count, NULL);
-    vkGetSwapchainImagesKHR(inst->vk_device, sc->swapchain, &sc->image_count, sc->images);
+    if (sc->image_storage.element_size == 0) {
+        sc->image_storage = (Ca_DynArray)CA_DYN_ARRAY_INIT(VkImage);
+        sc->image_view_storage = (Ca_DynArray)CA_DYN_ARRAY_INIT(VkImageView);
+        sc->image_render_finished_storage =
+            (Ca_DynArray)CA_DYN_ARRAY_INIT(VkSemaphore);
+        sc->viewport_wait_storage =
+            (Ca_DynArray)CA_DYN_ARRAY_INIT(VkSemaphore);
+        sc->submit_wait_storage =
+            (Ca_DynArray)CA_DYN_ARRAY_INIT(VkSemaphore);
+        sc->submit_stage_storage =
+            (Ca_DynArray)CA_DYN_ARRAY_INIT(VkPipelineStageFlags);
+    }
+
+    uint32_t actual_image_count = 0;
+    if (vkGetSwapchainImagesKHR(inst->vk_device, sc->swapchain,
+                                &actual_image_count, NULL) != VK_SUCCESS ||
+        actual_image_count == 0 ||
+        !ca_dyn_array_resize(&sc->image_storage, actual_image_count) ||
+        !ca_dyn_array_resize(&sc->image_view_storage, actual_image_count) ||
+        !ca_dyn_array_resize(&sc->image_render_finished_storage,
+                             actual_image_count)) {
+        fprintf(stderr, "[vk] unable to allocate swapchain image storage\n");
+        ca_swapchain_destroy(inst, win);
+        return false;
+    }
+    sc->images = sc->image_storage.data;
+    sc->image_views = sc->image_view_storage.data;
+    sc->image_render_finished = sc->image_render_finished_storage.data;
+    sc->image_count = actual_image_count;
+    if (vkGetSwapchainImagesKHR(inst->vk_device, sc->swapchain,
+                                &sc->image_count, sc->images) != VK_SUCCESS) {
+        fprintf(stderr, "[vk] unable to retrieve swapchain images\n");
+        ca_swapchain_destroy(inst, win);
+        return false;
+    }
 
     /* Image views + presentation semaphores. Render-finished semaphores are
        indexed by acquired swapchain image because presentation may retain them
@@ -194,8 +233,14 @@ bool ca_swapchain_create(Ca_Instance *inst, Ca_Window *win,
                 .baseArrayLayer = 0, .layerCount = 1,
             },
         };
-        vkCreateImageView(inst->vk_device, &vci, NULL, &sc->image_views[i]);
-        vkCreateSemaphore(inst->vk_device, &sem_ci, NULL, &sc->image_render_finished[i]);
+        if (vkCreateImageView(inst->vk_device, &vci, NULL,
+                              &sc->image_views[i]) != VK_SUCCESS ||
+            vkCreateSemaphore(inst->vk_device, &sem_ci, NULL,
+                              &sc->image_render_finished[i]) != VK_SUCCESS) {
+            fprintf(stderr, "[vk] swapchain image resource creation failed\n");
+            ca_swapchain_destroy(inst, win);
+            return false;
+        }
     }
 
     /* Per-frame sync + command buffers + instance buffers */
@@ -206,8 +251,13 @@ bool ca_swapchain_create(Ca_Instance *inst, Ca_Window *win,
             .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
             .flags = VK_FENCE_CREATE_SIGNALED_BIT,
         };
-        vkCreateSemaphore(inst->vk_device, &sem_ci, NULL, &f->image_available);
-        vkCreateFence(inst->vk_device, &fence_ci, NULL, &f->in_flight);
+        if (vkCreateSemaphore(inst->vk_device, &sem_ci, NULL,
+                              &f->image_available) != VK_SUCCESS ||
+            vkCreateFence(inst->vk_device, &fence_ci, NULL,
+                          &f->in_flight) != VK_SUCCESS) {
+            ca_swapchain_destroy(inst, win);
+            return false;
+        }
 
         VkCommandBufferAllocateInfo alloc = {
             .sType              = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
@@ -215,7 +265,11 @@ bool ca_swapchain_create(Ca_Instance *inst, Ca_Window *win,
             .level              = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
             .commandBufferCount = 1,
         };
-        vkAllocateCommandBuffers(inst->vk_device, &alloc, &f->cmd);
+        if (vkAllocateCommandBuffers(inst->vk_device, &alloc, &f->cmd) !=
+            VK_SUCCESS) {
+            ca_swapchain_destroy(inst, win);
+            return false;
+        }
 
         /* Instance buffer for instanced rendering (created if SSBO layout exists) */
         if (inst->ssbo_desc_layout != VK_NULL_HANDLE) {
@@ -261,6 +315,15 @@ void ca_swapchain_destroy(Ca_Instance *inst, Ca_Window *win)
     vkDestroySwapchainKHR(inst->vk_device, sc->swapchain, NULL);
     sc->swapchain   = VK_NULL_HANDLE;
     sc->image_count = 0;
+    sc->images = NULL;
+    sc->image_views = NULL;
+    sc->image_render_finished = NULL;
+    ca_dyn_array_destroy(&sc->image_storage);
+    ca_dyn_array_destroy(&sc->image_view_storage);
+    ca_dyn_array_destroy(&sc->image_render_finished_storage);
+    ca_dyn_array_destroy(&sc->viewport_wait_storage);
+    ca_dyn_array_destroy(&sc->submit_wait_storage);
+    ca_dyn_array_destroy(&sc->submit_stage_storage);
 }
 
 /* ---- Image layout transition helper ---- */
@@ -305,6 +368,12 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
     Ca_Frame     *f  = &sc->frames[sc->current_frame];
 
     vkWaitForFences(inst->vk_device, 1, &f->in_flight, VK_TRUE, UINT64_MAX);
+    if (!ca_instance_buf_ensure(inst, f,
+                                win->draw_cmd_count > 0
+                                    ? win->draw_cmd_count : 1u)) {
+        fprintf(stderr, "[vk] unable to grow frame instance storage\n");
+        return;
+    }
 
     uint32_t image_index;
     VkResult result = vkAcquireNextImageKHR(
@@ -330,9 +399,9 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
        must be waited on by this frame's own submit below (added to
        viewport_wait_sems) before compositing samples that viewport's
        texture; nothing else guarantees the render is done by then. */
-    VkSemaphore viewport_wait_sems[CA_MAX_VIEWPORTS_PER_WINDOW];
-    uint32_t    viewport_wait_count = 0;
-    ca_viewport_render_all(inst, win, viewport_wait_sems, &viewport_wait_count);
+    ca_viewport_render_all(inst, win, &sc->viewport_wait_storage);
+    VkSemaphore *viewport_wait_sems = sc->viewport_wait_storage.data;
+    uint32_t viewport_wait_count = (uint32_t)sc->viewport_wait_storage.count;
 
     vkResetCommandBuffer(f->cmd, 0);
 
@@ -430,6 +499,12 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
             else if (z > 0) n_pos++;
         }
         if ((n_neg | n_pos) && count > 1) {
+            if (!ca_window_reserve_sorted_indices(win, count)) {
+                n_neg = 0;
+                n_pos = 0;
+            }
+        }
+        if ((n_neg | n_pos) && count > 1) {
             sorted_idx = win->sorted_idx;
             sorted_idx[0] = 0;
             uint32_t n_zero  = count - 1 - n_neg - n_pos;
@@ -473,8 +548,6 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
             rect_cmd_count++;
     }
     uint32_t text_instance_start = rect_cmd_count;
-    if (text_instance_start > CA_MAX_DRAW_CMDS_PER_WINDOW)
-        text_instance_start = CA_MAX_DRAW_CMDS_PER_WINDOW;
 
     Ca_RectPushConst *rect_base = (Ca_RectPushConst *)f->instance_mapped;
     Ca_TextInstance  *ti_base   = (Ca_TextInstance *)f->instance_mapped;
@@ -622,7 +695,6 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
                     if (!cmd->in_use || cmd->type != CA_DRAW_GLYPH || cmd->a < 0.004f)
                         continue;
                     if (cmd_in_overlay_phase(cmd) != want_overlay) continue;
-                    if (ti_n >= CA_MAX_DRAW_CMDS_PER_WINDOW) break;
 
                     VkRect2D sc_new = full_scissor;
                     if (cmd->has_clip) {
@@ -691,7 +763,7 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
 
                 uint32_t batch_start = ti_n;
                 VkRect2D cur_sc      = full_scissor;
-                int16_t  cur_img     = -1;
+                uint32_t cur_img     = UINT32_MAX;
                 bool     first       = true;
 
                 for (uint32_t d = 0; d < win->draw_cmd_count; ++d) {
@@ -701,9 +773,11 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
                         continue;
                     if (cmd_in_overlay_phase(cmd) != want_overlay) continue;
 
-                    int16_t ii = cmd->image_index;
-                    if (ii < 0 || ii >= CA_MAX_IMAGES || !inst->images[ii].in_use)
+                    uint32_t ii = cmd->image_index;
+                    if ((size_t)ii >= ca_pool_slot_count(&inst->images))
                         continue;
+                    Ca_Image *image = CA_POOL_AT(inst->images, Ca_Image, ii);
+                    if (!image->in_use) continue;
 
                     VkRect2D sc_new = full_scissor;
                     if (cmd->has_clip) {
@@ -734,14 +808,13 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
                         /* Bind per-image sampler at set 1 */
                         vkCmdBindDescriptorSets(f->cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
                                                 inst->text_pipeline.layout,
-                                                1, 1, &inst->images[ii].desc_set,
+                                                1, 1, &image->desc_set,
                                                 0, NULL);
                         cur_img = ii;
                     }
                     cur_sc = sc_new;
                     first  = false;
 
-                    if (ti_n >= CA_MAX_DRAW_CMDS_PER_WINDOW) break;
                     Ca_TextInstance *dst = &ti_base[ti_n++];
                     dst->pos[0] = cmd->x;            dst->pos[1] = cmd->y;
                     dst->size[0] = cmd->w;            dst->size[1] = cmd->h;
@@ -761,7 +834,8 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
         }
 
         /* ---- Viewports (offscreen render targets composited as textured quads) ---- */
-        if (inst->image_pipeline != VK_NULL_HANDLE && win->viewport_pool) {
+        if (inst->image_pipeline != VK_NULL_HANDLE &&
+            ca_pool_slot_count(&win->viewport_pool) > 0) {
 
             bool has_viewports = false;
             for (uint32_t d = 0; d < win->draw_cmd_count; ++d) {
@@ -794,17 +868,19 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
                         continue;
                     if (cmd_in_overlay_phase(cmd) != want_overlay) continue;
 
-                    int16_t vi = cmd->viewport_index;
-                    if (vi < 0 || vi >= CA_MAX_VIEWPORTS_PER_WINDOW ||
-                        !win->viewport_pool[vi].in_use)
+                    uint32_t vi = cmd->viewport_index;
+                    if (vi >= ca_pool_slot_count(&win->viewport_pool) ||
+                        !CA_POOL_AT(win->viewport_pool, Ca_Viewport, vi)->in_use)
                         continue;
                     /* Composite the slot that was actually just rendered
                        (last_rendered_frame), not whatever frame_index
                        currently points at — frame_index already names the
                        NEXT slot ca_viewport_render_all will use by the time
                        this compositor submit runs. */
+                    Ca_Viewport *viewport =
+                        CA_POOL_AT(win->viewport_pool, Ca_Viewport, vi);
                     Ca_ViewportFrame *vpf =
-                        &win->viewport_pool[vi].frame[win->viewport_pool[vi].last_rendered_frame];
+                        &viewport->frame[viewport->last_rendered_frame];
                     if (vpf->desc_set == VK_NULL_HANDLE || !vpf->has_rendered_once)
                         continue;
 
@@ -843,7 +919,6 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
                     cur_sc = sc_new;
                     first  = false;
 
-                    if (ti_n >= CA_MAX_DRAW_CMDS_PER_WINDOW) break;
                     Ca_TextInstance *dst = &ti_base[ti_n++];
                     dst->pos[0] = cmd->x;            dst->pos[1] = cmd->y;
                     dst->size[0] = cmd->w;            dst->size[1] = cmd->h;
@@ -898,7 +973,6 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
                     if (!cmd->in_use || cmd->type != CA_DRAW_BACKDROP_BLUR)
                         continue;
                     if (cmd_in_overlay_phase(cmd) != want_overlay) continue;
-                    if (ti_n >= CA_MAX_DRAW_CMDS_PER_WINDOW) break;
 
                     VkRect2D sc_new = full_scissor;
                     if (cmd->has_clip) {
@@ -992,10 +1066,15 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
        into) plus every viewport's render_done semaphore collected above
        (viewport texture ready to sample during compositing) — the GPU-
        level replacement for the CPU wait ca_viewport_render_all no longer
-       does. viewport_wait_sems is bounded by CA_MAX_VIEWPORTS_PER_WINDOW,
-       so +1 for image_available always fits. */
-    VkSemaphore          wait_sems[CA_MAX_VIEWPORTS_PER_WINDOW + 1];
-    VkPipelineStageFlags wait_stages[CA_MAX_VIEWPORTS_PER_WINDOW + 1];
+       does. */
+    size_t wait_count = (size_t)viewport_wait_count + 1u;
+    if (!ca_dyn_array_resize(&sc->submit_wait_storage, wait_count) ||
+        !ca_dyn_array_resize(&sc->submit_stage_storage, wait_count)) {
+        fprintf(stderr, "[vk] unable to allocate submit wait storage\n");
+        return;
+    }
+    VkSemaphore *wait_sems = sc->submit_wait_storage.data;
+    VkPipelineStageFlags *wait_stages = sc->submit_stage_storage.data;
     wait_sems[0]   = f->image_available;
     wait_stages[0] = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
     for (uint32_t i = 0; i < viewport_wait_count; i++) {

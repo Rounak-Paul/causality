@@ -7,6 +7,7 @@
 #include <stdint.h>
 #include "causality_config.h"
 #include "ca_api.h"
+#include "ca_array.h"
 #include "ca_icons.h"
 #include "ca_reactive.h"
 
@@ -18,12 +19,9 @@ extern "C" {
 #define CAUSALITY_VERSION_MINOR 1
 #define CAUSALITY_VERSION_PATCH 0
 
-/* Maximum number of simultaneously open windows per instance. */
-#define CA_MAX_WINDOWS 8
 /* Reserved windows are owned by Causality internals (e.g. popup manager).
-   They do not count against CA_MAX_WINDOWS. */
+   The current popup service uses one reserved logical index. */
 #define CA_RESERVED_POPUP_WINDOWS 1
-#define CA_MAX_WINDOWS_TOTAL (CA_MAX_WINDOWS + CA_RESERVED_POPUP_WINDOWS)
 
 /* ---- Opaque handles ---- */
 
@@ -243,7 +241,7 @@ CA_API float ca_instance_get_scale(const Ca_Instance *instance);
  *
  * instance    Owning Ca_Instance.
  * menus       Array of Ca_MenuDesc describing each top-level menu.
- * menu_count  Number of elements in menus (clamped to CA_MAX_APP_MENUS).
+ * menu_count  Number of elements in menus.
  */
 CA_API void ca_instance_set_app_menus(Ca_Instance       *instance,
                                       const Ca_MenuDesc *menus,

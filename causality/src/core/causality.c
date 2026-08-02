@@ -9,13 +9,14 @@
 #include "css.h"
 #include "style.h"
 #include "widget.h"
+#include "menu_storage.h"
 #include "../platform/app_menu.h"
 
 /* Forward decls into the reactive subsystem (src/reactive/signal.c). */
 void ca_reactive_flush(Ca_Instance *inst);
 void ca_reactive_run_frame_effects(Ca_Instance *inst);
 void ca_reactive_release_instance(Ca_Instance *inst);
-void ca_popup_system_init(Ca_Instance *inst);
+bool ca_popup_system_init(Ca_Instance *inst);
 void ca_popup_system_tick(Ca_Instance *inst);
 void ca_popup_system_shutdown(Ca_Instance *inst);
 
@@ -41,9 +42,27 @@ Ca_Instance *ca_instance_create(const Ca_InstanceDesc *desc)
         return NULL;
     }
 
-    ca_event_init(inst);
+    if (!ca_pool_init(&inst->windows, sizeof(Ca_Window),
+                      ca_pool_recommended_chunk_capacity(sizeof(Ca_Window)))) {
+        CA_FREE(inst);
+        glfwTerminate();
+        return NULL;
+    }
+
+    if (!ca_event_init(inst)) {
+        ca_pool_destroy(&inst->windows, NULL, NULL);
+        CA_FREE(inst);
+        glfwTerminate();
+        return NULL;
+    }
     ca_ui_init(inst);
-    ca_popup_system_init(inst);
+    if (!ca_popup_system_init(inst)) {
+        ca_event_shutdown(inst);
+        ca_pool_destroy(&inst->windows, NULL, NULL);
+        CA_FREE(inst);
+        glfwTerminate();
+        return NULL;
+    }
 
     /* Cache font settings from descriptor */
     if (desc && desc->font_path)
@@ -59,8 +78,10 @@ Ca_Instance *ca_instance_create(const Ca_InstanceDesc *desc)
     inst->disable_vsync = desc && desc->disable_vsync;
 
     if (!ca_renderer_init(inst, desc)) {
+        ca_popup_system_shutdown(inst);
         ca_ui_shutdown(inst);
         ca_event_shutdown(inst);
+        ca_pool_destroy(&inst->windows, NULL, NULL);
         CA_FREE(inst);
         glfwTerminate();
         return NULL;
@@ -86,14 +107,18 @@ Ca_Instance *ca_instance_create(const Ca_InstanceDesc *desc)
 void ca_instance_destroy(Ca_Instance *instance)
 {
     if (!instance) return;
+    ca_widget_ctx_release_instance(instance);
     ca_popup_system_shutdown(instance);
     /* Destroy windows first — their Vulkan surfaces / swapchains
        require the device to still be alive for proper cleanup. */
     ca_window_system_shutdown(instance);
     ca_renderer_shutdown(instance);
+    ca_pool_destroy(&instance->windows, NULL, NULL);
     ca_ui_shutdown(instance);
     ca_event_shutdown(instance);
     ca_reactive_release_instance(instance);
+    ca_menu_storage_destroy(&instance->app_menu_storage,
+                            &instance->app_menus);
     ca_css_destroy(instance->system_stylesheet);
     CA_FREE(instance);
     printf("[causality] instance destroyed\n");
@@ -179,9 +204,10 @@ void ca_instance_set_bg_render(Ca_Instance *instance,
     if (!instance) return;
     instance->default_bg_render_fn = fn;
     instance->default_bg_render_data = user_data;
-    for (int i = 0; i < CA_MAX_WINDOWS_TOTAL; ++i) {
-        if (instance->windows[i].in_use && !instance->windows[i].bg_render_fn)
-            instance->windows[i].needs_render = true;
+    for (size_t i = 0; i < ca_pool_slot_count(&instance->windows); ++i) {
+        Ca_Window *window = CA_POOL_AT(instance->windows, Ca_Window, i);
+        if (window->in_use && !window->bg_render_fn)
+            window->needs_render = true;
     }
 }
 
@@ -201,11 +227,12 @@ void ca_instance_set_stylesheet(Ca_Instance *instance, Ca_Stylesheet *ss)
 void ca_instance_refresh_styles(Ca_Instance *instance)
 {
     if (!instance || (!instance->system_stylesheet && !instance->stylesheet)) return;
-    for (int wi = 0; wi < CA_MAX_WINDOWS_TOTAL; ++wi) {
-        Ca_Window *window = &instance->windows[wi];
-        if (!window->in_use || !window->node_pool) continue;
-        for (uint32_t ni = 0u; ni < CA_MAX_NODES_PER_WINDOW; ++ni) {
-            Ca_Node *node = &window->node_pool[ni];
+    for (size_t wi = 0; wi < ca_pool_slot_count(&instance->windows); ++wi) {
+        Ca_Window *window = CA_POOL_AT(instance->windows, Ca_Window, wi);
+        if (!window->in_use || ca_pool_slot_count(&window->node_pool) == 0)
+            continue;
+        for (uint32_t ni = 0u; ni < ca_pool_slot_count(&window->node_pool); ++ni) {
+            Ca_Node *node = CA_POOL_AT(window->node_pool, Ca_Node, ni);
             if (!node->in_use) continue;
             ca_widget_refresh_css(node);
             node->dirty |= CA_DIRTY_LAYOUT | CA_DIRTY_CONTENT;
@@ -257,8 +284,8 @@ void ca_instance_set_scale(Ca_Instance *instance, float scale)
 
     /* Apply immediately to every currently open window so a runtime
        scale change takes effect without needing to reopen windows. */
-    for (int i = 0; i < CA_MAX_WINDOWS_TOTAL; i++) {
-        Ca_Window *w = &instance->windows[i];
+    for (size_t i = 0; i < ca_pool_slot_count(&instance->windows); ++i) {
+        Ca_Window *w = CA_POOL_AT(instance->windows, Ca_Window, i);
         if (!w->in_use) continue;
         float old_scale = (w->ui_scale > 0.0f) ? w->ui_scale : 1.0f;
         w->ui_scale = scale;
@@ -307,7 +334,7 @@ float ca_instance_get_scale(const Ca_Instance *instance)
  *
  * Deep-copies all menu and item data into the instance so the caller may free
  * or modify the descriptors immediately after this call.  Sub-items are copied
- * one level deep (no recursive nesting).  Clamps counts to configured maximums.
+ * one level deep (no recursive nesting).
  *
  * On macOS the native [NSApp mainMenu] is rebuilt immediately.
  * On other platforms the stored data is read by ca_ui_begin each frame.
@@ -321,35 +348,43 @@ void ca_instance_set_app_menus(Ca_Instance       *instance,
                                int                menu_count)
 {
     if (!instance || !menus || menu_count <= 0) {
-        if (instance) instance->app_menu_count = 0;
+        if (instance) {
+            ca_menu_storage_resize(&instance->app_menu_storage,
+                                   &instance->app_menus, 0);
+            instance->app_menu_count = 0;
+            ca_app_menu_set(instance);
+        }
         return;
     }
 
-    int count = menu_count < CA_MAX_APP_MENUS ? menu_count : CA_MAX_APP_MENUS;
-    instance->app_menu_count = count;
+    int count = menu_count;
+    Ca_DynArray new_storage = { 0 };
+    Ca_MenuBarMenu *new_menus = NULL;
+    if (!ca_menu_storage_resize(&new_storage, &new_menus, (size_t)count))
+        return;
 
     for (int mi = 0; mi < count; mi++) {
         const Ca_MenuDesc *src = &menus[mi];
-        Ca_AppMenu        *dst = &instance->app_menus[mi];
+        Ca_MenuBarMenu    *dst = &new_menus[mi];
 
         snprintf(dst->label, sizeof(dst->label), "%s", src->label ? src->label : "");
 
-        int ic = src->item_count < CA_MAX_APP_MENU_ITEMS
-               ? src->item_count : CA_MAX_APP_MENU_ITEMS;
-        dst->item_count = ic;
+        int ic = src->item_count > 0 && src->items ? src->item_count : 0;
+        if (!ca_menu_item_storage_resize(dst, (size_t)ic)) goto copy_failed;
 
         for (int ii = 0; ii < ic; ii++) {
             const Ca_MenuItemDesc *si = &src->items[ii];
-            Ca_AppMenuItem        *di = &dst->items[ii];
+            Ca_MenuBarItem        *di = &dst->items[ii];
 
             snprintf(di->label, sizeof(di->label), "%s", si->label ? si->label : "");
             di->action       = si->action;
             di->action_data  = si->action_data;
             di->separator    = si->separator;
 
-            int sc = si->sub_item_count < CA_MAX_APP_MENU_SUB_ITEMS
-                   ? si->sub_item_count : CA_MAX_APP_MENU_SUB_ITEMS;
-            di->sub_item_count = sc;
+            int sc = si->sub_item_count > 0 && si->sub_items
+                ? si->sub_item_count : 0;
+            if (!ca_menu_sub_item_storage_resize(di, (size_t)sc))
+                goto copy_failed;
 
             for (int ki = 0; ki < sc; ki++) {
                 const Ca_MenuItemDesc *ss = &si->sub_items[ki];
@@ -357,10 +392,18 @@ void ca_instance_set_app_menus(Ca_Instance       *instance,
                          "%s", ss->label ? ss->label : "");
                 di->sub_items[ki].action      = ss->action;
                 di->sub_items[ki].action_data = ss->action_data;
-                di->sub_items[ki].separator   = ss->separator;
             }
         }
     }
 
+    ca_menu_storage_destroy(&instance->app_menu_storage,
+                            &instance->app_menus);
+    instance->app_menu_storage = new_storage;
+    instance->app_menus = new_menus;
+    instance->app_menu_count = count;
     ca_app_menu_set(instance);
+    return;
+
+copy_failed:
+    ca_menu_storage_destroy(&new_storage, &new_menus);
 }

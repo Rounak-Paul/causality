@@ -9,6 +9,7 @@
 #include "widget.h"
 #include "css.h"
 #include "title_bar.h"
+#include "menu_storage.h"
 #include "font.h"
 #include "../platform/window.h"
 
@@ -104,28 +105,38 @@ static uint32_t lerp_color(uint32_t a, uint32_t b, float t)
     return (r << 24) | (g << 16) | (bi << 8) | ai;
 }
 
+Ca_Transition *ca_node_transition_acquire(Ca_Node *node, uint8_t property)
+{
+    if (!node) return NULL;
+    if (node->transition_storage.element_size == 0 &&
+        !ca_dyn_array_init(&node->transition_storage,
+                           sizeof(Ca_Transition)))
+        return NULL;
+    for (size_t i = 0; i < node->transition_storage.count; ++i) {
+        Ca_Transition *transition =
+            ca_dyn_array_at(&node->transition_storage, i);
+        if (transition->active && transition->prop == property)
+            return transition;
+    }
+    for (size_t i = 0; i < node->transition_storage.count; ++i) {
+        Ca_Transition *transition =
+            ca_dyn_array_at(&node->transition_storage, i);
+        if (!transition->active) return transition;
+    }
+    size_t index = node->transition_storage.count;
+    if (!ca_dyn_array_resize(&node->transition_storage, index + 1u))
+        return NULL;
+    node->transitions = node->transition_storage.data;
+    return ca_dyn_array_at(&node->transition_storage, index);
+}
+
 /* Start or update a transition on a node for a given property */
 static void transition_start(Ca_Node *node, uint8_t prop,
                              float from_f, float to_f,
                              uint32_t from_color, uint32_t to_color)
 {
-    /* Find existing transition for this prop, or an inactive slot */
-    Ca_Transition *slot = NULL;
-    for (int i = 0; i < CA_MAX_TRANSITIONS_PER_NODE; ++i) {
-        if (node->transitions[i].active && node->transitions[i].prop == prop) {
-            slot = &node->transitions[i];
-            break;
-        }
-    }
-    if (!slot) {
-        for (int i = 0; i < CA_MAX_TRANSITIONS_PER_NODE; ++i) {
-            if (!node->transitions[i].active) {
-                slot = &node->transitions[i];
-                break;
-            }
-        }
-    }
-    if (!slot) return; /* all slots busy */
+    Ca_Transition *slot = ca_node_transition_acquire(node, prop);
+    if (!slot) return;
 
     slot->prop       = prop;
     slot->active     = true;
@@ -141,7 +152,7 @@ static void transition_start(Ca_Node *node, uint8_t prop,
 static bool transition_tick(Ca_Node *node, double now)
 {
     bool any_active = false;
-    for (int i = 0; i < CA_MAX_TRANSITIONS_PER_NODE; ++i) {
+    for (size_t i = 0; i < node->transition_storage.count; ++i) {
         Ca_Transition *tr = &node->transitions[i];
         if (!tr->active) continue;
 
@@ -189,15 +200,24 @@ void ca_ui_shutdown(Ca_Instance *inst)
     (void)inst;
 }
 
-void ca_ui_window_init(Ca_Window *win)
+/** Initializes all CPU-side UI state for one window. */
+bool ca_ui_window_init(Ca_Window *win)
 {
-    ca_node_system_init(win);
+    if (!ca_dyn_array_init(&win->geometry_snapshot, sizeof(NodeRect)) ||
+        !ca_node_system_init(win)) {
+        ca_dyn_array_destroy(&win->geometry_snapshot);
+        return false;
+    }
     ca_title_bar_init(win);
+    return true;
 }
 
 void ca_ui_window_shutdown(Ca_Window *win)
 {
+    ca_menu_storage_destroy(&win->titlebar_menu_storage,
+                            &win->titlebar_menus);
     ca_node_system_shutdown(win);
+    ca_dyn_array_destroy(&win->geometry_snapshot);
 }
 
 /* Snapshot geometry before layout, run layout, then invalidate only
@@ -207,10 +227,16 @@ static void mark_subtree_content_dirty(Ca_Node *node);
 
 static bool layout_and_invalidate(Ca_Window *win)
 {
-    static NodeRect prev[CA_MAX_NODES_PER_WINDOW];
+    size_t node_slots = ca_pool_slot_count(&win->node_pool);
+    if (!ca_dyn_array_resize(&win->geometry_snapshot, node_slots)) {
+        ca_layout_pass(win);
+        mark_subtree_content_dirty(win->root);
+        return true;
+    }
+    NodeRect *prev = win->geometry_snapshot.data;
 
-    for (uint32_t j = 0; j < CA_MAX_NODES_PER_WINDOW; ++j) {
-        Ca_Node *n = &win->node_pool[j];
+    for (size_t j = 0; j < node_slots; ++j) {
+        Ca_Node *n = CA_POOL_AT(win->node_pool, Ca_Node, j);
         if (n->in_use)
             prev[j] = (NodeRect){ n->x, n->y, n->w, n->h,
                                   n->content_w, n->content_h,
@@ -222,8 +248,8 @@ static bool layout_and_invalidate(Ca_Window *win)
     ca_layout_pass(win);
 
     bool any_dirty = false;
-    for (uint32_t j = 0; j < CA_MAX_NODES_PER_WINDOW; ++j) {
-        Ca_Node *n = &win->node_pool[j];
+    for (size_t j = 0; j < node_slots; ++j) {
+        Ca_Node *n = CA_POOL_AT(win->node_pool, Ca_Node, j);
         if (!n->in_use) continue;
         n->dirty &= ~(CA_DIRTY_LAYOUT | CA_DIRTY_CHILDREN);
 
@@ -266,9 +292,9 @@ void ca_ui_update(Ca_Instance *inst)
     /* Builder rebuilds happen during ca_reactive_flush (called by
        ca_instance_tick before this function) so the new tree is already
        in place by the time we run layout. */
-    for (int i = 0; i < CA_MAX_WINDOWS_TOTAL; ++i) {
-        Ca_Window *win = &inst->windows[i];
-        if (!win->in_use || !win->root || !win->node_pool) continue;
+    for (size_t i = 0; i < ca_pool_slot_count(&inst->windows); ++i) {
+        Ca_Window *win = CA_POOL_AT(inst->windows, Ca_Window, i);
+        if (!win->in_use || !win->root || ca_pool_slot_count(&win->node_pool) == 0) continue;
 
         /* 1. Deferred scale rescale — applied once at frame-start so that
               static nodes built during ca_ui_begin (never reconciled) pick up
@@ -286,8 +312,8 @@ void ca_ui_update(Ca_Instance *inst)
         double now = glfwGetTime();
         bool any_transitions = false;
         uint32_t trans_count = 0;
-        for (uint32_t j = 0; j < CA_MAX_NODES_PER_WINDOW; ++j) {
-            Ca_Node *n = &win->node_pool[j];
+        for (uint32_t j = 0; j < ca_pool_slot_count(&win->node_pool); ++j) {
+            Ca_Node *n = CA_POOL_AT(win->node_pool, Ca_Node, j);
             if (!n->in_use) continue;
             if (transition_tick(n, now)) {
                 any_transitions = true;
@@ -302,8 +328,8 @@ void ca_ui_update(Ca_Instance *inst)
         bool any_content = false;
         win->dbg_layout_count = 0;
 
-        for (uint32_t j = 0; j < CA_MAX_NODES_PER_WINDOW; ++j) {
-            Ca_Node *n = &win->node_pool[j];
+        for (uint32_t j = 0; j < ca_pool_slot_count(&win->node_pool); ++j) {
+            Ca_Node *n = CA_POOL_AT(win->node_pool, Ca_Node, j);
             if (!n->in_use) continue;
             if (n->dirty & (CA_DIRTY_LAYOUT | CA_DIRTY_CHILDREN)) any_layout  = true;
             if (n->dirty & CA_DIRTY_CONTENT)                       any_content = true;
@@ -392,8 +418,8 @@ void ca_ui_update(Ca_Instance *inst)
            before the paint pass runs. */
         {
             bool needs_layout_post_input = false;
-            for (uint32_t j = 0; j < CA_MAX_NODES_PER_WINDOW; ++j) {
-                Ca_Node *n = &win->node_pool[j];
+            for (uint32_t j = 0; j < ca_pool_slot_count(&win->node_pool); ++j) {
+                Ca_Node *n = CA_POOL_AT(win->node_pool, Ca_Node, j);
                 if (!n->in_use) continue;
                 if (n->dirty & (CA_DIRTY_LAYOUT | CA_DIRTY_CHILDREN))
                     needs_layout_post_input = true;
@@ -419,8 +445,8 @@ void ca_ui_update(Ca_Instance *inst)
                or triggered a layout change.  Re-scan so the paint pass below
                picks them up in the same frame. */
             bool needs_layout = false;
-            for (uint32_t j = 0; j < CA_MAX_NODES_PER_WINDOW; ++j) {
-                Ca_Node *n = &win->node_pool[j];
+            for (uint32_t j = 0; j < ca_pool_slot_count(&win->node_pool); ++j) {
+                Ca_Node *n = CA_POOL_AT(win->node_pool, Ca_Node, j);
                 if (!n->in_use) continue;
                 if (n->dirty & (CA_DIRTY_LAYOUT | CA_DIRTY_CHILDREN))
                     needs_layout = true;
@@ -442,8 +468,8 @@ void ca_ui_update(Ca_Instance *inst)
             win->titlebar_needs_rebuild = false;
 
             bool needs_layout_tb = false;
-            for (uint32_t j = 0; j < CA_MAX_NODES_PER_WINDOW; ++j) {
-                Ca_Node *n = &win->node_pool[j];
+            for (uint32_t j = 0; j < ca_pool_slot_count(&win->node_pool); ++j) {
+                Ca_Node *n = CA_POOL_AT(win->node_pool, Ca_Node, j);
                 if (!n->in_use) continue;
                 if (n->dirty & (CA_DIRTY_LAYOUT | CA_DIRTY_CHILDREN))
                     needs_layout_tb = true;
@@ -464,8 +490,8 @@ void ca_ui_update(Ca_Instance *inst)
             win->statusbar_needs_rebuild = false;
 
             bool needs_layout_sb = false;
-            for (uint32_t j = 0; j < CA_MAX_NODES_PER_WINDOW; ++j) {
-                Ca_Node *n = &win->node_pool[j];
+            for (uint32_t j = 0; j < ca_pool_slot_count(&win->node_pool); ++j) {
+                Ca_Node *n = CA_POOL_AT(win->node_pool, Ca_Node, j);
                 if (!n->in_use) continue;
                 if (n->dirty & (CA_DIRTY_LAYOUT | CA_DIRTY_CHILDREN))
                     needs_layout_sb = true;
@@ -488,7 +514,9 @@ void ca_ui_update(Ca_Instance *inst)
            would make clean nodes invisible on subsequent frames).
            Compaction reclaims dead/orphaned slots WITHOUT marking any
            node dirty — only nodes that genuinely changed will repaint. */
-        if (win->paint_cache_used > CA_MAX_DRAW_CMDS_PER_WINDOW * 3 / 4) {
+        if (win->paint_cache_storage.capacity > 0 &&
+            win->paint_cache_used >
+                win->paint_cache_storage.capacity * 3u / 4u) {
             ca_paint_cache_compact(win);
         }
 
@@ -496,9 +524,9 @@ void ca_ui_update(Ca_Instance *inst)
             /* Count dirty nodes for debug display */
             if (win->debug_overlay) {
                 uint32_t dc = 0;
-                for (uint32_t j = 0; j < CA_MAX_NODES_PER_WINDOW; ++j)
-                    if (win->node_pool[j].in_use &&
-                        (win->node_pool[j].dirty & CA_DIRTY_CONTENT))
+                for (uint32_t j = 0; j < ca_pool_slot_count(&win->node_pool); ++j)
+                    if (CA_POOL_AT(win->node_pool, Ca_Node, j)->in_use &&
+                        (CA_POOL_AT(win->node_pool, Ca_Node, j)->dirty & CA_DIRTY_CONTENT))
                         dc++;
                 win->dbg_dirty_count = dc;
             }

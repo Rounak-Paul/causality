@@ -7,6 +7,7 @@
 #include "causality.h"
 #include "ca_gpu.h"
 #include "causality_config.h"
+#include "ca_pool.h"
 #include "../ui/ca_resolved_style.h"
 #ifdef _WIN32
   #include <windows.h>
@@ -27,6 +28,8 @@ typedef struct {
     VkDeviceMemory  instance_mem;
     void           *instance_mapped;  /* persistently mapped */
     VkDescriptorSet ssbo_set;
+    VkDescriptorPool ssbo_pool;
+    uint32_t        instance_capacity;
 } Ca_Frame;
 
 typedef struct {
@@ -35,9 +38,15 @@ typedef struct {
     VkImageUsageFlags image_usage;
     VkExtent2D      extent;
     uint32_t        image_count;
-    VkImage         images[CA_MAX_SWAPCHAIN_IMAGES];
-    VkImageView     image_views[CA_MAX_SWAPCHAIN_IMAGES];
-    VkSemaphore     image_render_finished[CA_MAX_SWAPCHAIN_IMAGES];
+    Ca_DynArray     image_storage;
+    Ca_DynArray     image_view_storage;
+    Ca_DynArray     image_render_finished_storage;
+    VkImage        *images;
+    VkImageView    *image_views;
+    VkSemaphore    *image_render_finished;
+    Ca_DynArray     viewport_wait_storage;
+    Ca_DynArray     submit_wait_storage;
+    Ca_DynArray     submit_stage_storage;
     Ca_Frame        frames[CA_FRAMES_IN_FLIGHT];
     uint32_t        current_frame;
 } Ca_Swapchain;
@@ -67,14 +76,13 @@ typedef struct {
    RENDERER — image types
    ====================================================== */
 
-#define CA_MAX_IMAGES 64
-
 struct Ca_Image {
     VkImage          vk_image;
     VkDeviceMemory   memory;
     VkImageView      view;
     VkSampler        sampler;
     VkDescriptorSet  desc_set;     /* per-image descriptor set */
+    VkDescriptorPool desc_pool;
     int              width, height;
     bool             in_use;
 };
@@ -156,7 +164,6 @@ typedef struct {
    Rect and text/image records intentionally share a 128-byte slot size so
    all pipelines can bind the same storage buffer without dynamic offsets. */
 #define CA_INSTANCE_SLOT_SIZE ((uint32_t)sizeof(Ca_RectPushConst))
-#define CA_INSTANCE_BUF_SIZE  ((uint32_t)(CA_MAX_DRAW_CMDS_PER_WINDOW * sizeof(Ca_RectPushConst)))
 
 _Static_assert(sizeof(Ca_TextInstance) == sizeof(Ca_RectPushConst),
                "Causality instance SSBO records must use one fixed stride");
@@ -164,8 +171,6 @@ _Static_assert(sizeof(Ca_TextInstance) == sizeof(Ca_RectPushConst),
 /* ======================================================
    EVENTS
    ====================================================== */
-
-#define CA_EVENT_QUEUE_CAPACITY 256
 
 typedef struct {
     Ca_EventFn  fn;
@@ -311,14 +316,10 @@ typedef struct {
 
 /* Constants below are *not* user-tunable: they are tied to specific data
    structures inside the library and changing them requires code changes. */
-#define CA_MAX_MENUS_PER_BAR         16
-#define CA_MAX_ITEMS_PER_MENU        16
 #define CA_MENU_LABEL_MAX            64
-#define CA_MAX_SUB_ITEMS_PER_ITEM     16
-#define CA_MAX_SELECT_OPTIONS        16
 #define CA_SELECT_MAX_VISIBLE         8   /* max options visible without scrolling */
-#define CA_MAX_TAB_LABELS            16
-#define CA_MAX_CTXMENU_ITEMS         16
+
+typedef char Ca_OptionText[CA_OPTION_TEXT_MAX];
 
 /* ======================================================
    UI — draw command (CPU-side, one per visible node or glyph)
@@ -361,8 +362,8 @@ typedef struct {
     float       backdrop_blur_radius;
     /* Z-index for draw order sorting */
     int16_t     z_index;
-    int16_t     image_index;
-    int16_t     viewport_index;
+    uint32_t    image_index;
+    uint32_t    viewport_index;
     int16_t     font_page_index;
 } Ca_DrawCmd;
 
@@ -452,7 +453,7 @@ struct Ca_Node {
        O(rules) selector-match scan when this node's classes/pseudo-state
        fingerprint is unchanged from last call AND the stylesheet has no
        position-dependent selector targeting these classes (see
-       ca_style_node_is_cacheable / CA_CSS_MAX_POS_DEP_CLASSES in css.h).
+       ca_style_node_is_cacheable and the classification notes in css.h).
        Was the dominant cost in panels with many rows (e.g. a Hierarchy
        tree with hundreds of entities) rebuilt every frame — each row paid
        for a full stylesheet scan twice (container + header) even when
@@ -476,7 +477,8 @@ struct Ca_Node {
        instead of polling ca_get_scroll_y every frame. */
     Ca_Signal    *scroll_y_signal;
     /* Transition animations */
-    Ca_Transition transitions[CA_MAX_TRANSITIONS_PER_NODE];
+    Ca_DynArray   transition_storage;
+    Ca_Transition *transitions;
     float         transition_duration;   /* default duration from CSS (sec) */
     uint64_t      transition_props;      /* bitmask of props that should animate */
     /* Drag callbacks (user-level drag interaction) */
@@ -616,7 +618,8 @@ struct Ca_Progress {
 
 struct Ca_Select {
     Ca_Node      *node;
-    char          options[CA_MAX_SELECT_OPTIONS][CA_OPTION_TEXT_MAX];
+    Ca_DynArray   option_storage;
+    Ca_OptionText *options;
     int           option_count;
     int           selected;
     bool          open;
@@ -632,8 +635,10 @@ struct Ca_Select {
 
 struct Ca_TabBar {
     Ca_Node      *node;
-    Ca_Node      *tab_nodes[CA_MAX_TAB_LABELS]; /* one per tab header */
-    char          labels[CA_MAX_TAB_LABELS][CA_OPTION_TEXT_MAX];
+    Ca_DynArray   tab_node_storage;
+    Ca_Node     **tab_nodes;
+    Ca_DynArray   label_storage;
+    Ca_OptionText *labels;
     int           count;
     int           active;
     Ca_TabFn      on_change;
@@ -662,7 +667,8 @@ struct Ca_TreeNode {
 struct Ca_Table {
     Ca_Node      *node;
     int           column_count;
-    float         column_widths[16];
+    Ca_DynArray   column_width_storage;
+    float        *column_widths;
     bool          in_use;
 };
 
@@ -676,7 +682,8 @@ struct Ca_Tooltip {
 
 struct Ca_CtxMenu {
     Ca_Node      *node;       /* the target element */
-    char          items[CA_MAX_CTXMENU_ITEMS][CA_OPTION_TEXT_MAX];
+    Ca_DynArray   item_storage;
+    Ca_OptionText *items;
     int           item_count;
     bool          open;
     int           hover_index;
@@ -723,6 +730,7 @@ typedef struct {
     VkDeviceMemory       color_memory;
     VkImageView          color_view;
     VkDescriptorSet      desc_set;      /* per-slot descriptor for compositing */
+    VkDescriptorPool     desc_pool;
     VkCommandBuffer      cmd;           /* allocated from inst->cmd_pool */
     VkFence              render_fence;
     /* Signalled by the render submit; the swapchain's compositing submit
@@ -782,13 +790,15 @@ typedef struct {
     Ca_MenuActionFn     action;
     void               *action_data;
     bool                separator;                           /* render as divider line       */
-    Ca_MenuBarSubItem   sub_items[CA_MAX_SUB_ITEMS_PER_ITEM];
+    Ca_DynArray          sub_item_storage;
+    Ca_MenuBarSubItem   *sub_items;
     int                 sub_item_count;
 } Ca_MenuBarItem;
 
 typedef struct {
     char            label[CA_MENU_LABEL_MAX];
-    Ca_MenuBarItem  items[CA_MAX_ITEMS_PER_MENU];
+    Ca_DynArray      item_storage;
+    Ca_MenuBarItem  *items;
     int             item_count;
     Ca_Node        *header_node;
     int             active_sub;   /* index of item with open sub-menu, -1=none */
@@ -796,7 +806,8 @@ typedef struct {
 
 struct Ca_MenuBar {
     Ca_Node          *node;
-    Ca_MenuBarMenu    menus[CA_MAX_MENUS_PER_BAR];
+    Ca_DynArray       menu_storage;
+    Ca_MenuBarMenu   *menus;
     int               menu_count;
     int               active_menu;   /* -1 = no dropdown open */
     int               hover_item;
@@ -839,11 +850,13 @@ struct Ca_Window {
     bool          in_use;
 
     /* UI node tree */
-    Ca_Node      *node_pool;
+    Ca_Pool       node_pool;
     Ca_Node      *root;
+    Ca_DynArray   draw_cmd_storage;
     Ca_DrawCmd   *draw_cmds;
     uint32_t      draw_cmd_count;
     /* Pre-allocated z-sort index (avoids per-frame malloc) */
+    Ca_DynArray   sorted_index_storage;
     uint32_t     *sorted_idx;
 
     /* Backdrop blur — per-window offscreen image holding a blurred snapshot
@@ -859,16 +872,19 @@ struct Ca_Window {
     VkImageView      blur_view;
     VkSampler        blur_sampler;
     VkDescriptorSet  blur_desc_set;   /* combined-image-sampler for the blur tex */
+    VkDescriptorPool blur_desc_pool;
 
     VkImage          blur_temp;       /* horizontal-pass intermediate */
     VkDeviceMemory   blur_temp_memory;
     VkImageView      blur_temp_view;
     VkDescriptorSet  blur_temp_desc_set;
+    VkDescriptorPool blur_temp_desc_pool;
 
     uint32_t         blur_image_w;
     uint32_t         blur_image_h;
     bool             blur_image_valid; /* true once the snapshot is up to date */
     /* Incremental paint cache — mirrors draw_cmds for per-node caching */
+    Ca_DynArray   paint_cache_storage;
     Ca_DrawCmd   *paint_cache;
     uint32_t      paint_cache_used;
     /* Reusable flex-layout scratch.  One logical slot holds the seven
@@ -876,26 +892,29 @@ struct Ca_Window {
     float         *layout_scratch;
     uint32_t       layout_scratch_capacity;
     uint32_t       layout_scratch_used;
+    Ca_DynArray    layout_scratch_storage;
+    Ca_DynArray    geometry_snapshot;
+    Ca_DynArray    paint_cache_spans;
 
     /* Widget pools */
-    Ca_Label     *label_pool;
-    Ca_Button    *button_pool;
-    Ca_TextInput *input_pool;
-    Ca_Checkbox  *checkbox_pool;
-    Ca_Radio     *radio_pool;
-    Ca_Slider    *slider_pool;
-    Ca_Toggle    *toggle_pool;
-    Ca_Progress  *progress_pool;
-    Ca_Select    *select_pool;
-    Ca_TabBar    *tabbar_pool;
-    Ca_TreeNode  *treenode_pool;
-    Ca_Table     *table_pool;
-    Ca_Tooltip   *tooltip_pool;
-    Ca_CtxMenu   *ctxmenu_pool;
-    Ca_Modal     *modal_pool;
-    Ca_Splitter  *splitter_pool;
-    Ca_Viewport  *viewport_pool;
-    Ca_MenuBar   *menubar_pool;
+    Ca_Pool       label_pool;
+    Ca_Pool       button_pool;
+    Ca_Pool       input_pool;
+    Ca_Pool       checkbox_pool;
+    Ca_Pool       radio_pool;
+    Ca_Pool       slider_pool;
+    Ca_Pool       toggle_pool;
+    Ca_Pool       progress_pool;
+    Ca_Pool       select_pool;
+    Ca_Pool       tabbar_pool;
+    Ca_Pool       treenode_pool;
+    Ca_Pool       table_pool;
+    Ca_Pool       tooltip_pool;
+    Ca_Pool       ctxmenu_pool;
+    Ca_Pool       modal_pool;
+    Ca_Pool       splitter_pool;
+    Ca_Pool       viewport_pool;
+    Ca_Pool       menubar_pool;
 
     /* Hover / drag state for interactive widgets */
     Ca_Node      *hovered_node;
@@ -936,11 +955,15 @@ struct Ca_Window {
 
     /* Keyboard / focus state */
     Ca_Node      *focused_node;           /* NULL = nothing focused */
-    uint32_t      char_buf[CA_CHAR_BUF_MAX]; /* Unicode codepoints this frame */
+    Ca_DynArray   char_storage;
+    uint32_t     *char_buf;               /* Unicode codepoints this frame */
     uint32_t      char_count;
-    int           key_buf[CA_CHAR_BUF_MAX];  /* GLFW key codes this frame     */
-    int           key_action_buf[CA_CHAR_BUF_MAX];
-    int           key_mods_buf[CA_CHAR_BUF_MAX];
+    Ca_DynArray   key_storage;
+    Ca_DynArray   key_action_storage;
+    Ca_DynArray   key_mods_storage;
+    int          *key_buf;                /* GLFW key codes this frame */
+    int          *key_action_buf;
+    int          *key_mods_buf;
     uint32_t      key_count;
 
     /* Render gating: set by ui.c when draw list changes, cleared after submit */
@@ -988,7 +1011,8 @@ struct Ca_Window {
     float          status_bar_height;     /* pre-scaled: raw_height * ui_scale */
     float          status_bar_raw_height; /* logical height (unscaled) */
     bool           titlebar_maximized;
-    Ca_MenuBarMenu titlebar_menus[CA_MAX_MENUS_PER_BAR];
+    Ca_DynArray    titlebar_menu_storage;
+    Ca_MenuBarMenu *titlebar_menus;
     int            titlebar_menu_count;
     int            titlebar_restore_x;
     int            titlebar_restore_y;
@@ -1033,53 +1057,23 @@ struct Ca_Window {
    INSTANCE
    ====================================================== */
 
-/* ======================================================
-   APP MENU — instance-level deep copy of caller-provided menus
-   ====================================================== */
+#define CA_POPUP_TITLE_MAX 128
+#define CA_POPUP_TEXT_MAX 1024
 
-typedef struct {
-    char label[128];
-    Ca_MenuActionFn action;
-    void           *action_data;
-    bool            separator;
-    /* Sub-items stored inline; no recursive nesting beyond one level. */
-    struct {
-        char            label[128];
-        Ca_MenuActionFn action;
-        void           *action_data;
-        bool            separator;
-    } sub_items[CA_MAX_APP_MENU_SUB_ITEMS];
-    int sub_item_count;
-} Ca_AppMenuItem;
-
-typedef struct {
-    char           label[128];
-    Ca_AppMenuItem items[CA_MAX_APP_MENU_ITEMS];
-    int            item_count;
-} Ca_AppMenu;
+typedef struct Ca_PopupEntry {
+    char             title[CA_POPUP_TITLE_MAX];
+    char             message[CA_POPUP_TEXT_MAX];
+    Ca_PopupButtons  buttons;
+    Ca_PopupResultFn on_result;
+    void            *result_data;
+} Ca_PopupEntry;
 
 struct Ca_Instance {
-    Ca_Window windows[CA_MAX_WINDOWS_TOTAL];
+    Ca_Pool windows;
 
     /* Popup manager (reserved-window control) */
-#define CA_POPUP_TITLE_MAX  128
-#define CA_POPUP_TEXT_MAX   1024
-#define CA_POPUP_QUEUE_MAX  16
-    struct {
-        char             title[CA_POPUP_TITLE_MAX];
-        char             message[CA_POPUP_TEXT_MAX];
-        Ca_PopupButtons  buttons;
-        Ca_PopupResultFn on_result;
-        void            *result_data;
-    } popup_current;
-    struct {
-        char             title[CA_POPUP_TITLE_MAX];
-        char             message[CA_POPUP_TEXT_MAX];
-        Ca_PopupButtons  buttons;
-        Ca_PopupResultFn on_result;
-        void            *result_data;
-    } popup_queue[CA_POPUP_QUEUE_MAX];
-    int         popup_queue_count;
+    Ca_PopupEntry popup_current;
+    Ca_DynArray  popup_queue;
     bool        popup_active;
     Ca_Window  *popup_window;
     Ca_PopupResult popup_pending_result;
@@ -1115,10 +1109,9 @@ struct Ca_Instance {
     void (*gpu_predestroy_fn)(void *user_data);
     void  *gpu_predestroy_data;
 
-    /* Event ring-buffer */
-    Ca_Event         event_queue[CA_EVENT_QUEUE_CAPACITY];
-    uint32_t         event_head;
-    uint32_t         event_tail;
+    /* Double-buffered event queues: posting may continue during dispatch. */
+    Ca_DynArray      event_queue;
+    Ca_DynArray      event_dispatch_queue;
     Ca_Mutex        *event_mutex;
     Ca_EventHandler  handlers[CA_EVENT_TYPE_COUNT];
 
@@ -1134,9 +1127,9 @@ struct Ca_Instance {
     Ca_BgRenderFn default_bg_render_fn;
     void         *default_bg_render_data;
 
-    /* Shared SSBO descriptor set layout + pool for instanced rendering */
+    /* Shared SSBO descriptor set layout and growable descriptor-pool chunks. */
     VkDescriptorSetLayout ssbo_desc_layout;
-    VkDescriptorPool      ssbo_desc_pool;
+    Ca_DynArray           ssbo_desc_pools;
     uint32_t              min_ssbo_align;  /* minStorageBufferOffsetAlignment */
 
     /* Rect drawing pipeline — created on first window init */
@@ -1156,13 +1149,14 @@ struct Ca_Instance {
     VkPipeline       blur_v_pipeline;
     VkPipelineLayout blur_pipeline_layout;
 
-    /* Image pool — user-loaded textures for ca_image() */
-    Ca_Image         images[CA_MAX_IMAGES];
-    VkDescriptorPool image_desc_pool; /* shared pool for image descriptor sets */
+    /* Stable user-image handles and growable sampled-image descriptor pools. */
+    Ca_Pool           images;
+    Ca_DynArray       image_desc_pools;
 
     /* App-level (system) menu bar — set via ca_instance_set_app_menus(). */
-    Ca_AppMenu app_menus[CA_MAX_APP_MENUS];
-    int        app_menu_count;
+    Ca_DynArray    app_menu_storage;
+    Ca_MenuBarMenu *app_menus;
+    int             app_menu_count;
 
     /* When true, ca_window_system_tick polls continuously. */
     bool continuous;

@@ -16,6 +16,7 @@
  */
 
 #include "title_bar.h"
+#include "menu_storage.h"
 #include "ca_theme.h"
 #include "node.h"
 #include "style.h"
@@ -175,40 +176,66 @@ void ca_title_bar_rebuild(Ca_Window *win)
 
     /* ---- Left: optional menu bar ---- */
     if (win->titlebar_menu_count > 0) {
-        /* Reconstruct public Ca_MenuDesc arrays on the stack from the
-           deep-copied Ca_MenuBarMenu data stored in Ca_Window.         */
-        Ca_MenuItemDesc item_bufs[CA_MAX_MENUS_PER_BAR][CA_MAX_ITEMS_PER_MENU];
-        Ca_MenuItemDesc sub_bufs[CA_MAX_MENUS_PER_BAR]
-                                [CA_MAX_ITEMS_PER_MENU]
-                                [CA_MAX_SUB_ITEMS_PER_ITEM];
-        Ca_MenuDesc menu_descs[CA_MAX_MENUS_PER_BAR];
+        size_t total_items = 0;
+        size_t total_sub_items = 0;
+        for (int m = 0; m < win->titlebar_menu_count; ++m) {
+            Ca_MenuBarMenu *menu = &win->titlebar_menus[m];
+            if ((size_t)menu->item_count > SIZE_MAX - total_items)
+                goto titlebar_menu_done;
+            total_items += (size_t)menu->item_count;
+            for (int i = 0; i < menu->item_count; ++i) {
+                if ((size_t)menu->items[i].sub_item_count >
+                    SIZE_MAX - total_sub_items)
+                    goto titlebar_menu_done;
+                total_sub_items += (size_t)menu->items[i].sub_item_count;
+            }
+        }
+        Ca_DynArray menu_desc_storage = CA_DYN_ARRAY_INIT(Ca_MenuDesc);
+        Ca_DynArray item_desc_storage = CA_DYN_ARRAY_INIT(Ca_MenuItemDesc);
+        Ca_DynArray sub_desc_storage = CA_DYN_ARRAY_INIT(Ca_MenuItemDesc);
+        if (!ca_dyn_array_resize(&menu_desc_storage,
+                                 (size_t)win->titlebar_menu_count) ||
+            !ca_dyn_array_resize(&item_desc_storage, total_items) ||
+            !ca_dyn_array_resize(&sub_desc_storage, total_sub_items)) {
+            ca_dyn_array_destroy(&sub_desc_storage);
+            ca_dyn_array_destroy(&item_desc_storage);
+            ca_dyn_array_destroy(&menu_desc_storage);
+            goto titlebar_menu_done;
+        }
+        Ca_MenuDesc *menu_descs = menu_desc_storage.data;
+        Ca_MenuItemDesc *item_descs = item_desc_storage.data;
+        Ca_MenuItemDesc *sub_descs = sub_desc_storage.data;
+        size_t item_offset = 0;
+        size_t sub_offset = 0;
 
         for (int m = 0; m < win->titlebar_menu_count; m++) {
             Ca_MenuBarMenu *mbm = &win->titlebar_menus[m];
             for (int i = 0; i < mbm->item_count; i++) {
                 Ca_MenuBarItem *mbi = &mbm->items[i];
                 for (int s = 0; s < mbi->sub_item_count; s++) {
-                    sub_bufs[m][i][s] = (Ca_MenuItemDesc){
+                    sub_descs[sub_offset + (size_t)s] = (Ca_MenuItemDesc){
                         .label       = mbi->sub_items[s].label,
                         .action      = mbi->sub_items[s].action,
                         .action_data = mbi->sub_items[s].action_data,
                     };
                 }
-                item_bufs[m][i] = (Ca_MenuItemDesc){
+                item_descs[item_offset + (size_t)i] = (Ca_MenuItemDesc){
                     .label          = mbi->label,
                     .action         = mbi->action,
                     .action_data    = mbi->action_data,
                     .separator      = mbi->separator,
                     .sub_items      = mbi->sub_item_count > 0
-                                          ? sub_bufs[m][i] : NULL,
+                                          ? &sub_descs[sub_offset] : NULL,
                     .sub_item_count = mbi->sub_item_count,
                 };
+                sub_offset += (size_t)mbi->sub_item_count;
             }
             menu_descs[m] = (Ca_MenuDesc){
                 .label      = mbm->label,
-                .items      = item_bufs[m],
+                .items      = &item_descs[item_offset],
                 .item_count = mbm->item_count,
             };
+            item_offset += (size_t)mbm->item_count;
         }
 
         ca_menu_bar(&(Ca_MenuBarDesc){
@@ -217,6 +244,11 @@ void ca_title_bar_rebuild(Ca_Window *win)
             .style            = "ca-titlebar-menu",
             .item_style       = "ca-titlebar-menu-item",
         });
+        ca_dyn_array_destroy(&sub_desc_storage);
+        ca_dyn_array_destroy(&item_desc_storage);
+        ca_dyn_array_destroy(&menu_desc_storage);
+titlebar_menu_done:
+        ;
     }
 
     /* ---- Centre: drag zone (invisible, handles window dragging) ---- */
@@ -308,11 +340,11 @@ void ca_window_set_title_bar_menus(Ca_Window        *window,
 {
     if (!window || !window->in_use) return;
     if (count < 0) count = 0;
-    if (count > CA_MAX_MENUS_PER_BAR) count = CA_MAX_MENUS_PER_BAR;
-
+    if (count > 0 && !menus) count = 0;
+    if (!ca_menu_storage_resize(&window->titlebar_menu_storage,
+                                &window->titlebar_menus, (size_t)count))
+        return;
     window->titlebar_menu_count = count;
-    memset(window->titlebar_menus, 0,
-           sizeof(Ca_MenuBarMenu) * CA_MAX_MENUS_PER_BAR);
 
     for (int m = 0; m < count; m++) {
         Ca_MenuBarMenu    *dst = &window->titlebar_menus[m];
@@ -320,9 +352,10 @@ void ca_window_set_title_bar_menus(Ca_Window        *window,
 
         snprintf(dst->label, CA_MENU_LABEL_MAX, "%s",
                  src->label ? src->label : "");
-        dst->item_count = src->item_count;
-        if (dst->item_count > CA_MAX_ITEMS_PER_MENU)
-            dst->item_count = CA_MAX_ITEMS_PER_MENU;
+        int item_count = src->item_count > 0 && src->items
+            ? src->item_count : 0;
+        if (!ca_menu_item_storage_resize(dst, (size_t)item_count))
+            continue;
         dst->active_sub = -1;
 
         for (int i = 0; i < dst->item_count; i++) {
@@ -335,9 +368,10 @@ void ca_window_set_title_bar_menus(Ca_Window        *window,
             ditem->action_data = sitem->action_data;
             ditem->separator   = sitem->separator;
 
-            int nsub = sitem->sub_item_count;
-            if (nsub > CA_MAX_SUB_ITEMS_PER_ITEM) nsub = CA_MAX_SUB_ITEMS_PER_ITEM;
-            ditem->sub_item_count = nsub;
+            int nsub = sitem->sub_item_count > 0 && sitem->sub_items
+                ? sitem->sub_item_count : 0;
+            if (!ca_menu_sub_item_storage_resize(ditem, (size_t)nsub))
+                continue;
 
             for (int s = 0; s < nsub; s++) {
                 Ca_MenuBarSubItem     *dsub = &ditem->sub_items[s];

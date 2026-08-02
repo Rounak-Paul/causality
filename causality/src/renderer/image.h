@@ -10,6 +10,17 @@
 bool ca_image_pool_init(Ca_Instance *inst);
 void ca_image_pool_shutdown(Ca_Instance *inst);
 
+/** Allocate a sampled-image descriptor set from growable instance pools. */
+bool ca_image_descriptor_allocate(Ca_Instance *inst,
+                                  VkDescriptorSetLayout layout,
+                                  VkDescriptorSet *out_set,
+                                  VkDescriptorPool *out_pool);
+
+/** Release a sampled-image descriptor set to its owning pool. */
+void ca_image_descriptor_free(Ca_Instance *inst,
+                              VkDescriptorPool pool,
+                              VkDescriptorSet set);
+
 /* Public API implementation */
 Ca_Image *ca_image_create_impl(Ca_Instance *inst,
                                const uint8_t *pixels, int w, int h);

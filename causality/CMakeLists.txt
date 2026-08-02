@@ -103,3 +103,25 @@ set_source_files_properties(src/renderer/embedded_symbols_font.c
     PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
 
 target_precompile_headers(causality PRIVATE src/pch.h)
+
+if(BUILD_TESTING)
+    add_executable(causality_array_tests
+        tests/ca_array_tests.c
+        src/core/ca_alloc.c
+        src/core/ca_array.c
+        src/core/ca_pool.c
+    )
+    target_include_directories(causality_array_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/core
+    )
+    add_test(NAME causality_array_tests COMMAND causality_array_tests)
+
+    add_executable(causality_storage_tests tests/ca_storage_tests.c)
+    target_include_directories(causality_storage_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/ui
+    )
+    target_link_libraries(causality_storage_tests PRIVATE causality)
+    add_test(NAME causality_storage_tests COMMAND causality_storage_tests)
+endif()

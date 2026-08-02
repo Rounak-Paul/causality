@@ -3,6 +3,7 @@
 
 /* viewport.c — offscreen render target for external renderers */
 #include "viewport.h"
+#include "image.h"
 #include <string.h>
 #include <stdio.h>
 
@@ -124,13 +125,10 @@ bool ca_viewport_gpu_create(Ca_Instance *inst, Ca_Viewport *vp,
            descriptor convention — see Quasar's rg_pbr_node.c for the same
            pattern), since each slot's color_view is a distinct VkImageView
            for the lifetime of these GPU resources. */
-        VkDescriptorSetAllocateInfo ds_ai = {
-            .sType              = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
-            .descriptorPool     = inst->image_desc_pool,
-            .descriptorSetCount = 1,
-            .pSetLayouts        = &inst->text_pipeline.desc_layout,
-        };
-        if (vkAllocateDescriptorSets(inst->vk_device, &ds_ai, &f->desc_set) != VK_SUCCESS) {
+        if (!ca_image_descriptor_allocate(inst,
+                                          inst->text_pipeline.desc_layout,
+                                          &f->desc_set,
+                                          &f->desc_pool)) {
             fprintf(stderr, "[viewport] descriptor set alloc failed\n");
             ca_viewport_gpu_destroy(inst, vp);
             return false;
@@ -212,9 +210,9 @@ void ca_viewport_gpu_destroy(Ca_Instance *inst, Ca_Viewport *vp)
             f->cmd = VK_NULL_HANDLE;
         }
         if (f->desc_set != VK_NULL_HANDLE) {
-            vkFreeDescriptorSets(inst->vk_device, inst->image_desc_pool,
-                                 1, &f->desc_set);
+            ca_image_descriptor_free(inst, f->desc_pool, f->desc_set);
             f->desc_set = VK_NULL_HANDLE;
+            f->desc_pool = VK_NULL_HANDLE;
         }
         if (f->color_view != VK_NULL_HANDLE) {
             vkDestroyImageView(inst->vk_device, f->color_view, NULL);
@@ -287,13 +285,14 @@ static void transition_viewport_image(VkCommandBuffer cmd, VkImage image,
 }
 
 void ca_viewport_render_all(Ca_Instance *inst, Ca_Window *win,
-                            VkSemaphore *out_semaphores, uint32_t *out_count)
+                            Ca_DynArray *out_semaphores)
 {
-    *out_count = 0;
-    if (!win->viewport_pool) return;
+    if (!out_semaphores) return;
+    ca_dyn_array_clear(out_semaphores);
+    if (ca_pool_slot_count(&win->viewport_pool) == 0) return;
 
-    for (uint32_t i = 0; i < CA_MAX_VIEWPORTS_PER_WINDOW; ++i) {
-        Ca_Viewport *vp = &win->viewport_pool[i];
+    for (uint32_t i = 0; i < ca_pool_slot_count(&win->viewport_pool); ++i) {
+        Ca_Viewport *vp = CA_POOL_AT(win->viewport_pool, Ca_Viewport, i);
         if (!vp->in_use || !vp->on_render) continue;
         /* fi is captured BEFORE resize/advance below: it names the slot this
            call will render into. ca_viewport_frame_index() (called from
@@ -401,7 +400,11 @@ void ca_viewport_render_all(Ca_Instance *inst, Ca_Window *win,
            this loop body. */
         vp->frame_index = (fi + 1) % CA_FRAMES_IN_FLIGHT;
 
-        if (*out_count < CA_MAX_VIEWPORTS_PER_WINDOW)
-            out_semaphores[(*out_count)++] = f->render_done;
+        if (!ca_dyn_array_push(out_semaphores, &f->render_done)) {
+            fprintf(stderr, "[viewport] unable to retain render semaphore\n");
+            vkQueueWaitIdle(inst->gfx_queue);
+            ca_dyn_array_clear(out_semaphores);
+            return;
+        }
     }
 }

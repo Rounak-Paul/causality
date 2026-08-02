@@ -16,6 +16,9 @@ void ca_widget_input_pass(Ca_Window *win);
 void ca_widget_ctx_enter(Ca_Window *win);
 void ca_widget_ctx_leave(void);
 
+/** Releases retained process-global build storage owned by an instance. */
+void ca_widget_ctx_release_instance(Ca_Instance *instance);
+
 /* Re-resolve CSS for a single node without rebuilding its subtree.
    Resets node->desc = node->base_desc, runs ca_style_resolve +
    ca_style_apply_to_node, then diffs the post-CSS desc against the

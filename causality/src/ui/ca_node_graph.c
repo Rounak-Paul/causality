@@ -57,7 +57,6 @@
 
 /* Grid adaptivity */
 #define NG_GRID_MIN_SCR_PX   20.0f  /* min screen px between lines        */
-#define NG_GRID_MAX_LINES    40     /* hard cap per axis; 40+40+nodes+wires < CA_MAX_NODE_CHILDREN */
 
 /* Level-of-detail thresholds */
 #define NG_ZOOM_HIDE_TEXT    0.50f  /* below: hide pin labels + title      */
@@ -92,13 +91,17 @@ static Ca_NgNodeState *ng_find_or_create(Ca_NodeGraph *ng,
 
     /* Prefer an existing slot with matching key */
     for (int i = 0; i < ng->node_count; ++i) {
-        if (strncmp(ng->nodes[i].key, key, CA_NG_KEY_LEN) == 0)
-            return &ng->nodes[i];
+        Ca_NgNodeState *state = ca_node_graph_state(ng, i);
+        if (state && strncmp(state->key, key, CA_NG_KEY_LEN) == 0)
+            return state;
     }
 
-    if (ng->node_count >= CA_NG_MAX_NODES) return NULL;
-
-    Ca_NgNodeState *state = &ng->nodes[ng->node_count++];
+    Ca_NgNodeState *state = CA_CALLOC(1, sizeof(*state));
+    if (!state || !ca_dyn_array_push(&ng->_nodes, &state)) {
+        CA_FREE(state);
+        return NULL;
+    }
+    state->_index = ng->node_count++;
     snprintf(state->key, CA_NG_KEY_LEN, "%s", key);
     state->canvas_x = init_x;
     state->canvas_y = init_y;
@@ -343,7 +346,7 @@ static void node_drag_start(const Ca_DragEvent *ev, void *ud)
     state->_drag_start_y = state->canvas_y;
 
     /* Selection — fires immediately on mouse-down */
-    int idx = (int)(state - ng->nodes);
+    int idx = state->_index;
     ng->selected_node = idx;
     if (ng->_on_node_select)
         ng->_on_node_select(ng, idx, ng->_select_data);
@@ -380,14 +383,44 @@ static void canvas_scroll(double dx, double dy, void *ud)
     if (ng->_host_div) ca_div_invalidate(ng->_host_div);
 }
 
-void ca_node_graph_init(Ca_NodeGraph *ng)
+bool ca_node_graph_init(Ca_NodeGraph *ng)
 {
-    assert(ng);
+    if (!ng) return false;
     memset(ng, 0, sizeof(*ng));
+    if (!ca_dyn_array_init(&ng->_nodes, sizeof(Ca_NgNodeState *)))
+        return false;
     ng->selected_node  = -1;
     ng->_cur_node_idx  = -1;
     ng->_cur_node_z    = 0;
     ng->zoom           = 1.0f;
+    return true;
+}
+
+void ca_node_graph_destroy(Ca_NodeGraph *ng)
+{
+    if (!ng) return;
+    if (ca_dyn_array_valid(&ng->_nodes)) {
+        for (size_t i = 0; i < ng->_nodes.count; ++i)
+            CA_FREE(*(Ca_NgNodeState **)ca_dyn_array_at(&ng->_nodes, i));
+    }
+    ca_dyn_array_destroy(&ng->_nodes);
+    memset(ng, 0, sizeof(*ng));
+    ng->selected_node = -1;
+    ng->_cur_node_idx = -1;
+}
+
+Ca_NgNodeState *ca_node_graph_state(Ca_NodeGraph *ng, int node_idx)
+{
+    if (!ng || node_idx < 0 || (size_t)node_idx >= ng->_nodes.count)
+        return NULL;
+    return *(Ca_NgNodeState **)ca_dyn_array_at(&ng->_nodes,
+                                               (size_t)node_idx);
+}
+
+Ca_NgNodeState *ca_node_graph_add_state(Ca_NodeGraph *ng, const char *key,
+                                         float initial_x, float initial_y)
+{
+    return ng_find_or_create(ng, key, initial_x, initial_y);
 }
 
 void ca_node_graph_begin(Ca_NodeGraph *ng, Ca_Div *host_div,
@@ -438,7 +471,7 @@ void ca_node_graph_begin(Ca_NodeGraph *ng, Ca_Div *host_div,
     /* --- Grid lines ---
      * Adapt grid spacing so lines are never closer than NG_GRID_MIN_SCR_PX on
      * screen (doubles each step).  Then compute how many lines cover ~3200 px
-     * in each direction, capped at NG_GRID_MAX_LINES for performance. */
+     * in each direction. */
     float eff_gs = NG_GRID_SPACING * ng->zoom;
     while (eff_gs < NG_GRID_MIN_SCR_PX) eff_gs *= 2.0f;
 
@@ -447,8 +480,6 @@ void ca_node_graph_begin(Ca_NodeGraph *ng, Ca_Div *host_div,
 
     int nv = (int)(3200.0f / eff_gs) + 4;
     int nh = (int)(3200.0f / eff_gs) + 4;
-    if (nv > NG_GRID_MAX_LINES) nv = NG_GRID_MAX_LINES;
-    if (nh > NG_GRID_MAX_LINES) nh = NG_GRID_MAX_LINES;
 
     for (int i = 0; i < nv; ++i) {
         float x = off_x + (float)(i - 1) * eff_gs;
@@ -490,7 +521,7 @@ void ca_ng_node_begin(Ca_NodeGraph *ng, const Ca_NgNodeDesc *desc)
     Ca_NgNodeState *state = ng_find_or_create(ng, desc->key, desc->x, desc->y);
     if (!state) return;
 
-    int idx  = (int)(state - ng->nodes);
+    int idx  = state->_index;
     ng->_cur_node_idx = idx;
     ng->_cur_in_idx   = 0;
     ng->_cur_out_idx  = 0;
@@ -605,7 +636,9 @@ void ca_ng_node_end(Ca_NodeGraph *ng)
     if (ng->_cur_node_idx < 0) return;
 
     /* Record final pin counts for wire routing on subsequent frames */
-    Ca_NgNodeState *state = &ng->nodes[ng->_cur_node_idx];
+    Ca_NgNodeState *state =
+        ca_node_graph_state(ng, ng->_cur_node_idx);
+    if (!state) return;
     state->input_count  = ng->_cur_in_idx;
     state->output_count = ng->_cur_out_idx;
 
@@ -769,10 +802,12 @@ void ca_ng_wire(Ca_NodeGraph *ng, const Ca_NgWireDesc *desc)
 
     Ca_NgNodeState *src = NULL, *dst = NULL;
     for (int i = 0; i < ng->node_count; ++i) {
-        if (!src && strncmp(ng->nodes[i].key, desc->src_node, CA_NG_KEY_LEN) == 0)
-            src = &ng->nodes[i];
-        if (!dst && strncmp(ng->nodes[i].key, desc->dst_node, CA_NG_KEY_LEN) == 0)
-            dst = &ng->nodes[i];
+        Ca_NgNodeState *state = ca_node_graph_state(ng, i);
+        if (!state) continue;
+        if (!src && strncmp(state->key, desc->src_node, CA_NG_KEY_LEN) == 0)
+            src = state;
+        if (!dst && strncmp(state->key, desc->dst_node, CA_NG_KEY_LEN) == 0)
+            dst = state;
     }
     if (!src || !dst) return;
 

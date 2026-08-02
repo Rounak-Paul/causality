@@ -41,6 +41,7 @@
 
 #include "blur.h"
 #include "pipeline.h"
+#include "image.h"
 #include "shader.h"
 #include <string.h>
 #include <stdio.h>
@@ -311,15 +312,11 @@ static bool create_blur_image(Ca_Instance *inst,
 }
 
 static bool alloc_desc_set(Ca_Instance *inst, VkImageView view, VkSampler sampler,
-                           VkDescriptorSet *out_set)
+                           VkDescriptorSet *out_set,
+                           VkDescriptorPool *out_pool)
 {
-    VkDescriptorSetAllocateInfo ds_ai = {
-        .sType              = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
-        .descriptorPool     = inst->image_desc_pool,
-        .descriptorSetCount = 1,
-        .pSetLayouts        = &inst->text_pipeline.desc_layout,
-    };
-    if (vkAllocateDescriptorSets(inst->vk_device, &ds_ai, out_set) != VK_SUCCESS) {
+    if (!ca_image_descriptor_allocate(inst, inst->text_pipeline.desc_layout,
+                                      out_set, out_pool)) {
         fprintf(stderr, "[blur] descriptor set alloc failed\n");
         return false;
     }
@@ -371,9 +368,11 @@ bool ca_blur_window_create(Ca_Instance *inst, Ca_Window *win,
     if (!create_blur_image(inst, &win->blur_temp, &win->blur_temp_memory, &win->blur_temp_view, width, height))
         return false;
 
-    if (!alloc_desc_set(inst, win->blur_view, win->blur_sampler, &win->blur_desc_set))
+    if (!alloc_desc_set(inst, win->blur_view, win->blur_sampler,
+                        &win->blur_desc_set, &win->blur_desc_pool))
         return false;
-    if (!alloc_desc_set(inst, win->blur_temp_view, win->blur_sampler, &win->blur_temp_desc_set))
+    if (!alloc_desc_set(inst, win->blur_temp_view, win->blur_sampler,
+                        &win->blur_temp_desc_set, &win->blur_temp_desc_pool))
         return false;
 
     win->blur_image_w     = width;
@@ -390,12 +389,15 @@ void ca_blur_window_destroy(Ca_Instance *inst, Ca_Window *win)
     vkDeviceWaitIdle(inst->vk_device);
 
     if (win->blur_desc_set != VK_NULL_HANDLE) {
-        vkFreeDescriptorSets(inst->vk_device, inst->image_desc_pool, 1, &win->blur_desc_set);
+        ca_image_descriptor_free(inst, win->blur_desc_pool, win->blur_desc_set);
         win->blur_desc_set = VK_NULL_HANDLE;
+        win->blur_desc_pool = VK_NULL_HANDLE;
     }
     if (win->blur_temp_desc_set != VK_NULL_HANDLE) {
-        vkFreeDescriptorSets(inst->vk_device, inst->image_desc_pool, 1, &win->blur_temp_desc_set);
+        ca_image_descriptor_free(inst, win->blur_temp_desc_pool,
+                                 win->blur_temp_desc_set);
         win->blur_temp_desc_set = VK_NULL_HANDLE;
+        win->blur_temp_desc_pool = VK_NULL_HANDLE;
     }
     if (win->blur_view != VK_NULL_HANDLE) {
         vkDestroyImageView(inst->vk_device, win->blur_view, NULL);

@@ -22,10 +22,8 @@ struct Ca_Signal {
     uint64_t     generation;     /* bumped on every change */
     bool         in_use;
 
-    /* Subscribers (effects that read this signal). Indices into inst's
-       effect pool; -1 = empty slot. */
-    int32_t      subs[CA_MAX_SIGNAL_SUBSCRIBERS];
-    uint32_t     sub_count;
+    /* Subscriber pointers remain stable because effects use chunked storage. */
+    Ca_DynArray  subscribers;
 
     /* Optional computed body. NULL = plain signal. */
     Ca_ComputeFn compute_fn;
@@ -50,11 +48,11 @@ struct Ca_Effect {
     bool         is_frame_effect;
 
     /* Signals this effect currently subscribes to. */
-    Ca_Signal   *deps[CA_MAX_SIGNAL_DEPS];
-    uint32_t     dep_count;
+    Ca_DynArray  dependencies;
 
     /* For computed: the signal we should write into when re-running. */
     Ca_Signal   *computed_target;
+    void       (*destroy_user_data)(void *user_data);
 };
 
 /* ============================================================
@@ -64,43 +62,30 @@ struct Ca_Effect {
    (which would force ABI breakage downstream).
    ============================================================ */
 
-#define CA_REACTIVE_MAX_INSTANCES 8
-
 typedef struct {
     Ca_Instance *inst;
 
-    Ca_Signal *signals;
-    Ca_Effect *effects;
+    Ca_Pool signals;
+    Ca_Pool effects;
 
     /* Tracking stack — current top is the effect being executed.
        NULL means "no current effect" (untracked read). */
-    Ca_Effect *track_stack[64];
-    int        track_top;        /* -1 = empty */
+    Ca_DynArray track_stack;
 
     int        batch_depth;
 
     /* Pending re-run queue (effects that need to be flushed). */
-    int32_t    pending[CA_MAX_EFFECTS_PER_INSTANCE];
-    uint32_t   pending_count;
+    Ca_DynArray pending;
 
-    /* Indices of effects created via ca_frame_effect. Lets
-       ca_reactive_run_frame_effects iterate only the live frame-effects
-       every tick instead of scanning the whole (CA_MAX_EFFECTS_PER_INSTANCE)
-       effect pool to find the handful that are flagged — the per-tick
-       cost now scales with how many frame-effects are actually
-       registered, not with pool capacity. Sized to
-       CA_MAX_FRAME_EFFECTS_PER_INSTANCE (much smaller than the general
-       effect pool — frame-effects are rare by design), not
-       CA_MAX_EFFECTS_PER_INSTANCE, to avoid trading an 8192-slot scan for
-       an 8192-slot array. */
-    int32_t    frame_effects[CA_MAX_FRAME_EFFECTS_PER_INSTANCE];
-    uint32_t   frame_effect_count;
+    /* Live effects created through ca_frame_effect. Per-tick work scales with
+       actual registrations rather than the stable effect pool high-water. */
+    Ca_DynArray frame_effects;
 
     /* Untrack guard: when > 0, reads do not subscribe. */
     int        untrack_depth;
 } Ca_Reactive;
 
-static Ca_Reactive g_reactive[CA_REACTIVE_MAX_INSTANCES];
+static Ca_DynArray g_reactive = CA_DYN_ARRAY_INIT(Ca_Reactive *);
 
 /*
  * Return (or lazily create) the Ca_Reactive runtime for an instance.
@@ -116,26 +101,33 @@ static Ca_Reactive g_reactive[CA_REACTIVE_MAX_INSTANCES];
 static Ca_Reactive *get_reactive(Ca_Instance *inst)
 {
     if (!inst) return NULL;
-    /* Find existing. */
-    for (int i = 0; i < CA_REACTIVE_MAX_INSTANCES; ++i)
-        if (g_reactive[i].inst == inst) return &g_reactive[i];
-    /* Lazy-init. */
-    for (int i = 0; i < CA_REACTIVE_MAX_INSTANCES; ++i) {
-        if (g_reactive[i].inst == NULL) {
-            Ca_Reactive *r = &g_reactive[i];
-            memset(r, 0, sizeof(*r));
-            r->inst = inst;
-            r->signals = (Ca_Signal *)CA_CALLOC(CA_MAX_SIGNALS_PER_INSTANCE, sizeof(Ca_Signal));
-            r->effects = (Ca_Effect *)CA_CALLOC(CA_MAX_EFFECTS_PER_INSTANCE, sizeof(Ca_Effect));
-            r->track_top = -1;
-            r->batch_depth = 0;
-            r->untrack_depth = 0;
-            return r;
-        }
+    for (size_t i = 0; i < g_reactive.count; ++i) {
+        Ca_Reactive *runtime =
+            *(Ca_Reactive **)ca_dyn_array_at(&g_reactive, i);
+        if (runtime->inst == inst) return runtime;
     }
-    fprintf(stderr, "[causality] reactive: exceeded %d instances\n",
-            CA_REACTIVE_MAX_INSTANCES);
-    return NULL;
+
+    Ca_Reactive *runtime = CA_CALLOC(1, sizeof(*runtime));
+    if (!runtime) return NULL;
+    runtime->inst = inst;
+    bool initialized =
+        ca_pool_init(&runtime->signals, sizeof(Ca_Signal),
+                     ca_pool_recommended_chunk_capacity(sizeof(Ca_Signal))) &&
+        ca_pool_init(&runtime->effects, sizeof(Ca_Effect),
+                     ca_pool_recommended_chunk_capacity(sizeof(Ca_Effect))) &&
+        ca_dyn_array_init(&runtime->track_stack, sizeof(Ca_Effect *)) &&
+        ca_dyn_array_init(&runtime->pending, sizeof(Ca_Effect *)) &&
+        ca_dyn_array_init(&runtime->frame_effects, sizeof(Ca_Effect *));
+    if (!initialized || !ca_dyn_array_push(&g_reactive, &runtime)) {
+        ca_dyn_array_destroy(&runtime->frame_effects);
+        ca_dyn_array_destroy(&runtime->pending);
+        ca_dyn_array_destroy(&runtime->track_stack);
+        ca_pool_destroy(&runtime->effects, NULL, NULL);
+        ca_pool_destroy(&runtime->signals, NULL, NULL);
+        CA_FREE(runtime);
+        return NULL;
+    }
+    return runtime;
 }
 
 /*
@@ -148,17 +140,30 @@ static Ca_Reactive *get_reactive(Ca_Instance *inst)
  */
 static void release_reactive(Ca_Instance *inst)
 {
-    for (int i = 0; i < CA_REACTIVE_MAX_INSTANCES; ++i) {
-        Ca_Reactive *r = &g_reactive[i];
+    for (size_t i = 0; i < g_reactive.count; ++i) {
+        Ca_Reactive *r = *(Ca_Reactive **)ca_dyn_array_at(&g_reactive, i);
         if (r->inst != inst) continue;
-        if (r->signals) {
-            for (uint32_t s = 0; s < CA_MAX_SIGNALS_PER_INSTANCE; ++s)
-                CA_FREE(r->signals[s].value);
-            CA_FREE(r->signals);
+        for (size_t s = 0; s < ca_pool_slot_count(&r->signals); ++s) {
+            Ca_Signal *signal = CA_POOL_AT(r->signals, Ca_Signal, s);
+            if (!signal->in_use) continue;
+            CA_FREE(signal->value);
+            ca_dyn_array_destroy(&signal->subscribers);
         }
-        CA_FREE(r->effects);
-        memset(r, 0, sizeof(*r));
-        r->track_top = -1;
+        for (size_t e = 0; e < ca_pool_slot_count(&r->effects); ++e) {
+            Ca_Effect *effect = CA_POOL_AT(r->effects, Ca_Effect, e);
+            if (!effect->in_use) continue;
+            if (effect->destroy_user_data)
+                effect->destroy_user_data(effect->user_data);
+            ca_dyn_array_destroy(&effect->dependencies);
+        }
+        ca_dyn_array_destroy(&r->frame_effects);
+        ca_dyn_array_destroy(&r->pending);
+        ca_dyn_array_destroy(&r->track_stack);
+        ca_pool_destroy(&r->effects, NULL, NULL);
+        ca_pool_destroy(&r->signals, NULL, NULL);
+        CA_FREE(r);
+        ca_dyn_array_erase_unordered(&g_reactive, i);
+        if (g_reactive.count == 0) ca_dyn_array_shrink_to_fit(&g_reactive);
         return;
     }
 }
@@ -176,18 +181,6 @@ void ca_reactive_run_frame_effects(Ca_Instance *inst);
    Internal helpers
    ============================================================ */
 
-/* Return the pool index of signal s within reactive runtime r. */
-static int32_t signal_index(Ca_Reactive *r, const Ca_Signal *s)
-{
-    return (int32_t)(s - r->signals);
-}
-
-/* Return the pool index of effect e within reactive runtime r. */
-static int32_t effect_index(Ca_Reactive *r, const Ca_Effect *e)
-{
-    return (int32_t)(e - r->effects);
-}
-
 /*
  * Add an effect to the pending flush queue if it is not already scheduled.
  *
@@ -197,11 +190,10 @@ static int32_t effect_index(Ca_Reactive *r, const Ca_Effect *e)
 static void schedule_effect(Ca_Reactive *r, Ca_Effect *e)
 {
     if (!e || !e->in_use || e->scheduled) return;
-    if (r->pending_count >= CA_MAX_EFFECTS_PER_INSTANCE) {
-        fprintf(stderr, "[causality] reactive: pending queue full\n");
+    if (!ca_dyn_array_push(&r->pending, &e)) {
+        fprintf(stderr, "[causality] reactive: pending queue allocation failed\n");
         return;
     }
-    r->pending[r->pending_count++] = effect_index(r, e);
     e->scheduled = true;
 }
 
@@ -217,20 +209,20 @@ static void schedule_effect(Ca_Reactive *r, Ca_Effect *e)
  */
 static void clear_effect_deps(Ca_Reactive *r, Ca_Effect *e)
 {
+    (void)r;
     /* Remove this effect from each dep's subscriber list. */
-    for (uint32_t i = 0; i < e->dep_count; ++i) {
-        Ca_Signal *s = e->deps[i];
+    for (size_t i = 0; i < e->dependencies.count; ++i) {
+        Ca_Signal *s = *(Ca_Signal **)ca_dyn_array_at(&e->dependencies, i);
         if (!s || !s->in_use) continue;
-        int32_t target = effect_index(r, e);
-        for (uint32_t j = 0; j < s->sub_count; ++j) {
-            if (s->subs[j] == target) {
-                s->subs[j] = s->subs[s->sub_count - 1];
-                s->sub_count--;
+        for (size_t j = 0; j < s->subscribers.count; ++j) {
+            Ca_Effect **subscriber = ca_dyn_array_at(&s->subscribers, j);
+            if (*subscriber == e) {
+                ca_dyn_array_erase_unordered(&s->subscribers, j);
                 break;
             }
         }
     }
-    e->dep_count = 0;
+    ca_dyn_array_clear(&e->dependencies);
 }
 
 /*
@@ -246,24 +238,23 @@ static void clear_effect_deps(Ca_Reactive *r, Ca_Effect *e)
 static void track_dep(Ca_Reactive *r, Ca_Signal *s)
 {
     if (r->untrack_depth > 0) return;
-    if (r->track_top < 0) return;
-    Ca_Effect *e = r->track_stack[r->track_top];
+    if (r->track_stack.count == 0) return;
+    Ca_Effect *e = *(Ca_Effect **)ca_dyn_array_back(&r->track_stack);
     if (!e || !e->in_use) return;
 
     /* Already a dep? */
-    for (uint32_t i = 0; i < e->dep_count; ++i)
-        if (e->deps[i] == s) return;
+    for (size_t i = 0; i < e->dependencies.count; ++i)
+        if (*(Ca_Signal **)ca_dyn_array_at(&e->dependencies, i) == s) return;
 
-    if (e->dep_count >= CA_MAX_SIGNAL_DEPS) {
-        fprintf(stderr, "[causality] reactive: effect dep cap reached\n");
+    if (!ca_dyn_array_reserve(&e->dependencies,
+                              e->dependencies.count + 1u) ||
+        !ca_dyn_array_reserve(&s->subscribers,
+                              s->subscribers.count + 1u)) {
+        fprintf(stderr, "[causality] reactive: dependency allocation failed\n");
         return;
     }
-    if (s->sub_count >= CA_MAX_SIGNAL_SUBSCRIBERS) {
-        fprintf(stderr, "[causality] reactive: signal sub cap reached\n");
-        return;
-    }
-    e->deps[e->dep_count++] = s;
-    s->subs[s->sub_count++] = effect_index(r, e);
+    ca_dyn_array_push(&e->dependencies, &s);
+    ca_dyn_array_push(&s->subscribers, &e);
 }
 
 /*
@@ -281,15 +272,13 @@ static void run_effect(Ca_Reactive *r, Ca_Effect *e)
     if (!e || !e->in_use || !e->fn) return;
     /* Re-track: clear old deps, push, run, pop. */
     clear_effect_deps(r, e);
-    if (r->track_top + 1 >= (int)(sizeof(r->track_stack) / sizeof(r->track_stack[0]))) {
-        fprintf(stderr, "[causality] reactive: effect nesting too deep\n");
+    if (!ca_dyn_array_push(&r->track_stack, &e)) {
+        fprintf(stderr, "[causality] reactive: tracking stack allocation failed\n");
         return;
     }
-    r->track_top++;
-    r->track_stack[r->track_top] = e;
     e->scheduled = false;
     e->fn(e->user_data);
-    r->track_top--;
+    ca_dyn_array_pop(&r->track_stack, NULL);
 }
 
 /*
@@ -306,9 +295,9 @@ void ca_reactive_flush(Ca_Instance *inst)
     Ca_Reactive *r = get_reactive(inst);
     if (!r) return;
     /* Process queue, picking up newly scheduled effects too. */
-    while (r->pending_count > 0) {
-        int32_t idx = r->pending[--r->pending_count];
-        Ca_Effect *e = &r->effects[idx];
+    while (r->pending.count > 0) {
+        Ca_Effect *e = NULL;
+        ca_dyn_array_pop(&r->pending, &e);
         run_effect(r, e);
     }
 }
@@ -321,8 +310,7 @@ void ca_reactive_flush(Ca_Instance *inst)
  * whether or not any signal it reads changed (or even if it reads none).
  * Iterates r->frame_effects (populated by ca_frame_effect, pruned by
  * ca_effect_destroy) rather than scanning the full effect pool, so this
- * scales with how many frame-effects are actually registered, not with
- * CA_MAX_EFFECTS_PER_INSTANCE.
+ * scales with how many frame-effects are actually registered.
  *
  * inst  Instance whose frame effects are to be run.
  */
@@ -330,8 +318,8 @@ void ca_reactive_run_frame_effects(Ca_Instance *inst)
 {
     Ca_Reactive *r = get_reactive(inst);
     if (!r) return;
-    for (uint32_t i = 0; i < r->frame_effect_count; ++i) {
-        Ca_Effect *e = &r->effects[r->frame_effects[i]];
+    for (size_t i = 0; i < r->frame_effects.count; ++i) {
+        Ca_Effect *e = *(Ca_Effect **)ca_dyn_array_at(&r->frame_effects, i);
         if (e->in_use && e->is_frame_effect)
             run_effect(r, e);
     }
@@ -350,27 +338,26 @@ void ca_reactive_run_frame_effects(Ca_Instance *inst)
  * inst        Owning instance.
  * value_size  Size in bytes of the signal's value; must be > 0.
  * initial     Optional pointer to the initial value; NULL leaves the buffer zeroed.
- * Returns     New signal, or NULL if the pool is exhausted or allocation fails.
+ * Returns     New signal, or NULL if allocation fails.
  */
 Ca_Signal *ca_signal_create(Ca_Instance *inst, size_t value_size, const void *initial)
 {
     Ca_Reactive *r = get_reactive(inst);
-    if (!r) return NULL;
-    assert(value_size > 0);
-    for (uint32_t i = 0; i < CA_MAX_SIGNALS_PER_INSTANCE; ++i) {
-        Ca_Signal *s = &r->signals[i];
-        if (s->in_use) continue;
-        memset(s, 0, sizeof(*s));
-        s->inst       = inst;
-        s->value_size = (uint32_t)value_size;
-        s->value      = (uint8_t *)CA_CALLOC(1, value_size);
-        s->in_use     = true;
-        if (initial) memcpy(s->value, initial, value_size);
-        return s;
+    if (!r || value_size == 0 || value_size > UINT32_MAX) return NULL;
+    Ca_Signal *signal = ca_pool_acquire(&r->signals);
+    if (!signal) return NULL;
+    signal->inst = inst;
+    signal->value_size = (uint32_t)value_size;
+    signal->value = CA_CALLOC(1, value_size);
+    if (!signal->value ||
+        !ca_dyn_array_init(&signal->subscribers, sizeof(Ca_Effect *))) {
+        CA_FREE(signal->value);
+        ca_pool_release(&r->signals, signal);
+        return NULL;
     }
-    fprintf(stderr, "[causality] ca_signal_create: pool exhausted (%d)\n",
-            CA_MAX_SIGNALS_PER_INSTANCE);
-    return NULL;
+    signal->in_use = true;
+    if (initial) memcpy(signal->value, initial, value_size);
+    return signal;
 }
 
 /* Typed convenience wrappers around ca_signal_create(). */
@@ -393,12 +380,26 @@ void ca_signal_destroy(Ca_Signal *sig)
     if (!sig || !sig->in_use) return;
     Ca_Reactive *r = get_reactive(sig->inst);
     if (r) {
-        /* Detach all subscribers (their deps array may still point here;
-           clear lazily on next run). */
-        sig->sub_count = 0;
+        while (sig->subscribers.count > 0) {
+            Ca_Effect *effect = NULL;
+            ca_dyn_array_pop(&sig->subscribers, &effect);
+            if (!effect || !effect->in_use) continue;
+            for (size_t i = 0; i < effect->dependencies.count; ++i) {
+                Ca_Signal **dependency =
+                    ca_dyn_array_at(&effect->dependencies, i);
+                if (*dependency == sig) {
+                    ca_dyn_array_erase_unordered(&effect->dependencies, i);
+                    break;
+                }
+            }
+        }
+        Ca_Effect *owner = sig->owner_effect;
+        sig->owner_effect = NULL;
+        if (owner) ca_effect_destroy(owner);
     }
     CA_FREE(sig->value);
-    memset(sig, 0, sizeof(*sig));
+    ca_dyn_array_destroy(&sig->subscribers);
+    if (r) ca_pool_release(&r->signals, sig);
 }
 
 /*
@@ -419,11 +420,10 @@ static void maybe_recompute(Ca_Signal *s)
     s->dirty_computed = false;
     if (s->owner_effect) {
         clear_effect_deps(r, s->owner_effect);
-        if (r->track_top + 1 < (int)(sizeof(r->track_stack)/sizeof(r->track_stack[0]))) {
-            r->track_top++;
-            r->track_stack[r->track_top] = s->owner_effect;
+        Ca_Effect *owner = s->owner_effect;
+        if (ca_dyn_array_push(&r->track_stack, &owner)) {
             const void *new_val = s->compute_fn(s->compute_user);
-            r->track_top--;
+            ca_dyn_array_pop(&r->track_stack, NULL);
             if (new_val && memcmp(s->value, new_val, s->value_size) != 0) {
                 memcpy(s->value, new_val, s->value_size);
                 s->generation++;
@@ -494,10 +494,10 @@ void ca_signal_notify(Ca_Signal *sig)
     /* (Computeds subscribe via their owner effects; same path as effects.) */
 
     /* Schedule subscriber effects. */
-    for (uint32_t j = 0; j < sig->sub_count; ++j) {
-        int32_t idx = sig->subs[j];
-        if (idx < 0 || idx >= (int32_t)CA_MAX_EFFECTS_PER_INSTANCE) continue;
-        Ca_Effect *e = &r->effects[idx];
+    for (size_t j = 0; j < sig->subscribers.count; ++j) {
+        Ca_Effect *e =
+            *(Ca_Effect **)ca_dyn_array_at(&sig->subscribers, j);
+        if (!e || !e->in_use) continue;
         if (e->computed_target) {
             /* This effect drives a computed signal — mark it dirty so the
                next read recomputes. */
@@ -561,27 +561,24 @@ void *ca_signal_mut(Ca_Signal *sig)
  * inst       Owning instance.
  * fn         Effect body; must not be NULL.
  * user_data  Opaque argument forwarded to fn.
- * Returns    New Ca_Effect, or NULL if the pool is exhausted or fn is NULL.
+ * Returns    New Ca_Effect, or NULL if allocation fails or fn is NULL.
  */
 Ca_Effect *ca_effect(Ca_Instance *inst, Ca_EffectFn fn, void *user_data)
 {
     Ca_Reactive *r = get_reactive(inst);
     if (!r || !fn) return NULL;
-    for (uint32_t i = 0; i < CA_MAX_EFFECTS_PER_INSTANCE; ++i) {
-        Ca_Effect *e = &r->effects[i];
-        if (e->in_use) continue;
-        memset(e, 0, sizeof(*e));
-        e->inst      = inst;
-        e->fn        = fn;
-        e->user_data = user_data;
-        e->in_use    = true;
-        /* Run once to capture deps. */
-        run_effect(r, e);
-        return e;
+    Ca_Effect *effect = ca_pool_acquire(&r->effects);
+    if (!effect) return NULL;
+    if (!ca_dyn_array_init(&effect->dependencies, sizeof(Ca_Signal *))) {
+        ca_pool_release(&r->effects, effect);
+        return NULL;
     }
-    fprintf(stderr, "[causality] ca_effect: pool exhausted (%d)\n",
-            CA_MAX_EFFECTS_PER_INSTANCE);
-    return NULL;
+    effect->inst = inst;
+    effect->fn = fn;
+    effect->user_data = user_data;
+    effect->in_use = true;
+    run_effect(r, effect);
+    return effect;
 }
 
 /*
@@ -591,7 +588,7 @@ Ca_Effect *ca_effect(Ca_Instance *inst, Ca_EffectFn fn, void *user_data)
  * inst       Owning instance.
  * fn         Effect body; must not be NULL.
  * user_data  Opaque argument forwarded to fn.
- * Returns    New Ca_Effect, or NULL if the pool is exhausted or fn is NULL.
+ * Returns    New Ca_Effect, or NULL if allocation fails or fn is NULL.
  */
 Ca_Effect *ca_frame_effect(Ca_Instance *inst, Ca_EffectFn fn, void *user_data)
 {
@@ -599,8 +596,10 @@ Ca_Effect *ca_frame_effect(Ca_Instance *inst, Ca_EffectFn fn, void *user_data)
     if (!e) return NULL;
     e->is_frame_effect = true;
     Ca_Reactive *r = get_reactive(inst);
-    if (r && r->frame_effect_count < CA_MAX_FRAME_EFFECTS_PER_INSTANCE)
-        r->frame_effects[r->frame_effect_count++] = effect_index(r, e);
+    if (!r || !ca_dyn_array_push(&r->frame_effects, &e)) {
+        ca_effect_destroy(e);
+        return NULL;
+    }
     return e;
 }
 
@@ -615,18 +614,29 @@ void ca_effect_destroy(Ca_Effect *eff)
     Ca_Reactive *r = get_reactive(eff->inst);
     if (r) {
         clear_effect_deps(r, eff);
-        if (eff->is_frame_effect) {
-            /* Swap-remove this effect's index out of frame_effects. */
-            int32_t target = effect_index(r, eff);
-            for (uint32_t i = 0; i < r->frame_effect_count; ++i) {
-                if (r->frame_effects[i] == target) {
-                    r->frame_effects[i] = r->frame_effects[--r->frame_effect_count];
-                    break;
-                }
+        for (size_t i = 0; i < r->pending.count; ) {
+            Ca_Effect **pending = ca_dyn_array_at(&r->pending, i);
+            if (*pending == eff) {
+                ca_dyn_array_erase_unordered(&r->pending, i);
+                continue;
+            }
+            ++i;
+        }
+        for (size_t i = 0; i < r->frame_effects.count; ++i) {
+            Ca_Effect **frame_effect =
+                ca_dyn_array_at(&r->frame_effects, i);
+            if (*frame_effect == eff) {
+                ca_dyn_array_erase_unordered(&r->frame_effects, i);
+                break;
             }
         }
     }
-    memset(eff, 0, sizeof(*eff));
+    if (eff->computed_target && eff->computed_target->owner_effect == eff)
+        eff->computed_target->owner_effect = NULL;
+    if (eff->destroy_user_data)
+        eff->destroy_user_data(eff->user_data);
+    ca_dyn_array_destroy(&eff->dependencies);
+    if (r) ca_pool_release(&r->effects, eff);
 }
 
 /*
@@ -695,9 +705,14 @@ Ca_Signal *ca_computed(Ca_Instance *inst,
                        Ca_ComputeFn  fn,
                        void         *user_data)
 {
+    if (!fn) return NULL;
     Ca_Signal *s = ca_signal_create(inst, value_size, NULL);
-    if (!s || !fn) return s;
-    Ca_ComputedCtx *c = (Ca_ComputedCtx *)CA_CALLOC(1, sizeof(*c));
+    if (!s) return NULL;
+    Ca_ComputedCtx *c = CA_CALLOC(1, sizeof(*c));
+    if (!c) {
+        ca_signal_destroy(s);
+        return NULL;
+    }
     c->target = s;
     c->fn     = fn;
     c->user   = user_data;
@@ -706,8 +721,14 @@ Ca_Signal *ca_computed(Ca_Instance *inst,
     /* Drive recomputation through an effect; the effect ties into the
        same dep-tracking machinery as a normal user effect. */
     Ca_Effect *e = ca_effect(inst, computed_effect_fn, c);
+    if (!e) {
+        CA_FREE(c);
+        ca_signal_destroy(s);
+        return NULL;
+    }
+    e->destroy_user_data = ca_g_free;
     s->owner_effect = e;
-    if (e) e->computed_target = s;
+    e->computed_target = s;
     return s;
 }
 
