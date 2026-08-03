@@ -3433,6 +3433,60 @@ void ca_viewport_screen_rect(const Ca_Viewport *viewport,
     if (h) *h = viewport->node->h;
 }
 
+/** Returns true when a node participates in an interactive UI gesture. */
+static bool node_captures_input(const Ca_Node *node)
+{
+    if (!node || node_is_ancestor_hidden(node)) return false;
+    if (node->drag_fn_start || node->drag_fn_move || node->drag_fn_end ||
+        node->scroll_fn)
+        return true;
+    switch ((Ca_WidgetType)node->widget_type) {
+    case CA_WIDGET_BUTTON:
+    case CA_WIDGET_TEXT_INPUT:
+    case CA_WIDGET_CHECKBOX:
+    case CA_WIDGET_RADIO:
+    case CA_WIDGET_SLIDER:
+    case CA_WIDGET_TOGGLE:
+    case CA_WIDGET_SELECT:
+    case CA_WIDGET_TABBAR:
+    case CA_WIDGET_TREENODE:
+    case CA_WIDGET_SPLITTER:
+    case CA_WIDGET_MODAL:
+    case CA_WIDGET_MENUBAR:
+        return true;
+    default:
+        return false;
+    }
+}
+
+/** Reports pointer and keyboard ownership for the completed UI input pass. */
+void ca_window_input_capture(const Ca_Window *window,
+                             bool *out_pointer,
+                             bool *out_keyboard)
+{
+    bool pointer = false;
+    bool keyboard = false;
+    if (window) {
+        for (const Ca_Node *node = window->hovered_node; node; node = node->parent) {
+            if (node_captures_input(node)) {
+                pointer = true;
+                break;
+            }
+        }
+        for (const Ca_Node *node = window->focused_node; node; node = node->parent) {
+            if (node_captures_input(node)) {
+                keyboard = true;
+                break;
+            }
+        }
+        if (window->drag_node || window->numeric_drag_input ||
+            window->scrollbar_drag_node)
+            pointer = true;
+    }
+    if (out_pointer) *out_pointer = pointer;
+    if (out_keyboard) *out_keyboard = keyboard;
+}
+
 /* ============================================================
    INPUT PASS — hit-test, focus, keyboard
    ============================================================ */
