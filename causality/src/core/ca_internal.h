@@ -965,6 +965,7 @@ struct Ca_Window {
     int          *key_action_buf;
     int          *key_mods_buf;
     uint32_t      key_count;
+    bool          key_consumed[CA_KEY_MENU + 1]; /* indexed by Ca_Key */
 
     /* Render gating: set by ui.c when draw list changes, cleared after submit */
     bool          needs_render;

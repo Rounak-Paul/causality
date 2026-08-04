@@ -124,4 +124,16 @@ if(BUILD_TESTING)
     )
     target_link_libraries(causality_storage_tests PRIVATE causality)
     add_test(NAME causality_storage_tests COMMAND causality_storage_tests)
+
+    add_executable(causality_input_capture_tests tests/ca_input_capture_tests.c)
+    target_include_directories(causality_input_capture_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/core
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/ui
+    )
+    target_link_libraries(causality_input_capture_tests PRIVATE
+        causality
+        Vulkan::Vulkan
+    )
+    add_test(NAME causality_input_capture_tests COMMAND causality_input_capture_tests)
 endif()

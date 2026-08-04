@@ -3450,7 +3450,6 @@ static bool node_captures_input(const Ca_Node *node)
     case CA_WIDGET_SELECT:
     case CA_WIDGET_TABBAR:
     case CA_WIDGET_TREENODE:
-    case CA_WIDGET_SPLITTER:
     case CA_WIDGET_MODAL:
     case CA_WIDGET_MENUBAR:
         return true;
@@ -3468,23 +3467,47 @@ void ca_window_input_capture(const Ca_Window *window,
     bool keyboard = false;
     if (window) {
         for (const Ca_Node *node = window->hovered_node; node; node = node->parent) {
-            if (node_captures_input(node)) {
+            if (node_captures_input(node) ||
+                (node == window->hovered_node &&
+                 node->widget_type == CA_WIDGET_SPLITTER)) {
                 pointer = true;
                 break;
             }
         }
         for (const Ca_Node *node = window->focused_node; node; node = node->parent) {
-            if (node_captures_input(node)) {
+            if (node->widget_type == CA_WIDGET_TEXT_INPUT ||
+                node->widget_type == CA_WIDGET_MODAL) {
                 keyboard = true;
                 break;
             }
         }
+        for (uint32_t i = 0; !keyboard &&
+             i < ca_pool_slot_count(&window->modal_pool); ++i) {
+            const Ca_Modal *modal =
+                CA_POOL_AT_CONST(window->modal_pool, Ca_Modal, i);
+            if (modal->in_use && modal->visible && modal->node &&
+                !node_is_ancestor_hidden(modal->node))
+                keyboard = true;
+        }
         if (window->drag_node || window->numeric_drag_input ||
             window->scrollbar_drag_node)
             pointer = true;
+        for (uint32_t i = 0; !pointer &&
+             i < ca_pool_slot_count(&window->splitter_pool); ++i) {
+            const Ca_Splitter *splitter =
+                CA_POOL_AT_CONST(window->splitter_pool, Ca_Splitter, i);
+            if (splitter->in_use && splitter->dragging)
+                pointer = true;
+        }
     }
     if (out_pointer) *out_pointer = pointer;
     if (out_keyboard) *out_keyboard = keyboard;
+}
+
+bool ca_window_key_consumed(const Ca_Window *window, int key)
+{
+    return window && key >= 0 && key <= CA_KEY_MENU &&
+           window->key_consumed[(int)key];
 }
 
 /* ============================================================
@@ -4135,6 +4158,7 @@ void ca_widget_input_pass(Ca_Window *win)
             if (old_focus) old_focus->dirty |= CA_DIRTY_CONTENT;
             win->focused_node->dirty |= CA_DIRTY_CONTENT;
         }
+        win->key_consumed[CA_KEY_TAB] = true;
         ca_dyn_array_destroy(&focusable_storage);
         break; /* consume only the first Tab */
     }
@@ -4153,6 +4177,7 @@ void ca_widget_input_pass(Ca_Window *win)
                     fbtn->last_click_x = 0.0f;
                     fbtn->last_click_y = 0.0f;
                     fbtn->on_click(fbtn, fbtn->click_data);
+                    win->key_consumed[key] = true;
                     break;
                 }
             }

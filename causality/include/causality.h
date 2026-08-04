@@ -193,17 +193,28 @@ CA_API void        ca_clipboard_set_text(Ca_Window *window, const char *text);
 CA_API const char *ca_clipboard_get_text(Ca_Window *window);
 
 /*
- * Reports whether the UI under the pointer or the focused UI control owns
- * gameplay input for the current frame. The result is valid after Causality's
- * input pass, including from the window on-frame callback.
+ * Reports whether the UI owns pointer input or exclusive keyboard input for
+ * the current frame. Button focus alone is not exclusive; text editing and a
+ * visible modal are. The result is valid after Causality's input pass,
+ * including from the window on-frame callback.
  *
  * window        Window to query.
  * out_pointer   Receives true when an interactive UI node owns pointer input.
- * out_keyboard  Receives true when a focused UI node owns keyboard input.
+ * out_keyboard  Receives true when UI owns the keyboard exclusively.
  */
 CA_API void ca_window_input_capture(const Ca_Window *window,
                                     bool *out_pointer,
                                     bool *out_keyboard);
+
+/*
+ * Returns whether UI consumed a press or repeat for one key this frame.
+ * Use this for focused-widget navigation and activation keys that should not
+ * leak into gameplay while unrelated keys remain available.
+ *
+ * window  Window to query after its UI input pass.
+ * key     Platform-independent key identifier.
+ */
+CA_API bool ca_window_key_consumed(const Ca_Window *window, int key);
 
 /* Compatibility aliases for instance-wide UI scale.  Causality intentionally
    has one global UI scale per instance; calling this on any window updates

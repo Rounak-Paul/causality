@@ -661,6 +661,7 @@ bool ca_window_system_tick(Ca_Instance *inst)
             window->scroll_this_frame = false;
             window->char_count = 0;
             window->key_count  = 0;
+            memset(window->key_consumed, 0, sizeof(window->key_consumed));
         }
     }
 
