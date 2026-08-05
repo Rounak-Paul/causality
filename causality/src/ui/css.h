@@ -61,6 +61,11 @@ typedef enum {
     CA_CSS_PROP_MAX_WIDTH,
     CA_CSS_PROP_MIN_HEIGHT,
     CA_CSS_PROP_MAX_HEIGHT,
+    CA_CSS_PROP_POSITION,
+    CA_CSS_PROP_LEFT,
+    CA_CSS_PROP_RIGHT,
+    CA_CSS_PROP_TOP,
+    CA_CSS_PROP_BOTTOM,
     /* Padding */
     CA_CSS_PROP_PADDING_TOP,
     CA_CSS_PROP_PADDING_RIGHT,
@@ -430,6 +435,7 @@ typedef struct {
    is recorded here. A node whose own classes don't intersect this set is
    safe to cache; a node that does must always be freshly resolved. */
 typedef struct Ca_Stylesheet {
+    uint32_t ref_count;
     Ca_DynArray rule_storage;
     Ca_CssRule *rules;
     int        rule_count;
@@ -461,4 +467,5 @@ const char *ca_css_str(const Ca_Stylesheet *ss, int offset);
    ============================================================ */
 
 CA_API Ca_Stylesheet *ca_css_parse(const char *css_text);
+CA_API Ca_Stylesheet *ca_css_retain(Ca_Stylesheet *ss);
 CA_API void           ca_css_destroy(Ca_Stylesheet *ss);

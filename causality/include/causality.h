@@ -39,6 +39,7 @@ typedef struct Ca_TextInput Ca_TextInput;
 typedef struct Ca_Splitter  Ca_Splitter;
 typedef struct Ca_Image     Ca_Image;
 typedef struct Ca_Node      Ca_Div;
+typedef struct Ca_Stylesheet Ca_Stylesheet;
 
 /* Component widget handles — defined in ca_components.h */
 typedef struct Ca_Checkbox  Ca_Checkbox;
@@ -215,20 +216,6 @@ CA_API void ca_window_input_capture(const Ca_Window *window,
  * key     Platform-independent key identifier.
  */
 CA_API bool ca_window_key_consumed(const Ca_Window *window, int key);
-
-/* Compatibility aliases for instance-wide UI scale.  Causality intentionally
-   has one global UI scale per instance; calling this on any window updates
-   every open window and the scale inherited by future windows. */
-/*
- * Set the instance-wide UI scale via a window handle (compatibility alias).
- *
- * window  Any open window belonging to the instance.
- * scale   New scale factor; clamped to [0.25, 4.0].
- */
-CA_API void       ca_window_set_scale(Ca_Window *window, float scale);
-
-/* Returns the current instance-wide UI scale via a window handle. */
-CA_API float      ca_window_get_scale(Ca_Window *window);
 
 /* Return framebuffer pixels per logical window unit for the current display. */
 CA_API float      ca_window_get_pixel_ratio(Ca_Window *window);
@@ -724,6 +711,7 @@ typedef struct Ca_DivDesc {
     float    corner_radius;
     const char *id;                /* CSS id  (without #)                   */
     const char *style;             /* space-separated CSS class names       */
+    Ca_Stylesheet *stylesheet;     /* scoped stylesheet inherited by subtree */
     /* Positioning — default 0 (relative, participates in flex flow). */
     int      position;             /* CA_POSITION_RELATIVE / ABSOLUTE / FIXED */
     float    pos_x, pos_y;         /* coordinates when position != RELATIVE  */
@@ -750,6 +738,7 @@ typedef struct Ca_DivDesc {
     bool     disabled;             /* non-interactive, visually dimmed       */
     bool     no_hover;             /* invisible to hover hit-testing; children
                                       still participate normally               */
+    bool     clip_content;         /* clip descendants to the content box       */
 } Ca_DivDesc;
 
 /* <p> / text — leaf text element. */
@@ -1158,6 +1147,7 @@ CA_API void ca_image(const Ca_ImageDesc *desc);
      padding (shorthand + longhands), margin (shorthand + longhands),
      gap, display (flex/block/none), flex-direction, flex-wrap,
      align-items, justify-content, flex-grow, flex-shrink,
+     position, left, right, top, bottom,
      background-color / background, color, border-radius, opacity,
      font-size, overflow (shorthand + overflow-x/y)
 
@@ -1174,8 +1164,6 @@ CA_API void ca_image(const Ca_ImageDesc *desc);
      ca_btn_begin(&(Ca_BtnDesc){ .text = "OK", .style = "btn-primary" });
    ============================================================ */
 
-typedef struct Ca_Stylesheet Ca_Stylesheet;
-
 /*
  * Parse a CSS string into a Ca_Stylesheet.
  *
@@ -1183,6 +1171,9 @@ typedef struct Ca_Stylesheet Ca_Stylesheet;
  * Returns   Newly allocated Ca_Stylesheet, or NULL on parse error.
  */
 CA_API Ca_Stylesheet *ca_css_parse(const char *css_text);
+
+/** Retains a parsed stylesheet for shared or subtree-scoped ownership. */
+CA_API Ca_Stylesheet *ca_css_retain(Ca_Stylesheet *ss);
 
 /* Destroy a Ca_Stylesheet and release its memory. */
 CA_API void           ca_css_destroy(Ca_Stylesheet *ss);
@@ -1385,6 +1376,18 @@ CA_API float ca_div_get_layout_width(const Ca_Div *div);
 
 /* Returns the div's computed pixel height from the last layout pass. */
 CA_API float ca_div_get_layout_height(const Ca_Div *div);
+
+/* Returns the div's resolved screen-space border box. All pointers are optional. */
+CA_API void ca_div_screen_rect(const Ca_Div *div,
+                               float *x, float *y, float *w, float *h);
+
+/* Returns the div's resolved screen-space content box after padding and scrollbars. */
+CA_API void ca_div_content_screen_rect(const Ca_Div *div,
+                                       float *x, float *y, float *w, float *h);
+
+/* Applies an absolute border-box rectangle in the parent's resolved content space. */
+CA_API void ca_div_set_absolute_rect(Ca_Div *div,
+                                     float x, float y, float width, float height);
 
 /*
  * Returns the button's inner content dimensions from the last layout pass —

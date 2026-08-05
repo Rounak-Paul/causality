@@ -91,6 +91,7 @@ void ca_node_system_shutdown(Ca_Window *win)
     for (size_t i = 0; i < ca_pool_slot_count(&win->node_pool); ++i) {
         Ca_Node *node = CA_POOL_AT(win->node_pool, Ca_Node, i);
         if (node->builder_effect) ca_effect_destroy(node->builder_effect);
+        ca_css_destroy(node->scoped_stylesheet);
         ca_dyn_array_destroy(&node->transition_storage);
         CA_FREE(node->children);
     }
@@ -281,6 +282,8 @@ static void free_subtree(Ca_Node *node)
         node->scroll_y_signal = NULL;
     }
     ca_dyn_array_destroy(&node->transition_storage);
+    ca_css_destroy(node->scoped_stylesheet);
+    node->scoped_stylesheet = NULL;
     /* Clear any window-level pointers that reference this node, otherwise
        input handlers will dereference a freed slot next frame (UAF). */
     if (node->window) {
@@ -354,6 +357,10 @@ bool layout_desc_changed(const Ca_NodeDesc *a, const Ca_NodeDesc *b)
            a->position       != b->position       ||
            a->pos_x          != b->pos_x          ||
            a->pos_y          != b->pos_y          ||
+           a->pos_right      != b->pos_right      ||
+           a->pos_bottom     != b->pos_bottom     ||
+           a->position_offsets != b->position_offsets ||
+           a->position_percent != b->position_percent ||
            a->border_width   != b->border_width   ||
            a->text_wrap      != b->text_wrap      ||
            a->width_pct      != b->width_pct      ||

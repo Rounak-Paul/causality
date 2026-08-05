@@ -756,6 +756,11 @@ static Ca_CssPropId lookup_property(const char *name)
         { "max-width",                 CA_CSS_PROP_MAX_WIDTH },
         { "min-height",                CA_CSS_PROP_MIN_HEIGHT },
         { "max-height",                CA_CSS_PROP_MAX_HEIGHT },
+        { "position",                  CA_CSS_PROP_POSITION },
+        { "left",                      CA_CSS_PROP_LEFT },
+        { "right",                     CA_CSS_PROP_RIGHT },
+        { "top",                       CA_CSS_PROP_TOP },
+        { "bottom",                    CA_CSS_PROP_BOTTOM },
         { "padding-top",               CA_CSS_PROP_PADDING_TOP },
         { "padding-right",             CA_CSS_PROP_PADDING_RIGHT },
         { "padding-bottom",            CA_CSS_PROP_PADDING_BOTTOM },
@@ -1011,8 +1016,15 @@ static bool lookup_keyword(const char *name, Ca_CssPropId prop, int *out)
         { "auto",   CA_CSS_SCROLL_AUTO },
         { "smooth", CA_CSS_SCROLL_SMOOTH },
     };
+    static Ca_KwEntry position_kw[] = {
+        { "relative", CA_POSITION_RELATIVE },
+        { "absolute", CA_POSITION_ABSOLUTE },
+        { "fixed", CA_POSITION_FIXED },
+    };
 
     switch (prop) {
+        case CA_CSS_PROP_POSITION:
+            tbl = position_kw; count = 3; break;
         case CA_CSS_PROP_DISPLAY:
             tbl = display_kw; count = 3; break;
         case CA_CSS_PROP_FLEX_DIRECTION:
@@ -1139,7 +1151,7 @@ static Ca_CssValue parse_value(Parser *p, Ca_CssPropId prop)
             if (nm.type == TOK_IDENT && nm.text[0] == '-' && nm.text[1] == '-') {
                 snprintf(varname, sizeof(varname), "%s", nm.text);
             }
-            /* Skip optional fallback (not retained \u2014 v1 returns 0 on miss). */
+            /* Skip optional fallback; an unresolved variable produces no value. */
             int depth = 1;
             while (depth > 0) {
                 Token tt = parser_next(p);
@@ -2384,6 +2396,7 @@ Ca_Stylesheet *ca_css_parse(const char *css_text)
 
     Ca_Stylesheet *ss = (Ca_Stylesheet *)CA_CALLOC(1, sizeof(Ca_Stylesheet));
     if (!ss) return NULL;
+    ss->ref_count = 1u;
     ss->rule_storage = (Ca_DynArray)CA_DYN_ARRAY_INIT(Ca_CssRule);
     ss->var_storage = (Ca_DynArray)CA_DYN_ARRAY_INIT(Ca_CssVar);
     ss->str_pool_storage = (Ca_DynArray)CA_DYN_ARRAY_INIT(char);
@@ -2467,9 +2480,20 @@ Ca_Stylesheet *ca_css_parse(const char *css_text)
     return ss;
 }
 
+Ca_Stylesheet *ca_css_retain(Ca_Stylesheet *ss)
+{
+    if (!ss || ss->ref_count == UINT32_MAX) return NULL;
+    ss->ref_count++;
+    return ss;
+}
+
 void ca_css_destroy(Ca_Stylesheet *ss)
 {
     if (!ss) return;
+    if (ss->ref_count > 1u) {
+        ss->ref_count--;
+        return;
+    }
     for (size_t i = 0; i < ss->rule_storage.count; ++i)
         rule_destroy(&ss->rules[i]);
     ca_dyn_array_destroy(&ss->rule_storage);

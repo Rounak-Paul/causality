@@ -192,12 +192,24 @@ typedef struct Ca_TreeNodeDesc {
     bool             is_leaf;        /* suppress disclosure triangle */
     const char      *icon;           /* UTF-8 icon string, e.g. CA_ICON_* */
     uint32_t         icon_color;     /* packed RGBA for icon (0 = text_color) */
+    Ca_DragFn         on_drag_start;
+    Ca_DragFn         on_drag;
+    Ca_DragFn         on_drag_end;
+    void             *drag_data;
     /* Additional class(es) appended to the built-in "tree-row" class on
        the inner clickable header row. Lets callers attach state-aware
        styling (e.g. selected/highlighted) directly to the header where
        :hover / :focus actually fire, instead of the container. */
     const char      *row_style;
 } Ca_TreeNodeDesc;
+
+typedef enum Ca_TreeDropIndicator {
+    CA_TREE_DROP_NONE,
+    CA_TREE_DROP_SOURCE,
+    CA_TREE_DROP_BEFORE,
+    CA_TREE_DROP_AFTER,
+    CA_TREE_DROP_INSIDE,
+} Ca_TreeDropIndicator;
 
 typedef struct Ca_TableDesc {
     int          column_count;
@@ -360,6 +372,14 @@ CA_API void         ca_tree_end(void);
  * Returns  Handle to the created Ca_TreeNode.
  */
 CA_API Ca_TreeNode *ca_tree_node_begin(const Ca_TreeNodeDesc *desc);
+/** Returns the clickable row rectangle in window coordinates. */
+CA_API bool ca_tree_node_screen_rect(const Ca_TreeNode *node,
+                                     float *x, float *y,
+                                     float *width, float *height);
+/** Paints transient drag/drop feedback without changing tree layout. */
+CA_API void ca_tree_node_set_drop_indicator(Ca_TreeNode *node,
+                                            Ca_TreeDropIndicator indicator,
+                                            uint32_t color);
 
 /* Close a tree node opened by ca_tree_node_begin(). */
 CA_API void         ca_tree_node_end(void);

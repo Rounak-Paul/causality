@@ -1367,32 +1367,6 @@ void ca_window_resize_pass(Ca_Window *win)
 }
 
 /*
- * Set the UI scale for this window's instance (affects all windows).
- *
- * Delegates to ca_instance_set_scale(); see its documentation for semantics.
- *
- * window  Any open window belonging to the target instance.
- * scale   Desired scale factor.
- */
-void ca_window_set_scale(Ca_Window *window, float scale)
-{
-    if (!window || !window->in_use) return;
-    ca_instance_set_scale(window->instance, scale);
-}
-
-/*
- * Return the current UI scale for this window's instance.
- *
- * window  Any open window belonging to the target instance; returns 1.0 if NULL.
- * Returns Current scale factor.
- */
-float ca_window_get_scale(Ca_Window *window)
-{
-    if (!window || !window->in_use) return 1.0f;
-    return ca_instance_get_scale(window->instance);
-}
-
-/*
  * Return framebuffer pixels per logical window unit.
  *
  * window  Window to query.

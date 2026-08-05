@@ -776,6 +776,42 @@ static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, Cli
     default: break;
     }
 
+    if (node->tree_drop_indicator != CA_TREE_DROP_NONE &&
+        node->tree_drop_color != 0 &&
+        ca_window_reserve_draw_commands(
+            win, (size_t)win->draw_cmd_count + 1u)) {
+        Ca_DrawCmd *cmd = &win->draw_cmds[win->draw_cmd_count++];
+        memset(cmd, 0, sizeof(*cmd));
+        cmd->type = CA_DRAW_RECT;
+        cmd->x = node->x;
+        cmd->y = node->y;
+        cmd->w = node->w;
+        cmd->h = node->h;
+        float thickness = 2.0f * ui_s;
+        if (node->tree_drop_indicator == CA_TREE_DROP_BEFORE)
+            cmd->h = thickness;
+        else if (node->tree_drop_indicator == CA_TREE_DROP_AFTER) {
+            cmd->y += node->h - thickness;
+            cmd->h = thickness;
+        }
+        unpack_color(node->tree_drop_color,
+                     &cmd->r, &cmd->g, &cmd->b, &cmd->a);
+        if (node->tree_drop_indicator == CA_TREE_DROP_SOURCE)
+            cmd->a *= 0.16f;
+        else if (node->tree_drop_indicator == CA_TREE_DROP_INSIDE) {
+            cmd->a *= 0.12f;
+            cmd->border_width = thickness;
+            cmd->border_r = cmd->r;
+            cmd->border_g = cmd->g;
+            cmd->border_b = cmd->b;
+            cmd->border_a = 1.0f;
+        }
+        cmd->z_index = node->desc.z_index;
+        cmd->overlay = true;
+        cmd->in_use = true;
+        set_clip(cmd, clip);
+    }
+
     /* Apply disabled visual dimming to all draw commands emitted for this node. */
     if (is_node_effectively_disabled(node)) {
         const float dim = 0.4f;

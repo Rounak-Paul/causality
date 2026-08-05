@@ -660,6 +660,17 @@ static void style_resolve_sheet(Ca_Stylesheet *ss,
                 case CA_CSS_PROP_MAX_WIDTH:        out->max_width       = css_val_to_px(val); break;
                 case CA_CSS_PROP_MIN_HEIGHT:       out->min_height      = css_val_to_px(val); break;
                 case CA_CSS_PROP_MAX_HEIGHT:       out->max_height      = css_val_to_px(val); break;
+                case CA_CSS_PROP_POSITION:
+                    if (val->type == CA_CSS_VAL_KEYWORD) out->position = val->keyword;
+                    break;
+                case CA_CSS_PROP_LEFT:
+                    out->left = css_val_to_px(val); out->left_pct = val->type == CA_CSS_VAL_PERCENT; break;
+                case CA_CSS_PROP_RIGHT:
+                    out->right = css_val_to_px(val); out->right_pct = val->type == CA_CSS_VAL_PERCENT; break;
+                case CA_CSS_PROP_TOP:
+                    out->top = css_val_to_px(val); out->top_pct = val->type == CA_CSS_VAL_PERCENT; break;
+                case CA_CSS_PROP_BOTTOM:
+                    out->bottom = css_val_to_px(val); out->bottom_pct = val->type == CA_CSS_VAL_PERCENT; break;
                 case CA_CSS_PROP_PADDING_TOP:      out->padding[0]      = css_val_to_px(val); break;
                 case CA_CSS_PROP_PADDING_RIGHT:    out->padding[1]      = css_val_to_px(val); break;
                 case CA_CSS_PROP_PADDING_BOTTOM:   out->padding[2]      = css_val_to_px(val); break;
@@ -934,6 +945,9 @@ void ca_style_resolve_layers(Ca_Stylesheet *defaults,
                              const char *classes,
                              Ca_ResolvedStyle *out)
 {
+    Ca_Stylesheet *scoped = NULL;
+    for (Ca_Node *ancestor = node; ancestor && !scoped; ancestor = ancestor->parent)
+        scoped = ancestor->scoped_stylesheet;
     /* Per-node resolved-style cache: if this node's classes and
        hover/active/focus/focus_within/disabled state are identical to the
        previous call, and neither stylesheet has a position-dependent
@@ -954,7 +968,8 @@ void ca_style_resolve_layers(Ca_Stylesheet *defaults,
         bool disabled     = node_is_disabled(node);
 
         bool cacheable = ca_style_node_is_cacheable(defaults, classes) &&
-                         ca_style_node_is_cacheable(author, classes);
+                         ca_style_node_is_cacheable(author, classes) &&
+                         ca_style_node_is_cacheable(scoped, classes);
 
         if (cacheable && node->style_cache_valid &&
             node->style_cache_hover        == hover &&
@@ -962,6 +977,7 @@ void ca_style_resolve_layers(Ca_Stylesheet *defaults,
             node->style_cache_focus        == focus &&
             node->style_cache_focus_within == focus_within &&
             node->style_cache_disabled     == disabled &&
+            node->style_cache_scoped_stylesheet == scoped &&
             strncmp(node->style_cache_classes, classes ? classes : "",
                     CA_NODE_CLASS_MAX) == 0)
         {
@@ -971,6 +987,7 @@ void ca_style_resolve_layers(Ca_Stylesheet *defaults,
 
         style_resolve_sheet(defaults, node, elem_type, classes, out, true);
         style_resolve_sheet(author, node, elem_type, classes, out, false);
+        style_resolve_sheet(scoped, node, elem_type, classes, out, false);
 
         if (cacheable) {
             node->style_cache               = *out;
@@ -981,6 +998,7 @@ void ca_style_resolve_layers(Ca_Stylesheet *defaults,
             node->style_cache_focus         = focus;
             node->style_cache_focus_within  = focus_within;
             node->style_cache_disabled      = disabled;
+            node->style_cache_scoped_stylesheet = scoped;
             node->style_cache_valid         = true;
         } else {
             node->style_cache_valid = false;
@@ -990,6 +1008,7 @@ void ca_style_resolve_layers(Ca_Stylesheet *defaults,
 
     style_resolve_sheet(defaults, node, elem_type, classes, out, true);
     style_resolve_sheet(author, node, elem_type, classes, out, false);
+    style_resolve_sheet(scoped, node, elem_type, classes, out, false);
 }
 
 /* ============================================================
@@ -1020,6 +1039,23 @@ void ca_style_apply_to_node(const Ca_ResolvedStyle *style,
     if (nd->max_w  <= 0.0f && STYLE_SET(CA_CSS_PROP_MAX_WIDTH))  nd->max_w = style->max_width;
     if (nd->min_h  <= 0.0f && STYLE_SET(CA_CSS_PROP_MIN_HEIGHT)) nd->min_h = style->min_height;
     if (nd->max_h  <= 0.0f && STYLE_SET(CA_CSS_PROP_MAX_HEIGHT)) nd->max_h = style->max_height;
+    if (STYLE_SET(CA_CSS_PROP_POSITION)) nd->position = (uint8_t)style->position;
+    if (STYLE_SET(CA_CSS_PROP_LEFT)) {
+        nd->pos_x = style->left; nd->position_offsets |= 1u;
+        if (style->left_pct) nd->position_percent |= 1u;
+    }
+    if (STYLE_SET(CA_CSS_PROP_RIGHT)) {
+        nd->pos_right = style->right; nd->position_offsets |= 2u;
+        if (style->right_pct) nd->position_percent |= 2u;
+    }
+    if (STYLE_SET(CA_CSS_PROP_TOP)) {
+        nd->pos_y = style->top; nd->position_offsets |= 4u;
+        if (style->top_pct) nd->position_percent |= 4u;
+    }
+    if (STYLE_SET(CA_CSS_PROP_BOTTOM)) {
+        nd->pos_bottom = style->bottom; nd->position_offsets |= 8u;
+        if (style->bottom_pct) nd->position_percent |= 8u;
+    }
 
     /* Padding — CSS fills if zero */
     if (nd->padding_top    <= 0.0f && STYLE_SET(CA_CSS_PROP_PADDING_TOP))    nd->padding_top    = style->padding[0];

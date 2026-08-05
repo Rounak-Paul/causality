@@ -416,7 +416,7 @@ int main(void)
     /* ================================================================
        BUILD THE UI
        ================================================================ */
-    ca_window_set_scale(window, 1.0f);
+    ca_instance_set_scale(instance, 1.0f);
     ca_ui_begin(window, &(Ca_DivDesc){
         .direction = CA_VERTICAL,
         .style     = "body",

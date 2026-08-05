@@ -402,18 +402,17 @@ static bool create_logical_device(Ca_Instance *inst)
         available12.descriptorBindingSampledImageUpdateAfterBind == VK_TRUE &&
         available12.runtimeDescriptorArray == VK_TRUE;
     inst->descriptor_indexing_supported = bindless_bits;
-    fprintf(stderr,
-            "[vk] descriptor indexing (bindless) support: descriptorIndexing=%u "
-            "shaderSampledImageArrayNonUniformIndexing=%u descriptorBindingPartiallyBound=%u "
-            "descriptorBindingVariableDescriptorCount=%u descriptorBindingSampledImageUpdateAfterBind=%u "
-            "runtimeDescriptorArray=%u -> %s\n",
-            available12.descriptorIndexing,
-            available12.shaderSampledImageArrayNonUniformIndexing,
-            available12.descriptorBindingPartiallyBound,
-            available12.descriptorBindingVariableDescriptorCount,
-            available12.descriptorBindingSampledImageUpdateAfterBind,
-            available12.runtimeDescriptorArray,
-            bindless_bits ? "ENABLED" : "DISABLED");
+    printf("[vk] descriptor indexing (bindless) support: descriptorIndexing=%u "
+           "shaderSampledImageArrayNonUniformIndexing=%u descriptorBindingPartiallyBound=%u "
+           "descriptorBindingVariableDescriptorCount=%u descriptorBindingSampledImageUpdateAfterBind=%u "
+           "runtimeDescriptorArray=%u -> %s\n",
+           available12.descriptorIndexing,
+           available12.shaderSampledImageArrayNonUniformIndexing,
+           available12.descriptorBindingPartiallyBound,
+           available12.descriptorBindingVariableDescriptorCount,
+           available12.descriptorBindingSampledImageUpdateAfterBind,
+           available12.runtimeDescriptorArray,
+           bindless_bits ? "ENABLED" : "DISABLED");
 
     VkPhysicalDeviceVulkan12Features enabled12 = {
         .sType              = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,

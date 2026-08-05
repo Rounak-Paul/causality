@@ -271,6 +271,9 @@ typedef struct {
     /* Positioning */
     uint8_t      position;       /* Ca_Position: 0=relative, 1=absolute, 2=fixed */
     float        pos_x, pos_y;   /* used when position != relative */
+    float        pos_right, pos_bottom;
+    uint8_t      position_offsets; /* left=1, right=2, top=4, bottom=8 */
+    uint8_t      position_percent; /* percentage bits matching position_offsets */
     /* Aspect ratio — width/height; 0 = not set */
     float        aspect_ratio;
     /* Box-sizing */
@@ -449,6 +452,7 @@ struct Ca_Node {
     uint8_t       elem_type;       /* Ca_ElementType from style.h     */
     char          classes[CA_NODE_CLASS_MAX]; /* space-separated CSS classes */
     char          id[CA_NODE_ID_MAX];         /* CSS id (without #)          */
+    Ca_Stylesheet *scoped_stylesheet;
     /* Per-node resolved-style cache (apply_css in style.c). Skips the full
        O(rules) selector-match scan when this node's classes/pseudo-state
        fingerprint is unchanged from last call AND the stylesheet has no
@@ -461,6 +465,7 @@ struct Ca_Node {
     Ca_ResolvedStyle style_cache;
     char          style_cache_classes[CA_NODE_CLASS_MAX];
     bool          style_cache_valid;
+    Ca_Stylesheet *style_cache_scoped_stylesheet;
     bool          style_cache_hover, style_cache_active, style_cache_focus,
                   style_cache_focus_within, style_cache_disabled;
     /* Scroll state (for overflow: scroll) */
@@ -486,6 +491,8 @@ struct Ca_Node {
     void         *drag_fn_move;     /* Ca_DragFn */
     void         *drag_fn_end;      /* Ca_DragFn */
     void         *drag_data;        /* user_data for drag callbacks */
+    uint8_t       tree_drop_indicator;
+    uint32_t      tree_drop_color;
     /* Scroll callback */
     void         *scroll_fn;        /* Ca_ScrollFn */
     void         *scroll_data;      /* user_data for scroll callback */

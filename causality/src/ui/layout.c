@@ -15,6 +15,19 @@ static float node_ui_scale(const Ca_Node *node)
         : 1.0f;
 }
 
+/** Translates descendants after an out-of-flow container resolves trailing anchors. */
+static void translate_positioned_descendants(Ca_Node *node, float dx, float dy)
+{
+    if (!node || (dx == 0.0f && dy == 0.0f)) return;
+    for (uint32_t i = 0; i < node->child_count; ++i) {
+        Ca_Node *child = node->children[i];
+        if (!child || child->desc.position == CA_POSITION_FIXED) continue;
+        child->x += dx;
+        child->y += dy;
+        translate_positioned_descendants(child, dx, dy);
+    }
+}
+
 static float glyph_adv(Ca_FontTier *tier, uint32_t cp,
                        float cs, float desired_size)
 {
@@ -860,16 +873,50 @@ out_of_flow:
             - node->desc.padding_top  - node->desc.padding_bottom;
         if (avail_cw < 0.0f) avail_cw = 0.0f;
         if (avail_ch < 0.0f) avail_ch = 0.0f;
+        float left = child->desc.pos_x;
+        float right = child->desc.pos_right;
+        float top = child->desc.pos_y;
+        float bottom = child->desc.pos_bottom;
+        if (child->desc.position_percent & 1u) left = avail_cw * left * 0.01f;
+        if (child->desc.position_percent & 2u) right = avail_cw * right * 0.01f;
+        if (child->desc.position_percent & 4u) top = avail_ch * top * 0.01f;
+        if (child->desc.position_percent & 8u) bottom = avail_ch * bottom * 0.01f;
         float cx, cy;
         if (child->desc.position == CA_POSITION_ABSOLUTE) {
             /* Relative to parent's content box */
-            cx = node->x + node->desc.padding_left + child->desc.pos_x;
-            cy = node->y + node->desc.padding_top  + child->desc.pos_y;
+            cx = node->x + node->desc.padding_left + left;
+            cy = node->y + node->desc.padding_top + top;
         } else { /* CA_POSITION_FIXED — relative to window origin */
-            cx = child->desc.pos_x;
-            cy = child->desc.pos_y;
+            cx = left;
+            cy = top;
         }
+        float authored_width = child->desc.width;
+        float authored_height = child->desc.height;
+        bool authored_width_pct = child->desc.width_pct;
+        bool authored_height_pct = child->desc.height_pct;
+        if ((child->desc.position_offsets & 3u) == 3u && authored_width <= 0.0f)
+            child->desc.width = fmaxf(0.0f, avail_cw - left - right);
+        if ((child->desc.position_offsets & 12u) == 12u && authored_height <= 0.0f)
+            child->desc.height = fmaxf(0.0f, avail_ch - top - bottom);
         layout_node(child, cx, cy, avail_cw, avail_ch);
+        child->desc.width = authored_width;
+        child->desc.height = authored_height;
+        child->desc.width_pct = authored_width_pct;
+        child->desc.height_pct = authored_height_pct;
+        float laid_out_x = child->x;
+        float laid_out_y = child->y;
+        if (!(child->desc.position_offsets & 1u) &&
+            (child->desc.position_offsets & 2u))
+            child->x = (child->desc.position == CA_POSITION_FIXED
+                ? avail_cw : node->x + node->desc.padding_left + avail_cw) -
+                right - child->w;
+        if (!(child->desc.position_offsets & 4u) &&
+            (child->desc.position_offsets & 8u))
+            child->y = (child->desc.position == CA_POSITION_FIXED
+                ? avail_ch : node->y + node->desc.padding_top + avail_ch) -
+                bottom - child->h;
+        translate_positioned_descendants(
+            child, child->x - laid_out_x, child->y - laid_out_y);
     }
 }
 

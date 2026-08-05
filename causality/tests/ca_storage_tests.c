@@ -95,9 +95,31 @@ static bool test_stylesheet_growth(void)
     return true;
 }
 
+/** Verifies responsive anchor declarations and retained stylesheet lifetime. */
+static bool test_stylesheet_anchors(void)
+{
+    Ca_Stylesheet *stylesheet = ca_css_parse(
+        ".overlay{position:absolute;right:5%;bottom:12px;}");
+    CHECK(stylesheet);
+    CHECK(stylesheet->ref_count == 1u);
+    CHECK(stylesheet->rule_count == 1);
+    CHECK(stylesheet->rules[0].decl_count == 3);
+    CHECK(stylesheet->rules[0].decls[0].prop == CA_CSS_PROP_POSITION);
+    CHECK(stylesheet->rules[0].decls[1].prop == CA_CSS_PROP_RIGHT);
+    CHECK(stylesheet->rules[0].decls[1].value.type == CA_CSS_VAL_PERCENT);
+    CHECK(stylesheet->rules[0].decls[2].prop == CA_CSS_PROP_BOTTOM);
+    CHECK(ca_css_retain(stylesheet) == stylesheet);
+    CHECK(stylesheet->ref_count == 2u);
+    ca_css_destroy(stylesheet);
+    CHECK(stylesheet->ref_count == 1u);
+    ca_css_destroy(stylesheet);
+    return true;
+}
+
 int main(void)
 {
-    if (!test_node_graph_growth() || !test_stylesheet_growth()) return 1;
+    if (!test_node_graph_growth() || !test_stylesheet_growth() ||
+        !test_stylesheet_anchors()) return 1;
     puts("causality dynamic storage tests passed");
     return 0;
 }

@@ -30,6 +30,7 @@
 #include "../platform/window.h"
 
 #include <assert.h>
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -483,6 +484,10 @@ static void scale_resolved_style(Ca_ResolvedStyle *style, float scale)
     if (!style) return;
     if (!style->width_pct) style->width *= scale;
     if (!style->height_pct) style->height *= scale;
+    if (!style->left_pct) style->left *= scale;
+    if (!style->right_pct) style->right *= scale;
+    if (!style->top_pct) style->top *= scale;
+    if (!style->bottom_pct) style->bottom *= scale;
     style->min_width *= scale; style->max_width *= scale;
     style->min_height *= scale; style->max_height *= scale;
     for (size_t i = 0u; i < 4u; ++i) {
@@ -762,6 +767,8 @@ static Ca_NodeDesc div_to_nd(const Ca_DivDesc *d)
     nd.hidden         = d->hidden;
     nd.disabled       = d->disabled;
     nd.no_hover       = d->no_hover;
+    nd.overflow_x     = d->clip_content ? 1u : 0u;
+    nd.overflow_y     = d->clip_content ? 1u : 0u;
     return nd;
 }
 
@@ -868,6 +875,14 @@ Ca_Div *ca_div_begin(const Ca_DivDesc *desc)
     bool reused = false;
     Ca_Node *node = claim_child(&nd, CA_WIDGET_NONE, CA_ELEM_DIV, id, &reused);
     assert(node);
+
+    Ca_Stylesheet *stylesheet = desc ? desc->stylesheet : NULL;
+    if (node->scoped_stylesheet != stylesheet) {
+        Ca_Stylesheet *retained = ca_css_retain(stylesheet);
+        ca_css_destroy(node->scoped_stylesheet);
+        node->scoped_stylesheet = retained;
+        node->style_cache_valid = false;
+    }
 
     uint32_t dummy = 0;
     apply_css(node, &node->desc, CA_ELEM_DIV,
@@ -1661,6 +1676,63 @@ float ca_div_get_layout_height(const Ca_Div *div)
 {
     assert(div);
     return ((const Ca_Node *)div)->h;
+}
+
+void ca_div_screen_rect(const Ca_Div *div,
+                        float *x, float *y, float *w, float *h)
+{
+    const Ca_Node *node = (const Ca_Node *)div;
+    if (!node || !node->in_use) {
+        if (x) *x = 0.0f;
+        if (y) *y = 0.0f;
+        if (w) *w = 0.0f;
+        if (h) *h = 0.0f;
+        return;
+    }
+    if (x) *x = node->x;
+    if (y) *y = node->y;
+    if (w) *w = node->w;
+    if (h) *h = node->h;
+}
+
+void ca_div_content_screen_rect(const Ca_Div *div,
+                                float *x, float *y, float *w, float *h)
+{
+    const Ca_Node *node = (const Ca_Node *)div;
+    if (!node || !node->in_use) {
+        if (x) *x = 0.0f;
+        if (y) *y = 0.0f;
+        if (w) *w = 0.0f;
+        if (h) *h = 0.0f;
+        return;
+    }
+    float width = ca_scrollbar_viewport_width(node) -
+                  node->desc.padding_left - node->desc.padding_right;
+    float height = ca_scrollbar_viewport_height(node) -
+                   node->desc.padding_top - node->desc.padding_bottom;
+    if (x) *x = node->x + node->desc.padding_left;
+    if (y) *y = node->y + node->desc.padding_top;
+    if (w) *w = width > 0.0f ? width : 0.0f;
+    if (h) *h = height > 0.0f ? height : 0.0f;
+}
+
+void ca_div_set_absolute_rect(Ca_Div *div,
+                              float x, float y, float width, float height)
+{
+    Ca_Node *node = (Ca_Node *)div;
+    if (!node || !node->in_use || !isfinite(x) || !isfinite(y) ||
+        !isfinite(width) || !isfinite(height))
+        return;
+    node->desc.position = CA_POSITION_ABSOLUTE;
+    node->desc.pos_x = x;
+    node->desc.pos_y = y;
+    node->desc.width = width > 0.0f ? width : 0.0f;
+    node->desc.height = height > 0.0f ? height : 0.0f;
+    node->desc.width_pct = false;
+    node->desc.height_pct = false;
+    node->desc.position_offsets = 1u | 4u;
+    node->desc.position_percent = 0u;
+    node->dirty |= CA_DIRTY_LAYOUT;
 }
 
 void ca_btn_get_layout_inner_size(const Ca_Button *btn, float *out_w, float *out_h)
@@ -2479,7 +2551,7 @@ Ca_TreeNode *ca_tree_node_begin(const Ca_TreeNodeDesc *desc)
     node->desc.height = 0.0f;
     hdr.font_size    = node->desc.font_size;  /* inherit from CSS */
     hdr.font_bold    = node->desc.font_bold;  /* inherit from CSS */
-    hdr.padding_left = s(4.0f) * (float)tn->depth;
+    hdr.padding_left = s(16.0f) * (float)tn->depth;
     hdr.text_align   = 0; /* left-aligned */
     /* Sensible defaults — CSS can override via the tree node style */
     hdr.corner_radius = 0.0f;
@@ -2514,12 +2586,45 @@ Ca_TreeNode *ca_tree_node_begin(const Ca_TreeNodeDesc *desc)
         hdr_node->desc = hdr;
         uint32_t dummy = 0;
         apply_css(hdr_node, &hdr_node->desc, CA_ELEM_DIV, row_classes, NULL, &dummy);
+        hdr_node->drag_fn_start = (void *)desc->on_drag_start;
+        hdr_node->drag_fn_move = (void *)desc->on_drag;
+        hdr_node->drag_fn_end = (void *)desc->on_drag_end;
+        hdr_node->drag_data = desc->drag_data;
     }
 
     ctx_push_mode(node, ctx_top_reconcile());
     if (ctx_top_reconcile())
         *ctx_top_cursor() = 1;
     return tn;
+}
+
+bool ca_tree_node_screen_rect(const Ca_TreeNode *node,
+                              float *x, float *y,
+                              float *width, float *height)
+{
+    if (!node || !node->in_use || !node->node || node->node->child_count == 0)
+        return false;
+    const Ca_Node *row = node->node->children[0];
+    if (!row || row->desc.hidden || row->w <= 0.0f || row->h <= 0.0f)
+        return false;
+    if (x) *x = row->x;
+    if (y) *y = row->y;
+    if (width) *width = row->w;
+    if (height) *height = row->h;
+    return true;
+}
+
+void ca_tree_node_set_drop_indicator(Ca_TreeNode *node,
+                                     Ca_TreeDropIndicator indicator,
+                                     uint32_t color)
+{
+    if (!node || !node->in_use || !node->node || node->node->child_count == 0)
+        return;
+    Ca_Node *row = node->node->children[0];
+    if (!row || !row->in_use) return;
+    row->tree_drop_indicator = (uint8_t)indicator;
+    row->tree_drop_color = color;
+    row->dirty |= CA_DIRTY_CONTENT;
 }
 
 

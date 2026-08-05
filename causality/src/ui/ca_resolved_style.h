@@ -19,6 +19,9 @@ typedef struct {
     float    width, height;
     bool     width_pct, height_pct;   /* true when value is a percentage */
     float    min_width, max_width, min_height, max_height;
+    float    left, right, top, bottom;
+    bool     left_pct, right_pct, top_pct, bottom_pct;
+    int      position;
     /* Spacing */
     float    padding[4];     /* top, right, bottom, left */
     float    margin[4];
