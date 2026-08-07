@@ -1027,6 +1027,7 @@ Ca_Button *ca_btn_begin(const Ca_BtnDesc *desc)
     nd.gap           = s(desc->gap);
     nd.direction     = dir_from_int(desc->direction);
     nd.text_align    = 1; /* center, matching HTML <button> user-agent default */
+    nd.no_hover      = desc->no_hover;
 
     bool reused = false;
     Ca_Node *node = claim_child(&nd, CA_WIDGET_BUTTON, CA_ELEM_BUTTON, id, &reused);
@@ -1183,6 +1184,7 @@ Ca_TextInput *ca_input(const Ca_InputDesc *desc)
     nd.padding_right  = s(desc->padding[1]);
     nd.padding_bottom = s(desc->padding[2]);
     nd.padding_left   = s(desc->padding[3]);
+    nd.no_hover       = desc->no_hover;
 
     bool reused = false;
     Ca_Node *node = claim_child(&nd, CA_WIDGET_TEXT_INPUT, CA_ELEM_INPUT, id, &reused);
@@ -1995,6 +1997,7 @@ Ca_Checkbox *ca_checkbox(const Ca_CheckboxDesc *desc)
 
     if (desc->hidden)   node->desc.hidden   = true;
     if (desc->disabled) node->desc.disabled = true;
+    if (desc->no_hover) node->desc.no_hover = true;
 
     uint32_t dummy = 0;
     apply_css(node, &node->desc, CA_ELEM_CHECKBOX, desc->style, id, &cb->text_color);
@@ -2051,6 +2054,7 @@ Ca_Radio *ca_radio(const Ca_RadioDesc *desc)
 
     if (desc->hidden)   node->desc.hidden   = true;
     if (desc->disabled) node->desc.disabled = true;
+    if (desc->no_hover) node->desc.no_hover = true;
 
     uint32_t dummy = 0;
     apply_css(node, &node->desc, CA_ELEM_RADIO, desc->style, desc->id, &r->text_color);
@@ -2124,6 +2128,7 @@ Ca_Slider *ca_slider(const Ca_SliderDesc *desc)
 
     if (desc->hidden)   node->desc.hidden   = true;
     if (desc->disabled) node->desc.disabled = true;
+    if (desc->no_hover) node->desc.no_hover = true;
 
     uint32_t dummy = 0;
     apply_css(node, &node->desc, CA_ELEM_SLIDER, desc->style, id, &dummy);
@@ -2183,6 +2188,7 @@ Ca_Toggle *ca_toggle(const Ca_ToggleDesc *desc)
 
     if (desc->hidden)   node->desc.hidden   = true;
     if (desc->disabled) node->desc.disabled = true;
+    if (desc->no_hover) node->desc.no_hover = true;
 
     uint32_t dummy = 0;
     apply_css(node, &node->desc, CA_ELEM_TOGGLE, desc->style, id, &dummy);
@@ -2321,6 +2327,7 @@ Ca_Select *ca_select(const Ca_SelectDesc *desc)
 
     if (desc->hidden)   node->desc.hidden   = true;
     if (desc->disabled) node->desc.disabled = true;
+    if (desc->no_hover) node->desc.no_hover = true;
 
     uint32_t dummy = 0;
     apply_css(node, &node->desc, CA_ELEM_SELECT, desc->style, id, &dummy);
@@ -2419,6 +2426,7 @@ Ca_TabBar *ca_tabs(const Ca_TabBarDesc *desc)
 
     if (desc->hidden)   node->desc.hidden   = true;
     if (desc->disabled) node->desc.disabled = true;
+    if (desc->no_hover) node->desc.no_hover = true;
 
     uint32_t dummy = 0;
     apply_css(node, &node->desc, CA_ELEM_TABBAR, desc->style, id, &dummy);

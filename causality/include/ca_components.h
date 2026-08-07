@@ -110,6 +110,7 @@ typedef struct Ca_CheckboxDesc {
     const char *id, *style;
     bool        hidden;
     bool        disabled;
+    bool        no_hover;      /* transparent to hover/input-capture detection */
 } Ca_CheckboxDesc;
 
 typedef struct Ca_RadioDesc {
@@ -121,6 +122,7 @@ typedef struct Ca_RadioDesc {
     const char *id, *style;
     bool        hidden;
     bool        disabled;
+    bool        no_hover;      /* transparent to hover/input-capture detection */
 } Ca_RadioDesc;
 
 typedef struct Ca_SliderDesc {
@@ -131,6 +133,7 @@ typedef struct Ca_SliderDesc {
     const char *id, *style;
     bool        hidden;
     bool        disabled;
+    bool        no_hover;      /* transparent to hover/input-capture detection */
 } Ca_SliderDesc;
 
 typedef struct Ca_ToggleDesc {
@@ -140,6 +143,7 @@ typedef struct Ca_ToggleDesc {
     const char *id, *style;
     bool        hidden;
     bool        disabled;
+    bool        no_hover;      /* transparent to hover/input-capture detection */
 } Ca_ToggleDesc;
 
 typedef struct Ca_ProgressDesc {
@@ -162,6 +166,7 @@ typedef struct Ca_SelectDesc {
     const char  *id, *style;
     bool         hidden;
     bool         disabled;
+    bool         no_hover;      /* transparent to hover/input-capture detection */
 } Ca_SelectDesc;
 
 typedef struct Ca_TabBarDesc {
@@ -180,6 +185,7 @@ typedef struct Ca_TabBarDesc {
     bool         tabs_left_align;  /* true: left-align tab labels (false = centered) */
     bool         hidden;
     bool         disabled;
+    bool         no_hover;        /* transparent to hover/input-capture detection */
 } Ca_TabBarDesc;
 
 typedef struct Ca_TreeNodeDesc {

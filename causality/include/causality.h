@@ -770,6 +770,7 @@ typedef struct Ca_BtnDesc {
     bool        hidden;            /* display: none — removed from layout   */
     bool        disabled;          /* non-interactive, visually dimmed       */
     bool        skip_keyboard_focus; /* exclude from Tab focus and key activation */
+    bool        no_hover;          /* transparent to hover/input-capture detection */
 } Ca_BtnDesc;
 
 /* <hr> — horizontal rule / separator. */
@@ -811,6 +812,7 @@ typedef struct Ca_InputDesc {
     const char *style;             /* space-separated CSS class names        */
     bool        hidden;            /* display: none — removed from layout    */
     bool        disabled;          /* non-interactive, visually dimmed        */
+    bool        no_hover;          /* transparent to hover/input-capture detection */
 } Ca_InputDesc;
 
 /* ---- Tree root ---- */
