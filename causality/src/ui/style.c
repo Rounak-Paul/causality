@@ -765,6 +765,9 @@ static void style_resolve_sheet(Ca_Stylesheet *ss,
                         out->transition_props |= (1ULL << tprop);
                     break;
                 }
+                case CA_CSS_PROP_TRANSITION_EASING:
+                    out->transition_easing = val->keyword;
+                    break;
                 case CA_CSS_PROP_BORDER_WIDTH:
                     out->border_width = css_val_to_px(val); break;
                 case CA_CSS_PROP_BORDER_COLOR:

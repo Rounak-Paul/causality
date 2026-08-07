@@ -1727,7 +1727,18 @@ static void parse_declarations(Parser *p, Ca_CssRule *rule)
                     duration /= 1000.0f;
             }
 
-            /* Skip optional easing / rest of value */
+            /* Optional easing keyword, then skip any remaining tokens. */
+            int easing = -1; /* -1: none specified, keep node's current/default */
+            skip_ws(p);
+            Token ease_tok = parser_peek(p);
+            if (ease_tok.type == TOK_IDENT) {
+                if (strcasecmp(ease_tok.text, "linear") == 0) easing = 0;       /* CA_EASING_LINEAR */
+                else if (strcasecmp(ease_tok.text, "ease-in") == 0) easing = 1;  /* CA_EASING_EASE_IN */
+                else if (strcasecmp(ease_tok.text, "ease-out") == 0) easing = 2; /* CA_EASING_EASE_OUT */
+                else if (strcasecmp(ease_tok.text, "ease-in-out") == 0 ||
+                         strcasecmp(ease_tok.text, "ease") == 0) easing = 3;     /* CA_EASING_EASE_IN_OUT */
+                if (easing >= 0) parser_next(p);
+            }
             while (1) {
                 Token pk = parser_peek(p);
                 if (pk.type == TOK_SEMICOLON || pk.type == TOK_RBRACE || pk.type == TOK_EOF) break;
@@ -1740,6 +1751,12 @@ static void parse_declarations(Parser *p, Ca_CssRule *rule)
                 tv.number  = duration;
                 tv.keyword = (int)trans_prop;
                 add_decl(rule, CA_CSS_PROP_TRANSITION, tv);
+                if (easing >= 0) {
+                    Ca_CssValue ev = {0};
+                    ev.type    = CA_CSS_VAL_KEYWORD;
+                    ev.keyword = easing;
+                    add_decl(rule, CA_CSS_PROP_TRANSITION_EASING, ev);
+                }
             }
 
             skip_ws(p);

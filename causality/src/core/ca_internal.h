@@ -403,6 +403,15 @@ typedef enum {
    UI — node transition (for CSS transition property)
    ====================================================== */
 
+/* Interpolation curve applied across a transition's duration. Values match
+   the CSS transition-timing-function keywords this maps from. */
+typedef enum {
+    CA_EASING_LINEAR = 0,
+    CA_EASING_EASE_IN,
+    CA_EASING_EASE_OUT,
+    CA_EASING_EASE_IN_OUT,
+} Ca_Easing;
+
 typedef struct {
     uint8_t  prop;           /* Ca_CssPropId being animated */
     bool     active;
@@ -412,6 +421,7 @@ typedef struct {
     uint32_t to_color;       /* target RGBA */
     double   start_time;     /* glfwGetTime() when transition began */
     float    duration;       /* seconds */
+    Ca_Easing easing;
 } Ca_Transition;
 
 /* ======================================================
@@ -486,6 +496,10 @@ struct Ca_Node {
     Ca_Transition *transitions;
     float         transition_duration;   /* default duration from CSS (sec) */
     uint64_t      transition_props;      /* bitmask of props that should animate */
+    Ca_Easing     transition_easing;     /* default easing from CSS, applies
+                                             to every property this node
+                                             transitions (one shorthand per
+                                             node, matching transition_duration) */
     /* Drag callbacks (user-level drag interaction) */
     void         *drag_fn_start;    /* Ca_DragFn */
     void         *drag_fn_move;     /* Ca_DragFn */

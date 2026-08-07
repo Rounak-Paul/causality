@@ -120,6 +120,10 @@ typedef enum {
     CA_CSS_PROP_OVERFLOW_Y,
     /* Transitions */
     CA_CSS_PROP_TRANSITION,
+    /* Emitted as a second decl by the `transition:` shorthand when an
+       easing keyword follows the duration; `keyword` holds a Ca_Easing
+       value. Not settable as its own CSS property. */
+    CA_CSS_PROP_TRANSITION_EASING,
     /* Border — uniform */
     CA_CSS_PROP_BORDER_WIDTH,
     CA_CSS_PROP_BORDER_COLOR,

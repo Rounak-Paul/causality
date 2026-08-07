@@ -87,6 +87,30 @@ static float ease_in_out(float t)
     return 0.5f * f * f * f + 1.0f;
 }
 
+/* Ease-in cubic */
+static float ease_in(float t)
+{
+    return t * t * t;
+}
+
+/* Ease-out cubic */
+static float ease_out(float t)
+{
+    float f = t - 1.0f;
+    return f * f * f + 1.0f;
+}
+
+/* Applies the transition's authored curve to a linear [0,1] progress. */
+static float apply_easing(Ca_Easing easing, float t)
+{
+    switch (easing) {
+    case CA_EASING_LINEAR:     return t;
+    case CA_EASING_EASE_IN:    return ease_in(t);
+    case CA_EASING_EASE_OUT:   return ease_out(t);
+    case CA_EASING_EASE_IN_OUT: default: return ease_in_out(t);
+    }
+}
+
 /* Interpolate packed RGBA colors */
 static uint32_t lerp_color(uint32_t a, uint32_t b, float t)
 {
@@ -130,24 +154,6 @@ Ca_Transition *ca_node_transition_acquire(Ca_Node *node, uint8_t property)
     return ca_dyn_array_at(&node->transition_storage, index);
 }
 
-/* Start or update a transition on a node for a given property */
-static void transition_start(Ca_Node *node, uint8_t prop,
-                             float from_f, float to_f,
-                             uint32_t from_color, uint32_t to_color)
-{
-    Ca_Transition *slot = ca_node_transition_acquire(node, prop);
-    if (!slot) return;
-
-    slot->prop       = prop;
-    slot->active     = true;
-    slot->from_f     = from_f;
-    slot->to_f       = to_f;
-    slot->from_color = from_color;
-    slot->to_color   = to_color;
-    slot->start_time = glfwGetTime();
-    slot->duration   = node->transition_duration;
-}
-
 /* Tick all active transitions on a node. Returns true if any are still active. */
 static bool transition_tick(Ca_Node *node, double now)
 {
@@ -165,7 +171,7 @@ static bool transition_tick(Ca_Node *node, double now)
             any_active = true;
         }
 
-        float eased = ease_in_out(t);
+        float eased = apply_easing(tr->easing, t);
 
         /* Apply interpolated value to the node */
         switch ((Ca_CssPropId)tr->prop) {
@@ -182,7 +188,7 @@ static bool transition_tick(Ca_Node *node, double now)
                 node->desc.corner_radius = lerpf(tr->from_f, tr->to_f, eased);
                 break;
             case CA_CSS_PROP_OPACITY:
-                /* opacity modulates the alpha channel of background */
+                node->desc.opacity = lerpf(tr->from_f, tr->to_f, eased);
                 break;
             default: break;
         }

@@ -590,6 +590,7 @@ static void apply_css(Ca_Node *node, Ca_NodeDesc *nd,
     /* Store transition config on the node */
     node->transition_duration = rs.transition_duration;
     node->transition_props    = rs.transition_props;
+    node->transition_easing   = (Ca_Easing)rs.transition_easing;
 
     /* Post-CSS dirty detection: compare the fully-resolved *nd against the
        snapshot saved before claim_child/ca_ui_begin wrote the sparse desc.
@@ -708,6 +709,7 @@ void ca_widget_refresh_css(Ca_Node *node)
     apply_widget_text_color(node, text_color);
     node->transition_duration = resolved.transition_duration;
     node->transition_props = resolved.transition_props;
+    node->transition_easing = (Ca_Easing)resolved.transition_easing;
 
     node->desc.hidden = old.hidden;
     node->desc.disabled = old.disabled;
@@ -1295,6 +1297,7 @@ static void maybe_transition(Ca_Node *node, Ca_CssPropId prop,
     slot->to_color   = new_color;
     slot->start_time = glfwGetTime();
     slot->duration   = node->transition_duration;
+    slot->easing     = node->transition_easing;
 
     /* A transition can begin during the input pass, after ca_ui_update has
        already scanned active transitions for this frame. Wake an idle event
@@ -1385,6 +1388,7 @@ static void node_set_style(Ca_Node *node, const char *style,
 
         node->transition_duration = rs.transition_duration;
         node->transition_props    = rs.transition_props;
+        node->transition_easing   = (Ca_Easing)rs.transition_easing;
 
         if ((rs.set_mask & (1ULL << CA_CSS_PROP_DISPLAY)) &&
             rs.display == CA_CSS_DISPLAY_NONE)
@@ -1405,6 +1409,18 @@ static void node_set_style(Ca_Node *node, const char *style,
     if (old_desc.background != node->desc.background)
         maybe_transition(node, CA_CSS_PROP_BACKGROUND_COLOR,
                          0, 0, old_desc.background, node->desc.background);
+    if (old_desc.opacity != node->desc.opacity)
+        maybe_transition(node, CA_CSS_PROP_OPACITY,
+                         old_desc.opacity, node->desc.opacity, 0, 0);
+    if (old_desc.width != node->desc.width)
+        maybe_transition(node, CA_CSS_PROP_WIDTH,
+                         old_desc.width, node->desc.width, 0, 0);
+    if (old_desc.height != node->desc.height)
+        maybe_transition(node, CA_CSS_PROP_HEIGHT,
+                         old_desc.height, node->desc.height, 0, 0);
+    if (old_desc.corner_radius != node->desc.corner_radius)
+        maybe_transition(node, CA_CSS_PROP_BORDER_RADIUS,
+                         old_desc.corner_radius, node->desc.corner_radius, 0, 0);
 }
 
 static void node_set_hidden(Ca_Node *node, bool hidden)
