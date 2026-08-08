@@ -1505,9 +1505,16 @@ static void apply_inherited_z(Ca_Window *win, uint32_t start, uint32_t count,
    transform is always fully determined by its node's position in the tree,
    and cached commands replay with whatever transform was current when they
    were first painted. */
+/* `replayed` must be true for commands copied out of the paint cache: those
+   carry whatever transform was current when they were first painted, so an
+   identity transform still has to be written back over them. Freshly
+   emitted commands are memset to zero by paint_node_content, so the
+   identity case can skip the stores entirely — which is the common path,
+   since almost nothing in a typical tree is transformed. */
 static void apply_transform(Ca_Window *win, uint32_t start, uint32_t count,
-                            Ca_Transform2D xf)
+                            Ca_Transform2D xf, bool replayed)
 {
+    if (!xf.active && !replayed) return;
     for (uint32_t ci = start; ci < start + count; ++ci) {
         Ca_DrawCmd *cmd = &win->draw_cmds[ci];
         cmd->xf_active = xf.active;
@@ -1564,7 +1571,7 @@ static void paint_tree_cached(Ca_Instance *inst, Ca_Window *win,
         paint_node_content(win, inst->font, node, clip);
         uint32_t count = win->draw_cmd_count - start;
         apply_inherited_z(win, start, count, effective_z);
-        apply_transform(win, start, count, effective_xf);
+        apply_transform(win, start, count, effective_xf, false);
         cache_commands(win, node, start, count, false);
         node->dirty &= ~CA_DIRTY_CONTENT;
         if (win->debug_overlay && !win->dbg_force_repaint)
@@ -1582,7 +1589,7 @@ static void paint_tree_cached(Ca_Instance *inst, Ca_Window *win,
                                   &win->draw_cmds[replay_start],
                                   node->cache_count);
         apply_inherited_z(win, replay_start, node->cache_count, effective_z);
-        apply_transform(win, replay_start, node->cache_count, effective_xf);
+        apply_transform(win, replay_start, node->cache_count, effective_xf, true);
     }
 
     /* ---- Child clip ---- */
@@ -1603,7 +1610,7 @@ static void paint_tree_cached(Ca_Instance *inst, Ca_Window *win,
         paint_scrollbars(win, node, clip);
         uint32_t sb_count = win->draw_cmd_count - sb_start;
         apply_inherited_z(win, sb_start, sb_count, effective_z);
-        apply_transform(win, sb_start, sb_count, effective_xf);
+        apply_transform(win, sb_start, sb_count, effective_xf, false);
         cache_commands(win, node, sb_start, sb_count, true);
     } else if (node->cache_post_count > 0 &&
                ca_window_reserve_draw_commands(win, (size_t)win->draw_cmd_count + node->cache_post_count))
@@ -1617,7 +1624,7 @@ static void paint_tree_cached(Ca_Instance *inst, Ca_Window *win,
                                   &win->draw_cmds[sb_replay],
                                   node->cache_post_count);
         apply_inherited_z(win, sb_replay, node->cache_post_count, effective_z);
-        apply_transform(win, sb_replay, node->cache_post_count, effective_xf);
+        apply_transform(win, sb_replay, node->cache_post_count, effective_xf, true);
     }
 }
 

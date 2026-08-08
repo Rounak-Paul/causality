@@ -3669,14 +3669,29 @@ static Ca_Transform2D node_world_transform(const Ca_Node *n)
                                                    n->w, n->h));
 }
 
+/* True when any node on the path to the root carries a transform.
+   point_in_node runs inside pool-wide scans over every node in the window
+   (scroll targets, inputs, buttons, ...) on every mouse event, so the
+   untransformed case — which is nearly every node, nearly always — must
+   stay a plain AABB test with no matrix work and no allocation. This walk
+   touches only the cheap desc flags and stops at the first hit. */
+static bool node_has_transformed_ancestor(const Ca_Node *n)
+{
+    for (const Ca_Node *cur = n; cur; cur = cur->parent)
+        if (ca_desc_has_transform(&cur->desc)) return true;
+    return false;
+}
+
 /* True when a window-space point falls inside a node's box.
    Any rotation/scale on the node or its ancestors is undone first, so input
    follows what the user actually sees rather than the untransformed box. */
 static bool point_in_node(Ca_Node *n, float px, float py)
 {
-    Ca_Transform2D xf = node_world_transform(n);
-    if (xf.active && !ca_transform_apply_inverse(xf, px, py, &px, &py))
-        return false;
+    if (node_has_transformed_ancestor(n)) {
+        Ca_Transform2D xf = node_world_transform(n);
+        if (xf.active && !ca_transform_apply_inverse(xf, px, py, &px, &py))
+            return false;
+    }
     return px >= n->x && px <= n->x + n->w &&
            py >= n->y && py <= n->y + n->h;
 }
