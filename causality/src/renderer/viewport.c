@@ -341,7 +341,17 @@ void ca_viewport_render_all(Ca_Instance *inst, Ca_Window *win,
             .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
             .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
         };
-        vkBeginCommandBuffer(f->cmd, &begin);
+        VkResult vr = vkBeginCommandBuffer(f->cmd, &begin);
+        if (vr != VK_SUCCESS) {
+            fprintf(stderr, "[viewport] vkBeginCommandBuffer failed: %d\n", vr);
+            /* render_fence was already reset above in anticipation of a
+               submit that isn't happening this iteration — re-signal it
+               with an empty submit so the next render of this slot doesn't
+               hang waiting on a fence nothing will ever signal. */
+            VkSubmitInfo empty_submit = { .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO };
+            vkQueueSubmit(inst->gfx_queue, 1, &empty_submit, f->render_fence);
+            continue;
+        }
 
         /* Transition to COLOR_ATTACHMENT_OPTIMAL for engine rendering */
         transition_viewport_image(f->cmd, f->color_image,
@@ -368,7 +378,18 @@ void ca_viewport_render_all(Ca_Instance *inst, Ca_Window *win,
             VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
             VK_ACCESS_2_SHADER_READ_BIT);
 
-        vkEndCommandBuffer(f->cmd);
+        vr = vkEndCommandBuffer(f->cmd);
+        if (vr != VK_SUCCESS) {
+            fprintf(stderr, "[viewport] vkEndCommandBuffer failed: %d\n", vr);
+            VkSubmitInfo empty_submit = { .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO };
+            vkQueueSubmit(inst->gfx_queue, 1, &empty_submit, f->render_fence);
+            /* on_render already ran above and needs_redraw was cleared, but
+               this slot's image never actually reached the GPU — re-arm so
+               the next call retries instead of leaving whatever partial/
+               undefined content is in f->color_image to be sampled forever. */
+            vp->needs_redraw = true;
+            continue;
+        }
 
         /* Submit asynchronously: render_fence is waited on at the START of
            this slot's NEXT render (line ~340 above), reclaiming f->cmd
@@ -384,7 +405,20 @@ void ca_viewport_render_all(Ca_Instance *inst, Ca_Window *win,
             .signalSemaphoreCount = 1,
             .pSignalSemaphores    = &f->render_done,
         };
-        vkQueueSubmit(inst->gfx_queue, 1, &submit, f->render_fence);
+        vr = vkQueueSubmit(inst->gfx_queue, 1, &submit, f->render_fence);
+        if (vr != VK_SUCCESS) {
+            fprintf(stderr, "[viewport] vkQueueSubmit failed: %d\n", vr);
+            /* The real submit above didn't happen, so render_fence would
+               otherwise never be signaled — same recovery as the other
+               failure paths in this loop. render_done was never signaled
+               either; skip pushing it below so the compositor never waits
+               on a semaphore nothing will signal. */
+            VkSubmitInfo empty_submit = { .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO };
+            vkQueueSubmit(inst->gfx_queue, 1, &empty_submit, f->render_fence);
+            vp->needs_redraw = true;
+            vp->frame_index = (fi + 1) % CA_FRAMES_IN_FLIGHT;
+            continue;
+        }
         f->has_rendered_once = true;
 
         /* Record which slot was actually just submitted — the compositor

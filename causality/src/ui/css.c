@@ -1335,29 +1335,11 @@ static uint32_t parse_gradient_color_stop(Parser *p)
         return 0x000000FFu;
     }
     if (t.type == TOK_IDENT) {
-        /* Named color */
+        /* Named color — shares the full table with every other named-color
+           site in this file (see lookup_named_color above). */
         parser_next(p);
-        struct { const char *name; uint32_t rgba; } ctbl[] = {
-            {"transparent", 0x00000000u}, {"black",   0x000000FFu},
-            {"white",       0xFFFFFFFFu}, {"red",     0xFF0000FFu},
-            {"green",       0x008000FFu}, {"blue",    0x0000FFFFu},
-            {"yellow",      0xFFFF00FFu}, {"cyan",    0x00FFFFFFu},
-            {"magenta",     0xFF00FFFFu}, {"orange",  0xFFA500FFu},
-            {"purple",      0x800080FFu}, {"pink",    0xFFC0CBFFu},
-            {"gray",        0x808080FFu}, {"grey",    0x808080FFu},
-            {"silver",      0xC0C0C0FFu}, {"lime",    0x00FF00FFu},
-            {"navy",        0x000080FFu}, {"teal",    0x008080FFu},
-            {"maroon",      0x800000FFu}, {"olive",   0x808000FFu},
-            {"aqua",        0x00FFFFFFu}, {"fuchsia", 0xFF00FFFFu},
-            {"coral",       0xFF7F50FFu}, {"salmon",  0xFA8072FFu},
-            {"khaki",       0xF0E68CFFu}, {"violet",  0xEE82EEFFu},
-            {"indigo",      0x4B0082FFu}, {"gold",    0xFFD700FFu},
-            {"crimson",     0xDC143CFFu}, {"tan",     0xD2B48CFFu},
-        };
-        for (size_t i = 0; i < sizeof(ctbl)/sizeof(ctbl[0]); i++) {
-            if (strcasecmp(t.text, ctbl[i].name) == 0)
-                return ctbl[i].rgba;
-        }
+        uint32_t named = 0;
+        if (lookup_named_color(t.text, &named)) return named;
         return 0x000000FFu;
     }
     return 0x000000FFu;

@@ -438,7 +438,11 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
         .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
         .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
     };
-    vkBeginCommandBuffer(f->cmd, &begin);
+    result = vkBeginCommandBuffer(f->cmd, &begin);
+    if (result != VK_SUCCESS) {
+        fprintf(stderr, "[vk] vkBeginCommandBuffer failed: %d\n", result);
+        return;
+    }
 
     /* Transition to COLOR_ATTACHMENT_OPTIMAL */
     transition_image(f->cmd, sc->images[image_index],
@@ -1102,7 +1106,11 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
         VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
         VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT,  VK_ACCESS_2_NONE);
 
-    vkEndCommandBuffer(f->cmd);
+    result = vkEndCommandBuffer(f->cmd);
+    if (result != VK_SUCCESS) {
+        fprintf(stderr, "[vk] vkEndCommandBuffer failed: %d\n", result);
+        return;
+    }
 
     /* Submit. Waits on image_available (swapchain image ready to draw
        into) plus every viewport's render_done semaphore collected above
@@ -1134,7 +1142,20 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
         .signalSemaphoreCount = 1,
         .pSignalSemaphores    = &render_finished,
     };
-    vkQueueSubmit(inst->gfx_queue, 1, &submit, f->in_flight);
+    result = vkQueueSubmit(inst->gfx_queue, 1, &submit, f->in_flight);
+    if (result != VK_SUCCESS) {
+        fprintf(stderr, "[vk] vkQueueSubmit failed: %d\n", result);
+        /* f->in_flight was already reset above (line ~422) in anticipation
+           of this submit signaling it — if we bail out here without
+           signaling it some other way, next frame's vkWaitForFences on
+           this same fence hangs forever. An empty submit still signals
+           the fence once it completes, so use that purely to keep the
+           frame's fence lifecycle consistent; the frame's content is
+           simply dropped (skip present) since nothing was drawn. */
+        VkSubmitInfo empty_submit = { .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO };
+        vkQueueSubmit(inst->gfx_queue, 1, &empty_submit, f->in_flight);
+        return;
+    }
 
     /* Present */
     VkPresentInfoKHR present = {
