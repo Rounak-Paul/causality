@@ -779,6 +779,11 @@ static Ca_NodeDesc div_to_nd(const Ca_DivDesc *d)
     nd.no_hover       = d->no_hover;
     nd.overflow_x     = d->clip_content ? 1u : 0u;
     nd.overflow_y     = d->clip_content ? 1u : 0u;
+    nd.rotation       = d->rotation;
+    nd.scale_bias_x   = d->scale_bias_x;
+    nd.scale_bias_y   = d->scale_bias_y;
+    nd.pivot_off_x    = d->pivot_off_x;
+    nd.pivot_off_y    = d->pivot_off_y;
     return nd;
 }
 
@@ -1728,6 +1733,35 @@ void ca_div_set_absolute_rect(Ca_Div *div,
     node->desc.position_offsets = 1u | 4u;
     node->desc.position_percent = 0u;
     node->dirty |= CA_DIRTY_LAYOUT;
+}
+
+/* Marks a node and every descendant as needing repaint. A transform change
+   is inherited by the whole subtree, so repainting only the node itself
+   would leave children drawn with the previous transform. */
+static void mark_subtree_content_dirty(Ca_Node *node)
+{
+    if (!node || !node->in_use) return;
+    node->dirty |= CA_DIRTY_CONTENT;
+    for (uint32_t i = 0; i < node->child_count; ++i)
+        mark_subtree_content_dirty(node->children[i]);
+}
+
+void ca_div_set_transform(Ca_Div *div, float rotation,
+                          float scale_x, float scale_y,
+                          float pivot_x, float pivot_y)
+{
+    Ca_Node *node = (Ca_Node *)div;
+    if (!node || !node->in_use || !isfinite(rotation) ||
+        !isfinite(scale_x) || !isfinite(scale_y) ||
+        !isfinite(pivot_x) || !isfinite(pivot_y))
+        return;
+
+    node->desc.rotation     = rotation;
+    node->desc.scale_bias_x = scale_x - 1.0f;
+    node->desc.scale_bias_y = scale_y - 1.0f;
+    node->desc.pivot_off_x  = pivot_x - 0.5f;
+    node->desc.pivot_off_y  = pivot_y - 0.5f;
+    mark_subtree_content_dirty(node);
 }
 
 void ca_btn_get_layout_inner_size(const Ca_Button *btn, float *out_w, float *out_h)
@@ -3621,8 +3655,28 @@ bool ca_window_key_consumed(const Ca_Window *window, int key)
    INPUT PASS — hit-test, focus, keyboard
    ============================================================ */
 
+/* Accumulated paint transform for a node, rebuilt by walking to the root.
+   Hit-testing is a per-event operation on a single node path, not a
+   per-frame walk over the whole tree, so recomputing here keeps the
+   transform in exactly one place (paint owns the forward direction) rather
+   than caching a second copy on every node that could fall out of sync. */
+static Ca_Transform2D node_world_transform(const Ca_Node *n)
+{
+    if (!n) return ca_transform_identity();
+    Ca_Transform2D parent_xf = node_world_transform(n->parent);
+    return ca_transform_mul(parent_xf,
+                            ca_transform_from_desc(&n->desc, n->x, n->y,
+                                                   n->w, n->h));
+}
+
+/* True when a window-space point falls inside a node's box.
+   Any rotation/scale on the node or its ancestors is undone first, so input
+   follows what the user actually sees rather than the untransformed box. */
 static bool point_in_node(Ca_Node *n, float px, float py)
 {
+    Ca_Transform2D xf = node_world_transform(n);
+    if (xf.active && !ca_transform_apply_inverse(xf, px, py, &px, &py))
+        return false;
     return px >= n->x && px <= n->x + n->w &&
            py >= n->y && py <= n->y + n->h;
 }

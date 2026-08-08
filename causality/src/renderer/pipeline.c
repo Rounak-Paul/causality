@@ -36,7 +36,7 @@ static const char *VERT_GLSL =
     "    vec2  size;           /* offset   8 */\n"
     "    vec4  color;          /* offset  16 */\n"
     "    vec2  viewport;       /* offset  32 */\n"
-    "    vec2  _pad0;          /* offset  40 */\n"
+    "    vec2  xf_ab;          /* offset  40 — transform col 0 (a, b) */\n"
     "    vec4  corner_radii;   /* offset  48 — tl, tr, br, bl */\n"
     "    vec4  border_color;   /* offset  64 */\n"
     "    vec4  color2;         /* offset  80 — gradient end / shadow tint */\n"
@@ -46,7 +46,7 @@ static const char *VERT_GLSL =
     "    float gradient_angle; /* offset 108 — degrees */\n"
     "    float gradient_cx;    /* offset 112 — radial center 0..1 */\n"
     "    float gradient_cy;    /* offset 116 */\n"
-    "    vec2  _pad1;          /* offset 120 */\n"
+    "    vec2  xf_cd;          /* offset 120 — transform col 1 (c, d) */\n"
     "};\n"
     "\n"
     "layout(std430, set = 0, binding = 0) readonly buffer SSB {\n"
@@ -72,11 +72,16 @@ static const char *VERT_GLSL =
     "        vec2(1.0, 0.0), vec2(1.0, 1.0), vec2(0.0, 1.0)\n"
     "    );\n"
     "    vec2 off   = offsets[gl_VertexIndex];\n"
-    "    vec2 pixel = d.pos + off * d.size;\n"
+    "    vec2 local = off * d.size;\n"
+    /* mat2(col0, col1) — translation is pre-folded into d.pos on the CPU.
+       v_local stays in untransformed node space so the fragment shader's
+       rounded-corner and border SDF keeps measuring the real geometry. */
+    "    vec2 xf    = mat2(d.xf_ab, d.xf_cd) * local;\n"
+    "    vec2 pixel = d.pos + xf;\n"
     "    vec2 ndc   = (pixel / d.viewport) * 2.0 - 1.0;\n"
     "    gl_Position   = vec4(ndc, 0.0, 1.0);\n"
     "    v_color        = d.color;\n"
-    "    v_local        = off * d.size;\n"
+    "    v_local        = local;\n"
     "    v_size         = d.size;\n"
     "    v_corner_radii = d.corner_radii;\n"
     "    v_border_w     = d.border_width;\n"
@@ -367,8 +372,14 @@ static const char *TEXT_VERT_GLSL =
     "    vec4 uv;       // (s0, t0, s1, t1)\n"
     "    vec4 color;\n"
     "    vec2 viewport;\n"
-    "    vec2 _pad;\n"
-    "    vec4 _pad1[4];\n"
+    "    vec2 xf_ab;    // transform col 0 (a, b)\n"
+    "    vec2 xf_cd;    // transform col 1 (c, d)\n"
+    /* Padding MUST be declared as vec2, never vec4: in std430 a vec4 is
+       16-byte aligned, which would insert 8 bytes of padding after xf_cd
+       (offset 64) and inflate this struct to 144 bytes, while the C-side
+       Ca_TextInstance is 128. The shader indexes the SSBO by struct
+       stride, so the mismatch would misread every glyph after the first. */
+    "    vec2 _pad1[7];\n"
     "};\n"
     "\n"
     "layout(std430, set = 0, binding = 0) readonly buffer SSB {\n"
@@ -384,7 +395,10 @@ static const char *TEXT_VERT_GLSL =
     "        vec2(0.0, 0.0), vec2(1.0, 0.0), vec2(0.0, 1.0),\n"
     "        vec2(1.0, 0.0), vec2(1.0, 1.0), vec2(0.0, 1.0));\n"
     "    vec2 off   = offsets[gl_VertexIndex];\n"
-    "    vec2 pixel = d.pos + off * d.size;\n"
+    /* Same transform convention as the rect pipeline: 2x2 about the glyph
+       quad's local origin, translation pre-folded into d.pos. */
+    "    vec2 xf    = mat2(d.xf_ab, d.xf_cd) * (off * d.size);\n"
+    "    vec2 pixel = d.pos + xf;\n"
     "    vec2 ndc   = (pixel / d.viewport) * 2.0 - 1.0;\n"
     "    gl_Position = vec4(ndc, 0.0, 1.0);\n"
     "    v_uv    = d.uv.xy + off * (d.uv.zw - d.uv.xy);\n"

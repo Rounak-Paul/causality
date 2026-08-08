@@ -1499,8 +1499,27 @@ static void apply_inherited_z(Ca_Window *win, uint32_t start, uint32_t count,
             win->draw_cmds[ci].z_index = effective_z;
 }
 
+/* Stamp the accumulated subtree transform onto freshly-emitted or replayed
+   draw commands in [start, start+count).  Applied unconditionally (not only
+   to untransformed commands, unlike inherited z) because a command's
+   transform is always fully determined by its node's position in the tree,
+   and cached commands replay with whatever transform was current when they
+   were first painted. */
+static void apply_transform(Ca_Window *win, uint32_t start, uint32_t count,
+                            Ca_Transform2D xf)
+{
+    for (uint32_t ci = start; ci < start + count; ++ci) {
+        Ca_DrawCmd *cmd = &win->draw_cmds[ci];
+        cmd->xf_active = xf.active;
+        cmd->xf_a  = xf.a;  cmd->xf_b  = xf.b;
+        cmd->xf_c  = xf.c;  cmd->xf_d  = xf.d;
+        cmd->xf_tx = xf.tx; cmd->xf_ty = xf.ty;
+    }
+}
+
 static void paint_tree_cached(Ca_Instance *inst, Ca_Window *win,
-                              Ca_Node *node, ClipRect clip, int16_t inherited_z)
+                              Ca_Node *node, ClipRect clip, int16_t inherited_z,
+                              Ca_Transform2D inherited_xf)
 {
     if (!node || !node->in_use) return;
 
@@ -1528,6 +1547,15 @@ static void paint_tree_cached(Ca_Instance *inst, Ca_Window *win,
     int16_t effective_z = (node->desc.z_index != 0) ? node->desc.z_index
                                                      : inherited_z;
 
+    /* Effective transform: this node's own rotation/scale about its pivot,
+       composed under whatever its transformed ancestors already contribute.
+       Computed from the node's laid-out box, so it tracks layout changes
+       without any extra invalidation. */
+    Ca_Transform2D effective_xf = ca_transform_mul(
+        inherited_xf,
+        ca_transform_from_desc(&node->desc, node->x, node->y,
+                               node->w, node->h));
+
     bool was_dirty = (node->dirty & CA_DIRTY_CONTENT) != 0;
 
     /* ---- Pre-children: background + widget visuals ---- */
@@ -1536,6 +1564,7 @@ static void paint_tree_cached(Ca_Instance *inst, Ca_Window *win,
         paint_node_content(win, inst->font, node, clip);
         uint32_t count = win->draw_cmd_count - start;
         apply_inherited_z(win, start, count, effective_z);
+        apply_transform(win, start, count, effective_xf);
         cache_commands(win, node, start, count, false);
         node->dirty &= ~CA_DIRTY_CONTENT;
         if (win->debug_overlay && !win->dbg_force_repaint)
@@ -1553,6 +1582,7 @@ static void paint_tree_cached(Ca_Instance *inst, Ca_Window *win,
                                   &win->draw_cmds[replay_start],
                                   node->cache_count);
         apply_inherited_z(win, replay_start, node->cache_count, effective_z);
+        apply_transform(win, replay_start, node->cache_count, effective_xf);
     }
 
     /* ---- Child clip ---- */
@@ -1562,9 +1592,10 @@ static void paint_tree_cached(Ca_Instance *inst, Ca_Window *win,
                                     ca_scrollbar_viewport_width(node),
                                     ca_scrollbar_viewport_height(node));
 
-    /* ---- Recurse children (propagate effective_z down) ---- */
+    /* ---- Recurse children (propagate effective_z and transform down) ---- */
     for (uint32_t i = 0; i < node->child_count; ++i)
-        paint_tree_cached(inst, win, node->children[i], child_clip, effective_z);
+        paint_tree_cached(inst, win, node->children[i], child_clip,
+                          effective_z, effective_xf);
 
     /* ---- Post-children: scrollbars ---- */
     if (was_dirty) {
@@ -1572,6 +1603,7 @@ static void paint_tree_cached(Ca_Instance *inst, Ca_Window *win,
         paint_scrollbars(win, node, clip);
         uint32_t sb_count = win->draw_cmd_count - sb_start;
         apply_inherited_z(win, sb_start, sb_count, effective_z);
+        apply_transform(win, sb_start, sb_count, effective_xf);
         cache_commands(win, node, sb_start, sb_count, true);
     } else if (node->cache_post_count > 0 &&
                ca_window_reserve_draw_commands(win, (size_t)win->draw_cmd_count + node->cache_post_count))
@@ -1585,6 +1617,7 @@ static void paint_tree_cached(Ca_Instance *inst, Ca_Window *win,
                                   &win->draw_cmds[sb_replay],
                                   node->cache_post_count);
         apply_inherited_z(win, sb_replay, node->cache_post_count, effective_z);
+        apply_transform(win, sb_replay, node->cache_post_count, effective_xf);
     }
 }
 
@@ -2415,7 +2448,8 @@ void ca_paint_pass(Ca_Instance *inst, Ca_Window *win)
 
     /* 2. Incremental tree walk: only dirty nodes repaint, clean reuse cache */
     ClipRect no_clip = { .active = false };
-    paint_tree_cached(inst, win, win->root, no_clip, 0);
+    paint_tree_cached(inst, win, win->root, no_clip, 0,
+                      ca_transform_identity());
 
     /* 3. Decorations — always fresh, never cached (depend on global focus state) */
     Ca_Font *font = inst->font;

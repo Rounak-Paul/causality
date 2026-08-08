@@ -102,15 +102,18 @@ typedef struct {
     float viewport[2];
 } Ca_TextPushConst;
 
-/* std430-padded text instance for SSBO. Keep stride equal to Ca_RectPushConst. */
+/* std430-padded text instance for SSBO. Keep stride equal to Ca_RectPushConst.
+   Glyphs carry the same 2x2 paint transform as rects (translation folded
+   into `pos`) so text inside a rotated panel rotates with it. */
 typedef struct {
     float pos[2];
     float size[2];
     float uv[4];
     float color[4];
     float viewport[2];
-    float _pad[2];
-    float _pad1[16];
+    float xf_ab[2];             /* transform a, b — identity is (1, 0) */
+    float xf_cd[2];             /* transform c, d — identity is (0, 1) */
+    float _pad1[14];
 } Ca_TextInstance;
 
 /* Forward-declare Ca_Font (full definition lives in renderer/font.h) */
@@ -130,7 +133,7 @@ typedef enum {
      size[2]         offset   8  (8)
      color[4]        offset  16  (16)
      viewport[2]     offset  32  (8)
-     _pad0[2]        offset  40  (8)  ← padding to reach vec4 boundary at 48
+     xf_ab[2]        offset  40  (8)  transform column 0 (a, b)
      corner_radii[4] offset  48  (16) tl, tr, br, bl
      border_color[4] offset  64  (16)
      color2[4]       offset  80  (16) gradient end / shadow tint
@@ -140,14 +143,20 @@ typedef enum {
      gradient_angle  offset 108  (4)  degrees (linear) or unused (radial)
      gradient_cx     offset 112  (4)  radial center x (0..1)
      gradient_cy     offset 116  (4)  radial center y (0..1)
-     _pad1[2]        offset 120  (8)
-   Total: 128 bytes                                                              */
+     xf_cd[2]        offset 120  (8)  transform column 1 (c, d)
+   Total: 128 bytes
+
+   The 2x2 transform occupies what used to be pure padding, so adding
+   rotation cost no extra bytes and left the shared 128-byte instance
+   stride (asserted below) untouched. Its translation is folded into `pos`
+   on the CPU instead of needing two more floats, since the vertex shader
+   already adds `pos` after expanding the quad corner.                     */
 typedef struct {
     float    pos[2];
     float    size[2];
     float    color[4];
     float    viewport[2];
-    float    _pad0[2];
+    float    xf_ab[2];          /* transform a, b — identity is (1, 0) */
     float    corner_radii[4];   /* tl, tr, br, bl */
     float    border_color[4];
     float    color2[4];
@@ -157,7 +166,7 @@ typedef struct {
     float    gradient_angle;
     float    gradient_cx;
     float    gradient_cy;
-    float    _pad1[2];
+    float    xf_cd[2];          /* transform c, d — identity is (0, 1) */
 } Ca_RectPushConst;
 
 /* Instance buffer holds one fixed-stride slot per draw command for one frame.
@@ -165,8 +174,38 @@ typedef struct {
    all pipelines can bind the same storage buffer without dynamic offsets. */
 #define CA_INSTANCE_SLOT_SIZE ((uint32_t)sizeof(Ca_RectPushConst))
 
+/* ca_instance_pack_transform is defined just below Ca_DrawCmd, which it
+   reads from. */
+
 _Static_assert(sizeof(Ca_TextInstance) == sizeof(Ca_RectPushConst),
                "Causality instance SSBO records must use one fixed stride");
+
+/* The GLSL struct declarations in pipeline.c hardcode these std430 offsets;
+   a silent mismatch would render garbage rather than fail to build.
+
+   These assertions only constrain the C side. The matching GLSL structs
+   must be checked by hand, because std430 alignment does NOT follow C
+   struct rules: a `vec4` (or an array of them) is 16-byte aligned, so
+   declaring padding as `vec4 pad[3]` after a member ending at a non-16
+   boundary silently inflates the GLSL struct and desynchronises the SSBO
+   stride from this one. That exact mistake shipped once and dropped almost
+   every glyph on screen while rects rendered fine. Always express trailing
+   padding as `vec2`, and verify any change with:
+
+     glslc -fshader-stage=compute layout.comp -o out.spv
+     spirv-dis out.spv | grep ArrayStride     # must equal 128            */
+_Static_assert(sizeof(Ca_RectPushConst) == 128,
+               "RectData must stay 128 bytes to match VERT_GLSL");
+_Static_assert(offsetof(Ca_RectPushConst, xf_ab) == 40,
+               "RectData.xf_ab must sit at offset 40 to match VERT_GLSL");
+_Static_assert(offsetof(Ca_RectPushConst, xf_cd) == 120,
+               "RectData.xf_cd must sit at offset 120 to match VERT_GLSL");
+_Static_assert(offsetof(Ca_TextInstance, viewport) == 48,
+               "TextData.viewport must sit at offset 48 to match TEXT_VERT_GLSL");
+_Static_assert(offsetof(Ca_TextInstance, xf_ab) == 56,
+               "TextData.xf_ab must sit at offset 56 to match TEXT_VERT_GLSL");
+_Static_assert(offsetof(Ca_TextInstance, xf_cd) == 64,
+               "TextData.xf_cd must sit at offset 64 to match TEXT_VERT_GLSL");
 
 /* ======================================================
    EVENTS
@@ -311,7 +350,90 @@ typedef struct {
     float        gradient_angle;  /* degrees (linear); 0 = top→bottom */
     float        gradient_cx;     /* radial center x (0..1) */
     float        gradient_cy;     /* radial center y (0..1) */
+    /* 2D transform — purely visual, applied at paint time about the node's
+       pivot. Layout (x/y/w/h) is unaffected, so a rotated node still
+       occupies its axis-aligned box for sizing purposes; transforms
+       compose down the subtree and are inverted for hit-testing.
+
+       Scale is stored biased by -1 (0 = identity) and pivot is stored as an
+       offset from center (0 = center) so that the `Ca_NodeDesc nd = {0}`
+       initializer used at every construction site means "no transform"
+       without every builder having to restate defaults. Use the
+       ca_desc_scale_x/y and ca_desc_pivot_x/y accessors to read them. */
+    float        rotation;        /* degrees clockwise; 0 = none */
+    float        scale_bias_x, scale_bias_y;  /* actual scale minus 1 */
+    float        pivot_off_x, pivot_off_y;    /* normalized pivot minus 0.5 */
 } Ca_NodeDesc;
+
+static inline float ca_desc_scale_x(const Ca_NodeDesc *d) { return 1.0f + d->scale_bias_x; }
+static inline float ca_desc_scale_y(const Ca_NodeDesc *d) { return 1.0f + d->scale_bias_y; }
+static inline float ca_desc_pivot_x(const Ca_NodeDesc *d) { return 0.5f + d->pivot_off_x; }
+static inline float ca_desc_pivot_y(const Ca_NodeDesc *d) { return 0.5f + d->pivot_off_y; }
+
+static inline bool ca_desc_has_transform(const Ca_NodeDesc *d)
+{
+    return d->rotation != 0.0f ||
+           d->scale_bias_x != 0.0f || d->scale_bias_y != 0.0f;
+}
+
+/* Accumulated 2D affine transform for a painted subtree, expressed as the
+   matrix [ a c ; b d ] plus translation (tx, ty) in window pixels:
+
+       screen_x = a * px + c * py + tx
+       screen_y = b * px + d * py + ty
+
+   Composed down the paint walk (ca_transform_mul) so a rotated panel
+   rotates its descendants and their glyphs, and inverted at the single
+   hit-test chokepoint so input follows the pixels. `active` is false for
+   the identity, letting the untransformed common path skip all of it. */
+typedef struct {
+    float a, b, c, d;
+    float tx, ty;
+    bool  active;
+} Ca_Transform2D;
+
+static inline Ca_Transform2D ca_transform_identity(void)
+{
+    return (Ca_Transform2D){ .a = 1.0f, .b = 0.0f, .c = 0.0f, .d = 1.0f,
+                             .tx = 0.0f, .ty = 0.0f, .active = false };
+}
+
+/* Returns `outer` applied on top of `inner` (outer ∘ inner): a point is
+   first mapped by `inner`, then by `outer`. */
+static inline Ca_Transform2D ca_transform_mul(Ca_Transform2D outer,
+                                              Ca_Transform2D inner)
+{
+    if (!outer.active) return inner;
+    if (!inner.active) return outer;
+    Ca_Transform2D r;
+    r.a  = outer.a * inner.a + outer.c * inner.b;
+    r.b  = outer.b * inner.a + outer.d * inner.b;
+    r.c  = outer.a * inner.c + outer.c * inner.d;
+    r.d  = outer.b * inner.c + outer.d * inner.d;
+    r.tx = outer.a * inner.tx + outer.c * inner.ty + outer.tx;
+    r.ty = outer.b * inner.tx + outer.d * inner.ty + outer.ty;
+    r.active = true;
+    return r;
+}
+
+/* Builds the transform for one node's rotation/scale about its pivot,
+   where (px, py) is the node's top-left corner and (w, h) its size. */
+Ca_Transform2D ca_transform_from_desc(const Ca_NodeDesc *desc,
+                                      float px, float py, float w, float h);
+
+/* Maps a point through a transform. */
+static inline void ca_transform_apply(Ca_Transform2D t, float x, float y,
+                                      float *out_x, float *out_y)
+{
+    if (!t.active) { *out_x = x; *out_y = y; return; }
+    *out_x = t.a * x + t.c * y + t.tx;
+    *out_y = t.b * x + t.d * y + t.ty;
+}
+
+/* Maps a point through a transform's inverse. Returns false when the
+   transform is singular (a zero scale), in which case nothing is hit. */
+bool ca_transform_apply_inverse(Ca_Transform2D t, float x, float y,
+                                float *out_x, float *out_y);
 
 /* ======================================================
    UI — constants (limits live in causality_config.h)
@@ -368,7 +490,38 @@ typedef struct {
     uint32_t    image_index;
     uint32_t    viewport_index;
     int16_t     font_page_index;
+    /* Paint-time 2D transform inherited from this command's node and every
+       transformed ancestor. Applied in the vertex shader about (origin_x,
+       origin_y) in window pixels. Identity when `xf_active` is false, which
+       is the common case and costs nothing on the GPU either way. */
+    bool        xf_active;
+    float       xf_a, xf_b, xf_c, xf_d;
+    float       xf_tx, xf_ty;
 } Ca_DrawCmd;
+
+/* Writes one draw command's paint transform into an instance record, shared
+   by every pipeline so the CPU-side convention stays in one place.
+
+   The quad's own origin (qx, qy) is mapped through the transform and stored
+   in `pos`, while only the 2x2 part reaches the shader — folding translation
+   here is what let the transform fit in the pre-existing padding without
+   growing the 128-byte instance stride. */
+static inline void ca_instance_pack_transform(const Ca_DrawCmd *cmd,
+                                              float qx, float qy,
+                                              float pos[2], float xf_ab[2],
+                                              float xf_cd[2])
+{
+    if (!cmd->xf_active) {
+        pos[0] = qx;      pos[1] = qy;
+        xf_ab[0] = 1.0f;  xf_ab[1] = 0.0f;
+        xf_cd[0] = 0.0f;  xf_cd[1] = 1.0f;
+        return;
+    }
+    pos[0] = cmd->xf_a * qx + cmd->xf_c * qy + cmd->xf_tx;
+    pos[1] = cmd->xf_b * qx + cmd->xf_d * qy + cmd->xf_ty;
+    xf_ab[0] = cmd->xf_a;  xf_ab[1] = cmd->xf_b;
+    xf_cd[0] = cmd->xf_c;  xf_cd[1] = cmd->xf_d;
+}
 
 /* ======================================================
    UI — node type

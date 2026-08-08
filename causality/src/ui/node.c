@@ -6,8 +6,64 @@
 #include "menu_storage.h"
 #include "viewport.h"
 
+#include <math.h>
 #include <string.h>
 #include <assert.h>
+
+/** Builds the paint-time transform for one node's rotation and scale about
+ * its pivot.
+ *
+ * desc     Node descriptor supplying rotation, scale and pivot.
+ * px, py   Top-left corner of the node's laid-out box, in window pixels.
+ * w, h     Size of that box.
+ * Returns  The affine transform, inactive when the node has no transform. */
+Ca_Transform2D ca_transform_from_desc(const Ca_NodeDesc *desc,
+                                      float px, float py, float w, float h)
+{
+    if (!desc || !ca_desc_has_transform(desc)) return ca_transform_identity();
+
+    const float ox = px + ca_desc_pivot_x(desc) * w;
+    const float oy = py + ca_desc_pivot_y(desc) * h;
+    const float sx = ca_desc_scale_x(desc);
+    const float sy = ca_desc_scale_y(desc);
+    const float rad = desc->rotation * 0.017453292519943295f;
+    const float cs = cosf(rad);
+    const float sn = sinf(rad);
+
+    /* Rotate ∘ scale, then re-anchor so the pivot maps to itself. */
+    Ca_Transform2D t;
+    t.a = cs * sx;
+    t.b = sn * sx;
+    t.c = -sn * sy;
+    t.d = cs * sy;
+    t.tx = ox - (t.a * ox + t.c * oy);
+    t.ty = oy - (t.b * ox + t.d * oy);
+    t.active = true;
+    return t;
+}
+
+/** Maps a point through a transform's inverse.
+ *
+ * t              Transform to invert.
+ * x, y           Point in transformed (screen) space.
+ * out_x, out_y   Receives the point in untransformed space.
+ * Returns        false when the transform is singular, so callers treat the
+ *                point as a miss rather than reading undefined coordinates. */
+bool ca_transform_apply_inverse(Ca_Transform2D t, float x, float y,
+                                float *out_x, float *out_y)
+{
+    if (!t.active) { *out_x = x; *out_y = y; return true; }
+
+    const float det = t.a * t.d - t.b * t.c;
+    if (fabsf(det) < 1e-6f) return false;
+
+    const float inv = 1.0f / det;
+    const float rx = x - t.tx;
+    const float ry = y - t.ty;
+    *out_x = ( t.d * rx - t.c * ry) * inv;
+    *out_y = (-t.b * rx + t.a * ry) * inv;
+    return true;
+}
 
 /** Initializes pointer-stable, demand-grown UI object pools for a window. */
 bool ca_node_system_init(Ca_Window *win)

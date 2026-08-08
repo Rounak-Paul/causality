@@ -661,12 +661,12 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
 
                 /* Pack instance data into SSBO */
                 Ca_RectPushConst *dst = &rect_base[rect_n++];
-                dst->pos[0]        = cmd->x;           dst->pos[1]        = cmd->y;
+                ca_instance_pack_transform(cmd, cmd->x, cmd->y,
+                                           dst->pos, dst->xf_ab, dst->xf_cd);
                 dst->size[0]       = cmd->w;           dst->size[1]       = cmd->h;
                 dst->color[0]      = cmd->r;           dst->color[1]      = cmd->g;
                 dst->color[2]      = cmd->b;           dst->color[3]      = cmd->a;
                 dst->viewport[0]   = (float)log_w;     dst->viewport[1]   = (float)log_h;
-                dst->_pad0[0]      = 0.0f;             dst->_pad0[1]      = 0.0f;
                 /* Per-corner radii: use per-corner if set, else uniform fallback */
                 {
                     float tl = cmd->corner_tl > 0.0f ? cmd->corner_tl : cmd->corner_radius;
@@ -692,8 +692,6 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
                 dst->gradient_angle   = cmd->gradient_angle;
                 dst->gradient_cx      = cmd->gradient_cx;
                 dst->gradient_cy      = cmd->gradient_cy;
-                dst->_pad1[0]         = 0.0f;
-                dst->_pad1[1]         = 0.0f;
             }
             /* Flush final batch */
             if (rect_n > batch_start) {
@@ -768,14 +766,14 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
                     first  = false;
 
                     Ca_TextInstance *dst = &ti_base[ti_n++];
-                    dst->pos[0] = cmd->x;            dst->pos[1] = cmd->y;
+                    ca_instance_pack_transform(cmd, cmd->x, cmd->y,
+                                               dst->pos, dst->xf_ab, dst->xf_cd);
                     dst->size[0] = cmd->w;            dst->size[1] = cmd->h;
                     dst->uv[0] = cmd->u0;             dst->uv[1] = cmd->v0;
                     dst->uv[2] = cmd->u1;             dst->uv[3] = cmd->v1;
                     dst->color[0] = cmd->r;            dst->color[1] = cmd->g;
                     dst->color[2] = cmd->b;            dst->color[3] = cmd->a;
                     dst->viewport[0] = (float)log_w;   dst->viewport[1] = (float)log_h;
-                    dst->_pad[0] = 0.0f;               dst->_pad[1] = 0.0f;
                 }
                 if (ti_n > batch_start) {
                     vkCmdSetScissor(f->cmd, 0, 1, &cur_sc);
@@ -862,14 +860,14 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
                     first  = false;
 
                     Ca_TextInstance *dst = &ti_base[ti_n++];
-                    dst->pos[0] = cmd->x;            dst->pos[1] = cmd->y;
+                    ca_instance_pack_transform(cmd, cmd->x, cmd->y,
+                                               dst->pos, dst->xf_ab, dst->xf_cd);
                     dst->size[0] = cmd->w;            dst->size[1] = cmd->h;
                     dst->uv[0] = cmd->u0;             dst->uv[1] = cmd->v0;
                     dst->uv[2] = cmd->u1;             dst->uv[3] = cmd->v1;
                     dst->color[0] = cmd->r;            dst->color[1] = cmd->g;
                     dst->color[2] = cmd->b;            dst->color[3] = cmd->a;
                     dst->viewport[0] = (float)log_w;   dst->viewport[1] = (float)log_h;
-                    dst->_pad[0] = 0.0f;               dst->_pad[1] = 0.0f;
                 }
                 if (ti_n > batch_start) {
                     vkCmdSetScissor(f->cmd, 0, 1, &cur_sc);
@@ -966,14 +964,14 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
                     first  = false;
 
                     Ca_TextInstance *dst = &ti_base[ti_n++];
-                    dst->pos[0] = cmd->x;            dst->pos[1] = cmd->y;
+                    ca_instance_pack_transform(cmd, cmd->x, cmd->y,
+                                               dst->pos, dst->xf_ab, dst->xf_cd);
                     dst->size[0] = cmd->w;            dst->size[1] = cmd->h;
                     dst->uv[0] = cmd->u0;             dst->uv[1] = cmd->v0;
                     dst->uv[2] = cmd->u1;             dst->uv[3] = cmd->v1;
                     dst->color[0] = cmd->r;            dst->color[1] = cmd->g;
                     dst->color[2] = cmd->b;            dst->color[3] = cmd->a;
                     dst->viewport[0] = (float)log_w;   dst->viewport[1] = (float)log_h;
-                    dst->_pad[0] = 0.0f;               dst->_pad[1] = 0.0f;
                 }
                 if (ti_n > batch_start) {
                     vkCmdSetScissor(f->cmd, 0, 1, &cur_sc);
@@ -1052,7 +1050,8 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
                     float v1 = (cmd->y + cmd->h) / (float)log_h;
 
                     Ca_TextInstance *dst = &ti_base[ti_n++];
-                    dst->pos[0] = cmd->x;            dst->pos[1] = cmd->y;
+                    ca_instance_pack_transform(cmd, cmd->x, cmd->y,
+                                               dst->pos, dst->xf_ab, dst->xf_cd);
                     dst->size[0] = cmd->w;            dst->size[1] = cmd->h;
                     dst->uv[0] = u0;                  dst->uv[1] = v0;
                     dst->uv[2] = u1;                  dst->uv[3] = v1;
@@ -1060,7 +1059,6 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
                     dst->color[0] = 1.0f;  dst->color[1] = 1.0f;
                     dst->color[2] = 1.0f;  dst->color[3] = 1.0f;
                     dst->viewport[0] = (float)log_w;  dst->viewport[1] = (float)log_h;
-                    dst->_pad[0] = 0.0f;              dst->_pad[1] = 0.0f;
                 }
                 if (ti_n > batch_start) {
                     vkCmdSetScissor(f->cmd, 0, 1, &cur_sc);

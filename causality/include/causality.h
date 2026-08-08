@@ -739,6 +739,18 @@ typedef struct Ca_DivDesc {
     bool     no_hover;             /* invisible to hover hit-testing; children
                                       still participate normally               */
     bool     clip_content;         /* clip descendants to the content box       */
+    /* 2D transform — visual only, applied about the pivot at paint time.
+       Layout is unaffected (the node keeps its axis-aligned box for sizing),
+       transforms compose down the subtree, and hit-testing is inverted to
+       match, so a rotated button is clickable where it is drawn.
+
+       Stored relative to the identity so a zero-initialized Ca_DivDesc means
+       "no transform": scale is an offset from 1 and pivot an offset from the
+       node's center. Prefer ca_div_set_transform(), which takes absolute
+       values and does the conversion. */
+    float    rotation;             /* degrees clockwise (0 = none)          */
+    float    scale_bias_x, scale_bias_y;  /* actual scale minus 1           */
+    float    pivot_off_x, pivot_off_y;    /* normalized pivot minus 0.5     */
 } Ca_DivDesc;
 
 /* <p> / text — leaf text element. */
@@ -1390,6 +1402,25 @@ CA_API void ca_div_content_screen_rect(const Ca_Div *div,
 /* Applies an absolute border-box rectangle in the parent's resolved content space. */
 CA_API void ca_div_set_absolute_rect(Ca_Div *div,
                                      float x, float y, float width, float height);
+
+/*
+ * Sets a div's visual 2D transform, applied about its pivot at paint time.
+ *
+ * Layout is unaffected — the node keeps its axis-aligned box for sizing and
+ * flow — but painting and hit-testing both follow the transform, and it
+ * composes down the subtree, so descendants (including their text) rotate
+ * and scale with their ancestor.
+ *
+ * div        Target div (NULL is ignored).
+ * rotation   Degrees clockwise; 0 for none.
+ * scale_x    Horizontal multiplier about the pivot; 1 for none.
+ * scale_y    Vertical multiplier about the pivot; 1 for none.
+ * pivot_x    Horizontal transform origin, normalized (0.5 = center).
+ * pivot_y    Vertical transform origin, normalized (0.5 = center).
+ */
+CA_API void ca_div_set_transform(Ca_Div *div, float rotation,
+                                 float scale_x, float scale_y,
+                                 float pivot_x, float pivot_y);
 
 /*
  * Returns the button's inner content dimensions from the last layout pass —
