@@ -74,19 +74,6 @@ const char *ca_elem_type_name(Ca_ElementType type);
     @return Parsed stylesheet owned by the caller, or NULL on failure. */
 Ca_Stylesheet *ca_style_create_system_stylesheet(void);
 
-/** Resolve all matching CSS rules for a node, producing a merged style.
-    Walks the parent chain for descendant/child selector matching.
-    @param ss        Parsed stylesheet (may be NULL — returns zero style).
-    @param node      Target UI node.
-    @param elem_type Element type enum for element-selector matching.
-    @param classes   Space-separated class string for class-selector matching.
-    @param out       Output resolved style (zeroed on entry). */
-void ca_style_resolve(Ca_Stylesheet *ss,
-                      Ca_Node *node,
-                      Ca_ElementType elem_type,
-                      const char *classes,
-                      Ca_ResolvedStyle *out);
-
 /** Resolve system defaults followed by author CSS.
     Author declarations override matching default declarations regardless of
     selector specificity, matching CSS user-agent and author origin ordering.
@@ -106,7 +93,7 @@ void ca_style_resolve_layers(Ca_Stylesheet *defaults,
 /** Apply resolved style to a Ca_NodeDesc.
     Only fills in properties where the NodeDesc value is still at default (0).
     Non-zero NodeDesc values are treated as inline styles and take precedence.
-    @param style     Resolved style (from ca_style_resolve).
+    @param style     Resolved style (from ca_style_resolve_layers).
     @param nd        Target node descriptor to update in-place.
     @param out_color Optional output for the text/foreground color. */
 void ca_style_apply_to_node(const Ca_ResolvedStyle *style,

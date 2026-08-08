@@ -7,61 +7,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-/* ---- Vulkan helpers (same as font.c) ---- */
-
-static uint32_t find_memory_type(VkPhysicalDevice gpu, uint32_t type_bits,
-                                 VkMemoryPropertyFlags props)
-{
-    VkPhysicalDeviceMemoryProperties mem;
-    vkGetPhysicalDeviceMemoryProperties(gpu, &mem);
-    for (uint32_t i = 0; i < mem.memoryTypeCount; i++) {
-        if ((type_bits & (1u << i)) &&
-            (mem.memoryTypes[i].propertyFlags & props) == props)
-            return i;
-    }
-    return UINT32_MAX;
-}
-
-static bool begin_once(Ca_Instance *inst, VkCommandBuffer *out_cmd)
-{
-    VkCommandBufferAllocateInfo ai = {
-        .sType              = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
-        .commandPool        = inst->cmd_pool,
-        .level              = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
-        .commandBufferCount = 1,
-    };
-    *out_cmd = VK_NULL_HANDLE;
-    if (vkAllocateCommandBuffers(inst->vk_device, &ai, out_cmd) != VK_SUCCESS)
-        return false;
-    VkCommandBufferBeginInfo bi = {
-        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
-        .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
-    };
-    if (vkBeginCommandBuffer(*out_cmd, &bi) != VK_SUCCESS) {
-        vkFreeCommandBuffers(inst->vk_device, inst->cmd_pool, 1, out_cmd);
-        *out_cmd = VK_NULL_HANDLE;
-        return false;
-    }
-    return true;
-}
-
-static bool end_once(Ca_Instance *inst, VkCommandBuffer cmd)
-{
-    if (vkEndCommandBuffer(cmd) != VK_SUCCESS) {
-        vkFreeCommandBuffers(inst->vk_device, inst->cmd_pool, 1, &cmd);
-        return false;
-    }
-    VkSubmitInfo si = {
-        .sType              = VK_STRUCTURE_TYPE_SUBMIT_INFO,
-        .commandBufferCount = 1,
-        .pCommandBuffers    = &cmd,
-    };
-    VkResult result = vkQueueSubmit(inst->gfx_queue, 1, &si, VK_NULL_HANDLE);
-    if (result == VK_SUCCESS) result = vkQueueWaitIdle(inst->gfx_queue);
-    vkFreeCommandBuffers(inst->vk_device, inst->cmd_pool, 1, &cmd);
-    return result == VK_SUCCESS;
-}
-
 enum { CA_IMAGE_DESCRIPTOR_POOL_CHUNK = 64 };
 
 static bool image_descriptor_pool_create(Ca_Instance *inst,
@@ -215,7 +160,7 @@ Ca_Image *ca_image_create_impl(Ca_Instance *inst,
     VkMemoryAllocateInfo mem_ai = {
         .sType           = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
         .allocationSize  = req.size,
-        .memoryTypeIndex = find_memory_type(inst->vk_gpu, req.memoryTypeBits,
+        .memoryTypeIndex = ca_gpu_find_memory_type(inst, req.memoryTypeBits,
                                             VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT),
     };
     if (mem_ai.memoryTypeIndex == UINT32_MAX ||
@@ -240,7 +185,7 @@ Ca_Image *ca_image_create_impl(Ca_Instance *inst,
     VkMemoryAllocateInfo buf_mem_ai = {
         .sType           = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
         .allocationSize  = buf_req.size,
-        .memoryTypeIndex = find_memory_type(inst->vk_gpu, buf_req.memoryTypeBits,
+        .memoryTypeIndex = ca_gpu_find_memory_type(inst, buf_req.memoryTypeBits,
                                             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
                                             VK_MEMORY_PROPERTY_HOST_COHERENT_BIT),
     };
@@ -259,8 +204,8 @@ Ca_Image *ca_image_create_impl(Ca_Instance *inst,
     vkUnmapMemory(inst->vk_device, staging_mem);
 
     /* Upload via one-shot command buffer */
-    VkCommandBuffer cmd = VK_NULL_HANDLE;
-    if (!begin_once(inst, &cmd)) goto fail;
+    VkCommandBuffer cmd = ca_gpu_begin_transfer(inst);
+    if (cmd == VK_NULL_HANDLE) goto fail;
 
     VkImageMemoryBarrier bar = {
         .sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
@@ -293,7 +238,7 @@ Ca_Image *ca_image_create_impl(Ca_Instance *inst,
         VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
         0, 0, NULL, 0, NULL, 1, &bar);
 
-    if (!end_once(inst, cmd)) goto fail;
+    ca_gpu_end_transfer(inst, cmd);
 
     vkDestroyBuffer(inst->vk_device, staging, NULL);
     vkFreeMemory(inst->vk_device, staging_mem, NULL);
@@ -365,7 +310,16 @@ fail:
 void ca_image_destroy_impl(Ca_Instance *inst, Ca_Image *img)
 {
     if (!img || !img->in_use) return;
-    vkDeviceWaitIdle(inst->vk_device);
+
+    /* All command-buffer submission (swapchain frames, viewport renders,
+       one-shot transfers) goes through inst->gfx_queue — present_queue only
+       ever calls vkQueuePresentKHR. Waiting on the graphics queue alone is
+       therefore sufficient to guarantee no in-flight command buffer still
+       samples this image's descriptor, without vkDeviceWaitIdle's much
+       heavier cost of stalling every other window/viewport in the process.
+       This can run once per image reload (see ui_image_ensure_loaded in
+       Quasar/src/ui/qs_ui.c), so the distinction matters in practice. */
+    vkQueueWaitIdle(inst->gfx_queue);
 
     if (img->desc_set != VK_NULL_HANDLE) {
         ca_image_descriptor_free(inst, img->desc_pool, img->desc_set);

@@ -33,7 +33,7 @@
 
 /* ---- Backgrounds (dark minimalist) ---- */
 #define CA_THEME_BG_VOID     ca_color(0x0d/255.f, 0x0d/255.f, 0x0d/255.f, 1.0f)
-#define CA_THEME_BG_BASE     ca_color(0x0d/255.f, 0x0d/255.f, 0x0d/255.f, 1.0f)
+#define CA_THEME_BG_BASE     ca_color(0x0f/255.f, 0x0f/255.f, 0x0f/255.f, 1.0f)
 #define CA_THEME_BG_ELEVATED ca_color(0x12/255.f, 0x12/255.f, 0x12/255.f, 1.0f)
 #define CA_THEME_BG_SURFACE  ca_color(0x1a/255.f, 0x1a/255.f, 0x1a/255.f, 1.0f)
 #define CA_THEME_BG_OVERLAY  ca_color(0x33/255.f, 0x33/255.f, 0x33/255.f, 1.0f)

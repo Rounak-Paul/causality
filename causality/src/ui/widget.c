@@ -695,6 +695,14 @@ void ca_widget_refresh_css(Ca_Node *node)
     Ca_Instance *instance = node->window->instance;
     if (!instance || (!instance->system_stylesheet && !instance->stylesheet)) return;
 
+    /* Called only from ca_instance_refresh_styles (a global stylesheet
+       swap/hot-reload, not a per-frame path) — the per-node style cache
+       keys on hover/active/focus/disabled/scoped-stylesheet/classes, not on
+       the author/system stylesheet contents, so a cache hit here would
+       silently keep pre-swap resolved values on any node whose pseudo-state
+       happens to match what was cached before. Force a fresh resolve. */
+    node->style_cache_valid = false;
+
     const Ca_NodeDesc old = node->desc;
     node->desc = node->base_desc;
 
@@ -1351,38 +1359,7 @@ static void node_set_style(Ca_Node *node, const char *style,
         ca_style_resolve_layers(instance->system_stylesheet, instance->stylesheet,
                                 node, (Ca_ElementType)node->elem_type,
                                 node->classes, &rs);
-        /* Scale CSS pixel values */
-        if (!rs.width_pct)  rs.width  *= scale;
-        if (!rs.height_pct) rs.height *= scale;
-        rs.min_width         *= scale;  rs.max_width    *= scale;
-        rs.min_height        *= scale;  rs.max_height   *= scale;
-        rs.padding[0]        *= scale;  rs.padding[1]   *= scale;
-        rs.padding[2]        *= scale;  rs.padding[3]   *= scale;
-        rs.margin[0]         *= scale;  rs.margin[1]    *= scale;
-        rs.margin[2]         *= scale;  rs.margin[3]    *= scale;
-        rs.gap               *= scale;
-        rs.row_gap           *= scale;
-        rs.column_gap        *= scale;
-        rs.border_radius     *= scale;
-        rs.border_radius_tl  *= scale;
-        rs.border_radius_tr  *= scale;
-        rs.border_radius_br  *= scale;
-        rs.border_radius_bl  *= scale;
-        rs.border_width      *= scale;
-        rs.border_top_w      *= scale;
-        rs.border_right_w    *= scale;
-        rs.border_bottom_w   *= scale;
-        rs.border_left_w     *= scale;
-        rs.outline_width     *= scale;
-        rs.outline_offset    *= scale;
-        rs.shadow_offset_x   *= scale;
-        rs.shadow_offset_y   *= scale;
-        rs.shadow_blur       *= scale;
-        rs.font_size         *= scale;
-        rs.line_height       *= scale;
-        rs.letter_spacing    *= scale;
-        rs.word_spacing      *= scale;
-        rs.flex_basis        *= scale;
+        scale_resolved_style(&rs, scale);
 
         uint32_t dummy_color = 0;
         ca_style_apply_to_node(&rs, &node->desc,
@@ -2030,25 +2007,35 @@ bool ca_checkbox_get(const Ca_Checkbox *cb)
 Ca_Radio *ca_radio(const Ca_RadioDesc *desc)
 {
     assert(g_ctx.active && desc);
-    Ca_Radio *r = alloc_radio(g_ctx.window);
-    if (!r) return NULL;
+    const char *next_key = consume_next_key();
+    const char *id = next_key ? next_key : desc->id;
 
     Ca_NodeDesc nd = {0};
     nd.direction = CA_DIR_ROW;
     nd.height = s(20.0f);
 
-    Ca_Node *node = ca_node_add(ctx_top(), &nd);
+    bool reused = false;
+    Ca_Node *node = claim_child(&nd, CA_WIDGET_RADIO, CA_ELEM_RADIO, id, &reused);
     if (!node) return NULL;
+
+    Ca_Radio *r = NULL;
+    if (reused && node->widget_type == CA_WIDGET_RADIO && node->widget)
+        r = (Ca_Radio *)node->widget;
+    if (!r) {
+        r = alloc_radio(g_ctx.window);
+        if (!r) return NULL;
+        memset(r, 0, sizeof(*r));
+        r->in_use = true;
+        node->widget_type = CA_WIDGET_RADIO;
+        node->widget = r;
+    }
 
     r->node = node;
     r->in_use = true;
-    r->group = desc->group;
-    r->value = desc->value;
-    node->widget_type = CA_WIDGET_RADIO;
-    node->widget      = r;
+    WIDGET_SET(node, reused, r->group, desc->group);
+    WIDGET_SET(node, reused, r->value, desc->value);
     r->text_color = 0;
-    if (desc->text) snprintf(r->text, CA_LABEL_TEXT_MAX, "%s", desc->text);
-    else r->text[0] = '\0';
+    WIDGET_SET_TEXT(node, reused, r->text, CA_LABEL_TEXT_MAX, desc->text);
     r->on_change = desc->on_change;
     r->change_data = desc->change_data;
 
@@ -2057,7 +2044,7 @@ Ca_Radio *ca_radio(const Ca_RadioDesc *desc)
     if (desc->no_hover) node->desc.no_hover = true;
 
     uint32_t dummy = 0;
-    apply_css(node, &node->desc, CA_ELEM_RADIO, desc->style, desc->id, &r->text_color);
+    apply_css(node, &node->desc, CA_ELEM_RADIO, desc->style, id, &r->text_color);
 
     if (node->desc.width <= 0.0f) {
         float tw = measure_text_px(g_ctx.window, desc->text);
@@ -2069,17 +2056,8 @@ Ca_Radio *ca_radio(const Ca_RadioDesc *desc)
 int ca_radio_group_get(Ca_Window *win, int group)
 {
     if (!win || ca_pool_slot_count(&win->radio_pool) == 0) return -1;
-    for (uint32_t i = 0; i < ca_pool_slot_count(&win->radio_pool); ++i) {
-        Ca_Radio *r = CA_POOL_AT(win->radio_pool, Ca_Radio, i);
-        if (r->in_use && r->group == group) {
-            /* Find the selected one — we check all in paint pass, but return
-               the first marked selected during last click pass */
-        }
-    }
-    /* Walk and find the currently-active radio in this group.
-       The "selected" state is that exactly one radio per group is checked.
-       We store this by checking which radio's node is flagged. For simplicity,
-       we track selection per-radio and return the value of the first checked. */
+    /* Exactly one radio per group is selected (value == 1) at a time —
+       return the pool index of that radio, or -1 if none is selected. */
     for (uint32_t i = 0; i < ca_pool_slot_count(&win->radio_pool); ++i) {
         Ca_Radio *r = CA_POOL_AT(win->radio_pool, Ca_Radio, i);
         if (r->in_use && r->group == group && r->value == 1)
@@ -4828,9 +4806,8 @@ void ca_widget_input_pass(Ca_Window *win)
 
     /* --- Right-click for context menus --- */
     if (ca_pool_slot_count(&win->ctxmenu_pool) > 0) {
-        static bool prev_right = false;
         bool right_now = win->mouse_buttons[1];
-        if (right_now && !prev_right) {
+        if (right_now && !win->prev_mouse_right) {
             /* Close any currently-open context menu first */
             for (uint32_t i = 0; i < ca_pool_slot_count(&win->ctxmenu_pool); ++i) {
                 Ca_CtxMenu *cm = CA_POOL_AT(win->ctxmenu_pool, Ca_CtxMenu, i);
@@ -4867,7 +4844,7 @@ void ca_widget_input_pass(Ca_Window *win)
                 if (best->node) best->node->dirty |= CA_DIRTY_CONTENT;
             }
         }
-        prev_right = right_now;
+        win->prev_mouse_right = right_now;
     }
 
     update_context_menu_hover(win, mx, my, ui_s);

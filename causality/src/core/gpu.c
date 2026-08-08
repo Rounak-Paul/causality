@@ -144,13 +144,17 @@ VkCommandBuffer ca_gpu_begin_transfer(Ca_Instance *instance)
         .level              = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
         .commandBufferCount = 1,
     };
-    VkCommandBuffer cmd;
-    vkAllocateCommandBuffers(instance->vk_device, &ai, &cmd);
+    VkCommandBuffer cmd = VK_NULL_HANDLE;
+    if (vkAllocateCommandBuffers(instance->vk_device, &ai, &cmd) != VK_SUCCESS)
+        return VK_NULL_HANDLE;
     VkCommandBufferBeginInfo bi = {
         .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
         .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
     };
-    vkBeginCommandBuffer(cmd, &bi);
+    if (vkBeginCommandBuffer(cmd, &bi) != VK_SUCCESS) {
+        vkFreeCommandBuffers(instance->vk_device, instance->cmd_pool, 1, &cmd);
+        return VK_NULL_HANDLE;
+    }
     return cmd;
 }
 
@@ -166,14 +170,15 @@ VkCommandBuffer ca_gpu_begin_transfer(Ca_Instance *instance)
 void ca_gpu_end_transfer(Ca_Instance *instance, VkCommandBuffer cmd)
 {
     if (!instance || !cmd) return;
-    vkEndCommandBuffer(cmd);
-    VkSubmitInfo si = {
-        .sType              = VK_STRUCTURE_TYPE_SUBMIT_INFO,
-        .commandBufferCount = 1,
-        .pCommandBuffers    = &cmd,
-    };
-    vkQueueSubmit(instance->gfx_queue, 1, &si, VK_NULL_HANDLE);
-    vkQueueWaitIdle(instance->gfx_queue);
+    if (vkEndCommandBuffer(cmd) == VK_SUCCESS) {
+        VkSubmitInfo si = {
+            .sType              = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+            .commandBufferCount = 1,
+            .pCommandBuffers    = &cmd,
+        };
+        if (vkQueueSubmit(instance->gfx_queue, 1, &si, VK_NULL_HANDLE) == VK_SUCCESS)
+            vkQueueWaitIdle(instance->gfx_queue);
+    }
     vkFreeCommandBuffers(instance->vk_device, instance->cmd_pool, 1, &cmd);
 }
 

@@ -660,39 +660,37 @@ void ca_effect_invalidate(Ca_Effect *eff)
    Computed
    ============================================================ */
 
-typedef struct {
-    Ca_Signal   *target;
-    Ca_ComputeFn fn;
-    void        *user;
-} Ca_ComputedCtx;
-
 /*
- * Effect body that drives a computed signal.
+ * Effect body that (re)discovers a computed signal's dependencies.
  *
- * Invokes the user-supplied compute function and writes the result into the
- * target signal, triggering downstream notifications only when the value
- * actually changes.
+ * Computeds are lazy: the authoritative recompute happens once, on-demand,
+ * in maybe_recompute() when the signal is actually read. This effect body
+ * does NOT write the target's value — its only job is to run fn() under
+ * dependency tracking so track_dep() records the right subscriptions,
+ * which is what lets ca_signal_notify() find and dirty this computed the
+ * next time one of those dependencies changes. Running fn() here and again
+ * in maybe_recompute() is intentional, not duplicated work: this call's
+ * return value is discarded (dependency discovery only), while
+ * maybe_recompute()'s call is the one whose result actually lands in
+ * target->value. A dirty computed that is never read never pays the second
+ * call.
  *
- * user  Pointer to a Ca_ComputedCtx describing the target and compute function.
+ * s  The computed signal whose dependencies are being (re)tracked.
  */
-static void computed_effect_fn(void *user)
+static void computed_track_fn(void *user)
 {
-    Ca_ComputedCtx *c = (Ca_ComputedCtx *)user;
-    if (!c || !c->target || !c->target->in_use) return;
-    const void *new_val = c->fn(c->user);
-    if (!new_val) return;
-    if (memcmp(c->target->value, new_val, c->target->value_size) != 0) {
-        memcpy(c->target->value, new_val, c->target->value_size);
-        ca_signal_notify(c->target);
-    }
+    Ca_Signal *s = (Ca_Signal *)user;
+    if (!s || !s->in_use || !s->compute_fn) return;
+    s->compute_fn(s->compute_user);
+    s->dirty_computed = true;
 }
 
 /*
- * Create a computed (derived) signal whose value is produced by fn.
+ * Create a computed (derived) signal whose value is produced lazily by fn.
  *
- * Creates a plain signal, allocates a Ca_ComputedCtx, and wires an effect
- * through computed_effect_fn to recompute the value whenever its dependencies
- * change.  The initial value is computed immediately.
+ * Creates a plain signal and wires an effect that tracks fn's dependencies
+ * (see computed_track_fn) without eagerly computing a value. The first real
+ * value is produced by maybe_recompute() on the first read.
  *
  * inst        Owning instance.
  * value_size  Size in bytes of the computed value.
@@ -708,27 +706,20 @@ Ca_Signal *ca_computed(Ca_Instance *inst,
     if (!fn) return NULL;
     Ca_Signal *s = ca_signal_create(inst, value_size, NULL);
     if (!s) return NULL;
-    Ca_ComputedCtx *c = CA_CALLOC(1, sizeof(*c));
-    if (!c) {
-        ca_signal_destroy(s);
-        return NULL;
-    }
-    c->target = s;
-    c->fn     = fn;
-    c->user   = user_data;
     s->compute_fn   = fn;
     s->compute_user = user_data;
-    /* Drive recomputation through an effect; the effect ties into the
-       same dep-tracking machinery as a normal user effect. */
-    Ca_Effect *e = ca_effect(inst, computed_effect_fn, c);
+    /* Drive dependency (re)tracking through an effect; the effect ties into
+       the same dep-tracking machinery as a normal user effect. */
+    Ca_Effect *e = ca_effect(inst, computed_track_fn, s);
     if (!e) {
-        CA_FREE(c);
         ca_signal_destroy(s);
         return NULL;
     }
-    e->destroy_user_data = ca_g_free;
     s->owner_effect = e;
     e->computed_target = s;
+    /* Produce the initial value now so a read before any dependency change
+       doesn't need a special case in maybe_recompute(). */
+    maybe_recompute(s);
     return s;
 }
 

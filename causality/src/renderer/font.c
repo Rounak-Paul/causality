@@ -54,74 +54,6 @@ static int chars_for_ranges(int num_ranges)
    ============================================================ */
 
 /*
- * Find a Vulkan memory type index satisfying the required property flags.
- *
- * gpu       Physical device to query.
- * type_bits Bitmask from VkMemoryRequirements.memoryTypeBits.
- * required  Required VkMemoryPropertyFlags.
- * Returns   Matching type index, or UINT32_MAX if none is found.
- */
-static uint32_t find_memory_type(VkPhysicalDevice gpu, uint32_t type_bits,
-                                  VkMemoryPropertyFlags required)
-{
-    VkPhysicalDeviceMemoryProperties props;
-    vkGetPhysicalDeviceMemoryProperties(gpu, &props);
-    for (uint32_t i = 0; i < props.memoryTypeCount; i++) {
-        if ((type_bits & (1u << i)) &&
-            (props.memoryTypes[i].propertyFlags & required) == required)
-            return i;
-    }
-    return UINT32_MAX;
-}
-
-/*
- * Allocate and begin a one-time-submit command buffer from the shared pool.
- *
- * inst    Instance providing the device and command pool.
- * Returns Started VkCommandBuffer ready to record transfer commands.
- */
-static VkCommandBuffer begin_once(Ca_Instance *inst)
-{
-    VkCommandBufferAllocateInfo alloc = {
-        .sType              = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
-        .commandPool        = inst->cmd_pool,
-        .level              = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
-        .commandBufferCount = 1,
-    };
-    VkCommandBuffer cmd;
-    vkAllocateCommandBuffers(inst->vk_device, &alloc, &cmd);
-
-    VkCommandBufferBeginInfo begin = {
-        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
-        .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
-    };
-    vkBeginCommandBuffer(cmd, &begin);
-    return cmd;
-}
-
-/*
- * End, submit, and free a one-time-submit command buffer.
- *
- * Ends recording, submits to the graphics queue, waits idle, then frees the
- * command buffer back to the shared pool.
- *
- * inst  Instance providing the device and graphics queue.
- * cmd   Command buffer returned by begin_once().
- */
-static void end_once(Ca_Instance *inst, VkCommandBuffer cmd)
-{
-    vkEndCommandBuffer(cmd);
-    VkSubmitInfo submit = {
-        .sType              = VK_STRUCTURE_TYPE_SUBMIT_INFO,
-        .commandBufferCount = 1,
-        .pCommandBuffers    = &cmd,
-    };
-    vkQueueSubmit(inst->gfx_queue, 1, &submit, VK_NULL_HANDLE);
-    vkQueueWaitIdle(inst->gfx_queue);
-    vkFreeCommandBuffers(inst->vk_device, inst->cmd_pool, 1, &cmd);
-}
-
-/*
  * Upload an RGBA8 atlas bitmap to the GPU font image and create its view and sampler.
  *
  * Creates the VkImage, allocates device-local memory, uploads via a staging
@@ -160,7 +92,7 @@ static bool upload_atlas(Ca_Instance *inst, Ca_Font *font,
 
     VkMemoryRequirements img_req;
     vkGetImageMemoryRequirements(inst->vk_device, font->image, &img_req);
-    uint32_t img_mem_type = find_memory_type(inst->vk_gpu, img_req.memoryTypeBits,
+    uint32_t img_mem_type = ca_gpu_find_memory_type(inst, img_req.memoryTypeBits,
                                              VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
     if (img_mem_type == UINT32_MAX) {
         fprintf(stderr, "[font] no device-local memory for atlas image\n");
@@ -198,7 +130,7 @@ static bool upload_atlas(Ca_Instance *inst, Ca_Font *font,
 
     VkMemoryRequirements buf_req;
     vkGetBufferMemoryRequirements(inst->vk_device, staging_buf, &buf_req);
-    uint32_t buf_mem_type = find_memory_type(inst->vk_gpu, buf_req.memoryTypeBits,
+    uint32_t buf_mem_type = ca_gpu_find_memory_type(inst, buf_req.memoryTypeBits,
                                              VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
                                              VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
     if (buf_mem_type == UINT32_MAX) {
@@ -236,7 +168,7 @@ static bool upload_atlas(Ca_Instance *inst, Ca_Font *font,
     memcpy(mapped, bitmap_rgba, (size_t)atlas_sz);
     vkUnmapMemory(inst->vk_device, staging_mem);
 
-    VkCommandBuffer cmd = begin_once(inst);
+    VkCommandBuffer cmd = ca_gpu_begin_transfer(inst);
     VkImageMemoryBarrier bar = {
         .sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
         .srcAccessMask       = 0,
@@ -268,7 +200,7 @@ static bool upload_atlas(Ca_Instance *inst, Ca_Font *font,
         VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
         0, 0, NULL, 0, NULL, 1, &bar);
 
-    end_once(inst, cmd);
+    ca_gpu_end_transfer(inst, cmd);
 
     vkDestroyBuffer(inst->vk_device, staging_buf, NULL);
     vkFreeMemory(inst->vk_device, staging_mem, NULL);
@@ -1427,7 +1359,7 @@ void ca_font_flush_uploads(Ca_Instance *inst, Ca_Font *font)
 
     VkMemoryRequirements buf_req;
     vkGetBufferMemoryRequirements(inst->vk_device, staging_buf, &buf_req);
-    uint32_t mem_type = find_memory_type(inst->vk_gpu, buf_req.memoryTypeBits,
+    uint32_t mem_type = ca_gpu_find_memory_type(inst, buf_req.memoryTypeBits,
                                          VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
                                          VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
     if (mem_type == UINT32_MAX) {
@@ -1494,7 +1426,7 @@ void ca_font_flush_uploads(Ca_Instance *inst, Ca_Font *font)
     }
     vkUnmapMemory(inst->vk_device, staging_mem);
 
-    VkCommandBuffer cmd = begin_once(inst);
+    VkCommandBuffer cmd = ca_gpu_begin_transfer(inst);
     VkImageMemoryBarrier bar = {
         .sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
         .srcAccessMask       = VK_ACCESS_SHADER_READ_BIT,
@@ -1521,7 +1453,7 @@ void ca_font_flush_uploads(Ca_Instance *inst, Ca_Font *font)
     vkCmdPipelineBarrier(cmd,
         VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
         0, 0, NULL, 0, NULL, 1, &bar);
-    end_once(inst, cmd);
+    ca_gpu_end_transfer(inst, cmd);
 
     CA_FREE(copies);
     vkDestroyBuffer(inst->vk_device, staging_buf, NULL);

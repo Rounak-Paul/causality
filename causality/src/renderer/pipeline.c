@@ -778,19 +778,6 @@ void ca_image_pipeline_destroy(Ca_Instance *inst)
    Shared SSBO descriptor set layout (instanced rendering)
    ====================================================== */
 
-static uint32_t find_memory_type_pipe(VkPhysicalDevice gpu, uint32_t type_bits,
-                                      VkMemoryPropertyFlags props)
-{
-    VkPhysicalDeviceMemoryProperties mem;
-    vkGetPhysicalDeviceMemoryProperties(gpu, &mem);
-    for (uint32_t i = 0; i < mem.memoryTypeCount; i++) {
-        if ((type_bits & (1u << i)) &&
-            (mem.memoryTypes[i].propertyFlags & props) == props)
-            return i;
-    }
-    return 0;
-}
-
 bool ca_ssbo_layout_create(Ca_Instance *inst)
 {
     ca_dyn_array_init(&inst->ssbo_desc_pools, sizeof(VkDescriptorPool));
@@ -915,12 +902,19 @@ static bool instance_buffer_allocate(Ca_Instance *inst, VkDeviceSize size,
 
     VkMemoryRequirements req;
     vkGetBufferMemoryRequirements(inst->vk_device, *out_buffer, &req);
+    uint32_t mem_type = ca_gpu_find_memory_type(inst, req.memoryTypeBits,
+                             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                             VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    if (mem_type == UINT32_MAX) {
+        fprintf(stderr, "[pipeline] no suitable memory type for instance buffer\n");
+        vkDestroyBuffer(inst->vk_device, *out_buffer, NULL);
+        *out_buffer = VK_NULL_HANDLE;
+        return false;
+    }
     VkMemoryAllocateInfo mem_ai = {
         .sType           = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
         .allocationSize  = req.size,
-        .memoryTypeIndex = find_memory_type_pipe(inst->vk_gpu, req.memoryTypeBits,
-                               VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-                               VK_MEMORY_PROPERTY_HOST_COHERENT_BIT),
+        .memoryTypeIndex = mem_type,
     };
     if (vkAllocateMemory(inst->vk_device, &mem_ai, NULL, out_memory) != VK_SUCCESS) {
         fprintf(stderr, "[pipeline] instance buffer memory alloc failed\n");

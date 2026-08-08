@@ -29,6 +29,34 @@ static bool cmd_in_overlay_phase(const Ca_DrawCmd *cmd)
     return cmd->overlay || cmd->z_index > 0;
 }
 
+/* Locate the root node's own background-rect draw command for this frame.
+   Used both as the swapchain clear color and to exclude it from the regular
+   rect batch (it's implicitly drawn via VK_ATTACHMENT_LOAD_OP_CLEAR instead).
+
+   This is NOT always win->draw_cmds[0]: paint_node_content() emits a
+   CA_DRAW_BACKDROP_BLUR and/or a CA_DRAW_MODE_SHADOW rect BEFORE the plain
+   background rect whenever the root node has backdrop_blur or shadow_color
+   set, which would otherwise shift the background rect off index 0. The
+   background rect is always emitted (unconditionally, right after those),
+   so a short bounded scan from root->draw_cmd_idx finds it reliably instead
+   of assuming a fixed position. Returns UINT32_MAX if not found (root
+   hidden, or nothing painted yet). */
+static uint32_t find_root_bg_cmd_index(const Ca_Window *win)
+{
+    if (!win->root || win->root->draw_cmd_idx < 0) return UINT32_MAX;
+    uint32_t start = (uint32_t)win->root->draw_cmd_idx;
+    for (uint32_t d = start; d < win->draw_cmd_count; ++d) {
+        const Ca_DrawCmd *cmd = &win->draw_cmds[d];
+        if (!cmd->in_use) continue;
+        if (cmd->type == CA_DRAW_RECT && cmd->draw_mode != CA_DRAW_MODE_SHADOW)
+            return d;
+        if (cmd->type != CA_DRAW_BACKDROP_BLUR &&
+            !(cmd->type == CA_DRAW_RECT && cmd->draw_mode == CA_DRAW_MODE_SHADOW))
+            break; /* not one of the root's own leading commands — give up */
+    }
+    return UINT32_MAX;
+}
+
 static VkSurfaceFormatKHR choose_surface_format(VkPhysicalDevice gpu,
                                                  VkSurfaceKHR surface)
 {
@@ -442,11 +470,12 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
 
     /* Background: use the root node's color if available */
     float bg_r = 0.15f, bg_g = 0.15f, bg_b = 0.17f, bg_a = 1.0f;
-    if (win->draw_cmd_count > 0 && win->draw_cmds[0].in_use) {
-        bg_r = win->draw_cmds[0].r;
-        bg_g = win->draw_cmds[0].g;
-        bg_b = win->draw_cmds[0].b;
-        bg_a = win->draw_cmds[0].a;
+    uint32_t root_bg_idx = find_root_bg_cmd_index(win);
+    if (root_bg_idx != UINT32_MAX) {
+        bg_r = win->draw_cmds[root_bg_idx].r;
+        bg_g = win->draw_cmds[root_bg_idx].g;
+        bg_b = win->draw_cmds[root_bg_idx].b;
+        bg_a = win->draw_cmds[root_bg_idx].a;
     }
 
     /* Backdrop blur: if any nodes use backdrop-filter, capture the current
@@ -488,12 +517,18 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
     };
     vkCmdBeginRendering(f->cmd, &render_info);
 
-    /* --- Z-index: partition into z<0 | z==0 | z>0, sort only z!=0 --- */
+    /* --- Z-index: partition into z<0 | z==0 | z>0, sort only z!=0 ---
+       root_bg_idx (the root's own background rect, drawn implicitly via
+       VK_ATTACHMENT_LOAD_OP_CLEAR — see find_root_bg_cmd_index) is pinned
+       at sorted_idx[0] and excluded from partitioning/sorting, same as the
+       rest of this scheme previously assumed slot 0 always held it. */
     uint32_t *sorted_idx = NULL;
     {
-        uint32_t count = win->draw_cmd_count;
+        uint32_t count  = win->draw_cmd_count;
+        uint32_t pinned = (root_bg_idx != UINT32_MAX) ? root_bg_idx : 0;
         uint32_t n_neg = 0, n_pos = 0;
-        for (uint32_t d = 1; d < count; ++d) {
+        for (uint32_t d = 0; d < count; ++d) {
+            if (d == pinned) continue;
             int z = win->draw_cmds[d].z_index;
             if (z < 0) n_neg++;
             else if (z > 0) n_pos++;
@@ -506,10 +541,11 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
         }
         if ((n_neg | n_pos) && count > 1) {
             sorted_idx = win->sorted_idx;
-            sorted_idx[0] = 0;
+            sorted_idx[0] = pinned;
             uint32_t n_zero  = count - 1 - n_neg - n_pos;
             uint32_t ni = 1, zi = 1 + n_neg, pi = 1 + n_neg + n_zero;
-            for (uint32_t d = 1; d < count; ++d) {
+            for (uint32_t d = 0; d < count; ++d) {
+                if (d == pinned) continue;
                 int z = win->draw_cmds[d].z_index;
                 if (z < 0)       sorted_idx[ni++] = d;
                 else if (z == 0) sorted_idx[zi++] = d;
@@ -579,8 +615,14 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
             VkRect2D cur_sc      = full_scissor;
             bool     first       = true;
 
-            for (uint32_t d = 1; d < win->draw_cmd_count; ++d) {
+            /* When sorted_idx is set, position 0 is always root_bg_idx
+               (pinned there above) — start at 1 to skip it cheaply. When
+               unsorted, d IS the raw command index, so root_bg_idx can be
+               anywhere and must be skipped explicitly instead. */
+            uint32_t d_start = sorted_idx ? 1 : 0;
+            for (uint32_t d = d_start; d < win->draw_cmd_count; ++d) {
                 uint32_t idx = sorted_idx ? sorted_idx[d] : d;
+                if (!sorted_idx && idx == root_bg_idx) continue;
                 const Ca_DrawCmd *cmd = &win->draw_cmds[idx];
                 if (!cmd->in_use || cmd->type != CA_DRAW_RECT || cmd->a < 0.004f)
                     continue;

@@ -7,21 +7,6 @@
 #include <string.h>
 #include <stdio.h>
 
-/* ---- Helpers ---- */
-
-static uint32_t find_memory_type(VkPhysicalDevice gpu, uint32_t type_bits,
-                                 VkMemoryPropertyFlags props)
-{
-    VkPhysicalDeviceMemoryProperties mem;
-    vkGetPhysicalDeviceMemoryProperties(gpu, &mem);
-    for (uint32_t i = 0; i < mem.memoryTypeCount; i++) {
-        if ((type_bits & (1u << i)) &&
-            (mem.memoryTypes[i].propertyFlags & props) == props)
-            return i;
-    }
-    return UINT32_MAX;
-}
-
 /* ---- GPU resource lifecycle ---- */
 
 bool ca_viewport_gpu_create(Ca_Instance *inst, Ca_Viewport *vp,
@@ -82,7 +67,7 @@ bool ca_viewport_gpu_create(Ca_Instance *inst, Ca_Viewport *vp,
 
         VkMemoryRequirements req;
         vkGetImageMemoryRequirements(inst->vk_device, f->color_image, &req);
-        uint32_t mem_idx = find_memory_type(inst->vk_gpu, req.memoryTypeBits,
+        uint32_t mem_idx = ca_gpu_find_memory_type(inst, req.memoryTypeBits,
                                             VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
         if (mem_idx == UINT32_MAX) {
             fprintf(stderr, "[viewport] no suitable memory type\n");
@@ -193,7 +178,20 @@ bool ca_viewport_gpu_create(Ca_Instance *inst, Ca_Viewport *vp,
 void ca_viewport_gpu_destroy(Ca_Instance *inst, Ca_Viewport *vp)
 {
     if (!vp) return;
-    vkDeviceWaitIdle(inst->vk_device);
+
+    /* Wait only on this viewport's own in-flight submissions rather than
+       the whole device (vkDeviceWaitIdle) — ca_viewport_gpu_resize calls
+       this from the per-frame render loop, so stalling every other window's
+       and viewport's GPU work here on every resize is a real, easily
+       user-triggered hitch (e.g. dragging to resize a panel). Each slot's
+       fence is CA_FENCE_CREATE_SIGNALED_BIT at creation and reset only
+       right before that slot's own submit, so waiting on it here is safe
+       even for a slot that never rendered. */
+    for (uint32_t fi = 0; fi < CA_FRAMES_IN_FLIGHT; fi++) {
+        Ca_ViewportFrame *f = &vp->frame[fi];
+        if (f->render_fence != VK_NULL_HANDLE)
+            vkWaitForFences(inst->vk_device, 1, &f->render_fence, VK_TRUE, UINT64_MAX);
+    }
 
     for (uint32_t fi = 0; fi < CA_FRAMES_IN_FLIGHT; fi++) {
         Ca_ViewportFrame *f = &vp->frame[fi];

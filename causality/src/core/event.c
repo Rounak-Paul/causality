@@ -6,7 +6,8 @@
 /*
  * Initialise the event subsystem for an instance.
  *
- * Creates the event mutex and resets the ring-buffer head and tail to zero.
+ * Creates the event mutex and the two growable queues (post-side and
+ * dispatch-side) swapped by ca_event_dispatch.
  *
  * inst  Instance whose event system is being initialised.
  */
@@ -34,6 +35,7 @@ bool ca_event_init(Ca_Instance *inst)
  */
 void ca_event_shutdown(Ca_Instance *inst)
 {
+    if (!inst) return;
     ca_mutex_destroy(inst->event_mutex);
     inst->event_mutex = NULL;
     ca_dyn_array_destroy(&inst->event_dispatch_queue);
@@ -41,10 +43,10 @@ void ca_event_shutdown(Ca_Instance *inst)
 }
 
 /*
- * Push an event onto the instance ring-buffer (thread-safe).
+ * Push an event onto the instance's post-side queue (thread-safe).
  *
- * Acquires the event mutex, writes the event into the next free slot, and
- * advances the tail.  Drops the event with a warning if the buffer is full.
+ * Acquires the event mutex and appends the event to the growable queue.
+ * Drops the event with a warning only if the underlying allocation fails.
  *
  * inst   Instance to post to.
  * event  Event to enqueue; copied by value.
@@ -60,11 +62,11 @@ void ca_event_post(Ca_Instance *inst, const Ca_Event *event)
 }
 
 /*
- * Drain the event ring-buffer and invoke the registered handler for each event.
+ * Drain the posted events and invoke the registered handler for each.
  *
- * Takes a snapshot of the current head/tail under the mutex, then processes
- * all queued events without holding the lock, allowing new events to be posted
- * concurrently during dispatch.
+ * Swaps the post-side queue with the dispatch-side queue under the mutex
+ * (O(1), no copy), then processes the dispatch-side queue without holding
+ * the lock, allowing new events to be posted concurrently during dispatch.
  *
  * inst  Instance whose events are to be dispatched.
  */

@@ -290,6 +290,29 @@ static void mark_subtree_content_dirty(Ca_Node *node)
         mark_subtree_content_dirty(node->children[i]);
 }
 
+/* Scan the window's node pool for pending layout/content dirty work and run
+   a layout pass if any node needs one. Called after each stage that can
+   dirty nodes (input, on_frame_fn, titlebar/statusbar rebuild) — each call
+   observes a genuinely different point in time (dirty flags set by the
+   stage that just ran), so this is not a redundant repeat of the same
+   check; only the scan loop itself was previously duplicated per call site.
+
+   win          Window to scan.
+   any_content  In/out — set to true if any node has CA_DIRTY_CONTENT,
+                either already or as a result of the layout pass. */
+static void rescan_and_layout_if_dirty(Ca_Window *win, bool *any_content)
+{
+    bool needs_layout = false;
+    for (uint32_t j = 0; j < ca_pool_slot_count(&win->node_pool); ++j) {
+        Ca_Node *n = CA_POOL_AT(win->node_pool, Ca_Node, j);
+        if (!n->in_use) continue;
+        if (n->dirty & (CA_DIRTY_LAYOUT | CA_DIRTY_CHILDREN)) needs_layout = true;
+        if (n->dirty & CA_DIRTY_CONTENT) *any_content = true;
+    }
+    if (needs_layout && layout_and_invalidate(win))
+        *any_content = true;
+}
+
 void ca_ui_update(Ca_Instance *inst)
 {
     if (inst && inst->font)
@@ -422,21 +445,7 @@ void ca_ui_update(Ca_Instance *inst)
            Also check for new layout dirty — click callbacks can change
            widget visibility (hidden), which requires a layout reflow
            before the paint pass runs. */
-        {
-            bool needs_layout_post_input = false;
-            for (uint32_t j = 0; j < ca_pool_slot_count(&win->node_pool); ++j) {
-                Ca_Node *n = CA_POOL_AT(win->node_pool, Ca_Node, j);
-                if (!n->in_use) continue;
-                if (n->dirty & (CA_DIRTY_LAYOUT | CA_DIRTY_CHILDREN))
-                    needs_layout_post_input = true;
-                if (n->dirty & CA_DIRTY_CONTENT)
-                    any_content = true;
-            }
-            if (needs_layout_post_input) {
-                if (layout_and_invalidate(win))
-                    any_content = true;
-            }
-        }
+        rescan_and_layout_if_dirty(win, &any_content);
 
         /* Per-frame user callback — runs after input pass (scroll_y is
            updated) and before paint so any label changes are painted
@@ -450,19 +459,7 @@ void ca_ui_update(Ca_Instance *inst)
             /* The callback may have dirtied nodes (label text, hidden, etc.)
                or triggered a layout change.  Re-scan so the paint pass below
                picks them up in the same frame. */
-            bool needs_layout = false;
-            for (uint32_t j = 0; j < ca_pool_slot_count(&win->node_pool); ++j) {
-                Ca_Node *n = CA_POOL_AT(win->node_pool, Ca_Node, j);
-                if (!n->in_use) continue;
-                if (n->dirty & (CA_DIRTY_LAYOUT | CA_DIRTY_CHILDREN))
-                    needs_layout = true;
-                if (n->dirty & CA_DIRTY_CONTENT)
-                    any_content = true;
-            }
-            if (needs_layout) {
-                if (layout_and_invalidate(win))
-                    any_content = true;
-            }
+            rescan_and_layout_if_dirty(win, &any_content);
         }
 
         /* Title bar rebuild — runs after on_frame_fn so any menu changes
@@ -472,20 +469,7 @@ void ca_ui_update(Ca_Instance *inst)
             ca_title_bar_rebuild(win);
             ca_widget_ctx_leave();
             win->titlebar_needs_rebuild = false;
-
-            bool needs_layout_tb = false;
-            for (uint32_t j = 0; j < ca_pool_slot_count(&win->node_pool); ++j) {
-                Ca_Node *n = CA_POOL_AT(win->node_pool, Ca_Node, j);
-                if (!n->in_use) continue;
-                if (n->dirty & (CA_DIRTY_LAYOUT | CA_DIRTY_CHILDREN))
-                    needs_layout_tb = true;
-                if (n->dirty & CA_DIRTY_CONTENT)
-                    any_content = true;
-            }
-            if (needs_layout_tb) {
-                if (layout_and_invalidate(win))
-                    any_content = true;
-            }
+            rescan_and_layout_if_dirty(win, &any_content);
         }
 
         /* Status bar rebuild — same pattern as title bar. */
@@ -494,20 +478,7 @@ void ca_ui_update(Ca_Instance *inst)
             ca_status_bar_rebuild(win);
             ca_widget_ctx_leave();
             win->statusbar_needs_rebuild = false;
-
-            bool needs_layout_sb = false;
-            for (uint32_t j = 0; j < ca_pool_slot_count(&win->node_pool); ++j) {
-                Ca_Node *n = CA_POOL_AT(win->node_pool, Ca_Node, j);
-                if (!n->in_use) continue;
-                if (n->dirty & (CA_DIRTY_LAYOUT | CA_DIRTY_CHILDREN))
-                    needs_layout_sb = true;
-                if (n->dirty & CA_DIRTY_CONTENT)
-                    any_content = true;
-            }
-            if (needs_layout_sb) {
-                if (layout_and_invalidate(win))
-                    any_content = true;
-            }
+            rescan_and_layout_if_dirty(win, &any_content);
         }
 
         /* 6. Incremental paint pass — only dirty nodes are repainted;

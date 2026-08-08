@@ -4,6 +4,7 @@
 /* node.c — node pool, tree building, and subscription wiring */
 #include "node.h"
 #include "menu_storage.h"
+#include "viewport.h"
 
 #include <string.h>
 #include <assert.h>
@@ -256,7 +257,16 @@ static void release_widget(Ca_Node *node)
         break;
     }
     case CA_WIDGET_SPLITTER: ca_pool_release(&window->splitter_pool, node->widget); break;
-    case CA_WIDGET_VIEWPORT: ca_pool_release(&window->viewport_pool, node->widget); break;
+    case CA_WIDGET_VIEWPORT: {
+        Ca_Viewport *vp = node->widget;
+        /* GPU resources (images, views, descriptor sets) are a separate
+           lifetime from the pool slot — must be torn down explicitly or
+           they leak every time a viewport node is removed (panel close,
+           reconciled subtree drop), not just on full window/app teardown. */
+        ca_viewport_gpu_destroy(vp->instance, vp);
+        ca_pool_release(&window->viewport_pool, vp);
+        break;
+    }
     case CA_WIDGET_MODAL: ca_pool_release(&window->modal_pool, node->widget); break;
     case CA_WIDGET_MENUBAR: {
         Ca_MenuBar *menu_bar = node->widget;
@@ -471,8 +481,14 @@ void ca_node_remove(Ca_Node *node)
         Ca_Node *p = node->parent;
         for (uint32_t i = 0; i < p->child_count; ++i) {
             if (p->children[i] == node) {
-                /* Swap-remove */
-                p->children[i] = p->children[--p->child_count];
+                /* Ordered removal — matches ca_node_trim_children's ordered
+                   truncation and the sibling-order invariant claim_child's
+                   reconcile logic depends on. A swap-remove here would
+                   silently reorder later siblings for any future caller
+                   that removes a node from a reconciled subtree. */
+                memmove(&p->children[i], &p->children[i + 1],
+                       (size_t)(p->child_count - i - 1) * sizeof(Ca_Node *));
+                --p->child_count;
                 break;
             }
         }

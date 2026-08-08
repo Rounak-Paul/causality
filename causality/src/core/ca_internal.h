@@ -970,6 +970,7 @@ struct Ca_Window {
     /* Input state (updated by GLFW callbacks each tick) */
     double        mouse_x, mouse_y;
     bool          mouse_buttons[3];       /* [0]=left [1]=right [2]=middle */
+    bool          prev_mouse_right;       /* right-button edge detection for context menus (per-window, not shared) */
     bool          mouse_click_this_frame; /* cleared at top of each tick   */
     double        scroll_dx, scroll_dy;   /* accumulated scroll this frame */
     bool          scroll_this_frame;

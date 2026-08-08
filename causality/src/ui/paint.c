@@ -1120,14 +1120,15 @@ static void paint_text(Ca_Window *win, Ca_Font *font,
     if (!node || !node->in_use)   return;
     if (node->desc.hidden)        return;
 
+    /* Unlike unpack_color(), 0 here means "no explicit color" and defaults
+       to opaque white rather than transparent black — do not replace this
+       with a plain unpack_color() call, it would silently break that
+       default for every caller that passes a zero (unset) text color. */
     float r, g, b, a;
     if (packed_color == 0) {
         r = g = b = a = 1.0f;
     } else {
-        r = (float)((packed_color >> 24) & 0xFF) / 255.0f;
-        g = (float)((packed_color >> 16) & 0xFF) / 255.0f;
-        b = (float)((packed_color >>  8) & 0xFF) / 255.0f;
-        a = (float)((packed_color)       & 0xFF) / 255.0f;
+        unpack_color(packed_color, &r, &g, &b, &a);
     }
 
     float ui_s = win->ui_scale > 0.0f ? win->ui_scale : 1.0f;
@@ -1791,7 +1792,13 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
         for (uint32_t i = 0; i < ca_pool_slot_count(&win->ctxmenu_pool); ++i) {
             Ca_CtxMenu *cm = CA_POOL_AT(win->ctxmenu_pool, Ca_CtxMenu, i);
             if (!cm->in_use || !cm->open || cm->item_count <= 0) continue;
-            if (cm->node && node_is_ancestor_hidden(cm->node)) continue;
+            /* If the owning node (or any ancestor panel) is hidden, force-close
+               the menu so it doesn't reappear at stale geometry when the panel
+               becomes visible again — same rule select dropdowns follow above. */
+            if (cm->node && node_is_ancestor_hidden(cm->node)) {
+                cm->open = false;
+                continue;
+            }
             const OverlayCssStyle menu_style = overlay_css_style(
                 win, cm->node, "ca-context-menu", CA_THEME_POPUP_BG,
                 CA_THEME_POPUP_TEXT, 4.0f * ui_s);
@@ -1898,6 +1905,14 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
         for (uint32_t i = 0; i < ca_pool_slot_count(&win->menubar_pool); ++i) {
             Ca_MenuBar *mb = CA_POOL_AT(win->menubar_pool, Ca_MenuBar, i);
             if (!mb->in_use || !mb->node || mb->active_menu < 0) continue;
+            /* If the menu bar (or any ancestor panel) is hidden, force-close
+               the open dropdown so it doesn't reappear at stale geometry when
+               the panel becomes visible again — same rule select dropdowns
+               and context menus follow above. */
+            if (node_is_ancestor_hidden(mb->node)) {
+                mb->active_menu = -1;
+                continue;
+            }
 
             /* Highlight the active header */
             Ca_MenuBarMenu *am = &mb->menus[mb->active_menu];

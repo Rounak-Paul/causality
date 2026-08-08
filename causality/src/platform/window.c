@@ -13,6 +13,7 @@
 
 #include <limits.h>
 #include <stdlib.h>
+#include <string.h>
 
 #if defined(__linux__)
 #include <GLFW/glfw3native.h>
@@ -459,6 +460,36 @@ static void glfw_window_maximize_cb(GLFWwindow *glfw, int maximized)
 #endif
 }
 
+/*
+ * GLFW window focus callback — resets latched input state on focus loss.
+ *
+ * mouse_buttons[0] (left) self-heals via a live OS query in the resize and
+ * widget input passes (ca_window_left_button_held), but right/middle have no
+ * such fallback: a press delivered just before the window loses focus (e.g.
+ * alt-tab, an OS context menu, a modal stealing focus) would otherwise latch
+ * that button "held" forever, since GLFW does not synthesise a release event
+ * for a button that goes up while unfocused. Clearing all three here (plus
+ * the focus target) on every focus transition keeps input state consistent
+ * regardless of which button lost its release event.
+ *
+ * glfw     The GLFW window.
+ * focused  GLFW_TRUE when the window gained focus, GLFW_FALSE when it lost it.
+ */
+static void glfw_window_focus_cb(GLFWwindow *glfw, int focused)
+{
+    Ca_Window *win = (Ca_Window *)glfwGetWindowUserPointer(glfw);
+    if (!win) return;
+    if (!focused) {
+        win->mouse_buttons[0] = false;
+        win->mouse_buttons[1] = false;
+        win->mouse_buttons[2] = false;
+        win->prev_mouse_right = false;
+        win->focused_node     = NULL;
+        memset(win->key_consumed, 0, sizeof(win->key_consumed));
+        glfwPostEmptyEvent();
+    }
+}
+
 /* ---- System ---- */
 
 static int g_glfw_refcount = 0;
@@ -801,6 +832,7 @@ static Ca_Window *window_create_in_pool(Ca_Instance *inst,
     glfwSetWindowSizeCallback(glfw, glfw_window_size_cb);
     glfwSetFramebufferSizeCallback(glfw, glfw_framebuffer_size_cb);
     glfwSetWindowMaximizeCallback(glfw, glfw_window_maximize_cb);
+    glfwSetWindowFocusCallback(glfw, glfw_window_focus_cb);
 
     /* Boot surface + swapchain (renderer must already be initialised) */
     if (inst->vk_device != VK_NULL_HANDLE) {

@@ -932,15 +932,6 @@ static void style_resolve_sheet(Ca_Stylesheet *ss,
     ca_dyn_array_destroy(&matched_storage);
 }
 
-void ca_style_resolve(Ca_Stylesheet *ss,
-                      Ca_Node *node,
-                      Ca_ElementType elem_type,
-                      const char *classes,
-                      Ca_ResolvedStyle *out)
-{
-    style_resolve_sheet(ss, node, elem_type, classes, out, true);
-}
-
 void ca_style_resolve_layers(Ca_Stylesheet *defaults,
                              Ca_Stylesheet *author,
                              Ca_Node *node,

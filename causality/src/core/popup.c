@@ -275,11 +275,7 @@ static bool popup_activate(Ca_Instance *inst, const Ca_PopupEntry *entry)
 
     ca_window_set_title(win, entry->title);
 
-    snprintf(inst->popup_current.title, sizeof(inst->popup_current.title), "%s", entry->title);
-    snprintf(inst->popup_current.message, sizeof(inst->popup_current.message), "%s", entry->message);
-    inst->popup_current.buttons     = entry->buttons;
-    inst->popup_current.on_result   = entry->on_result;
-    inst->popup_current.result_data = entry->result_data;
+    inst->popup_current = *entry;
 
     inst->popup_pending_result = CA_POPUP_RESULT_NONE;
     inst->popup_active = true;
@@ -325,12 +321,7 @@ void ca_popup_system_tick(Ca_Instance *inst)
     if (!inst) return;
 
     if (inst->popup_active && (!inst->popup_window || !inst->popup_window->in_use)) {
-        Ca_PopupEntry entry;
-        snprintf(entry.title, sizeof(entry.title), "%s", inst->popup_current.title);
-        snprintf(entry.message, sizeof(entry.message), "%s", inst->popup_current.message);
-        entry.buttons = inst->popup_current.buttons;
-        entry.on_result = inst->popup_current.on_result;
-        entry.result_data = inst->popup_current.result_data;
+        Ca_PopupEntry entry = inst->popup_current;
 
         Ca_PopupResult r = inst->popup_pending_result;
         if (r == CA_POPUP_RESULT_NONE)
@@ -364,12 +355,7 @@ void ca_popup_system_shutdown(Ca_Instance *inst)
     if (!inst) return;
 
     if (inst->popup_active) {
-        Ca_PopupEntry entry;
-        snprintf(entry.title, sizeof(entry.title), "%s", inst->popup_current.title);
-        snprintf(entry.message, sizeof(entry.message), "%s", inst->popup_current.message);
-        entry.buttons = inst->popup_current.buttons;
-        entry.on_result = inst->popup_current.on_result;
-        entry.result_data = inst->popup_current.result_data;
+        Ca_PopupEntry entry = inst->popup_current;
         popup_emit_result(&entry, CA_POPUP_RESULT_CLOSED);
     }
 
