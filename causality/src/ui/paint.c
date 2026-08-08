@@ -298,12 +298,25 @@ static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, Cli
         cmd->a       *= op;
         cmd->color2_a *= op;
 
-        /* Uniform border */
-        cmd->border_width = node->desc.border_width;
-        if (node->desc.border_color != 0) {
-            unpack_color(node->desc.border_color,
-                         &cmd->border_r, &cmd->border_g,
-                         &cmd->border_b, &cmd->border_a);
+        /* Uniform border.
+
+           Suppressed when the four sides do not share one colour: the
+           per-side rects emitted below would otherwise be drawn on top of
+           a full uniform border, which still shows through at the corners
+           (where the per-side rects meet diagonally) and wins wherever a
+           side resolved to no colour of its own. A shaded/bevelled border
+           is exactly that case, so it has to own the whole edge. */
+        bool uniform_sides =
+            node->desc.border_top_c == node->desc.border_right_c &&
+            node->desc.border_top_c == node->desc.border_bottom_c &&
+            node->desc.border_top_c == node->desc.border_left_c;
+        if (uniform_sides) {
+            cmd->border_width = node->desc.border_width;
+            if (node->desc.border_color != 0) {
+                unpack_color(node->desc.border_color,
+                             &cmd->border_r, &cmd->border_g,
+                             &cmd->border_b, &cmd->border_a);
+            }
         }
         cmd->z_index = node->desc.z_index;
         cmd->in_use  = true;
@@ -330,11 +343,22 @@ static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, Cli
             ec->r = er; ec->g = eg; ec->b = eb; ec->a = ea;
             ec->z_index = node->desc.z_index;
             ec->in_use  = true;
+            /* Each side owns a disjoint span: the horizontal edges run the
+               full width and the vertical edges are inset between them.
+               Overlapping full-span rects would let whichever side is
+               painted last win the corner square outright, which on a
+               two-tone (bevelled) border shows as a wrongly-shaded block at
+               two of the four corners rather than a clean joint. */
+            float top_w    = node->desc.border_top_w    > 0.0f ? node->desc.border_top_w    : 0.0f;
+            float bottom_w = node->desc.border_bottom_w > 0.0f ? node->desc.border_bottom_w : 0.0f;
+            float inner_y  = node->y + top_w;
+            float inner_h  = node->h - top_w - bottom_w;
+            if (inner_h < 0.0f) inner_h = 0.0f;
             switch (edges[ei].side) {
                 case 0: ec->x = node->x;                  ec->y = node->y;                  ec->w = node->w;  ec->h = ew;       break; /* top    */
-                case 1: ec->x = node->x + node->w - ew;   ec->y = node->y;                  ec->w = ew;       ec->h = node->h;  break; /* right  */
+                case 1: ec->x = node->x + node->w - ew;   ec->y = inner_y;                  ec->w = ew;       ec->h = inner_h;  break; /* right  */
                 case 2: ec->x = node->x;                  ec->y = node->y + node->h - ew;   ec->w = node->w;  ec->h = ew;       break; /* bottom */
-                case 3: ec->x = node->x;                  ec->y = node->y;                  ec->w = ew;       ec->h = node->h;  break; /* left   */
+                case 3: ec->x = node->x;                  ec->y = inner_y;                  ec->w = ew;       ec->h = inner_h;  break; /* left   */
             }
             set_clip(ec, clip);
         }
