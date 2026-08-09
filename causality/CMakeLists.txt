@@ -92,6 +92,22 @@ else()
     find_package(X11 REQUIRED)
     target_link_libraries(causality PUBLIC stdc++ dl m)
     target_link_libraries(causality PRIVATE X11::X11)
+
+    # The system shaderc_combined.a does not bundle glslang/spirv-tools;
+    # causality links it PRIVATE, so every consumer of the static causality
+    # archive (including its own test executables below) needs these
+    # symbols supplied again at final link time.
+    find_library(GLSLANG_LIB           NAMES glslang            PATHS /usr/lib/x86_64-linux-gnu /usr/lib/aarch64-linux-gnu REQUIRED)
+    find_library(GLSLANG_MACHIND_LIB   NAMES MachineIndependent PATHS /usr/lib/x86_64-linux-gnu /usr/lib/aarch64-linux-gnu REQUIRED)
+    find_library(GLSLANG_OSDEP_LIB     NAMES OSDependent        PATHS /usr/lib/x86_64-linux-gnu /usr/lib/aarch64-linux-gnu REQUIRED)
+    find_library(GLSLANG_GENCG_LIB     NAMES GenericCodeGen     PATHS /usr/lib/x86_64-linux-gnu /usr/lib/aarch64-linux-gnu REQUIRED)
+    find_library(SPIRV_LIB             NAMES SPIRV              PATHS /usr/lib/x86_64-linux-gnu /usr/lib/aarch64-linux-gnu REQUIRED)
+    find_library(SPIRVTOOLS_OPT_LIB    NAMES SPIRV-Tools-opt    PATHS /usr/lib/x86_64-linux-gnu /usr/lib/aarch64-linux-gnu REQUIRED)
+    find_library(SPIRVTOOLS_BASE_LIB   NAMES SPIRV-Tools        PATHS /usr/lib/x86_64-linux-gnu /usr/lib/aarch64-linux-gnu REQUIRED)
+    target_link_libraries(causality PUBLIC
+        ${GLSLANG_LIB} ${GLSLANG_MACHIND_LIB} ${GLSLANG_OSDEP_LIB}
+        ${GLSLANG_GENCG_LIB} ${SPIRV_LIB} ${SPIRVTOOLS_OPT_LIB} ${SPIRVTOOLS_BASE_LIB}
+    )
 endif()
 
 # Skip precompiled header for the large embedded font data files
