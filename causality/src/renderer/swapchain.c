@@ -24,9 +24,26 @@ static int cmp_z_cmd(const void *a, const void *b)
     return (ia < ib) ? -1 : (ia > ib) ? 1 : 0; /* stable: by original index */
 }
 
-static bool cmd_in_overlay_phase(const Ca_DrawCmd *cmd)
+/* Paint bands, drawn strictly in order 0..3. Draw commands are submitted
+   batched by TYPE within each band (rects, then glyphs, then images, then
+   viewports, then backdrop-blur — see the per-type loops below), so two
+   commands of different types with the same z_index would otherwise not
+   respect z_index = "absolute paint order" (documented in causality.h) if
+   they were left in a single band together. Splitting into z<0 / z==0 / z>0
+   bands — matching the sorted_idx partition already computed above — makes
+   type-batching safe: within a band all commands share the same z bracket
+   relative to every other band, so cross-type mis-ordering can only happen
+   between commands of equal z_index, which paint_node_content() emits in
+   tree order already (stable qsort). Band 3 is reserved for true overlay
+   content — context menus, tooltips, dropdowns, modals — explicitly flagged
+   by paint_overlays() in paint.c, which must always sit above every ordinary
+   z-banded node regardless of that node's z_index. */
+static int cmd_paint_band(const Ca_DrawCmd *cmd)
 {
-    return cmd->overlay || cmd->z_index > 0;
+    if (cmd->overlay) return 3;
+    if (cmd->z_index < 0) return 0;
+    if (cmd->z_index > 0) return 2;
+    return 1;
 }
 
 /* Locate the root node's own background-rect draw command for this frame.
@@ -602,8 +619,7 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
         .minDepth = 0.0f, .maxDepth = 1.0f,
     };
 
-    for (int phase = 0; phase < 2; ++phase) {
-        const bool want_overlay = (phase == 1);
+    for (int band = 0; band < 4; ++band) {
 
         /* ---- Rects ---- */
         if (inst->rect_pipeline.pipeline != VK_NULL_HANDLE && win->draw_cmd_count > 1) {
@@ -630,7 +646,7 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
                 const Ca_DrawCmd *cmd = &win->draw_cmds[idx];
                 if (!cmd->in_use || cmd->type != CA_DRAW_RECT || cmd->a < 0.004f)
                     continue;
-                if (cmd_in_overlay_phase(cmd) != want_overlay) continue;
+                if (cmd_paint_band(cmd) != band) continue;
 
                 /* Compute scissor for this command */
                 VkRect2D sc_new = full_scissor;
@@ -708,7 +724,7 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
             for (uint32_t d = 0; d < win->draw_cmd_count; ++d) {
                 if (win->draw_cmds[d].in_use &&
                     win->draw_cmds[d].type == CA_DRAW_GLYPH &&
-                    cmd_in_overlay_phase(&win->draw_cmds[d]) == want_overlay) {
+                    cmd_paint_band(&win->draw_cmds[d]) == band) {
                     has_glyphs = true;
                     break;
                 }
@@ -738,7 +754,7 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
                     const Ca_DrawCmd *cmd = &win->draw_cmds[idx];
                     if (!cmd->in_use || cmd->type != CA_DRAW_GLYPH || cmd->a < 0.004f)
                         continue;
-                    if (cmd_in_overlay_phase(cmd) != want_overlay) continue;
+                    if (cmd_paint_band(cmd) != band) continue;
 
                     VkRect2D sc_new = full_scissor;
                     if (cmd->has_clip) {
@@ -790,7 +806,7 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
             for (uint32_t d = 0; d < win->draw_cmd_count; ++d) {
                 if (win->draw_cmds[d].in_use &&
                     win->draw_cmds[d].type == CA_DRAW_IMAGE &&
-                    cmd_in_overlay_phase(&win->draw_cmds[d]) == want_overlay) {
+                    cmd_paint_band(&win->draw_cmds[d]) == band) {
                     has_images = true;
                     break;
                 }
@@ -815,7 +831,7 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
                     const Ca_DrawCmd *cmd = &win->draw_cmds[idx];
                     if (!cmd->in_use || cmd->type != CA_DRAW_IMAGE || cmd->a < 0.004f)
                         continue;
-                    if (cmd_in_overlay_phase(cmd) != want_overlay) continue;
+                    if (cmd_paint_band(cmd) != band) continue;
 
                     uint32_t ii = cmd->image_index;
                     if ((size_t)ii >= ca_pool_slot_count(&inst->images))
@@ -885,7 +901,7 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
             for (uint32_t d = 0; d < win->draw_cmd_count; ++d) {
                 if (win->draw_cmds[d].in_use &&
                     win->draw_cmds[d].type == CA_DRAW_VIEWPORT &&
-                    cmd_in_overlay_phase(&win->draw_cmds[d]) == want_overlay) {
+                    cmd_paint_band(&win->draw_cmds[d]) == band) {
                     has_viewports = true;
                     break;
                 }
@@ -910,7 +926,7 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
                     const Ca_DrawCmd *cmd = &win->draw_cmds[idx];
                     if (!cmd->in_use || cmd->type != CA_DRAW_VIEWPORT || cmd->a < 0.004f)
                         continue;
-                    if (cmd_in_overlay_phase(cmd) != want_overlay) continue;
+                    if (cmd_paint_band(cmd) != band) continue;
 
                     uint32_t vi = cmd->viewport_index;
                     if (vi >= ca_pool_slot_count(&win->viewport_pool) ||
@@ -989,7 +1005,7 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
             for (uint32_t d = 0; d < win->draw_cmd_count; ++d) {
                 if (win->draw_cmds[d].in_use &&
                     win->draw_cmds[d].type == CA_DRAW_BACKDROP_BLUR &&
-                    cmd_in_overlay_phase(&win->draw_cmds[d]) == want_overlay) {
+                    cmd_paint_band(&win->draw_cmds[d]) == band) {
                     has_backdrop = true;
                     break;
                 }
@@ -1016,7 +1032,7 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
                     const Ca_DrawCmd *cmd = &win->draw_cmds[idx];
                     if (!cmd->in_use || cmd->type != CA_DRAW_BACKDROP_BLUR)
                         continue;
-                    if (cmd_in_overlay_phase(cmd) != want_overlay) continue;
+                    if (cmd_paint_band(cmd) != band) continue;
 
                     VkRect2D sc_new = full_scissor;
                     if (cmd->has_clip) {
