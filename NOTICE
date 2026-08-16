@@ -39,3 +39,12 @@ This product includes the following third-party software:
       Copyright (c) 2014 Ryan L McIntyre
       Nerd Fonts patcher (MIT) - https://github.com/ryanoasis/nerd-fonts
       Embedded as a static byte array in src/renderer/embedded_symbols_font.c.
+
+  - Embedded Unicode fallback font: DejaVu Sans (version 2.37)
+      Bitstream Vera Fonts Copyright (c) 2003 by Bitstream, Inc.
+      DejaVu changes are in the public domain.
+      Arev Fonts Copyright (c) 2006 by Tavmjong Bah.
+      Upstream: https://github.com/dejavu-fonts/dejavu-fonts
+      Provides Unicode text blocks the Nerd Font faces do not cover
+      (arrows, Braille, geometric shapes, dingbats, math operators).
+      Embedded as a static byte array in src/renderer/embedded_fallback_font.c.

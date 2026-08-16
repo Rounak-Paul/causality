@@ -110,12 +110,15 @@ typedef struct Ca_Font {
     void       *regular_face;
     void       *bold_face;
     void       *icon_face;
+    void       *fallback_face;
     unsigned char *regular_data;
     size_t      regular_size;
     unsigned char *bold_data;
     size_t      bold_size;
     unsigned char *icon_data;
     size_t      icon_size;
+    unsigned char *fallback_data;
+    size_t      fallback_size;
 } Ca_Font;
 
 /* Select or create the exact visual-size page for this scaled pixel size. */

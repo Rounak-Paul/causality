@@ -1147,6 +1147,21 @@ static bool font_render_glyph(Ca_FontTier *tier, uint32_t cp, Ca_Glyph *g)
             }
         }
     }
+    /* Last resort before '?': the Unicode fallback face.  Kept after the
+       styled and regular lookups so a codepoint present in the chosen font
+       always renders from that font. */
+    if (gi == 0 && font->fallback_face &&
+        face != (FT_Face)font->fallback_face) {
+        FT_Face fallback = (FT_Face)font->fallback_face;
+        if (font_set_face_size(fallback, tier->baked_px)) {
+            FT_UInt fallback_gi = FT_Get_Char_Index(fallback, cp);
+            if (fallback_gi != 0) {
+                face = fallback;
+                gi = fallback_gi;
+                is_icon_range = false;
+            }
+        }
+    }
     if (gi == 0 && cp != '?')
         gi = FT_Get_Char_Index(face, '?');
     if (gi == 0) {
@@ -1573,6 +1588,35 @@ static bool font_create_internal(Ca_Instance *inst, GLFWwindow *glfw_win,
         }
     }
 
+    /* Unicode fallback layer.  The Nerd Font faces patch icons into the
+       private-use area but do not extend coverage of ordinary Unicode text
+       blocks (arrows, Braille, geometric shapes, dingbats, math operators).
+       This face is consulted only when neither the styled face nor the
+       regular face maps the codepoint, so it never overrides font choice. */
+    extern const unsigned char ca_embedded_fallback_font_data[];
+    extern const unsigned int  ca_embedded_fallback_font_size;
+    if (ca_embedded_fallback_font_size > 0u) {
+        out_font->fallback_data =
+            (unsigned char *)CA_MALLOC(ca_embedded_fallback_font_size);
+        if (out_font->fallback_data) {
+            memcpy(out_font->fallback_data, ca_embedded_fallback_font_data,
+                   ca_embedded_fallback_font_size);
+            out_font->fallback_size = ca_embedded_fallback_font_size;
+            FT_Face fallback_face = NULL;
+            if (FT_New_Memory_Face(lib, out_font->fallback_data,
+                                   (FT_Long)out_font->fallback_size,
+                                   0, &fallback_face) == 0) {
+                out_font->fallback_face = fallback_face;
+            } else {
+                fprintf(stderr, "[font] FT_New_Memory_Face fallback failed; "
+                                "missing glyphs will render as '?'\n");
+                CA_FREE(out_font->fallback_data);
+                out_font->fallback_data = NULL;
+                out_font->fallback_size = 0;
+            }
+        }
+    }
+
     out_font->ft_library = lib;
 
     size_t atlas_bytes = (size_t)out_font->atlas_w * out_font->atlas_h * 4u;
@@ -1712,6 +1756,8 @@ void ca_font_destroy(Ca_Instance *inst, Ca_Font *font)
         FT_Done_Face((FT_Face)font->bold_face);
     if (font->icon_face)
         FT_Done_Face((FT_Face)font->icon_face);
+    if (font->fallback_face)
+        FT_Done_Face((FT_Face)font->fallback_face);
     if (font->regular_face)
         FT_Done_Face((FT_Face)font->regular_face);
     if (font->ft_library)
@@ -1719,6 +1765,7 @@ void ca_font_destroy(Ca_Instance *inst, Ca_Font *font)
     CA_FREE(font->regular_data);
     CA_FREE(font->bold_data);
     CA_FREE(font->icon_data);
+    CA_FREE(font->fallback_data);
     CA_FREE(font->atlas_rgba);
     ca_dyn_array_destroy(&font->dirty_rect_storage);
     memset(font, 0, sizeof(*font));
