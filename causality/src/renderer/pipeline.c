@@ -61,7 +61,7 @@ static const char *VERT_GLSL =
     "layout(location = 5) out vec4  v_border_color;\n"
     "layout(location = 6) out vec4  v_color2;\n"
     "layout(location = 7) out float v_blur;\n"
-    "layout(location = 8) out uint  v_mode;\n"
+    "layout(location = 8) flat out uint v_mode;\n"
     "layout(location = 9) out float v_grad_angle;\n"
     "layout(location = 10) out vec2 v_grad_center;\n"
     "\n"
