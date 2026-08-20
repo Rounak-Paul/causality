@@ -348,8 +348,12 @@ static bool create_logical_device(Ca_Instance *inst)
     }
     free(avail);
 
+    VkPhysicalDeviceVulkan11Features available11 = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES,
+    };
     VkPhysicalDeviceVulkan12Features available12 = {
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,
+        .pNext = &available11,
     };
     VkPhysicalDeviceVulkan13Features available13 = {
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES,
@@ -376,6 +380,18 @@ static bool create_logical_device(Ca_Instance *inst)
                 available.features.samplerAnisotropy,
                 available.features.fillModeNonSolid,
                 available.features.multiDrawIndirect);
+        return false;
+    }
+    /* shaderDrawParameters (Vulkan 1.1, VK_KHR_shader_draw_parameters
+       promoted to core) gives GLSL gl_BaseInstance/gl_BaseVertex/gl_DrawID
+       via #extension GL_ARB_shader_draw_parameters — the foliage GPU
+       cluster-cull pass (rg_foliage_cull_node.c) uses gl_BaseInstance to
+       encode a per-draw metadata index in a compacted indirect draw.
+       Required, not optional: confirmed supported on every Vulkan 1.1+
+       driver including MoltenVK (no feature-support fallback path exists
+       for the foliage draw, unlike bindless above). */
+    if (!available11.shaderDrawParameters) {
+        fprintf(stderr, "[vk] required Vulkan 1.1 feature unavailable (shaderDrawParameters=0)\n");
         return false;
     }
 
@@ -414,8 +430,13 @@ static bool create_logical_device(Ca_Instance *inst)
            available12.runtimeDescriptorArray,
            bindless_bits ? "ENABLED" : "DISABLED");
 
+    VkPhysicalDeviceVulkan11Features enabled11 = {
+        .sType                   = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES,
+        .shaderDrawParameters    = VK_TRUE,
+    };
     VkPhysicalDeviceVulkan12Features enabled12 = {
         .sType              = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,
+        .pNext              = &enabled11,
         .drawIndirectCount  = inst->draw_indirect_count ? VK_TRUE : VK_FALSE,
         .descriptorIndexing                              = bindless_bits ? VK_TRUE : VK_FALSE,
         .shaderSampledImageArrayNonUniformIndexing        = bindless_bits ? VK_TRUE : VK_FALSE,
