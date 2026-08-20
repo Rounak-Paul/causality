@@ -478,6 +478,23 @@ static bool create_command_pool(Ca_Instance *inst)
     return true;
 }
 
+/* ---- VMA allocator ---- */
+
+static bool create_vma_allocator(Ca_Instance *inst)
+{
+    VmaAllocatorCreateInfo ci = {
+        .vulkanApiVersion = VK_API_VERSION_1_3,
+        .physicalDevice   = inst->vk_gpu,
+        .device           = inst->vk_device,
+        .instance         = inst->vk_instance,
+    };
+    if (vmaCreateAllocator(&ci, &inst->vma) != VK_SUCCESS) {
+        fprintf(stderr, "[vk] vmaCreateAllocator failed\n");
+        return false;
+    }
+    return true;
+}
+
 /* ---- Public ---- */
 
 bool ca_renderer_init(Ca_Instance *inst, const Ca_InstanceDesc *desc)
@@ -487,6 +504,7 @@ bool ca_renderer_init(Ca_Instance *inst, const Ca_InstanceDesc *desc)
     if (!find_queue_families(inst))   return false;
     if (!create_logical_device(inst)) return false;
     if (!create_command_pool(inst))   return false;
+    if (!create_vma_allocator(inst))  return false;
     printf("[vk] renderer ready\n");
     return true;
 }
@@ -502,6 +520,11 @@ void ca_renderer_shutdown(Ca_Instance *inst)
        destroyed by the time vkDestroyDevice below runs, tripping
        validation's "child objects not destroyed" check. */
     if (inst->gpu_predestroy_fn) inst->gpu_predestroy_fn(inst->gpu_predestroy_data);
+
+    if (inst->vma != VK_NULL_HANDLE) {
+        vmaDestroyAllocator(inst->vma);
+        inst->vma = VK_NULL_HANDLE;
+    }
 
     ca_image_pool_shutdown(inst);
     ca_blur_pipeline_destroy(inst);

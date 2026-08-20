@@ -195,3 +195,12 @@ void ca_gpu_set_predestroy_callback(Ca_Instance *instance,
     instance->gpu_predestroy_fn   = fn;
     instance->gpu_predestroy_data = user_data;
 }
+
+/*
+ * Return the shared VmaAllocator for this instance — see ca_gpu_allocator's
+ * doc comment in ca_gpu.h.
+ */
+VmaAllocator ca_gpu_allocator(Ca_Instance *instance)
+{
+    return instance ? instance->vma : VK_NULL_HANDLE;
+}

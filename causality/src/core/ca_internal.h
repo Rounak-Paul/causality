@@ -1266,6 +1266,7 @@ struct Ca_Instance {
     uint32_t                 gfx_family;
     uint32_t                 present_family;
     VkCommandPool            cmd_pool;
+    VmaAllocator              vma;
 
     /* GPU info (populated at init for debug overlay) */
     char                     gpu_name[256];

@@ -19,6 +19,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <vulkan/vulkan.h>
+#include <vk_mem_alloc.h>
 #include "ca_api.h"
 
 #ifdef __cplusplus
@@ -137,6 +138,17 @@ CA_API bool                ca_gpu_bindless_supported(Ca_Instance *instance);
 CA_API uint32_t            ca_gpu_find_memory_type(Ca_Instance *instance,
                                                    uint32_t type_bits,
                                                    VkMemoryPropertyFlags properties);
+
+/*
+ * Returns the shared VmaAllocator owned by this instance. All buffer/image
+ * memory for the device — causality's own and any external renderer sharing
+ * this GPU context — is allocated through this single allocator instance.
+ *
+ * instance  Owning Ca_Instance.
+ * Returns   The VmaAllocator, or VK_NULL_HANDLE if instance is NULL or
+ *           allocator creation failed.
+ */
+CA_API VmaAllocator        ca_gpu_allocator(Ca_Instance *instance);
 
 /*
  * Allocate and begin a one-shot command buffer for immediate GPU work.

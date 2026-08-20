@@ -1,5 +1,9 @@
 file(GLOB_RECURSE CAUSALITY_SOURCES CONFIGURE_DEPENDS src/*.c)
 
+# vma_impl.cpp is the sole translation unit compiling VMA's own
+# implementation (requires C++); every other source stays plain C.
+list(APPEND CAUSALITY_SOURCES src/core/vma_impl.cpp)
+
 if(APPLE)
     list(APPEND CAUSALITY_SOURCES src/platform/mouse_state_mac.m)
 endif()
@@ -152,6 +156,7 @@ if(BUILD_TESTING)
     target_link_libraries(causality_input_capture_tests PRIVATE
         causality
         Vulkan::Vulkan
+        VulkanMemoryAllocator
     )
     add_test(NAME causality_input_capture_tests COMMAND causality_input_capture_tests)
 endif()
