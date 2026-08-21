@@ -753,8 +753,10 @@ bool ca_renderer_window_resize(Ca_Instance *inst, Ca_Window *win, int w, int h)
 
 void ca_renderer_frame(Ca_Instance *inst)
 {
+    ca_profile_begin(inst, "Platform Font Upload");
     if (inst && inst->font)
         ca_font_flush_uploads(inst, inst->font);
+    ca_profile_end(inst, "Platform Font Upload");
 
     for (size_t i = 0; i < ca_pool_slot_count(&inst->windows); ++i) {
         Ca_Window *win = CA_POOL_AT(inst->windows, Ca_Window, i);
@@ -763,14 +765,18 @@ void ca_renderer_frame(Ca_Instance *inst)
         /* Apply any deferred swapchain resize now that we are outside GLFW
            callbacks — safe to call vkDeviceWaitIdle here. */
         if (win->pending_swapchain_resize) {
+            ca_profile_begin(inst, "Platform Swapchain Resize");
             win->pending_swapchain_resize = false;
             ca_renderer_window_resize(inst, win, win->pending_sc_w, win->pending_sc_h);
+            ca_profile_end(inst, "Platform Swapchain Resize");
         }
 
         if (win->sc.swapchain == VK_NULL_HANDLE) continue;
         if (win->bg_render_fn || inst->default_bg_render_fn) win->needs_render = true;
         if (!win->needs_render) continue;
         win->needs_render = false;
+        ca_profile_begin(inst, "Platform Swapchain");
         ca_swapchain_frame(inst, win);
+        ca_profile_end(inst, "Platform Swapchain");
     }
 }

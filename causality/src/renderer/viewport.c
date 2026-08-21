@@ -332,8 +332,10 @@ void ca_viewport_render_all(Ca_Instance *inst, Ca_Window *win,
            than 1, so the fence is typically already signaled — this is the
            actual latency win double-buffering provides over the old
            single-fence design. */
+        ca_profile_begin(inst, "Platform Viewport Fence");
         vkWaitForFences(inst->vk_device, 1, &f->render_fence, VK_TRUE, UINT64_MAX);
         vkResetFences(inst->vk_device, 1, &f->render_fence);
+        ca_profile_end(inst, "Platform Viewport Fence");
 
         /* Begin command buffer */
         vkResetCommandBuffer(f->cmd, 0);
@@ -363,7 +365,9 @@ void ca_viewport_render_all(Ca_Instance *inst, Ca_Window *win,
             VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
 
         /* Let the engine render */
+        ca_profile_begin(inst, "Platform Viewport Render");
         vp->on_render(vp, vp->render_data);
+        ca_profile_end(inst, "Platform Viewport Render");
 
         vp->needs_redraw = false;
         if (vp->node)
@@ -405,7 +409,9 @@ void ca_viewport_render_all(Ca_Instance *inst, Ca_Window *win,
             .signalSemaphoreCount = 1,
             .pSignalSemaphores    = &f->render_done,
         };
+        ca_profile_begin(inst, "Platform Viewport Submit");
         vr = vkQueueSubmit(inst->gfx_queue, 1, &submit, f->render_fence);
+        ca_profile_end(inst, "Platform Viewport Submit");
         if (vr != VK_SUCCESS) {
             fprintf(stderr, "[viewport] vkQueueSubmit failed: %d\n", vr);
             /* The real submit above didn't happen, so render_fence would

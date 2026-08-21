@@ -412,18 +412,26 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
     Ca_Swapchain *sc = &win->sc;
     Ca_Frame     *f  = &sc->frames[sc->current_frame];
 
+    ca_profile_begin(inst, "Platform Swapchain Fence");
     vkWaitForFences(inst->vk_device, 1, &f->in_flight, VK_TRUE, UINT64_MAX);
+    ca_profile_end(inst, "Platform Swapchain Fence");
+
+    ca_profile_begin(inst, "Platform UI Buffer Ensure");
     if (!ca_instance_buf_ensure(inst, f,
                                 win->draw_cmd_count > 0
                                     ? win->draw_cmd_count : 1u)) {
+        ca_profile_end(inst, "Platform UI Buffer Ensure");
         fprintf(stderr, "[vk] unable to grow frame instance storage\n");
         return;
     }
+    ca_profile_end(inst, "Platform UI Buffer Ensure");
 
     uint32_t image_index;
+    ca_profile_begin(inst, "Platform Swapchain Acquire");
     VkResult result = vkAcquireNextImageKHR(
         inst->vk_device, sc->swapchain, UINT64_MAX,
         f->image_available, VK_NULL_HANDLE, &image_index);
+    ca_profile_end(inst, "Platform Swapchain Acquire");
 
     if (result == VK_ERROR_OUT_OF_DATE_KHR) {
         int w, h;
@@ -444,7 +452,9 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
        must be waited on by this frame's own submit below (added to
        viewport_wait_sems) before compositing samples that viewport's
        texture; nothing else guarantees the render is done by then. */
+    ca_profile_begin(inst, "Platform Viewport Pass");
     ca_viewport_render_all(inst, win, &sc->viewport_wait_storage);
+    ca_profile_end(inst, "Platform Viewport Pass");
     VkSemaphore *viewport_wait_sems = sc->viewport_wait_storage.data;
     uint32_t viewport_wait_count = (uint32_t)sc->viewport_wait_storage.count;
 
@@ -455,8 +465,10 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
         .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
         .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
     };
+    ca_profile_begin(inst, "Platform UI Command Build");
     result = vkBeginCommandBuffer(f->cmd, &begin);
     if (result != VK_SUCCESS) {
+        ca_profile_end(inst, "Platform UI Command Build");
         fprintf(stderr, "[vk] vkBeginCommandBuffer failed: %d\n", result);
         return;
     }
@@ -1121,6 +1133,7 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
         VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT,  VK_ACCESS_2_NONE);
 
     result = vkEndCommandBuffer(f->cmd);
+    ca_profile_end(inst, "Platform UI Command Build");
     if (result != VK_SUCCESS) {
         fprintf(stderr, "[vk] vkEndCommandBuffer failed: %d\n", result);
         return;
@@ -1156,7 +1169,9 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
         .signalSemaphoreCount = 1,
         .pSignalSemaphores    = &render_finished,
     };
+    ca_profile_begin(inst, "Platform Swapchain Submit");
     result = vkQueueSubmit(inst->gfx_queue, 1, &submit, f->in_flight);
+    ca_profile_end(inst, "Platform Swapchain Submit");
     if (result != VK_SUCCESS) {
         fprintf(stderr, "[vk] vkQueueSubmit failed: %d\n", result);
         /* f->in_flight was already reset above (line ~422) in anticipation
@@ -1180,7 +1195,9 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
         .pSwapchains        = &sc->swapchain,
         .pImageIndices      = &image_index,
     };
+    ca_profile_begin(inst, "Platform Present");
     result = vkQueuePresentKHR(inst->present_queue, &present);
+    ca_profile_end(inst, "Platform Present");
     if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR) {
         int w, h;
         glfwGetFramebufferSize(win->glfw, &w, &h);

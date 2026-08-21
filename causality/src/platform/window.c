@@ -696,6 +696,7 @@ bool ca_window_system_tick(Ca_Instance *inst)
         }
     }
 
+    ca_profile_begin(inst, "Platform Event Wait");
     if (inst->continuous) {
         glfwPollEvents();
     } else if (inst->frame_deadline_pending) {
@@ -711,12 +712,16 @@ bool ca_window_system_tick(Ca_Instance *inst)
     } else {
         glfwWaitEvents();
     }
+    ca_profile_end(inst, "Platform Event Wait");
 
     /* Dispatch all queued input / resize events */
+    ca_profile_begin(inst, "Platform Event Dispatch");
     ca_event_dispatch(inst);
+    ca_profile_end(inst, "Platform Event Dispatch");
 
     /* Fire WINDOW_CLOSE event then destroy — order matters.
        Track whether we destroyed anything so we can re-focus. */
+    ca_profile_begin(inst, "Platform Window Close");
     bool destroyed_any = false;
     for (size_t i = 0; i < ca_pool_slot_count(&inst->windows); ++i) {
         Ca_Window *window = CA_POOL_AT(inst->windows, Ca_Window, i);
@@ -744,6 +749,7 @@ bool ca_window_system_tick(Ca_Instance *inst)
             }
         }
     }
+    ca_profile_end(inst, "Platform Window Close");
 
     for (size_t i = 0; i < ca_pool_slot_count(&inst->windows); ++i) {
         Ca_Window *window = CA_POOL_AT(inst->windows, Ca_Window, i);

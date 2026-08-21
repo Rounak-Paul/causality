@@ -1338,6 +1338,8 @@ struct Ca_Instance {
     /* When true, ca_window_system_tick polls continuously. */
     bool continuous;
 
+    Ca_ProfileHooks profile_hooks;
+
     /* Earliest requested timed frame, in GLFW monotonic seconds. */
     double frame_deadline;
     bool   frame_deadline_pending;
@@ -1346,6 +1348,18 @@ struct Ca_Instance {
        0.0 / 1.0 both mean "no scaling".  Set via ca_instance_set_scale(). */
     float default_ui_scale;
 };
+
+static inline void ca_profile_begin(Ca_Instance *inst, const char *name)
+{
+    if (inst && inst->profile_hooks.begin)
+        inst->profile_hooks.begin(inst->profile_hooks.user_data, name);
+}
+
+static inline void ca_profile_end(Ca_Instance *inst, const char *name)
+{
+    if (inst && inst->profile_hooks.end)
+        inst->profile_hooks.end(inst->profile_hooks.user_data, name);
+}
 
 /* ======================================================
    THREAD

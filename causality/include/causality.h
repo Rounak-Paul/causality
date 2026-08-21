@@ -31,6 +31,13 @@ typedef struct Ca_Thread   Ca_Thread;
 typedef struct Ca_Mutex    Ca_Mutex;
 typedef struct Ca_CondVar  Ca_CondVar;
 
+/** Optional host profiler bridge invoked around Causality frame phases. */
+typedef struct Ca_ProfileHooks {
+    void (*begin)(void *user_data, const char *name);
+    void (*end)(void *user_data, const char *name);
+    void *user_data;
+} Ca_ProfileHooks;
+
 /* ---- Widget handles ---- */
 
 typedef struct Ca_Label     Ca_Label;
@@ -108,6 +115,15 @@ CA_API void ca_set_allocator(Ca_MallocFn mal, Ca_CallocFn cal,
 /* Pumps the event loop: processes window events, updates UI, renders one frame.
    Returns false when all windows have been closed. */
 CA_API bool         ca_instance_tick(Ca_Instance *instance);
+
+/**
+ * Installs optional profiler callbacks for frame-phase instrumentation.
+ *
+ * instance Instance to instrument.
+ * hooks    Callback pair to install, or NULL to remove the current hooks.
+ */
+CA_API void ca_instance_set_profile_hooks(Ca_Instance *instance,
+                                          const Ca_ProfileHooks *hooks);
 
 /* Wake the event loop from another thread (e.g. after posting async data). */
 CA_API void         ca_instance_wake(void);

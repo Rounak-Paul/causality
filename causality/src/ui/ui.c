@@ -315,8 +315,10 @@ static void rescan_and_layout_if_dirty(Ca_Window *win, bool *any_content)
 
 void ca_ui_update(Ca_Instance *inst)
 {
+    ca_profile_begin(inst, "Platform UI Font");
     if (inst && inst->font)
         ca_font_begin_frame(inst->font);
+    ca_profile_end(inst, "Platform UI Font");
 
     /* Builder rebuilds happen during ca_reactive_flush (called by
        ca_instance_tick before this function) so the new tree is already
@@ -338,6 +340,7 @@ void ca_ui_update(Ca_Instance *inst)
         }
 
         /* 2. Transition tick — update animated properties, mark dirty */
+        ca_profile_begin(inst, "Platform UI Transitions");
         double now = glfwGetTime();
         bool any_transitions = false;
         uint32_t trans_count = 0;
@@ -351,6 +354,7 @@ void ca_ui_update(Ca_Instance *inst)
             }
         }
         win->dbg_transition_count = trans_count;
+        ca_profile_end(inst, "Platform UI Transitions");
 
         /* 3. Check what kind of work this window needs */
         bool any_layout  = false;
@@ -366,9 +370,11 @@ void ca_ui_update(Ca_Instance *inst)
 
         /* 4. Layout pass — recompute rects, only dirty moved nodes */
         if (any_layout) {
+            ca_profile_begin(inst, "Platform UI Layout");
             win->dbg_layout_count = 1;
             if (layout_and_invalidate(win))
                 any_content = true;
+            ca_profile_end(inst, "Platform UI Layout");
         }
 
         /* 5. Resize pass — handle edge/corner drag for undecorated windows.
@@ -388,6 +394,7 @@ void ca_ui_update(Ca_Instance *inst)
         Ca_Node *prev_hovered = win->hovered_node;
         Ca_Node *prev_focused = win->focused_node;
         Ca_Node *prev_drag    = win->drag_node;
+        ca_profile_begin(inst, "Platform UI Input");
         if (!win->resize_active && !titlebar_dragging)
             ca_widget_input_pass(win);
 
@@ -439,6 +446,7 @@ void ca_ui_update(Ca_Instance *inst)
             for (Ca_Node *n = win->drag_node; n; n = n->parent)
                 ca_widget_reapply_css(n);
         }
+        ca_profile_end(inst, "Platform UI Input");
 
         /* Re-scan for content dirty after input (widget state changes may
            have dirtied nodes that weren't dirty before).
@@ -452,9 +460,11 @@ void ca_ui_update(Ca_Instance *inst)
            in the same frame.  Build context is activated so that
            widget creation (ca_div_clear + rebuild) works. */
         if (win->on_frame_fn) {
+            ca_profile_begin(inst, "Platform UI Callback");
             ca_widget_ctx_enter(win);
             win->on_frame_fn(win->on_frame_data);
             ca_widget_ctx_leave();
+            ca_profile_end(inst, "Platform UI Callback");
 
             /* The callback may have dirtied nodes (label text, hidden, etc.)
                or triggered a layout change.  Re-scan so the paint pass below
@@ -507,7 +517,9 @@ void ca_ui_update(Ca_Instance *inst)
                         dc++;
                 win->dbg_dirty_count = dc;
             }
+            ca_profile_begin(inst, "Platform UI Paint");
             ca_paint_pass(inst, win);
+            ca_profile_end(inst, "Platform UI Paint");
             win->dbg_force_repaint = false;
             win->needs_render = true;
         } else {

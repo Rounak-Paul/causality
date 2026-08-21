@@ -136,15 +136,40 @@ void ca_instance_destroy(Ca_Instance *instance)
  */
 bool ca_instance_tick(Ca_Instance *instance)
 {
-    if (!ca_window_system_tick(instance)) return false;
+    ca_profile_begin(instance, "Platform Events");
+    bool window_open = ca_window_system_tick(instance);
+    ca_profile_end(instance, "Platform Events");
+    if (!window_open) return false;
+
+    ca_profile_begin(instance, "Platform Popups");
     ca_popup_system_tick(instance);
+    ca_profile_end(instance, "Platform Popups");
+
     /* Run reactive effects scheduled since the previous tick. */
+    ca_profile_begin(instance, "Platform Reactive");
     ca_reactive_flush(instance);
+    ca_profile_end(instance, "Platform Reactive");
+
     /* Run every ca_frame_effect unconditionally, every tick. */
+    ca_profile_begin(instance, "Platform Frame Effects");
     ca_reactive_run_frame_effects(instance);
+    ca_profile_end(instance, "Platform Frame Effects");
+
+    ca_profile_begin(instance, "Platform UI");
     ca_ui_update(instance);
+    ca_profile_end(instance, "Platform UI");
+
+    ca_profile_begin(instance, "Platform Renderer");
     ca_renderer_frame(instance);
+    ca_profile_end(instance, "Platform Renderer");
     return true;
+}
+
+void ca_instance_set_profile_hooks(Ca_Instance *instance,
+                                   const Ca_ProfileHooks *hooks)
+{
+    if (!instance) return;
+    instance->profile_hooks = hooks ? *hooks : (Ca_ProfileHooks){0};
 }
 
 /*
