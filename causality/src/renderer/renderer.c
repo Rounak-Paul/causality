@@ -369,17 +369,20 @@ static bool create_logical_device(Ca_Instance *inst)
         !available13.shaderDemoteToHelperInvocation ||
         !available.features.samplerAnisotropy ||
         !available.features.fillModeNonSolid ||
-        !available.features.multiDrawIndirect) {
+        !available.features.multiDrawIndirect ||
+        !available.features.fragmentStoresAndAtomics) {
         fprintf(stderr,
                 "[vk] required Vulkan 1.3 features unavailable "
                 "(dynamicRendering=%u, synchronization2=%u, shaderDemoteToHelperInvocation=%u, "
-                "samplerAnisotropy=%u, fillModeNonSolid=%u, multiDrawIndirect=%u)\n",
+                "samplerAnisotropy=%u, fillModeNonSolid=%u, multiDrawIndirect=%u, "
+                "fragmentStoresAndAtomics=%u)\n",
                 available13.dynamicRendering,
                 available13.synchronization2,
                 available13.shaderDemoteToHelperInvocation,
                 available.features.samplerAnisotropy,
                 available.features.fillModeNonSolid,
-                available.features.multiDrawIndirect);
+                available.features.multiDrawIndirect,
+                available.features.fragmentStoresAndAtomics);
         return false;
     }
     /* shaderDrawParameters (Vulkan 1.1, VK_KHR_shader_draw_parameters
@@ -461,6 +464,10 @@ static bool create_logical_device(Ca_Instance *inst)
             .samplerAnisotropy = VK_TRUE,
             .fillModeNonSolid  = VK_TRUE,
             .multiDrawIndirect = VK_TRUE,
+            /* Required for imageAtomicOr on a storage image bound in the
+               fragment stage — the standard fragment-shader voxelization
+               technique (rasterize triangles, atomic-write occupancy). */
+            .fragmentStoresAndAtomics = VK_TRUE,
         },
     };
 
