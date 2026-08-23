@@ -10,13 +10,21 @@ endif()
 
 add_library(causality STATIC ${CAUSALITY_SOURCES})
 
+# causality_EXPORTS makes CA_API resolve to "export" (dllexport on Windows,
+# visibility("default") on GCC/Clang) while compiling causality's own
+# sources — required unconditionally: without it, Windows' CA_API would
+# resolve to dllimport even for causality's own function definitions, which
+# MSVC rejects. On Windows this also marks the symbols for inclusion in
+# whichever DLL causality's static archive is later linked into (Quasar.dll)
+# so consumers can resolve them via CA_API's dllimport branch instead of
+# each linking their own separate copy of causality (which would mean a
+# separate, out-of-sync widget-build context — see ca_api.h).
+target_compile_definitions(causality PRIVATE causality_EXPORTS)
+
 # Set default symbol visibility to hidden on GCC/Clang so that only
 # CA_API-decorated symbols are exported from the final binary.
-# causality_EXPORTS makes CA_API expand to visibility("default"), which
-# overrides -fvisibility=hidden for the public API surface.
 if(NOT WIN32)
     target_compile_options(causality PRIVATE -fvisibility=hidden)
-    target_compile_definitions(causality PRIVATE causality_EXPORTS)
 endif()
 
 # Enable the Vulkan validation layer + debug messenger in Debug and
@@ -127,6 +135,11 @@ set_source_files_properties(src/renderer/embedded_fallback_font.c
 target_precompile_headers(causality PRIVATE src/pch.h)
 
 if(BUILD_TESTING)
+    # These test binaries link causality directly with no intervening DLL
+    # (causality_array_tests even compiles a few of its sources directly),
+    # so they need causality_EXPORTS too — the same "export" resolution as
+    # causality's own build, not the dllimport a real external DLL consumer
+    # would see (there's no DLL boundary here to import across).
     add_executable(causality_array_tests
         tests/ca_array_tests.c
         src/core/ca_alloc.c
@@ -137,6 +150,7 @@ if(BUILD_TESTING)
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${CMAKE_CURRENT_SOURCE_DIR}/src/core
     )
+    target_compile_definitions(causality_array_tests PRIVATE causality_EXPORTS)
     add_test(NAME causality_array_tests COMMAND causality_array_tests)
 
     add_executable(causality_storage_tests tests/ca_storage_tests.c)
@@ -144,6 +158,7 @@ if(BUILD_TESTING)
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${CMAKE_CURRENT_SOURCE_DIR}/src/ui
     )
+    target_compile_definitions(causality_storage_tests PRIVATE causality_EXPORTS)
     target_link_libraries(causality_storage_tests PRIVATE causality)
     add_test(NAME causality_storage_tests COMMAND causality_storage_tests)
 
@@ -153,6 +168,7 @@ if(BUILD_TESTING)
         ${CMAKE_CURRENT_SOURCE_DIR}/src/core
         ${CMAKE_CURRENT_SOURCE_DIR}/src/ui
     )
+    target_compile_definitions(causality_input_capture_tests PRIVATE causality_EXPORTS)
     target_link_libraries(causality_input_capture_tests PRIVATE
         causality
         Vulkan::Vulkan
