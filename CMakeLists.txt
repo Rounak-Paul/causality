@@ -13,9 +13,15 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 include(CTest)
 
-# MSVC runtime library
+# MSVC runtime library — always the Release DLL CRT, even in Debug config.
+# The LunarG Vulkan SDK ships shaderc_combined.lib (linked below) built only
+# against the Release CRT, with no debug variant; a Debug-CRT (/MDd) build
+# fails to link with LNK2038 CRT mismatches. Debug configs still compile at
+# -Od with full debug symbols — only /MDd's extra iterator/heap-debug checks
+# are unavailable. Mirrors the same override in the top-level QuasarEngine
+# CMakeLists.txt, needed here too since causality is also buildable standalone.
 if(MSVC)
-    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreadedDLL")
     # Suppress common MSVC warnings for POSIX-like C code
     add_compile_definitions(_CRT_SECURE_NO_WARNINGS)
 endif()
