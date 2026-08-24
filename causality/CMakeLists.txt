@@ -27,11 +27,19 @@ if(NOT WIN32)
     target_compile_options(causality PRIVATE -fvisibility=hidden)
 endif()
 
-# Enable the Vulkan validation layer + debug messenger in Debug and
-# RelWithDebInfo builds only — compiled out entirely in Release, matching
-# QS_PROFILE_ENABLED's convention in Quasar/CMakeLists.txt.
+# Enable the Vulkan validation layer + debug messenger in Debug builds only.
+# RelWithDebInfo deliberately does NOT get it (unlike QS_PROFILE_ENABLED in
+# Quasar/CMakeLists.txt, which stays on for both) — it is the only config
+# that is both optimized AND profiler-capable, i.e. the one to profile in for
+# real performance numbers. Validation layer overhead is large per-Vulkan-
+# call (parameter/state/thread-safety checks on every bind, barrier, and
+# draw), and with QS_PROFILE_ENABLED tied to the same Debug/RelWithDebInfo
+# pair, Debug was previously the only way to see profiler output at all —
+# meaning every profiled number included full validation overhead baked into
+# every CPU-side render-graph timing, with no way to isolate real cost from
+# validation cost. Compiled out entirely in Release, as before.
 target_compile_definitions(causality PRIVATE
-    $<$<OR:$<CONFIG:Debug>,$<CONFIG:RelWithDebInfo>>:CAUSALITY_VULKAN_VALIDATION>
+    $<$<CONFIG:Debug>:CAUSALITY_VULKAN_VALIDATION>
 )
 
 # shaderc — bundled with the LunarG Vulkan SDK, used for runtime GLSL compilation
