@@ -6,7 +6,9 @@
    Symbols Nerd Font Mono provides the icon/symbol layer.
    DejaVu Sans provides the Unicode fallback layer for text blocks the
    Nerd Font faces do not cover (arrows, Braille, geometric shapes,
-   dingbats, math operators). */
+   dingbats, math operators).
+   Noto Emoji (monochrome) provides the final fallback layer for emoji
+   pictograph blocks that DejaVu does not cover. */
 #pragma once
 
 extern const unsigned int  ca_embedded_font_size;
@@ -20,3 +22,6 @@ extern const unsigned char ca_embedded_symbols_font_data[];
 
 extern const unsigned int  ca_embedded_fallback_font_size;
 extern const unsigned char ca_embedded_fallback_font_data[];
+
+extern const unsigned int  ca_embedded_emoji_font_size;
+extern const unsigned char ca_embedded_emoji_font_data[];

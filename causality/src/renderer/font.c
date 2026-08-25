@@ -1147,9 +1147,9 @@ static bool font_render_glyph(Ca_FontTier *tier, uint32_t cp, Ca_Glyph *g)
             }
         }
     }
-    /* Last resort before '?': the Unicode fallback face.  Kept after the
-       styled and regular lookups so a codepoint present in the chosen font
-       always renders from that font. */
+    /* Unicode fallback face.  Kept after the styled and regular lookups so
+       a codepoint present in the chosen font always renders from that
+       font. */
     if (gi == 0 && font->fallback_face &&
         face != (FT_Face)font->fallback_face) {
         FT_Face fallback = (FT_Face)font->fallback_face;
@@ -1158,6 +1158,22 @@ static bool font_render_glyph(Ca_FontTier *tier, uint32_t cp, Ca_Glyph *g)
             if (fallback_gi != 0) {
                 face = fallback;
                 gi = fallback_gi;
+                is_icon_range = false;
+            }
+        }
+    }
+    /* Last resort before '?': the emoji face.  DejaVu covers text/symbol
+       blocks (arrows, Braille, geometric shapes) but has essentially no
+       emoji pictograph coverage, so pictograph/emoticon codepoints fall
+       through to here. */
+    if (gi == 0 && font->emoji_face &&
+        face != (FT_Face)font->emoji_face) {
+        FT_Face emoji = (FT_Face)font->emoji_face;
+        if (font_set_face_size(emoji, tier->baked_px)) {
+            FT_UInt emoji_gi = FT_Get_Char_Index(emoji, cp);
+            if (emoji_gi != 0) {
+                face = emoji;
+                gi = emoji_gi;
                 is_icon_range = false;
             }
         }
@@ -1617,6 +1633,34 @@ static bool font_create_internal(Ca_Instance *inst, GLFWwindow *glfw_win,
         }
     }
 
+    /* Emoji layer.  DejaVu's fallback covers text/symbol blocks but has
+       essentially no emoji pictograph coverage, so this face is consulted
+       only when neither the styled, regular, nor DejaVu fallback face maps
+       the codepoint. */
+    extern const unsigned char ca_embedded_emoji_font_data[];
+    extern const unsigned int  ca_embedded_emoji_font_size;
+    if (ca_embedded_emoji_font_size > 0u) {
+        out_font->emoji_data =
+            (unsigned char *)CA_MALLOC(ca_embedded_emoji_font_size);
+        if (out_font->emoji_data) {
+            memcpy(out_font->emoji_data, ca_embedded_emoji_font_data,
+                   ca_embedded_emoji_font_size);
+            out_font->emoji_size = ca_embedded_emoji_font_size;
+            FT_Face emoji_face = NULL;
+            if (FT_New_Memory_Face(lib, out_font->emoji_data,
+                                   (FT_Long)out_font->emoji_size,
+                                   0, &emoji_face) == 0) {
+                out_font->emoji_face = emoji_face;
+            } else {
+                fprintf(stderr, "[font] FT_New_Memory_Face emoji failed; "
+                                "missing glyphs will render as '?'\n");
+                CA_FREE(out_font->emoji_data);
+                out_font->emoji_data = NULL;
+                out_font->emoji_size = 0;
+            }
+        }
+    }
+
     out_font->ft_library = lib;
 
     size_t atlas_bytes = (size_t)out_font->atlas_w * out_font->atlas_h * 4u;
@@ -1758,6 +1802,8 @@ void ca_font_destroy(Ca_Instance *inst, Ca_Font *font)
         FT_Done_Face((FT_Face)font->icon_face);
     if (font->fallback_face)
         FT_Done_Face((FT_Face)font->fallback_face);
+    if (font->emoji_face)
+        FT_Done_Face((FT_Face)font->emoji_face);
     if (font->regular_face)
         FT_Done_Face((FT_Face)font->regular_face);
     if (font->ft_library)
@@ -1766,6 +1812,7 @@ void ca_font_destroy(Ca_Instance *inst, Ca_Font *font)
     CA_FREE(font->bold_data);
     CA_FREE(font->icon_data);
     CA_FREE(font->fallback_data);
+    CA_FREE(font->emoji_data);
     CA_FREE(font->atlas_rgba);
     ca_dyn_array_destroy(&font->dirty_rect_storage);
     memset(font, 0, sizeof(*font));

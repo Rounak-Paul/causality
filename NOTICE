@@ -48,3 +48,12 @@ This product includes the following third-party software:
       Provides Unicode text blocks the Nerd Font faces do not cover
       (arrows, Braille, geometric shapes, dingbats, math operators).
       Embedded as a static byte array in src/renderer/embedded_fallback_font.c.
+
+  - Embedded emoji fallback font: Noto Emoji (monochrome outline)
+      SIL Open Font License, Version 1.1 - https://scripts.sil.org/OFL
+      Copyright 2013 Google LLC
+      Upstream: https://github.com/googlefonts/noto-emoji
+      Static Regular-weight instance of the upstream variable font
+      (fonttools varLib.instancer, wght=400). Provides emoji pictograph
+      blocks that neither the Nerd Font faces nor DejaVu Sans cover.
+      Embedded as a static byte array in src/renderer/embedded_emoji_font.c.
