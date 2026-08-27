@@ -1054,8 +1054,14 @@ static void paint_text_wrapped(Ca_Window *win, Ca_Font *font,
     int cur_line = 0;
 
     /* Keep xpos fractional so bilinear coverage sampling preserves smooth
-       horizontal positioning. Snap y for a stable pixel-aligned baseline. */
+       horizontal positioning. Snap y for a stable pixel-aligned baseline.
+       xpos stays in LOGICAL space and drives word-wrap width comparisons
+       against max_w — unchanged. glyph_raster_xpos is a parallel RASTER-
+       space accumulator (see paint_text()'s comment for why this split
+       exists) used only for the actual glyph draw position; it is reset
+       in lockstep with xpos at every line break / word-wrap point below. */
     float xpos = left_x;
+    float glyph_raster_xpos = snap_text_position(left_x * cs, cs, font->display_scale);
     float baseline_y = start_y;
 
     ClipRect node_clip = text_clip_for_node(node);
@@ -1074,10 +1080,12 @@ static void paint_text_wrapped(Ca_Window *win, Ca_Font *font,
             cur_line++;
             cur_line_w = word_w;
             xpos = left_x;
+            glyph_raster_xpos = snap_text_position(left_x * cs, cs, font->display_scale);
             baseline_y = start_y + line_height * cur_line;
         } else {
             if (cur_line_w > 0.0f) {
                 xpos += space_adv;
+                glyph_raster_xpos += space_adv * cs;
                 cur_line_w += space_adv;
             }
             cur_line_w += word_w;
@@ -1093,9 +1101,7 @@ static void paint_text_wrapped(Ca_Window *win, Ca_Font *font,
 
             Ca_GlyphQuad q;
             float glyph_cs_eff = ca_font_glyph_cs_eff(glyph_tier, desired_size, cs);
-            float glyph_xpos = snap_text_position(xpos * glyph_cs_eff,
-                                                  glyph_cs_eff,
-                                                  font->display_scale);
+            float glyph_xpos = glyph_raster_xpos;
             float glyph_ypos = floorf(baseline_y * glyph_cs_eff + 0.5f);
             ca_font_get_quad(pc, font->atlas_w, font->atlas_h,
                              &glyph_xpos, &glyph_ypos, &q);
@@ -1104,6 +1110,7 @@ static void paint_text_wrapped(Ca_Window *win, Ca_Font *font,
             float adv = pc->xadvance / glyph_cs_eff;
             if (gw < 0.5f || gh < 0.5f) {
                 xpos += adv;
+                glyph_raster_xpos += pc->xadvance;
                 continue;
             }
 
@@ -1120,11 +1127,13 @@ static void paint_text_wrapped(Ca_Window *win, Ca_Font *font,
             cmd->in_use = true;
             set_clip(cmd, node_clip);
             xpos += adv;
+            glyph_raster_xpos += pc->xadvance;
         }
         if (*p == '\n') {
             cur_line++;
             cur_line_w = 0;
             xpos = left_x;
+            glyph_raster_xpos = snap_text_position(left_x * cs, cs, font->display_scale);
             baseline_y = start_y + line_height * cur_line;
             p++;
         } else if (*p == ' ') {
@@ -1186,8 +1195,21 @@ static void paint_text(Ca_Window *win, Ca_Font *font,
         }
     }
 
-    float xpos = snap_text_position(left_logical * cs, cs,
-                                    font->display_scale) / cs;
+    /* Glyph positions accumulate in RASTER space (glyph_raster_xpos), using
+       each glyph's xadvance as FreeType/hinting produced it directly — this
+       is what stays exact (typically a whole raster pixel for a hinted
+       monospace face). Re-deriving each glyph's position by repeatedly
+       converting an accumulated LOGICAL xpos through cs_eff and re-snapping
+       the absolute result independently per glyph discards a fractional
+       remainder every time cs_eff isn't an exact integer ratio (any
+       ui_scale other than one that divides content_scale cleanly) — that
+       discarded remainder does not cancel out, it compounds directionally
+       across the line, which is exactly what produced visible cursor/glyph
+       drift on non-1.0 ui_scale. Accumulating the already-integral raster
+       advance keeps every glyph exactly adjacent to the previous one. */
+    float glyph_raster_xpos = snap_text_position(left_logical * cs, cs,
+                                                 font->display_scale);
+    float letter_spacing_raster = node->desc.letter_spacing * cs;
 
     ClipRect node_clip = text_clip_for_node(node);
 
@@ -1201,18 +1223,15 @@ static void paint_text(Ca_Window *win, Ca_Font *font,
 
         Ca_GlyphQuad q;
         float glyph_cs_eff = ca_font_glyph_cs_eff(glyph_tier, desired_size, cs);
-        float glyph_xpos = snap_text_position(xpos * glyph_cs_eff,
-                                              glyph_cs_eff,
-                                              font->display_scale);
+        float glyph_xpos = glyph_raster_xpos;
         float glyph_ypos = floorf(baseline_logical * glyph_cs_eff + 0.5f);
         ca_font_get_quad(pc, font->atlas_w, font->atlas_h,
                          &glyph_xpos, &glyph_ypos, &q);
 
         float gw = (q.x1 - q.x0) / glyph_cs_eff;
         float gh = (q.y1 - q.y0) / glyph_cs_eff;
-        float adv = pc->xadvance / glyph_cs_eff;
         if (gw < 0.5f || gh < 0.5f) {
-            xpos += adv;
+            glyph_raster_xpos += pc->xadvance;
             continue;
         }
 
@@ -1228,7 +1247,7 @@ static void paint_text(Ca_Window *win, Ca_Font *font,
         cmd->z_index = node->desc.z_index;
         cmd->in_use = true;
         set_clip(cmd, node_clip);
-        xpos += adv + node->desc.letter_spacing;
+        glyph_raster_xpos += pc->xadvance + letter_spacing_raster;
     }
 }
 
@@ -1260,8 +1279,12 @@ static void paint_text_left(Ca_Window *win, Ca_Font *font,
         + (tier->ascent * metric_scale + tier->descent * metric_scale) * 0.5f;
     float left_logical = node->x + node->desc.padding_left;
 
-    float xpos = snap_text_position(left_logical * cs, cs,
-                                    font->display_scale) / cs;
+    /* See the identical raster-space-accumulation comment in paint_text():
+       accumulating pc->xadvance directly (raster units, exact) instead of
+       repeatedly round-tripping an absolute logical xpos through cs_eff and
+       re-snapping it keeps glyphs drift-free at any ui_scale. */
+    float glyph_raster_xpos = snap_text_position(left_logical * cs, cs,
+                                                 font->display_scale);
 
     ClipRect input_clip = text_clip_for_node(node);
 
@@ -1275,18 +1298,15 @@ static void paint_text_left(Ca_Window *win, Ca_Font *font,
 
         Ca_GlyphQuad q;
         float glyph_cs_eff = ca_font_glyph_cs_eff(glyph_tier, desired_size, cs);
-        float glyph_xpos = snap_text_position(xpos * glyph_cs_eff,
-                                              glyph_cs_eff,
-                                              font->display_scale);
+        float glyph_xpos = glyph_raster_xpos;
         float glyph_ypos = floorf(baseline_logical * glyph_cs_eff + 0.5f);
         ca_font_get_quad(pc, font->atlas_w, font->atlas_h,
                          &glyph_xpos, &glyph_ypos, &q);
 
         float gw = (q.x1 - q.x0) / glyph_cs_eff;
         float gh = (q.y1 - q.y0) / glyph_cs_eff;
-        float adv = pc->xadvance / glyph_cs_eff;
         if (gw < 0.5f || gh < 0.5f) {
-            xpos += adv;
+            glyph_raster_xpos += pc->xadvance;
             continue;
         }
 
@@ -1301,7 +1321,7 @@ static void paint_text_left(Ca_Window *win, Ca_Font *font,
         cmd->u1 = q.s1;  cmd->v1 = q.t1;
         cmd->in_use = true;
         set_clip(cmd, input_clip);
-        xpos += adv;
+        glyph_raster_xpos += pc->xadvance;
     }
 }
 
