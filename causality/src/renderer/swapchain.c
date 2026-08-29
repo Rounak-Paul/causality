@@ -191,6 +191,8 @@ bool ca_swapchain_create(Ca_Instance *inst, Ca_Window *win,
 
     VkImageUsageFlags image_usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
                                     VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+    if (caps.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_SRC_BIT)
+        image_usage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
     if (caps.supportedUsageFlags & VK_IMAGE_USAGE_SAMPLED_BIT)
         image_usage |= VK_IMAGE_USAGE_SAMPLED_BIT;
 
@@ -524,7 +526,8 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
                     max_blur = win->draw_cmds[d].backdrop_blur_radius;
             }
         }
-        if (has_backdrop && win->blur_image != VK_NULL_HANDLE)
+        if (has_backdrop && win->blur_image != VK_NULL_HANDLE &&
+            (sc->image_usage & VK_IMAGE_USAGE_TRANSFER_SRC_BIT) != 0u)
             ca_blur_capture_and_blur(inst, win, f->cmd,
                                      sc->images[image_index],
                                      sc->extent.width, sc->extent.height,
