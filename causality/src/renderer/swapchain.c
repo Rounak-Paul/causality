@@ -7,6 +7,8 @@
 #include "viewport.h"
 #include "blur.h"
 #include "node.h"
+#include <math.h>
+#include <stdio.h>
 #include <string.h>
 
 /* ---- Helpers ---- */
@@ -688,10 +690,19 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
                 VkRect2D sc_new = full_scissor;
                 Ca_ClipPushConst clip_new = { 0 };
                 if (cmd->has_clip) {
-                    int32_t cx = (int32_t)(cmd->clip_x * scale_x);
-                    int32_t cy = (int32_t)(cmd->clip_y * scale_y);
-                    int32_t cw = (int32_t)(cmd->clip_w * scale_x);
-                    int32_t ch = (int32_t)(cmd->clip_h * scale_y);
+                    /* Floor the origin, ceil the far edge: a scissor that
+                       truncates both origin and extent can end up half a
+                       physical pixel short of the clip's true right/bottom
+                       edge at fractional logical-to-physical scale factors,
+                       silently shaving the outermost column/row off thin
+                       content (e.g. a 1-2px border ring) hugging that edge
+                       while staying invisible against an opaque fill. */
+                    int32_t cx = (int32_t)floorf(cmd->clip_x * scale_x);
+                    int32_t cy = (int32_t)floorf(cmd->clip_y * scale_y);
+                    int32_t cx1 = (int32_t)ceilf((cmd->clip_x + cmd->clip_w) * scale_x);
+                    int32_t cy1 = (int32_t)ceilf((cmd->clip_y + cmd->clip_h) * scale_y);
+                    int32_t cw = cx1 - cx;
+                    int32_t ch = cy1 - cy;
                     if (cx < 0) { cw += cx; cx = 0; }
                     if (cy < 0) { ch += cy; cy = 0; }
                     if (cw < 0) cw = 0;

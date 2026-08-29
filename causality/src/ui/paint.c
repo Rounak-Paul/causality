@@ -319,71 +319,20 @@ static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, Cli
         cmd->a       *= op;
         cmd->color2_a *= op;
 
-        /* Uniform border.
-
-           Suppressed when the four sides do not share one colour: the
-           per-side rects emitted below would otherwise be drawn on top of
-           a full uniform border, which still shows through at the corners
-           (where the per-side rects meet diagonally) and wins wherever a
-           side resolved to no colour of its own. A shaded/bevelled border
-           is exactly that case, so it has to own the whole edge. */
-        bool uniform_sides =
-            node->desc.border_top_c == node->desc.border_right_c &&
-            node->desc.border_top_c == node->desc.border_bottom_c &&
-            node->desc.border_top_c == node->desc.border_left_c;
-        if (uniform_sides) {
-            cmd->border_width = node->desc.border_width;
-            if (node->desc.border_color != 0) {
-                unpack_color(node->desc.border_color,
-                             &cmd->border_r, &cmd->border_g,
-                             &cmd->border_b, &cmd->border_a);
-            }
-        }
         cmd->z_index = node->desc.z_index;
         cmd->in_use  = true;
         set_clip(cmd, clip);
     }
 
-    /* ---- Per-side border rects (top / right / bottom / left) ---- */
-    {
-        struct { float w; uint32_t c; int side; } edges[4] = {
-            { node->desc.border_top_w,    node->desc.border_top_c,    0 },
-            { node->desc.border_right_w,  node->desc.border_right_c,  1 },
-            { node->desc.border_bottom_w, node->desc.border_bottom_c, 2 },
-            { node->desc.border_left_w,   node->desc.border_left_c,   3 },
-        };
-        for (int ei = 0; ei < 4; ei++) {
-            float ew = edges[ei].w;
-            if (ew <= 0.0f || edges[ei].c == 0) continue;
-            if (!ca_window_reserve_draw_commands(win, (size_t)win->draw_cmd_count + 1u)) break;
-            float er, eg, eb, ea;
-            unpack_color(edges[ei].c, &er, &eg, &eb, &ea);
-            Ca_DrawCmd *ec = &win->draw_cmds[win->draw_cmd_count++];
-            memset(ec, 0, sizeof(*ec));
-            ec->type = CA_DRAW_RECT;
-            ec->r = er; ec->g = eg; ec->b = eb; ec->a = ea;
-            ec->z_index = node->desc.z_index;
-            ec->in_use  = true;
-            /* Each side owns a disjoint span: the horizontal edges run the
-               full width and the vertical edges are inset between them.
-               Overlapping full-span rects would let whichever side is
-               painted last win the corner square outright, which on a
-               two-tone (bevelled) border shows as a wrongly-shaded block at
-               two of the four corners rather than a clean joint. */
-            float top_w    = node->desc.border_top_w    > 0.0f ? node->desc.border_top_w    : 0.0f;
-            float bottom_w = node->desc.border_bottom_w > 0.0f ? node->desc.border_bottom_w : 0.0f;
-            float inner_y  = node->y + top_w;
-            float inner_h  = node->h - top_w - bottom_w;
-            if (inner_h < 0.0f) inner_h = 0.0f;
-            switch (edges[ei].side) {
-                case 0: ec->x = node->x;                  ec->y = node->y;                  ec->w = node->w;  ec->h = ew;       break; /* top    */
-                case 1: ec->x = node->x + node->w - ew;   ec->y = inner_y;                  ec->w = ew;       ec->h = inner_h;  break; /* right  */
-                case 2: ec->x = node->x;                  ec->y = node->y + node->h - ew;   ec->w = node->w;  ec->h = ew;       break; /* bottom */
-                case 3: ec->x = node->x;                  ec->y = inner_y;                  ec->w = ew;       ec->h = inner_h;  break; /* left   */
-            }
-            set_clip(ec, clip);
-        }
-    }
+    /* Uniform and per-side borders are painted post-children — see
+       paint_border, called from paint_tree_cached alongside
+       paint_scrollbars. A node's children commonly fill its content box
+       edge-to-edge (e.g. a tab strip flush against its panel), and since
+       children paint after their parent, a border baked into this
+       pre-children background rect would be overpainted by any child whose
+       own edge coincides with the border ring — most visibly at the
+       corners, where a child's own corner rounding exactly consumes the
+       border arc, leaving only uncovered straight-edge slivers visible. */
 
     /* ---- CSS outline — drawn outside the border, does not affect layout ---- */
     if (node->desc.outline_width > 0.0f && node->desc.outline_color != 0) {
@@ -872,6 +821,120 @@ static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, Cli
         const float dim = 0.4f;
         for (uint32_t i = cmd_start; i < win->draw_cmd_count; ++i)
             win->draw_cmds[i].a *= dim;
+    }
+}
+
+/*
+ * Paint a node's border (post-children, so it draws on top).
+ *
+ * A node's children commonly fill its content box edge-to-edge — a tab
+ * strip flush against its own panel, a scroll body against its pane — so a
+ * border emitted with the background rect (pre-children) would be
+ * overpainted by any child whose edge coincides with the border ring, most
+ * visibly at rounded corners where a child's own corner rounding exactly
+ * consumes the arc. Mirrors paint_scrollbars' post-children placement.
+ *
+ * win   The window accumulating draw commands.
+ * node  The node whose border to paint.
+ * clip  The node's own (pre-children) clip rect.
+ */
+static void paint_border(Ca_Window *win, Ca_Node *node, ClipRect clip)
+{
+    /* Uniform border.
+
+       Suppressed when the four sides do not share one colour: the
+       per-side rects emitted below would otherwise be drawn on top of
+       a full uniform border, which still shows through at the corners
+       (where the per-side rects meet diagonally) and wins wherever a
+       side resolved to no colour of its own. A shaded/bevelled border
+       is exactly that case, so it has to own the whole edge. */
+    bool uniform_sides =
+        node->desc.border_top_c == node->desc.border_right_c &&
+        node->desc.border_top_c == node->desc.border_bottom_c &&
+        node->desc.border_top_c == node->desc.border_left_c;
+    if (uniform_sides && node->desc.border_width > 0.0f &&
+        node->desc.border_color != 0 &&
+        ca_window_reserve_draw_commands(win, (size_t)win->draw_cmd_count + 1u)) {
+        Ca_DrawCmd *cmd = &win->draw_cmds[win->draw_cmd_count++];
+        memset(cmd, 0, sizeof(*cmd));
+        cmd->type = CA_DRAW_RECT;
+        /* Square corners, not node->desc.corner_radius: the border-ring
+           SDF (roundedBoxSDF's inner/outer pair in the rect fragment
+           shader) renders a visibly chamfered corner instead of a smooth
+           arc on a thin ring at small radii, for reasons that didn't
+           resolve under source review or a from-scratch numeric
+           reimplementation of the same formula — both traced a correct,
+           gradual arc, yet the live GPU output kept showing a cut corner.
+           Until that's root-caused with GPU-side tooling, a square-cornered
+           border is the honest, correct-looking option — Sol is currently
+           this engine's only border-width/border-color caller, so this
+           doesn't regress any other rounded-border use.
+
+           Inset the rect so the square corners land inside the panel's
+           own rounded silhouette instead of poking past its curve: for a
+           corner radius r, a rect inset by m keeps its corner point at
+           distance sqrt(2)*(r-m) from the arc center, which stays within
+           the radius-r quarter-circle once m >= r*(1 - 1/sqrt(2)). */
+        float inset = node->desc.corner_radius * 0.293f;
+        float max_inset = 0.5f * (node->w < node->h ? node->w : node->h);
+        if (inset > max_inset) inset = max_inset;
+        cmd->x = node->x + inset;   cmd->y = node->y + inset;
+        cmd->w = node->w - inset * 2.0f;
+        cmd->h = node->h - inset * 2.0f;
+        cmd->corner_radius = 0.0f;
+        cmd->corner_tl = 0.0f;
+        cmd->corner_tr = 0.0f;
+        cmd->corner_br = 0.0f;
+        cmd->corner_bl = 0.0f;
+        /* Transparent fill: only the border ring should paint here — the
+           node's own background already painted in the pre-children pass. */
+        cmd->draw_mode = CA_DRAW_MODE_NORMAL;
+        cmd->border_width = node->desc.border_width;
+        unpack_color(node->desc.border_color,
+                     &cmd->border_r, &cmd->border_g,
+                     &cmd->border_b, &cmd->border_a);
+        cmd->z_index = node->desc.z_index;
+        cmd->in_use  = true;
+        set_clip(cmd, clip);
+    }
+
+    /* ---- Per-side border rects (top / right / bottom / left) ---- */
+    struct { float w; uint32_t c; int side; } edges[4] = {
+        { node->desc.border_top_w,    node->desc.border_top_c,    0 },
+        { node->desc.border_right_w,  node->desc.border_right_c,  1 },
+        { node->desc.border_bottom_w, node->desc.border_bottom_c, 2 },
+        { node->desc.border_left_w,   node->desc.border_left_c,   3 },
+    };
+    for (int ei = 0; ei < 4; ei++) {
+        float ew = edges[ei].w;
+        if (ew <= 0.0f || edges[ei].c == 0) continue;
+        if (!ca_window_reserve_draw_commands(win, (size_t)win->draw_cmd_count + 1u)) break;
+        float er, eg, eb, ea;
+        unpack_color(edges[ei].c, &er, &eg, &eb, &ea);
+        Ca_DrawCmd *ec = &win->draw_cmds[win->draw_cmd_count++];
+        memset(ec, 0, sizeof(*ec));
+        ec->type = CA_DRAW_RECT;
+        ec->r = er; ec->g = eg; ec->b = eb; ec->a = ea;
+        ec->z_index = node->desc.z_index;
+        ec->in_use  = true;
+        /* Each side owns a disjoint span: the horizontal edges run the
+           full width and the vertical edges are inset between them.
+           Overlapping full-span rects would let whichever side is
+           painted last win the corner square outright, which on a
+           two-tone (bevelled) border shows as a wrongly-shaded block at
+           two of the four corners rather than a clean joint. */
+        float top_w    = node->desc.border_top_w    > 0.0f ? node->desc.border_top_w    : 0.0f;
+        float bottom_w = node->desc.border_bottom_w > 0.0f ? node->desc.border_bottom_w : 0.0f;
+        float inner_y  = node->y + top_w;
+        float inner_h  = node->h - top_w - bottom_w;
+        if (inner_h < 0.0f) inner_h = 0.0f;
+        switch (edges[ei].side) {
+            case 0: ec->x = node->x;                  ec->y = node->y;                  ec->w = node->w;  ec->h = ew;       break; /* top    */
+            case 1: ec->x = node->x + node->w - ew;   ec->y = inner_y;                  ec->w = ew;       ec->h = inner_h;  break; /* right  */
+            case 2: ec->x = node->x;                  ec->y = node->y + node->h - ew;   ec->w = node->w;  ec->h = ew;       break; /* bottom */
+            case 3: ec->x = node->x;                  ec->y = inner_y;                  ec->w = ew;       ec->h = inner_h;  break; /* left   */
+        }
+        set_clip(ec, clip);
     }
 }
 
@@ -1714,9 +1777,10 @@ static void paint_tree_cached(Ca_Instance *inst, Ca_Window *win,
         paint_tree_cached(inst, win, node->children[i], child_clip,
                           effective_z, effective_xf);
 
-    /* ---- Post-children: scrollbars ---- */
+    /* ---- Post-children: border + scrollbars ---- */
     if (was_dirty) {
         uint32_t sb_start = win->draw_cmd_count;
+        paint_border(win, node, own_clip);
         paint_scrollbars(win, node, own_clip);
         uint32_t sb_count = win->draw_cmd_count - sb_start;
         apply_inherited_z(win, sb_start, sb_count, effective_z);
