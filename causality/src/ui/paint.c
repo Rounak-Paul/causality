@@ -1059,9 +1059,18 @@ static void paint_text_wrapped(Ca_Window *win, Ca_Font *font,
        against max_w — unchanged. glyph_raster_xpos is a parallel RASTER-
        space accumulator (see paint_text()'s comment for why this split
        exists) used only for the actual glyph draw position; it is reset
-       in lockstep with xpos at every line break / word-wrap point below. */
+       in lockstep with xpos at every line break / word-wrap point below.
+
+       Must snap/accumulate using glyph_cs_eff (line_cs_eff), not plain cs —
+       cs alone omits the font_scale factor (desired_size/tier->logical_px),
+       which is not 1.0 whenever the active tier's quantized logical_px
+       differs from the requested desired_size (the normal case at any
+       non-default ui_scale). Using cs there shifts every glyph off its
+       node by a factor of font_scale — mild at font_scale≈1, but far
+       enough off-node to render as missing/clipped content otherwise. */
+    float line_cs_eff = ca_font_glyph_cs_eff(tier, desired_size, cs);
     float xpos = left_x;
-    float glyph_raster_xpos = snap_text_position(left_x * cs, cs, font->display_scale);
+    float glyph_raster_xpos = snap_text_position(left_x * line_cs_eff, line_cs_eff, font->display_scale);
     float baseline_y = start_y;
 
     ClipRect node_clip = text_clip_for_node(node);
@@ -1080,12 +1089,12 @@ static void paint_text_wrapped(Ca_Window *win, Ca_Font *font,
             cur_line++;
             cur_line_w = word_w;
             xpos = left_x;
-            glyph_raster_xpos = snap_text_position(left_x * cs, cs, font->display_scale);
+            glyph_raster_xpos = snap_text_position(left_x * line_cs_eff, line_cs_eff, font->display_scale);
             baseline_y = start_y + line_height * cur_line;
         } else {
             if (cur_line_w > 0.0f) {
                 xpos += space_adv;
-                glyph_raster_xpos += space_adv * cs;
+                glyph_raster_xpos += space_adv * line_cs_eff;
                 cur_line_w += space_adv;
             }
             cur_line_w += word_w;
@@ -1133,7 +1142,7 @@ static void paint_text_wrapped(Ca_Window *win, Ca_Font *font,
             cur_line++;
             cur_line_w = 0;
             xpos = left_x;
-            glyph_raster_xpos = snap_text_position(left_x * cs, cs, font->display_scale);
+            glyph_raster_xpos = snap_text_position(left_x * line_cs_eff, line_cs_eff, font->display_scale);
             baseline_y = start_y + line_height * cur_line;
             p++;
         } else if (*p == ' ') {
@@ -1206,10 +1215,23 @@ static void paint_text(Ca_Window *win, Ca_Font *font,
        discarded remainder does not cancel out, it compounds directionally
        across the line, which is exactly what produced visible cursor/glyph
        drift on non-1.0 ui_scale. Accumulating the already-integral raster
-       advance keeps every glyph exactly adjacent to the previous one. */
-    float glyph_raster_xpos = snap_text_position(left_logical * cs, cs,
+       advance keeps every glyph exactly adjacent to the previous one.
+
+       The snap and the loop must both operate in the SAME raster space:
+       glyph_cs_eff (which folds in font_scale = desired_size/tier->logical_px),
+       not the coarser 'cs'. All glyphs on this line share one tier (fallback
+       lookups render into the same tier/baked_px rather than a differently
+       sized page — see ca_font_glyph_from_tier), so it is safe to compute
+       glyph_cs_eff once here from the line's primary tier. Using plain 'cs'
+       for the initial snap left glyph_raster_xpos off by a factor of
+       font_scale — harmless at font_scale==1 but badly wrong (glyphs shifted
+       far outside their node, rendering as clipped/invisible) whenever the
+       active tier's logical_px differs from desired_size, which is the
+       normal case at any non-default ui_scale. */
+    float line_cs_eff = ca_font_glyph_cs_eff(tier, desired_size, cs);
+    float glyph_raster_xpos = snap_text_position(left_logical * line_cs_eff, line_cs_eff,
                                                  font->display_scale);
-    float letter_spacing_raster = node->desc.letter_spacing * cs;
+    float letter_spacing_raster = node->desc.letter_spacing * line_cs_eff;
 
     ClipRect node_clip = text_clip_for_node(node);
 
@@ -1282,8 +1304,11 @@ static void paint_text_left(Ca_Window *win, Ca_Font *font,
     /* See the identical raster-space-accumulation comment in paint_text():
        accumulating pc->xadvance directly (raster units, exact) instead of
        repeatedly round-tripping an absolute logical xpos through cs_eff and
-       re-snapping it keeps glyphs drift-free at any ui_scale. */
-    float glyph_raster_xpos = snap_text_position(left_logical * cs, cs,
+       re-snapping it keeps glyphs drift-free at any ui_scale. Must snap
+       using glyph_cs_eff (line_cs_eff), not plain cs — see paint_text()'s
+       comment on the font_scale unit mismatch this caused when using cs. */
+    float line_cs_eff = ca_font_glyph_cs_eff(tier, desired_size, cs);
+    float glyph_raster_xpos = snap_text_position(left_logical * line_cs_eff, line_cs_eff,
                                                  font->display_scale);
 
     ClipRect input_clip = text_clip_for_node(node);

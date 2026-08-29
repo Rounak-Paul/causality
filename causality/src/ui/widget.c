@@ -512,7 +512,19 @@ static void scale_resolved_style(Ca_ResolvedStyle *style, float scale)
     style->shadow_offset_x *= scale;
     style->shadow_offset_y *= scale;
     style->shadow_blur *= scale;
-    style->font_size *= scale;
+    /* font_size is intentionally left in author (CSS) space here — see the
+       identical comment on rescale_desc() in ui.c. Every consumer of
+       node->desc.font_size (layout.c's text measurement, paint.c's three
+       glyph-drawing functions, and Sol's caret math in text_view.c) treats
+       it as raw CSS px and multiplies by ui_scale itself when selecting the
+       atlas tier (`desired_size * ui_s`). Scaling it here as well silently
+       double-applies ui_scale for every text node, which is invisible at
+       ui_scale==1.0 (the default) but at any other scale shifts the atlas
+       tier selected for painting away from the tier the caret/measurement
+       code assumes, producing a systematic (non-per-character-compounding)
+       mismatch between where text is drawn and where the caret/selection/
+       click-hit-test math thinks each character boundary is — e.g. the
+       caret rendering partway through a glyph instead of at a cell edge. */
     style->line_height *= scale;
     style->letter_spacing *= scale;
     style->word_spacing *= scale;
