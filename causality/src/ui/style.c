@@ -1075,23 +1075,21 @@ void ca_style_apply_to_node(const Ca_ResolvedStyle *style,
     /* Border radius — uniform and per-corner */
     if (nd->corner_radius <= 0.0f && STYLE_SET(CA_CSS_PROP_BORDER_RADIUS))
         nd->corner_radius = style->border_radius;
-    if (nd->border_radius_tl <= 0.0f && STYLE_SET(CA_CSS_PROP_BORDER_TOP_LEFT_RADIUS))
+    if (nd->border_radius_tl <= 0.0f && STYLE_SET(CA_CSS_PROP_BORDER_TOP_LEFT_RADIUS)) {
         nd->border_radius_tl = style->border_radius_tl;
-    if (nd->border_radius_tr <= 0.0f && STYLE_SET(CA_CSS_PROP_BORDER_TOP_RIGHT_RADIUS))
+        nd->corner_radii_set |= CA_CORNER_RADIUS_TL_SET;
+    }
+    if (nd->border_radius_tr <= 0.0f && STYLE_SET(CA_CSS_PROP_BORDER_TOP_RIGHT_RADIUS)) {
         nd->border_radius_tr = style->border_radius_tr;
-    if (nd->border_radius_br <= 0.0f && STYLE_SET(CA_CSS_PROP_BORDER_BOTTOM_RIGHT_RADIUS))
+        nd->corner_radii_set |= CA_CORNER_RADIUS_TR_SET;
+    }
+    if (nd->border_radius_br <= 0.0f && STYLE_SET(CA_CSS_PROP_BORDER_BOTTOM_RIGHT_RADIUS)) {
         nd->border_radius_br = style->border_radius_br;
-    if (nd->border_radius_bl <= 0.0f && STYLE_SET(CA_CSS_PROP_BORDER_BOTTOM_LEFT_RADIUS))
+        nd->corner_radii_set |= CA_CORNER_RADIUS_BR_SET;
+    }
+    if (nd->border_radius_bl <= 0.0f && STYLE_SET(CA_CSS_PROP_BORDER_BOTTOM_LEFT_RADIUS)) {
         nd->border_radius_bl = style->border_radius_bl;
-    /* If any per-corner was set, derive uniform from max for the GPU shader */
-    {
-        float mx = 0.0f;
-        if (nd->border_radius_tl > mx) mx = nd->border_radius_tl;
-        if (nd->border_radius_tr > mx) mx = nd->border_radius_tr;
-        if (nd->border_radius_br > mx) mx = nd->border_radius_br;
-        if (nd->border_radius_bl > mx) mx = nd->border_radius_bl;
-        if (mx > 0.0f && nd->corner_radius <= 0.0f)
-            nd->corner_radius = mx;
+        nd->corner_radii_set |= CA_CORNER_RADIUS_BL_SET;
     }
 
     /* Background color — 0 = transparent = not set.

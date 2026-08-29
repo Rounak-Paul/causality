@@ -64,6 +64,7 @@ static const char *VERT_GLSL =
     "layout(location = 8) flat out uint v_mode;\n"
     "layout(location = 9) out float v_grad_angle;\n"
     "layout(location = 10) out vec2 v_grad_center;\n"
+    "layout(location = 11) out vec2 v_node_pos;\n"
     "\n"
     "void main() {\n"
     "    RectData d = ssb.data[gl_InstanceIndex];\n"
@@ -91,6 +92,10 @@ static const char *VERT_GLSL =
     "    v_mode         = d.draw_mode;\n"
     "    v_grad_angle   = d.gradient_angle;\n"
     "    v_grad_center  = vec2(d.gradient_cx, d.gradient_cy);\n"
+    /* Absolute node-space position (pre-viewport-NDC), so the fragment
+       shader can test against a clip rect pushed in the same space
+       without needing the clip origin relative to each instance. */
+    "    v_node_pos     = pixel;\n"
     "}\n";
 
 /* Fragment shader: rounded-rectangle SDF with anti-aliased edges.
@@ -111,7 +116,19 @@ static const char *FRAG_GLSL =
     "layout(location = 8) in  flat uint  v_mode;\n"
     "layout(location = 9) in  float v_grad_angle;\n"
     "layout(location = 10) in vec2  v_grad_center;\n"
+    "layout(location = 11) in vec2  v_node_pos;\n"
     "layout(location = 0) out vec4  out_color;\n"
+    "\n"
+    /* Clip rect shared by every instance in the current batch (all instances
+       in one vkCmdDraw share one hardware scissor, so one push constant is
+       enough — no per-instance clip data needed). radius == 0 behaves as a
+       plain rectangle clip, matching the pre-existing scissor-only clip. */
+    "layout(push_constant) uniform ClipPC {\n"
+    "    vec2  clip_pos;\n"
+    "    vec2  clip_size;\n"
+    "    float clip_radius;\n"
+    "    float _clip_pad0;\n"
+    "} clip_pc;\n"
     "\n"
     "#define MODE_NORMAL      0u\n"
     "#define MODE_SHADOW      1u\n"
@@ -121,6 +138,14 @@ static const char *FRAG_GLSL =
     "vec3 srgb_to_linear(vec3 c) {\n"
     "    bvec3 cut = lessThan(c, vec3(0.04045));\n"
     "    return mix(pow((c + 0.055) / 1.055, vec3(2.4)), c / 12.92, vec3(cut));\n"
+    "}\n"
+    "\n"
+    "float roundedClipSDF(vec2 abs_pos) {\n"
+    "    vec2 half_size = clip_pc.clip_size * 0.5;\n"
+    "    float radius   = min(clip_pc.clip_radius, min(half_size.x, half_size.y));\n"
+    "    vec2  center   = clip_pc.clip_pos + half_size;\n"
+    "    vec2  q = abs(abs_pos - center) - (half_size - vec2(radius));\n"
+    "    return length(max(q, vec2(0.0))) + min(max(q.x, q.y), 0.0) - radius;\n"
     "}\n"
     "\n"
     "/* Per-corner rounded-box SDF.  p is centred on the box (half-size b).\n"
@@ -143,6 +168,12 @@ static const char *FRAG_GLSL =
     "}\n"
     "\n"
     "void main() {\n"
+    "    /* ---- Rounded clip: an ancestor overflow:hidden panel with a\n"
+    "       corner-radius masks this fragment to its curve, not just its\n"
+    "       bounding box. The hardware scissor already pre-culls to that box\n"
+    "       (clip_radius == 0 skips this test entirely — the common case). */\n"
+    "    if (clip_pc.clip_radius > 0.0 && roundedClipSDF(v_node_pos) > 0.0) discard;\n"
+    "\n"
     "    vec2  p    = v_local - v_size * 0.5;\n"
     "    vec4  r    = v_corner_radii;\n"
     "    vec2  box_half = v_size * 0.5;\n"
@@ -216,11 +247,21 @@ bool ca_rect_pipeline_create(Ca_Instance *inst, VkFormat color_format)
         return false;
     }
 
-    /* Pipeline layout — set 0 = SSBO (no push constants) */
+    /* Pipeline layout — set 0 = SSBO, plus a small fragment-stage push
+       constant carrying the rounded clip rect shared by the current batch
+       (all instances in one vkCmdDraw share one hardware scissor, so one
+       push constant per batch is sufficient — see Ca_ClipPushConst). */
+    VkPushConstantRange clip_pcr = {
+        .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
+        .offset     = 0,
+        .size       = sizeof(Ca_ClipPushConst),
+    };
     VkPipelineLayoutCreateInfo layout_ci = {
         .sType                  = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
         .setLayoutCount         = 1,
         .pSetLayouts            = &inst->ssbo_desc_layout,
+        .pushConstantRangeCount = 1,
+        .pPushConstantRanges    = &clip_pcr,
     };
     if (vkCreatePipelineLayout(inst->vk_device, &layout_ci, NULL,
                                &inst->rect_pipeline.layout) != VK_SUCCESS) {
@@ -661,10 +702,52 @@ void ca_text_pipeline_destroy(Ca_Instance *inst)
 }
 
 /* ======================================================
-   Image pipeline — RGBA textured quads (same vertex shader as text,
-   different fragment shader that samples all 4 channels).
+   Image pipeline — RGBA textured quads with optional rounded clipping.
    Shares the text pipeline's layout (descriptor set layout + push constants).
    ====================================================== */
+
+static const char *IMAGE_VERT_GLSL =
+    "#version 450\n"
+    "\n"
+    "struct ImageData {\n"
+    "    vec2 pos;\n"
+    "    vec2 size;\n"
+    "    vec4 uv;\n"
+    "    vec4 color;\n"
+    "    vec2 viewport;\n"
+    "    vec2 xf_ab;\n"
+    "    vec2 xf_cd;\n"
+    "    vec2 corner_01; // tl, tr\n"
+    "    vec2 corner_23; // br, bl\n"
+    "    vec2 _pad1[5];\n"
+    "};\n"
+    "\n"
+    "layout(std430, set = 0, binding = 0) readonly buffer SSB {\n"
+    "    ImageData data[];\n"
+    "} ssb;\n"
+    "\n"
+    "layout(location = 0) out vec2 v_uv;\n"
+    "layout(location = 1) out vec4 v_color;\n"
+    "layout(location = 2) out vec2 v_local;\n"
+    "layout(location = 3) out vec2 v_size;\n"
+    "layout(location = 4) out vec4 v_corner_radii;\n"
+    "\n"
+    "void main() {\n"
+    "    ImageData d = ssb.data[gl_InstanceIndex];\n"
+    "    const vec2 offsets[6] = vec2[6](\n"
+    "        vec2(0.0, 0.0), vec2(1.0, 0.0), vec2(0.0, 1.0),\n"
+    "        vec2(1.0, 0.0), vec2(1.0, 1.0), vec2(0.0, 1.0));\n"
+    "    vec2 off = offsets[gl_VertexIndex];\n"
+    "    vec2 xf = mat2(d.xf_ab, d.xf_cd) * (off * d.size);\n"
+    "    vec2 pixel = d.pos + xf;\n"
+    "    vec2 ndc = (pixel / d.viewport) * 2.0 - 1.0;\n"
+    "    gl_Position = vec4(ndc, 0.0, 1.0);\n"
+    "    v_uv = d.uv.xy + off * (d.uv.zw - d.uv.xy);\n"
+    "    v_color = d.color;\n"
+    "    v_local = off * d.size;\n"
+    "    v_size = d.size;\n"
+    "    v_corner_radii = vec4(d.corner_01, d.corner_23);\n"
+    "}\n";
 
 static const char *IMAGE_FRAG_GLSL =
     "#version 450\n"
@@ -673,6 +756,9 @@ static const char *IMAGE_FRAG_GLSL =
     "\n"
     "layout(location = 0) in  vec2 v_uv;\n"
     "layout(location = 1) in  vec4 v_color;\n"
+    "layout(location = 2) in  vec2 v_local;\n"
+    "layout(location = 3) in  vec2 v_size;\n"
+    "layout(location = 4) in  vec4 v_corner_radii;\n"
     "layout(location = 0) out vec4 out_color;\n"
     "\n"
     "vec3 srgb_to_linear(vec3 c) {\n"
@@ -682,18 +768,32 @@ static const char *IMAGE_FRAG_GLSL =
     "    return mix(hi, lo, vec3(cutoff));\n"
     "}\n"
     "\n"
+    "float roundedBoxSDF(vec2 p, vec2 b, vec4 r) {\n"
+    "    float radius = (p.x > 0.0) ?\n"
+    "        ((p.y > 0.0) ? r.z : r.y) :\n"
+    "        ((p.y > 0.0) ? r.w : r.x);\n"
+    "    radius = clamp(radius, 0.0, min(b.x, b.y));\n"
+    "    vec2 d = abs(p) - b + vec2(radius);\n"
+    "    return length(max(d, vec2(0.0))) + min(max(d.x, d.y), 0.0) - radius;\n"
+    "}\n"
+    "\n"
     "void main() {\n"
+    "    vec2 half_size = v_size * 0.5;\n"
+    "    float distance = roundedBoxSDF(v_local - half_size, half_size,\n"
+    "                                   v_corner_radii);\n"
+    "    float coverage = 1.0 - smoothstep(-0.5, 0.5, distance);\n"
+    "    if (coverage < 0.001) discard;\n"
     "    /* Texture is bound as R8G8B8A8_SRGB so sampling returns linear RGB. */\n"
     "    vec4 t = texture(tex, v_uv);\n"
     "    vec3 tint_lin = srgb_to_linear(v_color.rgb);\n"
-    "    out_color = vec4(t.rgb * tint_lin, t.a * v_color.a);\n"
+    "    out_color = vec4(t.rgb * tint_lin, t.a * v_color.a * coverage);\n"
     "}\n";
 
 bool ca_image_pipeline_create(Ca_Instance *inst, VkFormat color_format)
 {
     if (inst->text_pipeline.layout == VK_NULL_HANDLE) return false;
 
-    VkShaderModule vert = ca_shader_compile(inst->vk_device, TEXT_VERT_GLSL,
+    VkShaderModule vert = ca_shader_compile(inst->vk_device, IMAGE_VERT_GLSL,
                                             VK_SHADER_STAGE_VERTEX_BIT);
     VkShaderModule frag = ca_shader_compile(inst->vk_device, IMAGE_FRAG_GLSL,
                                             VK_SHADER_STAGE_FRAGMENT_BIT);

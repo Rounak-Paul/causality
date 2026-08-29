@@ -61,9 +61,17 @@ static OverlayCssStyle overlay_css_style(Ca_Window *window, Ca_Node *owner,
 typedef struct {
     bool  active;
     float x, y, w, h;
+    /* Corner radius of the innermost (nearest) clipping ancestor that
+       contributed this rect. Zero for a plain rectangular clip. Only ever
+       set by the ancestor whose bounds equal the final intersected rect —
+       an outer rounded ancestor whose rect got shrunk by a tighter,
+       square-cornered descendant clip no longer owns visible corners, so
+       its radius must not leak through. */
+    float radius;
 } ClipRect;
 
-static ClipRect clip_intersect(ClipRect parent, float cx, float cy, float cw, float ch)
+static ClipRect clip_intersect(ClipRect parent, float cx, float cy, float cw, float ch,
+                               float new_radius)
 {
     ClipRect r;
     r.active = true;
@@ -78,6 +86,17 @@ static ClipRect clip_intersect(ClipRect parent, float cx, float cy, float cw, fl
     r.x = x0; r.y = y0;
     r.w = (x1 > x0) ? x1 - x0 : 0.0f;
     r.h = (y1 > y0) ? y1 - y0 : 0.0f;
+
+    /* The new ancestor's radius only applies where its own edge is still
+       the visible boundary (i.e. its rect was not shrunk by the parent's
+       tighter bound on that side); otherwise a square-cornered parent
+       clip already owns that corner and must keep it square. */
+    bool edge_unshrunk =
+        (!parent.active || parent.x <= cx) &&
+        (!parent.active || parent.y <= cy) &&
+        (!parent.active || parent.x + parent.w >= cx + cw) &&
+        (!parent.active || parent.y + parent.h >= cy + ch);
+    r.radius = edge_unshrunk ? new_radius : 0.0f;
     return r;
 }
 
@@ -89,6 +108,7 @@ static void set_clip(Ca_DrawCmd *cmd, ClipRect clip)
         cmd->clip_y = clip.y;
         cmd->clip_w = clip.w;
         cmd->clip_h = clip.h;
+        cmd->clip_radius = clip.radius;
     }
 }
 
@@ -128,7 +148,8 @@ static ClipRect find_clip_for_node(Ca_Node *node)
         if (cur->desc.overflow_x >= 1 || cur->desc.overflow_y >= 1) {
             clip = clip_intersect(clip, cur->x, cur->y,
                                   ca_scrollbar_viewport_width(cur),
-                                  ca_scrollbar_viewport_height(cur));
+                                  ca_scrollbar_viewport_height(cur),
+                                  cur->desc.corner_radius);
         }
         cur = cur->parent;
     }
@@ -229,10 +250,10 @@ static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, Cli
         cmd->h                    = node->h;
         cmd->backdrop_blur_radius = node->desc.backdrop_blur;
         cmd->corner_radius        = node->desc.corner_radius;
-        cmd->corner_tl = node->desc.border_radius_tl > 0.0f ? node->desc.border_radius_tl : node->desc.corner_radius;
-        cmd->corner_tr = node->desc.border_radius_tr > 0.0f ? node->desc.border_radius_tr : node->desc.corner_radius;
-        cmd->corner_br = node->desc.border_radius_br > 0.0f ? node->desc.border_radius_br : node->desc.corner_radius;
-        cmd->corner_bl = node->desc.border_radius_bl > 0.0f ? node->desc.border_radius_bl : node->desc.corner_radius;
+        cmd->corner_tl = ca_desc_corner_tl(&node->desc);
+        cmd->corner_tr = ca_desc_corner_tr(&node->desc);
+        cmd->corner_br = ca_desc_corner_br(&node->desc);
+        cmd->corner_bl = ca_desc_corner_bl(&node->desc);
         cmd->z_index   = node->desc.z_index;
         cmd->in_use    = true;
         set_clip(cmd, clip);
@@ -255,10 +276,10 @@ static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, Cli
         cmd->h           = node->h + expand * 2.0f;
         cmd->r = sr; cmd->g = sg; cmd->b = sb; cmd->a = sa;
         /* Pass the node's corner radii so shadow follows the shape */
-        cmd->corner_tl   = node->desc.border_radius_tl > 0.0f ? node->desc.border_radius_tl : node->desc.corner_radius;
-        cmd->corner_tr   = node->desc.border_radius_tr > 0.0f ? node->desc.border_radius_tr : node->desc.corner_radius;
-        cmd->corner_br   = node->desc.border_radius_br > 0.0f ? node->desc.border_radius_br : node->desc.corner_radius;
-        cmd->corner_bl   = node->desc.border_radius_bl > 0.0f ? node->desc.border_radius_bl : node->desc.corner_radius;
+        cmd->corner_tl   = ca_desc_corner_tl(&node->desc);
+        cmd->corner_tr   = ca_desc_corner_tr(&node->desc);
+        cmd->corner_br   = ca_desc_corner_br(&node->desc);
+        cmd->corner_bl   = ca_desc_corner_bl(&node->desc);
         cmd->blur_radius = blur;
         cmd->z_index     = node->desc.z_index;
         cmd->in_use      = true;
@@ -276,10 +297,10 @@ static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, Cli
 
         /* Per-corner radii — GPU handles asymmetric corners natively now */
         cmd->corner_radius = node->desc.corner_radius;
-        cmd->corner_tl = node->desc.border_radius_tl > 0.0f ? node->desc.border_radius_tl : node->desc.corner_radius;
-        cmd->corner_tr = node->desc.border_radius_tr > 0.0f ? node->desc.border_radius_tr : node->desc.corner_radius;
-        cmd->corner_br = node->desc.border_radius_br > 0.0f ? node->desc.border_radius_br : node->desc.corner_radius;
-        cmd->corner_bl = node->desc.border_radius_bl > 0.0f ? node->desc.border_radius_bl : node->desc.corner_radius;
+        cmd->corner_tl = ca_desc_corner_tl(&node->desc);
+        cmd->corner_tr = ca_desc_corner_tr(&node->desc);
+        cmd->corner_br = ca_desc_corner_br(&node->desc);
+        cmd->corner_bl = ca_desc_corner_bl(&node->desc);
 
         /* Gradient or solid fill */
         if (node->desc.gradient_type != 0) {
@@ -766,6 +787,11 @@ static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, Cli
             cmd->h           = node->h;
             cmd->r = 1; cmd->g = 1; cmd->b = 1; cmd->a = 1;
             cmd->u0 = 0; cmd->v0 = 0; cmd->u1 = 1; cmd->v1 = 1;
+            cmd->corner_radius = node->desc.corner_radius;
+            cmd->corner_tl = ca_desc_corner_tl(&node->desc);
+            cmd->corner_tr = ca_desc_corner_tr(&node->desc);
+            cmd->corner_br = ca_desc_corner_br(&node->desc);
+            cmd->corner_bl = ca_desc_corner_bl(&node->desc);
             cmd->image_index = (uint32_t)image_index;
             cmd->z_index     = node->desc.z_index;
             cmd->in_use      = true;
@@ -790,6 +816,11 @@ static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, Cli
             cmd->h              = node->h;
             cmd->r = 1; cmd->g = 1; cmd->b = 1; cmd->a = 1;
             cmd->u0 = 0; cmd->v0 = 0; cmd->u1 = 1; cmd->v1 = 1;
+            cmd->corner_radius = node->desc.corner_radius;
+            cmd->corner_tl = ca_desc_corner_tl(&node->desc);
+            cmd->corner_tr = ca_desc_corner_tr(&node->desc);
+            cmd->corner_br = ca_desc_corner_br(&node->desc);
+            cmd->corner_bl = ca_desc_corner_bl(&node->desc);
             cmd->viewport_index = (uint32_t)pool_index;
             cmd->z_index        = node->desc.z_index;
             cmd->in_use         = true;
@@ -1394,7 +1425,7 @@ static void paint_cursor(Ca_Window *win, Ca_Font *font,
     cmd->in_use = true;
 
     ClipRect clip = find_clip_for_node(node);
-    ClipRect input_clip = clip_intersect(clip, node->x, node->y, node->w, node->h);
+    ClipRect input_clip = clip_intersect(clip, node->x, node->y, node->w, node->h, 0.0f);
     set_clip(cmd, input_clip);
 }
 
@@ -1663,10 +1694,20 @@ static void paint_tree_cached(Ca_Instance *inst, Ca_Window *win,
 
     /* ---- Child clip ---- */
     ClipRect child_clip = clip;
-    if (node->desc.overflow_x >= 1 || node->desc.overflow_y >= 1)
+    /* Own-bounds clip: the panel's full rect (not narrowed to exclude the
+       scrollbar gutter like child_clip is), carrying the same rounded
+       radius. Used for content — like the scrollbar track/thumb — that
+       must be masked to this panel's own rounded shape but legitimately
+       spans its full width, unlike reflowed child content. */
+    ClipRect own_clip = clip;
+    if (node->desc.overflow_x >= 1 || node->desc.overflow_y >= 1) {
         child_clip = clip_intersect(clip, node->x, node->y,
                                     ca_scrollbar_viewport_width(node),
-                                    ca_scrollbar_viewport_height(node));
+                                    ca_scrollbar_viewport_height(node),
+                                    node->desc.corner_radius);
+        own_clip = clip_intersect(clip, node->x, node->y, node->w, node->h,
+                                  node->desc.corner_radius);
+    }
 
     /* ---- Recurse children (propagate effective_z and transform down) ---- */
     for (uint32_t i = 0; i < node->child_count; ++i)
@@ -1676,7 +1717,7 @@ static void paint_tree_cached(Ca_Instance *inst, Ca_Window *win,
     /* ---- Post-children: scrollbars ---- */
     if (was_dirty) {
         uint32_t sb_start = win->draw_cmd_count;
-        paint_scrollbars(win, node, clip);
+        paint_scrollbars(win, node, own_clip);
         uint32_t sb_count = win->draw_cmd_count - sb_start;
         apply_inherited_z(win, sb_start, sb_count, effective_z);
         apply_transform(win, sb_start, sb_count, effective_xf, false);

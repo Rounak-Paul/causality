@@ -113,7 +113,7 @@ typedef struct {
     float viewport[2];
     float xf_ab[2];             /* transform a, b — identity is (1, 0) */
     float xf_cd[2];             /* transform c, d — identity is (0, 1) */
-    float _pad1[14];
+    float _pad1[14];            /* image pipeline uses [0..3] for tl,tr,br,bl */
 } Ca_TextInstance;
 
 /* Forward-declare Ca_Font (full definition lives in renderer/font.h) */
@@ -169,6 +169,17 @@ typedef struct {
     float    xf_cd[2];          /* transform c, d — identity is (0, 1) */
 } Ca_RectPushConst;
 
+/* Fragment-stage push constant carrying the rounded clip rect shared by
+   every instance in the current batch (see paint.c's ClipRect / clip_radius
+   and the rect pipeline's ClipPC block in pipeline.c). Field order/size
+   matches the shader's std430-equivalent push-constant layout exactly. */
+typedef struct {
+    float pos[2];
+    float size[2];
+    float radius;
+    float _pad0;
+} Ca_ClipPushConst;
+
 /* Instance buffer holds one fixed-stride slot per draw command for one frame.
    Rect and text/image records intentionally share a 128-byte slot size so
    all pipelines can bind the same storage buffer without dynamic offsets. */
@@ -206,6 +217,8 @@ _Static_assert(offsetof(Ca_TextInstance, xf_ab) == 56,
                "TextData.xf_ab must sit at offset 56 to match TEXT_VERT_GLSL");
 _Static_assert(offsetof(Ca_TextInstance, xf_cd) == 64,
                "TextData.xf_cd must sit at offset 64 to match TEXT_VERT_GLSL");
+_Static_assert(offsetof(Ca_TextInstance, _pad1) == 72,
+               "ImageData.corner_01 must sit at offset 72 to match IMAGE_VERT_GLSL");
 
 /* ======================================================
    EVENTS
@@ -273,6 +286,7 @@ typedef struct {
     float        border_radius_bl;
     float        corner_radius;
     float        opacity;        /* 0 = not set (default 1.0) */
+    uint8_t      corner_radii_set; /* CSS per-corner declarations: tl,tr,br,bl */
     /* Flex properties */
     float        flex_grow;
     float        flex_shrink;
@@ -364,6 +378,41 @@ typedef struct {
     float        scale_bias_x, scale_bias_y;  /* actual scale minus 1 */
     float        pivot_off_x, pivot_off_y;    /* normalized pivot minus 0.5 */
 } Ca_NodeDesc;
+
+enum {
+    CA_CORNER_RADIUS_TL_SET = 1u << 0,
+    CA_CORNER_RADIUS_TR_SET = 1u << 1,
+    CA_CORNER_RADIUS_BR_SET = 1u << 2,
+    CA_CORNER_RADIUS_BL_SET = 1u << 3,
+};
+
+static inline float ca_desc_corner_tl(const Ca_NodeDesc *desc)
+{
+    return ((desc->corner_radii_set & CA_CORNER_RADIUS_TL_SET) != 0u ||
+            desc->border_radius_tl > 0.0f)
+        ? desc->border_radius_tl : desc->corner_radius;
+}
+
+static inline float ca_desc_corner_tr(const Ca_NodeDesc *desc)
+{
+    return ((desc->corner_radii_set & CA_CORNER_RADIUS_TR_SET) != 0u ||
+            desc->border_radius_tr > 0.0f)
+        ? desc->border_radius_tr : desc->corner_radius;
+}
+
+static inline float ca_desc_corner_br(const Ca_NodeDesc *desc)
+{
+    return ((desc->corner_radii_set & CA_CORNER_RADIUS_BR_SET) != 0u ||
+            desc->border_radius_br > 0.0f)
+        ? desc->border_radius_br : desc->corner_radius;
+}
+
+static inline float ca_desc_corner_bl(const Ca_NodeDesc *desc)
+{
+    return ((desc->corner_radii_set & CA_CORNER_RADIUS_BL_SET) != 0u ||
+            desc->border_radius_bl > 0.0f)
+        ? desc->border_radius_bl : desc->corner_radius;
+}
 
 static inline float ca_desc_scale_x(const Ca_NodeDesc *d) { return 1.0f + d->scale_bias_x; }
 static inline float ca_desc_scale_y(const Ca_NodeDesc *d) { return 1.0f + d->scale_bias_y; }
@@ -472,6 +521,12 @@ typedef struct {
     bool        overlay;
     bool        has_clip;
     float       clip_x, clip_y, clip_w, clip_h;
+    /* Corner radius of the clip rect itself (uniform). Zero means the
+       clip behaves as a plain rectangle, as before. Set when the nearest
+       overflow:hidden ancestor has a nonzero corner-radius, so content
+       painted near a rounded panel's edge is masked to the same curve
+       instead of poking past it into the panel's square bounding box. */
+    float       clip_radius;
     /* Border — uniform */
     float       border_width;
     float       border_r, border_g, border_b, border_a;

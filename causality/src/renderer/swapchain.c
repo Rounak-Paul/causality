@@ -46,6 +46,24 @@ static int cmd_paint_band(const Ca_DrawCmd *cmd)
     return 1;
 }
 
+/**
+ * Packs per-corner radii into the image instance's reserved SSBO payload.
+ *
+ * @param dst Image instance receiving the radii.
+ * @param cmd Draw command supplying per-corner or uniform fallback radii.
+ */
+static void image_instance_pack_corner_radii(Ca_TextInstance *dst,
+                                             const Ca_DrawCmd *cmd)
+{
+    memset(dst->_pad1, 0, sizeof(dst->_pad1));
+    bool has_per_corner = cmd->corner_tl != 0.0f || cmd->corner_tr != 0.0f ||
+                          cmd->corner_br != 0.0f || cmd->corner_bl != 0.0f;
+    dst->_pad1[0] = has_per_corner ? cmd->corner_tl : cmd->corner_radius;
+    dst->_pad1[1] = has_per_corner ? cmd->corner_tr : cmd->corner_radius;
+    dst->_pad1[2] = has_per_corner ? cmd->corner_br : cmd->corner_radius;
+    dst->_pad1[3] = has_per_corner ? cmd->corner_bl : cmd->corner_radius;
+}
+
 /* Locate the root node's own background-rect draw command for this frame.
    Used both as the swapchain clear color and to exclude it from the regular
    rect batch (it's implicitly drawn via VK_ATTACHMENT_LOAD_OP_CLEAR instead).
@@ -648,6 +666,7 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
 
             uint32_t batch_start = rect_n;
             VkRect2D cur_sc      = full_scissor;
+            Ca_ClipPushConst cur_clip = { 0 };
             bool     first       = true;
 
             /* When sorted_idx is set, position 0 is always root_bg_idx
@@ -663,8 +682,11 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
                     continue;
                 if (cmd_paint_band(cmd) != band) continue;
 
-                /* Compute scissor for this command */
+                /* Compute scissor (physical pixels) and the rounded-clip
+                   push constant (logical/node-space pixels, matching
+                   v_node_pos) for this command. */
                 VkRect2D sc_new = full_scissor;
+                Ca_ClipPushConst clip_new = { 0 };
                 if (cmd->has_clip) {
                     int32_t cx = (int32_t)(cmd->clip_x * scale_x);
                     int32_t cy = (int32_t)(cmd->clip_y * scale_y);
@@ -676,19 +698,33 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
                     if (ch < 0) ch = 0;
                     sc_new = (VkRect2D){ .offset = {cx, cy},
                                          .extent = {(uint32_t)cw, (uint32_t)ch} };
+                    clip_new.pos[0]  = cmd->clip_x;
+                    clip_new.pos[1]  = cmd->clip_y;
+                    clip_new.size[0] = cmd->clip_w;
+                    clip_new.size[1] = cmd->clip_h;
+                    clip_new.radius  = cmd->clip_radius;
                 }
 
-                /* Flush batch on scissor change */
-                if (!first && memcmp(&sc_new, &cur_sc, sizeof(VkRect2D)) != 0) {
+                /* Flush batch on scissor OR clip-shape change (a plain
+                   rectangular clip and a rounded one can share identical
+                   scissor bounds while still needing separate push
+                   constants, e.g. a rounded-panel clip nested inside an
+                   unrelated square scroll clip of the same size). */
+                bool clip_changed = memcmp(&clip_new, &cur_clip, sizeof(clip_new)) != 0;
+                if (!first && (memcmp(&sc_new, &cur_sc, sizeof(VkRect2D)) != 0 || clip_changed)) {
                     if (rect_n > batch_start) {
                         vkCmdSetScissor(f->cmd, 0, 1, &cur_sc);
+                        vkCmdPushConstants(f->cmd, inst->rect_pipeline.layout,
+                                           VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                                           sizeof(cur_clip), &cur_clip);
                         vkCmdDraw(f->cmd, 6, rect_n - batch_start, 0, batch_start);
                         batch_n++;
                     }
                     batch_start = rect_n;
                 }
-                cur_sc = sc_new;
-                first  = false;
+                cur_sc   = sc_new;
+                cur_clip = clip_new;
+                first    = false;
 
                 /* Pack instance data into SSBO */
                 Ca_RectPushConst *dst = &rect_base[rect_n++];
@@ -698,12 +734,17 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
                 dst->color[0]      = cmd->r;           dst->color[1]      = cmd->g;
                 dst->color[2]      = cmd->b;           dst->color[3]      = cmd->a;
                 dst->viewport[0]   = (float)log_w;     dst->viewport[1]   = (float)log_h;
-                /* Per-corner radii: use per-corner if set, else uniform fallback */
+                /* Per-corner values are authoritative as a set so an explicit
+                   zero can keep one edge square while another is rounded. */
                 {
-                    float tl = cmd->corner_tl > 0.0f ? cmd->corner_tl : cmd->corner_radius;
-                    float tr = cmd->corner_tr > 0.0f ? cmd->corner_tr : cmd->corner_radius;
-                    float br = cmd->corner_br > 0.0f ? cmd->corner_br : cmd->corner_radius;
-                    float bl = cmd->corner_bl > 0.0f ? cmd->corner_bl : cmd->corner_radius;
+                    bool has_per_corner = cmd->corner_tl != 0.0f ||
+                                          cmd->corner_tr != 0.0f ||
+                                          cmd->corner_br != 0.0f ||
+                                          cmd->corner_bl != 0.0f;
+                    float tl = has_per_corner ? cmd->corner_tl : cmd->corner_radius;
+                    float tr = has_per_corner ? cmd->corner_tr : cmd->corner_radius;
+                    float br = has_per_corner ? cmd->corner_br : cmd->corner_radius;
+                    float bl = has_per_corner ? cmd->corner_bl : cmd->corner_radius;
                     dst->corner_radii[0] = tl;
                     dst->corner_radii[1] = tr;
                     dst->corner_radii[2] = br;
@@ -727,6 +768,9 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
             /* Flush final batch */
             if (rect_n > batch_start) {
                 vkCmdSetScissor(f->cmd, 0, 1, &cur_sc);
+                vkCmdPushConstants(f->cmd, inst->rect_pipeline.layout,
+                                   VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                                   sizeof(cur_clip), &cur_clip);
                 vkCmdDraw(f->cmd, 6, rect_n - batch_start, 0, batch_start);
                 batch_n++;
             }
@@ -899,6 +943,7 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
                     dst->color[0] = cmd->r;            dst->color[1] = cmd->g;
                     dst->color[2] = cmd->b;            dst->color[3] = cmd->a;
                     dst->viewport[0] = (float)log_w;   dst->viewport[1] = (float)log_h;
+                    image_instance_pack_corner_radii(dst, cmd);
                 }
                 if (ti_n > batch_start) {
                     vkCmdSetScissor(f->cmd, 0, 1, &cur_sc);
@@ -1003,6 +1048,7 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
                     dst->color[0] = cmd->r;            dst->color[1] = cmd->g;
                     dst->color[2] = cmd->b;            dst->color[3] = cmd->a;
                     dst->viewport[0] = (float)log_w;   dst->viewport[1] = (float)log_h;
+                    image_instance_pack_corner_radii(dst, cmd);
                 }
                 if (ti_n > batch_start) {
                     vkCmdSetScissor(f->cmd, 0, 1, &cur_sc);
@@ -1090,6 +1136,7 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
                     dst->color[0] = 1.0f;  dst->color[1] = 1.0f;
                     dst->color[2] = 1.0f;  dst->color[3] = 1.0f;
                     dst->viewport[0] = (float)log_w;  dst->viewport[1] = (float)log_h;
+                    image_instance_pack_corner_radii(dst, cmd);
                 }
                 if (ti_n > batch_start) {
                     vkCmdSetScissor(f->cmd, 0, 1, &cur_sc);

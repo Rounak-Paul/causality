@@ -439,6 +439,11 @@ bool content_desc_changed(const Ca_NodeDesc *a, const Ca_NodeDesc *b)
 {
     return a->background      != b->background      ||
            a->corner_radius   != b->corner_radius   ||
+           a->border_radius_tl != b->border_radius_tl ||
+           a->border_radius_tr != b->border_radius_tr ||
+           a->border_radius_br != b->border_radius_br ||
+           a->border_radius_bl != b->border_radius_bl ||
+           a->corner_radii_set != b->corner_radii_set ||
            a->opacity         != b->opacity         ||
            a->font_size       != b->font_size       ||
            a->font_bold       != b->font_bold       ||
@@ -463,6 +468,7 @@ bool content_desc_changed(const Ca_NodeDesc *a, const Ca_NodeDesc *b)
            a->shadow_offset_y != b->shadow_offset_y ||
            a->shadow_blur     != b->shadow_blur     ||
            a->shadow_color    != b->shadow_color    ||
+           a->backdrop_blur   != b->backdrop_blur   ||
            a->z_index         != b->z_index         ||
            a->text_wrap       != b->text_wrap;
 }
