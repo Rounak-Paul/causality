@@ -10,6 +10,7 @@
 #include "scrollbar.h"
 #include "../../include/ca_icons.h"
 #include <GLFW/glfw3.h>
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -836,7 +837,7 @@ static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, Cli
  *
  * win   The window accumulating draw commands.
  * node  The node whose border to paint.
- * clip  The node's own (pre-children) clip rect.
+ * clip  The node's own clip rect.
  */
 static void paint_border(Ca_Window *win, Ca_Node *node, ClipRect clip)
 {
@@ -853,49 +854,81 @@ static void paint_border(Ca_Window *win, Ca_Node *node, ClipRect clip)
         node->desc.border_top_c == node->desc.border_bottom_c &&
         node->desc.border_top_c == node->desc.border_left_c;
     if (uniform_sides && node->desc.border_width > 0.0f &&
-        node->desc.border_color != 0 &&
-        ca_window_reserve_draw_commands(win, (size_t)win->draw_cmd_count + 1u)) {
-        Ca_DrawCmd *cmd = &win->draw_cmds[win->draw_cmd_count++];
-        memset(cmd, 0, sizeof(*cmd));
-        cmd->type = CA_DRAW_RECT;
-        /* Square corners, not node->desc.corner_radius: the border-ring
-           SDF (roundedBoxSDF's inner/outer pair in the rect fragment
-           shader) renders a visibly chamfered corner instead of a smooth
-           arc on a thin ring at small radii, for reasons that didn't
-           resolve under source review or a from-scratch numeric
-           reimplementation of the same formula — both traced a correct,
-           gradual arc, yet the live GPU output kept showing a cut corner.
-           Until that's root-caused with GPU-side tooling, a square-cornered
-           border is the honest, correct-looking option — Sol is currently
-           this engine's only border-width/border-color caller, so this
-           doesn't regress any other rounded-border use.
+        node->desc.border_color != 0 && node->w > 0.0f && node->h > 0.0f) {
+        float half_extent = 0.5f * (node->w < node->h ? node->w : node->h);
+        float width = node->desc.border_width < half_extent
+            ? node->desc.border_width : half_extent;
+        float radii[4] = {
+            ca_desc_corner_tl(&node->desc), ca_desc_corner_tr(&node->desc),
+            ca_desc_corner_br(&node->desc), ca_desc_corner_bl(&node->desc),
+        };
+        for (int i = 0; i < 4; ++i) {
+            if (radii[i] < 0.0f) radii[i] = 0.0f;
+            if (radii[i] > half_extent) radii[i] = half_extent;
+        }
 
-           Inset the rect so the square corners land inside the panel's
-           own rounded silhouette instead of poking past its curve: for a
-           corner radius r, a rect inset by m keeps its corner point at
-           distance sqrt(2)*(r-m) from the arc center, which stays within
-           the radius-r quarter-circle once m >= r*(1 - 1/sqrt(2)). */
-        float inset = node->desc.corner_radius * 0.293f;
-        float max_inset = 0.5f * (node->w < node->h ? node->w : node->h);
-        if (inset > max_inset) inset = max_inset;
-        cmd->x = node->x + inset;   cmd->y = node->y + inset;
-        cmd->w = node->w - inset * 2.0f;
-        cmd->h = node->h - inset * 2.0f;
-        cmd->corner_radius = 0.0f;
-        cmd->corner_tl = 0.0f;
-        cmd->corner_tr = 0.0f;
-        cmd->corner_br = 0.0f;
-        cmd->corner_bl = 0.0f;
-        /* Transparent fill: only the border ring should paint here — the
-           node's own background already painted in the pre-children pass. */
-        cmd->draw_mode = CA_DRAW_MODE_NORMAL;
-        cmd->border_width = node->desc.border_width;
-        unpack_color(node->desc.border_color,
-                     &cmd->border_r, &cmd->border_g,
-                     &cmd->border_b, &cmd->border_a);
-        cmd->z_index = node->desc.z_index;
-        cmd->in_use  = true;
-        set_clip(cmd, clip);
+        float r, g, b, a;
+        unpack_color(node->desc.border_color, &r, &g, &b, &a);
+        struct { float x, y, w, h; } sides[4] = {
+            { node->x + radii[0], node->y,
+              node->w - radii[0] - radii[1], width },
+            { node->x + node->w - width, node->y + radii[1],
+              width, node->h - radii[1] - radii[2] },
+            { node->x + radii[3], node->y + node->h - width,
+              node->w - radii[3] - radii[2], width },
+            { node->x, node->y + radii[0],
+              width, node->h - radii[0] - radii[3] },
+        };
+        for (int i = 0; i < 4; ++i) {
+            if (sides[i].w <= 0.0f || sides[i].h <= 0.0f) continue;
+            if (!ca_window_reserve_draw_commands(win,
+                    (size_t)win->draw_cmd_count + 1u)) return;
+            Ca_DrawCmd *cmd = &win->draw_cmds[win->draw_cmd_count++];
+            memset(cmd, 0, sizeof(*cmd));
+            cmd->type = CA_DRAW_RECT;
+            cmd->x = sides[i].x; cmd->y = sides[i].y;
+            cmd->w = sides[i].w; cmd->h = sides[i].h;
+            cmd->r = r; cmd->g = g; cmd->b = b; cmd->a = a;
+            cmd->z_index = node->desc.z_index;
+            cmd->in_use = true;
+            set_clip(cmd, clip);
+        }
+
+        const float pi = 3.14159265358979323846f;
+        const float angles[4] = { pi, pi * 1.5f, 0.0f, pi * 0.5f };
+        const float centers[4][2] = {
+            { node->x + radii[0], node->y + radii[0] },
+            { node->x + node->w - radii[1], node->y + radii[1] },
+            { node->x + node->w - radii[2], node->y + node->h - radii[2] },
+            { node->x + radii[3], node->y + node->h - radii[3] },
+        };
+        for (int corner = 0; corner < 4; ++corner) {
+            float radius = radii[corner];
+            if (radius <= 0.0f) continue;
+            float center_radius = radius - width * 0.5f;
+            if (center_radius < 0.0f) center_radius = 0.0f;
+            int segments = (int)ceilf((pi * 0.5f * center_radius) / width);
+            if (segments < 1) segments = 1;
+            for (int segment = 0; segment <= segments; ++segment) {
+                float angle = angles[corner] +
+                    (pi * 0.5f * (float)segment) / (float)segments;
+                float cx = centers[corner][0] + cosf(angle) * center_radius;
+                float cy = centers[corner][1] + sinf(angle) * center_radius;
+                if (!ca_window_reserve_draw_commands(win,
+                        (size_t)win->draw_cmd_count + 1u)) return;
+                Ca_DrawCmd *cmd = &win->draw_cmds[win->draw_cmd_count++];
+                memset(cmd, 0, sizeof(*cmd));
+                cmd->type = CA_DRAW_RECT;
+                cmd->x = cx - width * 0.5f;
+                cmd->y = cy - width * 0.5f;
+                cmd->w = width; cmd->h = width;
+                cmd->corner_radius = width * 0.5f;
+                cmd->r = r; cmd->g = g; cmd->b = b; cmd->a = a;
+                cmd->z_index = node->desc.z_index;
+                cmd->in_use = true;
+                set_clip(cmd, clip);
+            }
+        }
     }
 
     /* ---- Per-side border rects (top / right / bottom / left) ---- */
