@@ -135,6 +135,7 @@ static void paint_text_wrapped(Ca_Window *win, Ca_Font *font,
 static void paint_text_left(Ca_Window *win, Ca_Font *font,
                             Ca_Node *node,
                             const char *text, uint32_t packed_color);
+static void ca_mask_password_text(const char *real_text, char *out, size_t out_size);
 static void paint_cursor(Ca_Window *win, Ca_Font *font,
                          Ca_Node *node, const char *text, int cursor_pos);
 static void paint_focus_ring(Ca_Window *win, Ca_Node *node);
@@ -392,11 +393,18 @@ static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, Cli
     case CA_WIDGET_TEXT_INPUT: {
         Ca_TextInput *inp = (Ca_TextInput *)node->widget;
         if (inp && inp->in_use) {
-            if (inp->text[0] != '\0')
-                paint_text_left(win, font, node, inp->text, inp->text_color);
-            else if (inp->placeholder[0] != '\0')
+            if (inp->text[0] != '\0') {
+                if (inp->input_mode == CA_INPUT_PASSWORD) {
+                    char masked[CA_INPUT_TEXT_MAX];
+                    ca_mask_password_text(inp->text, masked, sizeof(masked));
+                    paint_text_left(win, font, node, masked, inp->text_color);
+                } else {
+                    paint_text_left(win, font, node, inp->text, inp->text_color);
+                }
+            } else if (inp->placeholder[0] != '\0') {
                 paint_text_left(win, font, node, inp->placeholder,
                                 inp->placeholder_color);
+            }
             /* Cursor is painted in the decoration pass, not cached */
         }
         break;
@@ -1400,6 +1408,47 @@ static void paint_text(Ca_Window *win, Ca_Font *font,
     }
 }
 
+/* Build the masked glyph string for a CA_INPUT_PASSWORD field: one
+ * CA_ICON_NF_MD_RABBIT glyph per character of real_text, rather than a
+ * literal '*' repeat.
+ *
+ * The Nerd Font rabbit icon is a single 4-byte UTF-8 codepoint (Private
+ * Use Area, not a color emoji), so it renders through the same glyph
+ * atlas as every other CA_ICON_* glyph Sol/Causality already draws —
+ * no separate emoji-font page lookup, unlike an actual 🐰 emoji would
+ * need. Because each mask glyph is a fixed 4 bytes regardless of what
+ * real character it stands in for, callers must measure/index this
+ * string by CODEPOINT count, never by byte offset into real_text — see
+ * measure_text_advance's cp_count parameter and its call site below.
+ *
+ * real_text  The real field value (never itself modified or exposed
+ *            beyond this translation unit's painting code).
+ * out        Destination buffer for the masked string.
+ * out_size   Capacity of out, including the terminating NUL. Masking
+ *            truncates (rather than overflowing) if real_text has more
+ *            characters than fit — matches every other fixed-capacity
+ *            text buffer in this codebase failing safe by truncation.
+ */
+static void ca_mask_password_text(const char *real_text, char *out, size_t out_size)
+{
+    static const char glyph[] = CA_ICON_NF_MD_RABBIT;
+    const size_t glyph_len = sizeof(glyph) - 1u;   /* exclude glyph's own NUL */
+
+    if (!out || out_size == 0u) return;
+    out[0] = '\0';
+    if (!real_text) return;
+
+    const char *p = real_text;
+    size_t written = 0u;
+    while (*p) {
+        (void)ca_utf8_decode(&p);   /* advance one real codepoint */
+        if (written + glyph_len + 1u > out_size) break;   /* +1 for NUL */
+        memcpy(out + written, glyph, glyph_len);
+        written += glyph_len;
+    }
+    out[written] = '\0';
+}
+
 /* Emit glyph draw commands for a text string LEFT-ALIGNED in the given node rect,
    respecting padding. Used for text inputs. */
 static void paint_text_left(Ca_Window *win, Ca_Font *font,
@@ -1477,8 +1526,15 @@ static void paint_text_left(Ca_Window *win, Ca_Font *font,
     }
 }
 
-/* Measure x-advance for a substring of text (byte_count bytes) */
-static float measure_text_advance(Ca_Font *font, const char *text, int byte_count,
+/* Measure x-advance for the first cp_count codepoints of text.
+ *
+ * Takes a codepoint count rather than a byte count: paint_cursor's one
+ * caller needs to measure the same prefix length in two strings whose
+ * byte lengths differ per character (a password field's real text vs.
+ * its rendered mask, where each mask glyph may be a multi-byte
+ * codepoint) — a byte-offset cutoff cannot express "the same prefix" in
+ * both cases, but a codepoint count can. */
+static float measure_text_advance(Ca_Font *font, const char *text, int cp_count,
                                   float content_scale, float ui_scale,
                                   float font_size, bool bold)
 {
@@ -1487,22 +1543,22 @@ static float measure_text_advance(Ca_Font *font, const char *text, int byte_coun
     float desired = font_size > 0.0f ? font_size : font->default_size;
     Ca_FontTier *tier = ca_font_select_tier_for_size(font, desired * ui_s, bold);
     float w = 0.0f;
-    const char *p   = text;
-    const char *end = text + byte_count;
-    while (*p && p < end) {
+    const char *p = text;
+    for (int i = 0; i < cp_count && *p; ++i) {
         uint32_t cp = ca_utf8_decode(&p);
         w += glyph_adv(tier, cp, cs, desired);
     }
     return w;
 }
 
-/* Paint a thin cursor line at the given cursor byte offset in the input text */
+/* Paint a thin cursor line at the given cursor position (a codepoint
+   count, not a byte offset — see measure_text_advance) in text. */
 static void paint_cursor(Ca_Window *win, Ca_Font *font,
-                         Ca_Node *node, const char *text, int cursor_pos)
+                         Ca_Node *node, const char *text, int cursor_cp_count)
 {
     if (!ca_window_reserve_draw_commands(win, (size_t)win->draw_cmd_count + 1u)) return;
 
-    float advance = measure_text_advance(font, text, cursor_pos,
+    float advance = measure_text_advance(font, text, cursor_cp_count,
                                          font->content_scale, win->ui_scale,
                                          node->desc.font_size,
                                          node->desc.font_bold);
@@ -2674,7 +2730,29 @@ void ca_paint_pass(Ca_Instance *inst, Ca_Window *win)
             for (uint32_t i = 0; i < ca_pool_slot_count(&win->input_pool); ++i) {
                 Ca_TextInput *inp = CA_POOL_AT(win->input_pool, Ca_TextInput, i);
                 if (inp->in_use && inp->node == win->focused_node) {
-                    paint_cursor(win, font, inp->node, inp->text, inp->cursor);
+                    /* inp->cursor is a byte offset into inp->text (how
+                       editing/backspace already track it). paint_cursor
+                       takes a codepoint count, so convert here — see
+                       measure_text_advance's comment for why a byte
+                       offset can't index a password field's masked
+                       string, whose glyphs are a different byte width
+                       per character than the real text. */
+                    int cursor_cp = 0;
+                    {
+                        const char *p = inp->text;
+                        const char *cursor_byte = inp->text + inp->cursor;
+                        while (*p && p < cursor_byte) {
+                            (void)ca_utf8_decode(&p);
+                            cursor_cp++;
+                        }
+                    }
+                    if (inp->input_mode == CA_INPUT_PASSWORD) {
+                        char masked[CA_INPUT_TEXT_MAX];
+                        ca_mask_password_text(inp->text, masked, sizeof(masked));
+                        paint_cursor(win, font, inp->node, masked, cursor_cp);
+                    } else {
+                        paint_cursor(win, font, inp->node, inp->text, cursor_cp);
+                    }
                     break;
                 }
             }

@@ -851,6 +851,13 @@ typedef enum Ca_InputMode {
     CA_INPUT_FLOAT,
     CA_INPUT_INT,
     CA_INPUT_UINT,
+    /* Edits exactly like CA_INPUT_TEXT (any character accepted, no
+       numeric filtering/clamping) but every character renders as '*'
+       instead of the real glyph. ca_input_text() still returns the
+       real, unmasked value — only the painted glyphs and the cursor's
+       horizontal position are computed from the masked string, so the
+       caret still tracks the visible '*' characters exactly. */
+    CA_INPUT_PASSWORD,
 } Ca_InputMode;
 
 /* <input> — single-line text or draggable numeric input field. */

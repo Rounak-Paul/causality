@@ -3880,7 +3880,8 @@ static int utf8_encode(uint32_t cp, char *buf)
 /** Returns whether a typed codepoint is valid at the numeric input cursor. */
 static bool numeric_input_accepts(const Ca_TextInput *input, uint32_t cp)
 {
-    if (!input || input->input_mode == CA_INPUT_TEXT) return true;
+    if (!input || input->input_mode == CA_INPUT_TEXT ||
+        input->input_mode == CA_INPUT_PASSWORD) return true;
     if (cp >= '0' && cp <= '9') return true;
     if (input->input_mode == CA_INPUT_UINT) return false;
 
@@ -4193,6 +4194,7 @@ void ca_widget_input_pass(Ca_Window *win)
                 Ca_TextInput *input = CA_POOL_AT(win->input_pool, Ca_TextInput, i);
                 if (!input->in_use || !input->node ||
                     input->input_mode == CA_INPUT_TEXT ||
+                    input->input_mode == CA_INPUT_PASSWORD ||
                     is_effectively_disabled(input->node))
                     continue;
                 if (!point_within_clip_ancestors(input->node, mx, my) ||
