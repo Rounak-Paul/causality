@@ -46,7 +46,7 @@
 #include <string.h>
 #include <stdio.h>
 
-#define CA_BACKDROP_BLUR_SCALE_DIVISOR 2u
+#define CA_BACKDROP_BLUR_SCALE_DIVISOR 4u
 
 /* Return the reduced backdrop texture dimension for one swapchain axis. */
 static uint32_t blur_extent(uint32_t extent)
@@ -108,34 +108,27 @@ static const char *BLUR_VERT_GLSL =
     "    v_uv        = uv[gl_VertexIndex];\n"
     "}\n";
 
-/* Fragment: one-dimensional Gaussian blur.
+/* Fragment: fixed-cost separable blur over a downsampled backdrop cache.
    push_constant.direction: 0 = horizontal, 1 = vertical.
-   push_constant.blur_radius: sigma in pixels.                             */
+   push_constant.blur_radius: CSS radius in cache pixels.                  */
 static const char *BLUR_FRAG_GLSL =
     "#version 450\n"
     "layout(set = 0, binding = 0) uniform sampler2D src_tex;\n"
     "layout(push_constant) uniform PC {\n"
     "    vec2  texel_size;    /* 1/width, 1/height */\n"
-    "    float blur_radius;   /* sigma in pixels   */\n"
+    "    float blur_radius;   /* CSS radius in cache pixels */\n"
     "    int   direction;     /* 0=H, 1=V          */\n"
     "} pc;\n"
     "layout(location = 0) in  vec2 v_uv;\n"
     "layout(location = 0) out vec4 out_color;\n"
     "void main() {\n"
-    "    float sigma = max(pc.blur_radius, 0.5);\n"
-    "    int   r     = int(ceil(sigma * 2.5));\n"   /* cover ~2.5 sigma each side */
-    "    r = clamp(r, 1, 32);\n"
-    "    vec2  dir   = (pc.direction == 0) ? vec2(pc.texel_size.x, 0.0)\n"
-    "                                      : vec2(0.0, pc.texel_size.y);\n"
-    "    float weight_sum = 0.0;\n"
-    "    vec4  color = vec4(0.0);\n"
-    "    for (int i = -r; i <= r; i++) {\n"
-    "        float d = float(i);\n"
-    "        float w = exp(-0.5 * (d/sigma)*(d/sigma));\n"
-    "        color      += texture(src_tex, v_uv + dir * d) * w;\n"
-    "        weight_sum += w;\n"
-    "    }\n"
-    "    out_color = color / weight_sum;\n"
+    "    vec2 dir = (pc.direction == 0) ? vec2(pc.texel_size.x, 0.0)\n"
+    "                                     : vec2(0.0, pc.texel_size.y);\n"
+    "    float spread = max(pc.blur_radius * 0.4, 0.5);\n"
+    "    float w[9] = float[](0.0542,0.0816,0.1065,0.1213,0.1283,0.1213,0.1065,0.0816,0.0542);\n"
+    "    vec4 color = vec4(0.0);\n"
+    "    for (int i = 0; i < 9; ++i) color += texture(src_tex, v_uv + dir * (float(i) - 4.0) * spread) * w[i];\n"
+    "    out_color = color;\n"
     "}\n";
 
 /* ---- Blur pipeline ---- */
