@@ -46,6 +46,15 @@
 #include <string.h>
 #include <stdio.h>
 
+#define CA_BACKDROP_BLUR_SCALE_DIVISOR 2u
+
+/* Return the reduced backdrop texture dimension for one swapchain axis. */
+static uint32_t blur_extent(uint32_t extent)
+{
+    return (extent + CA_BACKDROP_BLUR_SCALE_DIVISOR - 1u) /
+           CA_BACKDROP_BLUR_SCALE_DIVISOR;
+}
+
 /* ---- Memory helper ---- */
 
 static uint32_t find_mem_type(VkPhysicalDevice gpu, uint32_t bits,
@@ -344,6 +353,8 @@ bool ca_blur_window_create(Ca_Instance *inst, Ca_Window *win,
 
     if (!inst->blur_h_pipeline) return true; /* pipeline not created yet — lazy */
     if (width == 0 || height == 0) return false;
+    const uint32_t blur_width = blur_extent(width);
+    const uint32_t blur_height = blur_extent(height);
 
     /* Sampler (linear, clamp) */
     VkSamplerCreateInfo samp_ci = {
@@ -363,9 +374,11 @@ bool ca_blur_window_create(Ca_Instance *inst, Ca_Window *win,
         }
     }
 
-    if (!create_blur_image(inst, &win->blur_image, &win->blur_memory, &win->blur_view, width, height))
+    if (!create_blur_image(inst, &win->blur_image, &win->blur_memory, &win->blur_view,
+                           blur_width, blur_height))
         return false;
-    if (!create_blur_image(inst, &win->blur_temp, &win->blur_temp_memory, &win->blur_temp_view, width, height))
+    if (!create_blur_image(inst, &win->blur_temp, &win->blur_temp_memory, &win->blur_temp_view,
+                           blur_width, blur_height))
         return false;
 
     if (!alloc_desc_set(inst, win->blur_view, win->blur_sampler,
@@ -375,11 +388,12 @@ bool ca_blur_window_create(Ca_Instance *inst, Ca_Window *win,
                         &win->blur_temp_desc_set, &win->blur_temp_desc_pool))
         return false;
 
-    win->blur_image_w     = width;
-    win->blur_image_h     = height;
+    win->blur_image_w     = blur_width;
+    win->blur_image_h     = blur_height;
     win->blur_image_valid = false;
 
-    printf("[blur] window blur images created (%ux%u)\n", width, height);
+    printf("[blur] window blur images created (%ux%u for %ux%u swapchain)\n",
+           blur_width, blur_height, width, height);
     return true;
 }
 
@@ -435,7 +449,8 @@ void ca_blur_window_destroy(Ca_Instance *inst, Ca_Window *win)
 bool ca_blur_window_resize(Ca_Instance *inst, Ca_Window *win,
                            uint32_t width, uint32_t height, VkFormat format)
 {
-    if (win->blur_image_w == width && win->blur_image_h == height) return true;
+    if (win->blur_image_w == blur_extent(width) &&
+        win->blur_image_h == blur_extent(height)) return true;
     /* Destroy and recreate; keep the sampler across resizes */
     VkSampler saved_sampler = win->blur_sampler;
     win->blur_sampler = VK_NULL_HANDLE; /* prevent ca_blur_window_destroy from destroying it */
@@ -456,20 +471,22 @@ void ca_blur_capture_and_blur(Ca_Instance *inst, Ca_Window *win,
     if (!win->blur_image || !win->blur_temp) return;
 
     /* Ensure blur images are the right size */
-    if (win->blur_image_w != sc_width || win->blur_image_h != sc_height) {
+    const uint32_t blur_width = blur_extent(sc_width);
+    const uint32_t blur_height = blur_extent(sc_height);
+    if (win->blur_image_w != blur_width || win->blur_image_h != blur_height) {
         /* Can't resize mid-command-buffer — skip this frame.
            Resize is handled by swapchain recreation code. */
         return;
     }
 
-    VkExtent2D extent = { sc_width, sc_height };
-    VkViewport vp = { 0, 0, (float)sc_width, (float)sc_height, 0.0f, 1.0f };
+    VkExtent2D extent = { blur_width, blur_height };
+    VkViewport vp = { 0, 0, (float)blur_width, (float)blur_height, 0.0f, 1.0f };
     VkRect2D   scissor = { {0,0}, extent };
 
     BlurPC pc;
-    pc.texel_size[0] = 1.0f / (float)sc_width;
-    pc.texel_size[1] = 1.0f / (float)sc_height;
-    pc.blur_radius   = blur_radius;
+    pc.texel_size[0] = 1.0f / (float)blur_width;
+    pc.texel_size[1] = 1.0f / (float)blur_height;
+    pc.blur_radius   = blur_radius / (float)CA_BACKDROP_BLUR_SCALE_DIVISOR;
 
     VkPipelineLayout blur_layout = inst->blur_pipeline_layout;
 
@@ -491,7 +508,7 @@ void ca_blur_capture_and_blur(Ca_Instance *inst, Ca_Window *win,
         .srcSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 },
         .srcOffsets     = { {0, 0, 0}, {(int32_t)sc_width, (int32_t)sc_height, 1} },
         .dstSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 },
-        .dstOffsets     = { {0, 0, 0}, {(int32_t)sc_width, (int32_t)sc_height, 1} },
+        .dstOffsets     = { {0, 0, 0}, {(int32_t)blur_width, (int32_t)blur_height, 1} },
     };
     VkBlitImageInfo2 blit_info = {
         .sType          = VK_STRUCTURE_TYPE_BLIT_IMAGE_INFO_2,
@@ -501,7 +518,7 @@ void ca_blur_capture_and_blur(Ca_Instance *inst, Ca_Window *win,
         .dstImageLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
         .regionCount    = 1,
         .pRegions       = &blit_region,
-        .filter         = VK_FILTER_NEAREST,
+        .filter         = VK_FILTER_LINEAR,
     };
     vkCmdBlitImage2(cmd, &blit_info);
 
