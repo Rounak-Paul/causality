@@ -1351,6 +1351,19 @@ struct Ca_Instance {
     char  font_path[512];
     char  bold_font_path[512];
 
+    /* Compiled-SPIR-V cache directory (see renderer/shader_cache.h).
+       Empty string means lookups always miss — every ca_shader_compile
+       call falls back to compiling via shaderc, exactly as if no
+       shader_cache_dir had ever existed. Set once by
+       ca_shader_cache_init_dir during ca_instance_create, before
+       ca_renderer_init runs the first shader compile.
+       Read and write are independent: a directory a sandboxed app can
+       read but not write (e.g. one pre-seeded read-only by an
+       installer) still serves cache hits via shader_cache_writable ==
+       false gating writes only, not lookups. */
+    char  shader_cache_dir[1024];
+    bool  shader_cache_writable;
+
     /* System defaults are instance-owned; author stylesheet is borrowed. */
     struct Ca_Stylesheet *system_stylesheet;
     struct Ca_Stylesheet *stylesheet;

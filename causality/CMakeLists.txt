@@ -185,4 +185,30 @@ if(BUILD_TESTING)
         VulkanMemoryAllocator
     )
     add_test(NAME causality_input_capture_tests COMMAND causality_input_capture_tests)
+
+    add_executable(causality_shader_cache_tests tests/ca_shader_cache_tests.c)
+    target_include_directories(causality_shader_cache_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/core
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/ui
+    )
+    target_compile_definitions(causality_shader_cache_tests PRIVATE
+        causality_EXPORTS
+        # Must match causality's own CAUSALITY_VULKAN_VALIDATION definition
+        # exactly (see above) — this test computes sizeof(Ca_Instance) and
+        # reads/writes its fields directly, so a mismatched Ca_Instance
+        # layout between this translation unit and the causality archive
+        # it links is a silent ODR violation: this test's writes and the
+        # library's reads (or vice versa) land at different byte offsets.
+        $<$<CONFIG:Debug>:CAUSALITY_VULKAN_VALIDATION>
+    )
+    target_link_libraries(causality_shader_cache_tests PRIVATE
+        causality
+        Vulkan::Vulkan
+        VulkanMemoryAllocator
+        glfw   # ca_internal.h's Ca_Window embeds a GLFWwindow* by value in
+               # Ca_Instance; this test computes sizeof(Ca_Instance), which
+               # needs the real GLFW header, not just an opaque handle.
+    )
+    add_test(NAME causality_shader_cache_tests COMMAND causality_shader_cache_tests)
 endif()

@@ -11,6 +11,7 @@
 #include "widget.h"
 #include "menu_storage.h"
 #include "../platform/app_menu.h"
+#include "../renderer/shader_cache.h"
 
 /* Forward decls into the reactive subsystem (src/reactive/signal.c). */
 void ca_reactive_flush(Ca_Instance *inst);
@@ -76,6 +77,7 @@ Ca_Instance *ca_instance_create(const Ca_InstanceDesc *desc)
         inst->default_ui_scale = s; /* 0 means "unset" → windows default to 1.0 */
     }
     inst->disable_vsync = desc && desc->disable_vsync;
+    ca_shader_cache_init_dir(inst, desc ? desc->shader_cache_dir : NULL);
 
     if (!ca_renderer_init(inst, desc)) {
         ca_popup_system_shutdown(inst);

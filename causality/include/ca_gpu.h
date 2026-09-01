@@ -169,12 +169,20 @@ CA_API void                ca_gpu_end_transfer(Ca_Instance *instance, VkCommandB
 /*
  * Compile a GLSL source string to a VkShaderModule via shaderc.
  *
- * device      Logical device to create the module on.
+ * When instance was created with Ca_InstanceDesc::shader_cache_dir set,
+ * this first checks the on-disk cache for a blob matching this exact
+ * source + stage and, on a hit, loads it directly instead of invoking
+ * shaderc; a miss compiles normally and best-effort writes the result
+ * back to the cache for the next launch. Caching is entirely transparent
+ * to the caller — the return value and failure behavior are identical
+ * either way.
+ *
+ * instance    Owning Ca_Instance (provides the device and cache config).
  * glsl_source Null-terminated GLSL source code.
  * stage       Shader stage (e.g. VK_SHADER_STAGE_VERTEX_BIT).
  * Returns     The compiled VkShaderModule, or VK_NULL_HANDLE on failure.
  */
-CA_API VkShaderModule      ca_shader_compile(VkDevice device,
+CA_API VkShaderModule      ca_shader_compile(Ca_Instance *instance,
                                              const char *glsl_source,
                                              VkShaderStageFlagBits stage);
 

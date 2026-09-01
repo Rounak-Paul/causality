@@ -162,8 +162,8 @@ bool ca_blur_pipeline_create(Ca_Instance *inst, VkFormat color_format)
         return false;
     }
 
-    VkShaderModule vert = ca_shader_compile(inst->vk_device, BLUR_VERT_GLSL, VK_SHADER_STAGE_VERTEX_BIT);
-    VkShaderModule frag = ca_shader_compile(inst->vk_device, BLUR_FRAG_GLSL, VK_SHADER_STAGE_FRAGMENT_BIT);
+    VkShaderModule vert = ca_shader_compile(inst, BLUR_VERT_GLSL, VK_SHADER_STAGE_VERTEX_BIT);
+    VkShaderModule frag = ca_shader_compile(inst, BLUR_FRAG_GLSL, VK_SHADER_STAGE_FRAGMENT_BIT);
     if (!vert || !frag) {
         fprintf(stderr, "[blur] shader compile failed\n");
         if (vert) vkDestroyShaderModule(inst->vk_device, vert, NULL);

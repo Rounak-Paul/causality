@@ -249,9 +249,9 @@ static const char *FRAG_GLSL =
 bool ca_rect_pipeline_create(Ca_Instance *inst, VkFormat color_format)
 {
     /* Compile shaders at runtime */
-    VkShaderModule vert = ca_shader_compile(inst->vk_device, VERT_GLSL,
+    VkShaderModule vert = ca_shader_compile(inst, VERT_GLSL,
                                             VK_SHADER_STAGE_VERTEX_BIT);
-    VkShaderModule frag = ca_shader_compile(inst->vk_device, FRAG_GLSL,
+    VkShaderModule frag = ca_shader_compile(inst, FRAG_GLSL,
                                             VK_SHADER_STAGE_FRAGMENT_BIT);
     if (vert == VK_NULL_HANDLE || frag == VK_NULL_HANDLE) {
         if (vert != VK_NULL_HANDLE) vkDestroyShaderModule(inst->vk_device, vert, NULL);
@@ -560,9 +560,9 @@ bool ca_text_pipeline_create(Ca_Instance *inst, VkFormat color_format)
     }
 
     /* Compile shaders */
-    VkShaderModule vert = ca_shader_compile(inst->vk_device, TEXT_VERT_GLSL,
+    VkShaderModule vert = ca_shader_compile(inst, TEXT_VERT_GLSL,
                                             VK_SHADER_STAGE_VERTEX_BIT);
-    VkShaderModule frag = ca_shader_compile(inst->vk_device, TEXT_FRAG_GLSL,
+    VkShaderModule frag = ca_shader_compile(inst, TEXT_FRAG_GLSL,
                                             VK_SHADER_STAGE_FRAGMENT_BIT);
     if (vert == VK_NULL_HANDLE || frag == VK_NULL_HANDLE) {
         fprintf(stderr, "[pipeline] text shader compilation failed\n");
@@ -805,9 +805,9 @@ bool ca_image_pipeline_create(Ca_Instance *inst, VkFormat color_format)
 {
     if (inst->text_pipeline.layout == VK_NULL_HANDLE) return false;
 
-    VkShaderModule vert = ca_shader_compile(inst->vk_device, IMAGE_VERT_GLSL,
+    VkShaderModule vert = ca_shader_compile(inst, IMAGE_VERT_GLSL,
                                             VK_SHADER_STAGE_VERTEX_BIT);
-    VkShaderModule frag = ca_shader_compile(inst->vk_device, IMAGE_FRAG_GLSL,
+    VkShaderModule frag = ca_shader_compile(inst, IMAGE_FRAG_GLSL,
                                             VK_SHADER_STAGE_FRAGMENT_BIT);
     if (vert == VK_NULL_HANDLE || frag == VK_NULL_HANDLE) {
         if (vert != VK_NULL_HANDLE) vkDestroyShaderModule(inst->vk_device, vert, NULL);

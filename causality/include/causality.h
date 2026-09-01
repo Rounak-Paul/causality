@@ -93,6 +93,36 @@ typedef struct Ca_InstanceDesc {
        is supported). Named negatively so `{0}` never silently changes
        existing callers' presentation behaviour. */
     bool        disable_vsync;
+    /* Directory for the on-disk compiled-shader cache (see
+       ca_shader_compile in <ca_gpu.h>). NULL or "" (including a
+       zero-initialized {0} desc) disables caching entirely — every
+       ca_shader_compile call behaves exactly as before this field
+       existed, compiling via shaderc on every call.
+       When set, ca_instance_create creates the directory (mkdir -p) if
+       it does not already exist. Read and write access are checked
+       independently and neither failing ever fails instance creation:
+         - Unreadable/uncreatable (no permission, read-only filesystem
+           above it, sandboxed environment): caching is fully disabled,
+           identical to passing NULL.
+         - Readable but not writable (e.g. a cache directory pre-seeded
+           read-only by an installer, or a read-only bind mount): cache
+           lookups still serve hits from whatever is already there;
+           ca_shader_compile simply never persists new entries. This is
+           the supported path for an app that cannot write at its own
+           install location — ship a warm cache alongside the binary and
+           point shader_cache_dir at it.
+       Callers that cannot guarantee write access to any path may pass
+       one unconditionally and rely on this fallback instead of probing
+       first.
+       The directory is safe to share between multiple instances or
+       processes using the same Causality build: cache files are keyed
+       by shader source content and written via a temp-file-then-rename
+       so concurrent writers never observe a torn file. It is NOT safe
+       to share across incompatible Causality builds if their shaderc
+       invocation changes in a way this library doesn't already version
+       internally — that invalidation is handled automatically via the
+       cache key, not the directory choice. */
+    const char *shader_cache_dir;
 } Ca_InstanceDesc;
 
 /*
