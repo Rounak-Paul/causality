@@ -876,19 +876,26 @@ static int font_supersample_for_glyph(const Ca_Font *font,
 /*
  * Return true if LCD (RGB subpixel) rasterisation should be used for a glyph.
  *
- * Only applies to small text on 1x displays; never to icons or HiDPI.
+ * Always false: the text pipeline blends with a single scalar alpha
+ * (max(r,g,b) of the atlas sample, see TEXT_FRAG_GLSL), which discards LCD's
+ * per-subpixel coverage precision without dual-source blending. Rasterising
+ * at 3x horizontal resolution just to throw the extra precision away costs
+ * real FreeType CPU time for no visible benefit, so the LCD path is disabled
+ * in favour of grayscale everywhere (dualSrcBlend was likewise dropped from
+ * device creation — see renderer.c). blit_lcd() is kept only so a future
+ * dual-source-blend text pipeline can reuse it.
  *
  * font          Font object.
  * tier          Active font tier.
  * is_icon_range true if the codepoint belongs to an icon range.
- * Returns       true to use FT_RENDER_MODE_LCD; false for grayscale.
+ * Returns       false; grayscale (FT_RENDER_MODE_NORMAL) is always used.
  */
 static bool font_should_use_lcd_glyph(const Ca_Font *font,
                                       const Ca_FontTier *tier,
                                       bool is_icon_range)
 {
-    if (!font || !tier || is_icon_range) return false;
-    return font->display_scale < 1.5f && tier->logical_px <= 18.0f;
+    (void)font; (void)tier; (void)is_icon_range;
+    return false;
 }
 
 /*
