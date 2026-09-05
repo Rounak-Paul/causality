@@ -172,12 +172,17 @@ typedef struct {
 /* Fragment-stage push constant carrying the rounded clip rect shared by
    every instance in the current batch (see paint.c's ClipRect / clip_radius
    and the rect pipeline's ClipPC block in pipeline.c). Field order/size
-   matches the shader's std430-equivalent push-constant layout exactly. */
+   matches the shader's std430-equivalent push-constant layout exactly.
+   edge_aa_scale is physical-px-per-logical-px (content_scale) for the
+   window this batch belongs to: shape SDFs are evaluated in logical-pixel
+   node space (see v_local in VERT_GLSL), so the shader needs this factor
+   to size the anti-aliasing ramp as exactly one physical pixel regardless
+   of DPI — see the comment above roundedBoxSDF's callers in pipeline.c. */
 typedef struct {
     float pos[2];
     float size[2];
     float radius;
-    float _pad0;
+    float edge_aa_scale;
 } Ca_ClipPushConst;
 
 /* Instance buffer holds one fixed-stride slot per draw command for one frame.

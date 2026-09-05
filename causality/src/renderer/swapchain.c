@@ -49,13 +49,23 @@ static int cmd_paint_band(const Ca_DrawCmd *cmd)
 }
 
 /**
- * Packs per-corner radii into the image instance's reserved SSBO payload.
+ * Packs per-corner radii and the edge anti-aliasing scale into the image
+ * instance's reserved SSBO payload.
  *
- * @param dst Image instance receiving the radii.
- * @param cmd Draw command supplying per-corner or uniform fallback radii.
+ * _pad1[0..3] carry the per-corner radii (GLSL corner_01/corner_23).
+ * _pad1[4] carries edge_aa_scale (GLSL edge_aa_scale_pad.x) — physical
+ * px per logical px, so IMAGE_FRAG_GLSL can size its rounded-corner AA
+ * ramp to exactly one physical pixel at any content_scale (see the
+ * matching FRAG_GLSL comment in pipeline.c for why a derivative-based
+ * ramp is wrong here above 1x DPI).
+ *
+ * @param dst      Image instance receiving the radii and scale.
+ * @param cmd      Draw command supplying per-corner or uniform fallback radii.
+ * @param aa_scale Physical-px-per-logical-px for this window (content_scale).
  */
 static void image_instance_pack_corner_radii(Ca_TextInstance *dst,
-                                             const Ca_DrawCmd *cmd)
+                                             const Ca_DrawCmd *cmd,
+                                             float aa_scale)
 {
     memset(dst->_pad1, 0, sizeof(dst->_pad1));
     bool has_per_corner = cmd->corner_tl != 0.0f || cmd->corner_tr != 0.0f ||
@@ -64,6 +74,7 @@ static void image_instance_pack_corner_radii(Ca_TextInstance *dst,
     dst->_pad1[1] = has_per_corner ? cmd->corner_tr : cmd->corner_radius;
     dst->_pad1[2] = has_per_corner ? cmd->corner_br : cmd->corner_radius;
     dst->_pad1[3] = has_per_corner ? cmd->corner_bl : cmd->corner_radius;
+    dst->_pad1[4] = aa_scale;
 }
 
 /* Locate the root node's own background-rect draw command for this frame.
@@ -669,6 +680,7 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
             uint32_t batch_start = rect_n;
             VkRect2D cur_sc      = full_scissor;
             Ca_ClipPushConst cur_clip = { 0 };
+            cur_clip.edge_aa_scale = scale_x;
             bool     first       = true;
 
             /* When sorted_idx is set, position 0 is always root_bg_idx
@@ -689,6 +701,7 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
                    v_node_pos) for this command. */
                 VkRect2D sc_new = full_scissor;
                 Ca_ClipPushConst clip_new = { 0 };
+                clip_new.edge_aa_scale = scale_x;
                 if (cmd->has_clip) {
                     /* Floor the origin, ceil the far edge: a scissor that
                        truncates both origin and extent can end up half a
@@ -954,7 +967,7 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
                     dst->color[0] = cmd->r;            dst->color[1] = cmd->g;
                     dst->color[2] = cmd->b;            dst->color[3] = cmd->a;
                     dst->viewport[0] = (float)log_w;   dst->viewport[1] = (float)log_h;
-                    image_instance_pack_corner_radii(dst, cmd);
+                    image_instance_pack_corner_radii(dst, cmd, scale_x);
                 }
                 if (ti_n > batch_start) {
                     vkCmdSetScissor(f->cmd, 0, 1, &cur_sc);
@@ -1059,7 +1072,7 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
                     dst->color[0] = cmd->r;            dst->color[1] = cmd->g;
                     dst->color[2] = cmd->b;            dst->color[3] = cmd->a;
                     dst->viewport[0] = (float)log_w;   dst->viewport[1] = (float)log_h;
-                    image_instance_pack_corner_radii(dst, cmd);
+                    image_instance_pack_corner_radii(dst, cmd, scale_x);
                 }
                 if (ti_n > batch_start) {
                     vkCmdSetScissor(f->cmd, 0, 1, &cur_sc);
@@ -1147,7 +1160,7 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
                     dst->color[0] = 1.0f;  dst->color[1] = 1.0f;
                     dst->color[2] = 1.0f;  dst->color[3] = 1.0f;
                     dst->viewport[0] = (float)log_w;  dst->viewport[1] = (float)log_h;
-                    image_instance_pack_corner_radii(dst, cmd);
+                    image_instance_pack_corner_radii(dst, cmd, scale_x);
                 }
                 if (ti_n > batch_start) {
                     vkCmdSetScissor(f->cmd, 0, 1, &cur_sc);
