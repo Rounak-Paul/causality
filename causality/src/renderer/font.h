@@ -229,3 +229,9 @@ void ca_font_destroy(Ca_Instance *inst, Ca_Font *font);
 void ca_font_begin_frame(Ca_Font *font);
 void ca_font_touch_page(Ca_Font *font, int page_index);
 void ca_font_flush_uploads(Ca_Instance *inst, Ca_Font *font);
+
+/** Re-query glfw_win's content scale and, if it differs from the font's
+    cached display_scale/content_scale (e.g. the window moved to a monitor
+    with a different DPI), update both fields and re-bake every atlas page
+    at the new physical pixel size. No-op when the scale is unchanged. */
+void ca_font_refresh_content_scale(Ca_Font *font, GLFWwindow *glfw_win);

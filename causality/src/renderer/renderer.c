@@ -760,6 +760,23 @@ bool ca_renderer_window_resize(Ca_Instance *inst, Ca_Window *win, int w, int h)
 
 void ca_renderer_frame(Ca_Instance *inst)
 {
+    /* content_scale (display DPI) can change without a resize event on this
+       codepath — the window moving to a different monitor, or the OS
+       reporting a live scale-factor change. Everything else that reads
+       content scale (viewport.c, widget.c) already re-queries GLFW per
+       frame; the font atlas must too, or glyphs stay baked for whichever
+       display was active at startup. Checked against the first live
+       window since inst->font is a single instance-wide atlas shared by
+       all windows. */
+    if (inst && inst->font) {
+        for (size_t i = 0; i < ca_pool_slot_count(&inst->windows); ++i) {
+            Ca_Window *scale_win = CA_POOL_AT(inst->windows, Ca_Window, i);
+            if (!scale_win->in_use || !scale_win->glfw) continue;
+            ca_font_refresh_content_scale(inst->font, scale_win->glfw);
+            break;
+        }
+    }
+
     ca_profile_begin(inst, "Platform Font Upload");
     if (inst && inst->font)
         ca_font_flush_uploads(inst, inst->font);

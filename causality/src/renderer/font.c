@@ -1776,6 +1776,61 @@ bool ca_font_create_from_memory(Ca_Instance *inst, GLFWwindow *glfw_win,
 }
 
 /*
+ * Re-query glfw_win's content scale and, if it differs from the font's
+ * cached display_scale/content_scale, refresh both fields and force every
+ * live atlas page to re-bake at the new physical pixel size.
+ *
+ * font->content_scale is captured once at font_create_internal() time and
+ * feeds tier->baked_px = tier->logical_px * content_scale (font_init_page)
+ * — the actual FreeType rasterisation size. Pages are keyed only by logical
+ * size (font_size_key), not by content_scale, so if the window is created
+ * on one display and later rendered on another with a different DPI (or
+ * dragged between displays), every existing page stays baked at the old
+ * display's physical resolution and font_find_page keeps returning those
+ * stale pages: glyphs look blurry/misaligned on the new display until the
+ * process restarts. This is the per-frame fix-up that keeps them in sync.
+ *
+ * font      Font whose cached scale/pages may need to change.
+ * glfw_win  GLFW window used to query the live content scale.
+ */
+void ca_font_refresh_content_scale(Ca_Font *font, GLFWwindow *glfw_win)
+{
+    if (!font || !glfw_win) return;
+
+    float cx = 1.0f;
+    glfwGetWindowContentScale(glfw_win, &cx, NULL);
+    if (!(cx > 0.0f)) cx = 1.0f;
+
+    if (cx == font->content_scale) return;
+
+    font->display_scale = cx;
+    font->content_scale = cx;
+
+    /* Every page was baked for the old physical resolution; mark all of
+       them unpacked so font_find_page misses and font_alloc_page re-inits
+       them (via font_init_page) at the new baked_px. Existing UVs referenced
+       by already-painted nodes are stale the instant baked_px changes, so
+       invalidate paint caches the same way page eviction already does. */
+    for (int i = 0; i < CA_FONT_MAX_PAGES; i++) {
+        Ca_FontTier *tier = &font->pages[i];
+        if (!tier->dynamic_page || !tier->packed) continue;
+        CA_FREE(tier->chardata_block);
+        ca_dyn_array_destroy(&tier->extra_glyph_storage);
+        ca_dyn_array_destroy(&tier->extra_lookup_storage);
+        memset(tier, 0, sizeof(*tier));
+    }
+    font->dirty_full = true;
+    font_invalidate_paint_caches(font);
+
+    /* Re-prime the default page so the always-valid-fallback invariant
+       documented in font_create_internal holds immediately, not just after
+       the next ca_font_select_tier_for_size() call happens to need it. */
+    (void)ca_font_select_tier_for_size(font, font->default_size, false);
+
+    printf("[font] content scale changed to %.2fx; atlas pages reset\n", cx);
+}
+
+/*
  * Destroy a Ca_Font, releasing all Vulkan and FreeType resources.
  *
  * Waits for the device to be idle, destroys the Vulkan sampler, image view,
