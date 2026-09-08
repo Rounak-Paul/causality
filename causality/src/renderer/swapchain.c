@@ -544,26 +544,18 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
         bg_a = win->draw_cmds[root_bg_idx].a;
     }
 
-    /* Backdrop blur: if any nodes use backdrop-filter, capture the current
-       swapchain image and blur it before the UI render pass begins.         */
-    {
-        float max_blur = 0.0f;
-        bool  has_backdrop = false;
-        for (uint32_t d = 0; d < win->draw_cmd_count; ++d) {
-            if (win->draw_cmds[d].in_use &&
-                win->draw_cmds[d].type == CA_DRAW_BACKDROP_BLUR) {
-                has_backdrop = true;
-                if (win->draw_cmds[d].backdrop_blur_radius > max_blur)
-                    max_blur = win->draw_cmds[d].backdrop_blur_radius;
-            }
-        }
-        if (has_backdrop && win->blur_image != VK_NULL_HANDLE &&
-            (sc->image_usage & VK_IMAGE_USAGE_TRANSFER_SRC_BIT) != 0u)
-            ca_blur_capture_and_blur(inst, win, f->cmd,
-                                     sc->images[image_index],
-                                     sc->extent.width, sc->extent.height,
-                                     max_blur);
-    }
+    /* Backdrop blur: capture the swapchain image and blur it, but NOT here.
+       A backdrop-filter must blur the actually-painted UI sitting behind the
+       node — the paint band it's already sorted into (see cmd_paint_band)
+       exists precisely to guarantee "everything below" has painted first.
+       Capturing once at the very top of the frame (the old approach) instead
+       blurred whatever was left over in this swapchain image slot from 2-3
+       frames ago — visually indistinguishable from no blur at all whenever
+       the UI is mostly static, which is why panel-level backdrop-filter
+       never actually worked despite recording correct Vulkan state.
+       The real per-band capture is spliced into the band loop below, right
+       before painting the first band that contains a blur consumer — see
+       "Backdrop blur: real per-band capture" inside the loop. */
 
     /* Dynamic rendering — load if bg_render wrote content, clear otherwise */
     VkRenderingAttachmentInfo color_attach = {
@@ -634,6 +626,29 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
     float scale_y = (log_h > 0) ? (float)sc->extent.height / (float)log_h : 1.0f;
     VkRect2D full_scissor = { .offset = {0, 0}, .extent = sc->extent };
 
+    /* Backdrop blur: find the max blur radius requested per band, and the
+       highest blur radius of any band at or below each band (so a capture
+       at band N reflects every backdrop-filter strength that could apply to
+       content painted by band N, matching CSS "blur everything under me"
+       semantics even when multiple distinct blur radii are in play). Bands
+       that need a fresh capture get one spliced into the band loop below,
+       right before that band's own content paints — see
+       "Backdrop blur: real per-band capture". */
+    float band_max_blur[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+    bool  band_has_backdrop[4] = { false, false, false, false };
+    bool  any_backdrop = false;
+    for (uint32_t d = 0; d < win->draw_cmd_count; ++d) {
+        const Ca_DrawCmd *c = &win->draw_cmds[d];
+        if (!c->in_use || c->type != CA_DRAW_BACKDROP_BLUR) continue;
+        int b = cmd_paint_band(c);
+        band_has_backdrop[b] = true;
+        any_backdrop = true;
+        if (c->backdrop_blur_radius > band_max_blur[b])
+            band_max_blur[b] = c->backdrop_blur_radius;
+    }
+    const bool can_blur = win->blur_image != VK_NULL_HANDLE &&
+        (sc->image_usage & VK_IMAGE_USAGE_TRANSFER_SRC_BIT) != 0u;
+
     /* ================================================================
        Instanced rendering with scissor-aware batching.
        Instance data is packed into fixed-size SSBO slots:
@@ -666,6 +681,39 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
     };
 
     for (int band = 0; band < 4; ++band) {
+
+        /* ---- Backdrop blur: real per-band capture ----
+           If THIS band contains a backdrop-filter consumer, snapshot the
+           swapchain image now — every earlier band has already painted into
+           it this frame (the render pass has been open and accumulating
+           since before band 0), so this capture reflects exactly what a
+           CSS backdrop-filter is supposed to blur: the real UI sitting
+           behind the node, not a stale frame from 2-3 presents ago. The
+           blit requires the image out of a rendering scope, so end/re-begin
+           dynamic rendering around it (LOAD_OP_LOAD preserves everything
+           already painted; nothing here clears or discards). */
+        if (any_backdrop && can_blur && band_has_backdrop[band]) {
+            vkCmdEndRendering(f->cmd);
+            ca_blur_capture_and_blur(inst, win, f->cmd,
+                                     sc->images[image_index],
+                                     sc->extent.width, sc->extent.height,
+                                     band_max_blur[band]);
+            VkRenderingAttachmentInfo reload_attach = {
+                .sType       = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+                .imageView   = sc->image_views[image_index],
+                .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                .loadOp      = VK_ATTACHMENT_LOAD_OP_LOAD,
+                .storeOp     = VK_ATTACHMENT_STORE_OP_STORE,
+            };
+            VkRenderingInfo reload_info = {
+                .sType                = VK_STRUCTURE_TYPE_RENDERING_INFO,
+                .renderArea           = { .offset = {0, 0}, .extent = sc->extent },
+                .layerCount           = 1,
+                .colorAttachmentCount = 1,
+                .pColorAttachments    = &reload_attach,
+            };
+            vkCmdBeginRendering(f->cmd, &reload_info);
+        }
 
         /* ---- Rects ---- */
         if (inst->rect_pipeline.pipeline != VK_NULL_HANDLE && win->draw_cmd_count > 1) {
