@@ -831,6 +831,8 @@ static Ca_CssPropId lookup_property(const char *name)
         { "shadow-offset-y",           CA_CSS_PROP_SHADOW_OFFSET_Y },
         { "shadow-blur",               CA_CSS_PROP_SHADOW_BLUR },
         { "shadow-color",              CA_CSS_PROP_SHADOW_COLOR },
+        { "glow-radius",               CA_CSS_PROP_GLOW_RADIUS },
+        { "glow-color",                CA_CSS_PROP_GLOW_COLOR },
         { "z-index",                   CA_CSS_PROP_Z_INDEX },
         { "text-wrap",                 CA_CSS_PROP_TEXT_WRAP },
         { "aspect-ratio",              CA_CSS_PROP_ASPECT_RATIO },

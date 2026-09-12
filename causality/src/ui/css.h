@@ -152,6 +152,8 @@ typedef enum {
     CA_CSS_PROP_SHADOW_OFFSET_Y,
     CA_CSS_PROP_SHADOW_BLUR,
     CA_CSS_PROP_SHADOW_COLOR,
+    CA_CSS_PROP_GLOW_RADIUS,
+    CA_CSS_PROP_GLOW_COLOR,
     /* Z-index */
     CA_CSS_PROP_Z_INDEX,
     /* Text wrapping */

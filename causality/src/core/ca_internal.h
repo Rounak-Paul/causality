@@ -121,6 +121,7 @@ typedef struct Ca_Font Ca_Font;
 
 /* Draw modes for Ca_RectPushConst.draw_mode */
 typedef enum {
+    CA_DRAW_MODE_GLOW        = 4,  /* outer glow around the unexpanded source shape */
     CA_DRAW_MODE_NORMAL      = 0,  /* solid fill + uniform border              */
     CA_DRAW_MODE_SHADOW      = 1,  /* SDF Gaussian shadow — blur via GPU       */
     CA_DRAW_MODE_LINEAR_GRAD = 2,  /* linear-gradient(angle, color, color2)    */
@@ -346,6 +347,8 @@ typedef struct {
     float        outline_width;
     uint32_t     outline_color;
     float        outline_offset;
+    float        glow_radius;
+    uint32_t     glow_color;
     /* Box shadow */
     float        shadow_offset_x, shadow_offset_y;
     float        shadow_blur;
@@ -943,9 +946,8 @@ struct Ca_Splitter {
     float         min_ratio;  /* minimum ratio (default 0.1) */
     float         max_ratio;  /* maximum ratio (default 0.9) */
     float         bar_size;   /* divider thickness in px */
-    uint32_t      bar_color;
-    uint32_t      bar_hover_color;
     bool          dragging;   /* true while user drags the divider */
+    bool          bar_hovered;/* true while the cursor sits on the bar's hit-zone */
     bool          in_use;
     /* User callback fired when the user drags the divider and the
        ratio changes. Allows the application to persist the new ratio

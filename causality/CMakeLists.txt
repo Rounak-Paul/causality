@@ -186,6 +186,32 @@ if(BUILD_TESTING)
     )
     add_test(NAME causality_input_capture_tests COMMAND causality_input_capture_tests)
 
+    add_executable(causality_splitter_tests tests/ca_splitter_tests.c)
+    target_include_directories(causality_splitter_tests PRIVATE
+        src/core src/ui src/renderer
+    )
+    target_compile_definitions(causality_splitter_tests PRIVATE
+        causality_EXPORTS
+        $<$<CONFIG:Debug>:CAUSALITY_VULKAN_VALIDATION>
+    )
+    target_link_libraries(causality_splitter_tests PRIVATE
+        causality Vulkan::Vulkan VulkanMemoryAllocator glfw
+    )
+    add_test(NAME causality_splitter_tests COMMAND causality_splitter_tests)
+
+    add_executable(causality_text_clip_tests tests/ca_text_clip_tests.c)
+    target_include_directories(causality_text_clip_tests PRIVATE
+        src/core src/ui src/renderer
+    )
+    target_compile_definitions(causality_text_clip_tests PRIVATE
+        causality_EXPORTS
+        $<$<CONFIG:Debug>:CAUSALITY_VULKAN_VALIDATION>
+    )
+    target_link_libraries(causality_text_clip_tests PRIVATE
+        causality Vulkan::Vulkan VulkanMemoryAllocator glfw freetype
+    )
+    add_test(NAME causality_text_clip_tests COMMAND causality_text_clip_tests)
+
     add_executable(causality_shader_cache_tests tests/ca_shader_cache_tests.c)
     target_include_directories(causality_shader_cache_tests PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/include

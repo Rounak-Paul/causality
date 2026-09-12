@@ -82,6 +82,8 @@ typedef struct {
     uint32_t outline_color;
     int      outline_style;
     float    outline_offset;
+    float        glow_radius;
+    uint32_t     glow_color;
     /* Box shadow */
     float    shadow_offset_x, shadow_offset_y;
     float    shadow_blur;

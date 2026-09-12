@@ -882,6 +882,10 @@ static void style_resolve_sheet(Ca_Stylesheet *ss,
                 case CA_CSS_PROP_OUTLINE_OFFSET:   out->outline_offset   = css_val_to_px(val); break;
                 case CA_CSS_PROP_SHADOW_OFFSET_X:  out->shadow_offset_x  = css_val_to_px(val); break;
                 case CA_CSS_PROP_SHADOW_OFFSET_Y:  out->shadow_offset_y  = css_val_to_px(val); break;
+                case CA_CSS_PROP_GLOW_RADIUS: out->glow_radius = css_val_to_px(val); break;
+                case CA_CSS_PROP_GLOW_COLOR:
+                    if (val->type == CA_CSS_VAL_COLOR) out->glow_color = val->color;
+                    break;
                 case CA_CSS_PROP_SHADOW_BLUR:      out->shadow_blur      = css_val_to_px(val); break;
                 case CA_CSS_PROP_SHADOW_COLOR:
                     if (val->type == CA_CSS_VAL_COLOR) out->shadow_color = val->color;
@@ -1293,6 +1297,8 @@ void ca_style_apply_to_node(const Ca_ResolvedStyle *style,
     if (STYLE_SET(CA_CSS_PROP_SHADOW_OFFSET_Y)) nd->shadow_offset_y = style->shadow_offset_y;
     if (STYLE_SET(CA_CSS_PROP_SHADOW_BLUR))     nd->shadow_blur     = style->shadow_blur;
     if (STYLE_SET(CA_CSS_PROP_SHADOW_COLOR))    nd->shadow_color    = style->shadow_color;
+    if (STYLE_SET(CA_CSS_PROP_GLOW_RADIUS)) nd->glow_radius = style->glow_radius;
+    if (STYLE_SET(CA_CSS_PROP_GLOW_COLOR)) nd->glow_color = style->glow_color;
 
     /* Backdrop filter — last rule wins */
     if (STYLE_SET(CA_CSS_PROP_BACKDROP_FILTER)) nd->backdrop_blur = style->backdrop_blur;

@@ -96,10 +96,11 @@ static uint32_t find_root_bg_cmd_index(const Ca_Window *win)
     for (uint32_t d = start; d < win->draw_cmd_count; ++d) {
         const Ca_DrawCmd *cmd = &win->draw_cmds[d];
         if (!cmd->in_use) continue;
-        if (cmd->type == CA_DRAW_RECT && cmd->draw_mode != CA_DRAW_MODE_SHADOW)
+        if (cmd->type == CA_DRAW_RECT && cmd->draw_mode != CA_DRAW_MODE_SHADOW &&
+            cmd->draw_mode != CA_DRAW_MODE_GLOW)
             return d;
         if (cmd->type != CA_DRAW_BACKDROP_BLUR &&
-            !(cmd->type == CA_DRAW_RECT && cmd->draw_mode == CA_DRAW_MODE_SHADOW))
+            !(cmd->type == CA_DRAW_RECT && (cmd->draw_mode == CA_DRAW_MODE_SHADOW || cmd->draw_mode == CA_DRAW_MODE_GLOW)))
             break; /* not one of the root's own leading commands — give up */
     }
     return UINT32_MAX;

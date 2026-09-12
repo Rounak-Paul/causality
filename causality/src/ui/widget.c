@@ -512,6 +512,7 @@ static void scale_resolved_style(Ca_ResolvedStyle *style, float scale)
     style->shadow_offset_x *= scale;
     style->shadow_offset_y *= scale;
     style->shadow_blur *= scale;
+    style->glow_radius *= scale;
     /* font_size is intentionally left in author (CSS) space here — see the
        identical comment on rescale_desc() in ui.c. Every consumer of
        node->desc.font_size (layout.c's text measurement, paint.c's three
@@ -546,8 +547,6 @@ static void apply_widget_text_color(Ca_Node *node, uint32_t color)
         }
     }
     if (!node->widget) return;
-    if (node->widget_type == CA_WIDGET_SPLITTER)
-        ((Ca_Splitter *)node->widget)->bar_color = node->desc.background;
     if (color == 0u) return;
     switch (node->widget_type) {
     case CA_WIDGET_LABEL: ((Ca_Label *)node->widget)->color = color; break;
@@ -557,7 +556,6 @@ static void apply_widget_text_color(Ca_Node *node, uint32_t color)
     case CA_WIDGET_RADIO: ((Ca_Radio *)node->widget)->text_color = color; break;
     case CA_WIDGET_TREENODE: ((Ca_TreeNode *)node->widget)->text_color = color; break;
     case CA_WIDGET_PROGRESS: ((Ca_Progress *)node->widget)->bar_color = color; break;
-    case CA_WIDGET_SPLITTER: ((Ca_Splitter *)node->widget)->bar_hover_color = color; break;
     default: break;
     }
 }
@@ -643,6 +641,8 @@ void ca_widget_reapply_css(Ca_Node *node)
     nd->border_color    = bd->border_color;
     nd->border_width    = bd->border_width;
     nd->corner_radius   = bd->corner_radius;
+    nd->glow_color      = bd->glow_color;
+    nd->glow_radius     = bd->glow_radius;
     nd->shadow_color    = bd->shadow_color;
     nd->shadow_blur     = bd->shadow_blur;
     nd->shadow_offset_x = bd->shadow_offset_x;
@@ -785,6 +785,8 @@ static Ca_NodeDesc div_to_nd(const Ca_DivDesc *d)
     nd.shadow_offset_y = d->shadow_offset_y;
     nd.shadow_blur    = d->shadow_blur;
     nd.shadow_color   = d->shadow_color;
+    nd.glow_radius    = s(d->glow_radius);
+    nd.glow_color     = d->glow_color;
     nd.z_index        = (int16_t)d->z_index;
     nd.hidden         = d->hidden;
     nd.disabled       = d->disabled;
@@ -3355,11 +3357,6 @@ Ca_Splitter *ca_split_begin(const Ca_SplitDesc *desc)
     sp->min_ratio = (desc->min_ratio > 0.0f) ? desc->min_ratio : 0.1f;
     sp->max_ratio = (desc->max_ratio > 0.0f) ? desc->max_ratio : 0.9f;
     sp->bar_size  = (desc->bar_size > 0.0f)  ? s(desc->bar_size)  : s(4.0f);
-    const bool has_stylesheet = node->window && node->window->instance &&
-                                node->window->instance->stylesheet;
-    sp->bar_color       = desc->bar_color ? desc->bar_color :
-                          (has_stylesheet ? 0u : CA_THEME_BG_VOID);
-    sp->bar_hover_color = desc->bar_hover_color ? desc->bar_hover_color : CA_THEME_ACCENT;
     sp->on_resize = desc->on_resize;
     sp->user_data = desc->user_data;
     /* Do NOT reset sp->dragging here — ca_widget_input_pass owns the
@@ -4008,6 +4005,25 @@ static void input_handle_keys(Ca_Window *win, Ca_TextInput *inp)
         if (inp->on_change)
             inp->on_change(inp, inp->change_data);
     }
+}
+
+/** Test the shared hover/drag gutter of splitter node n at window point px, py. */
+static bool point_in_splitter_handle(Ca_Node *n, float px, float py)
+{
+    Ca_Splitter *sp = n ? (Ca_Splitter *)n->widget : NULL;
+    if (!sp || !sp->in_use || !n->in_use || n->desc.no_hover ||
+        node_is_ancestor_hidden(n) || is_effectively_disabled(n) ||
+        !point_within_clip_ancestors(n, px, py)) return false;
+    float scale = n->window && n->window->ui_scale > 0.0f ? n->window->ui_scale : 1.0f;
+    float expand = 4.0f * scale;
+    bool horizontal = sp->direction == CA_HORIZONTAL;
+    float total = horizontal ? n->w : n->h;
+    if (total <= sp->bar_size || n->w <= 0.0f || n->h <= 0.0f) return false;
+    float start = (horizontal ? n->x : n->y) + (total - sp->bar_size) * sp->ratio;
+    float along = horizontal ? px : py;
+    return px >= n->x && px <= n->x + n->w &&
+           py >= n->y && py <= n->y + n->h &&
+           along >= start - expand && along <= start + sp->bar_size + expand;
 }
 
 void ca_widget_input_pass(Ca_Window *win)
@@ -4982,26 +4998,25 @@ void ca_widget_input_pass(Ca_Window *win)
                 Ca_Splitter *sp = CA_POOL_AT(win->splitter_pool, Ca_Splitter, i);
                 if (!sp->in_use || !sp->node) continue;
                 Ca_Node *n = sp->node;
-                /* Compute the divider bar rect */
-                bool is_h = (sp->direction == CA_HORIZONTAL);
-                float bar_x, bar_y, bar_w, bar_h;
-                if (is_h) {
-                    bar_x = n->x + (n->w - sp->bar_size) * sp->ratio;
-                    bar_y = n->y;
-                    bar_w = sp->bar_size;
-                    bar_h = n->h;
-                } else {
-                    bar_x = n->x;
-                    bar_y = n->y + (n->h - sp->bar_size) * sp->ratio;
-                    bar_w = n->w;
-                    bar_h = sp->bar_size;
-                }
-                /* Expand hit zone slightly for easier grabbing */
-                float expand = 4.0f;
-                if (mx >= bar_x - expand && mx <= bar_x + bar_w + expand &&
-                    my >= bar_y - expand && my <= bar_y + bar_h + expand) {
+                if (point_in_splitter_handle(n, mx, my)) {
                     sp->dragging = true;
+                    n->dirty |= CA_DIRTY_CONTENT;
                 }
+            }
+        }
+
+        /* Track per-bar hover so the handle repaints on enter/leave.
+           win->hovered_node is not used for this: it is arbitrated against
+           every other node by z-index/area, and the splitter's own node
+           spans its full container (both panes), so it routinely loses
+           that arbitration even while the cursor sits on the bar. */
+        for (uint32_t i = 0; i < ca_pool_slot_count(&win->splitter_pool); ++i) {
+            Ca_Splitter *sp = CA_POOL_AT(win->splitter_pool, Ca_Splitter, i);
+            if (!sp->in_use || !sp->node) continue;
+            bool now_hovered = point_in_splitter_handle(sp->node, mx, my);
+            if (now_hovered != sp->bar_hovered) {
+                sp->bar_hovered = now_hovered;
+                sp->node->dirty |= CA_DIRTY_CONTENT;
             }
         }
 
@@ -5011,13 +5026,18 @@ void ca_widget_input_pass(Ca_Window *win)
             if (!sp->in_use || !sp->dragging) continue;
             if (!left_down) {
                 sp->dragging = false;
+                if (sp->node) sp->node->dirty |= CA_DIRTY_CONTENT;
                 continue;
             }
             Ca_Node *n = sp->node;
             bool is_h = (sp->direction == CA_HORIZONTAL);
             float total = is_h ? n->w : n->h;
             if (total <= sp->bar_size) continue;
-            float local = is_h ? (mx - n->x) : (my - n->y);
+            /* Center the bar under the cursor rather than placing its
+               leading edge there — matches where the user actually grabbed
+               the handle (its visual/hit-test center), instead of drifting
+               the bar bar_size/2 to the right/below the cursor. */
+            float local = (is_h ? (mx - n->x) : (my - n->y)) - sp->bar_size * 0.5f;
             float new_ratio = local / (total - sp->bar_size);
             if (new_ratio < sp->min_ratio) new_ratio = sp->min_ratio;
             if (new_ratio > sp->max_ratio) new_ratio = sp->max_ratio;
@@ -5119,6 +5139,7 @@ void ca_widget_input_pass(Ca_Window *win)
     }
 
     /* --- Hover tracking --- */
+    Ca_Node *previous_hovered = win->hovered_node;
     win->hovered_node = NULL;
 
     /* If the cursor is over an active overlay (select dropdown, context menu,
@@ -5233,7 +5254,8 @@ void ca_widget_input_pass(Ca_Window *win)
            as transparent to hit-testing (their descendants still qualify). */
 #define HOVER_CANDIDATE(n) \
             ((n)->in_use && !(n)->desc.hidden && !(n)->desc.no_hover && \
-             point_in_node((n), mx, my) && !node_is_ancestor_hidden(n))
+             point_in_node((n), mx, my) && !node_is_ancestor_hidden(n) && \
+             ((n)->widget_type != CA_WIDGET_SPLITTER || point_in_splitter_handle((n), mx, my)))
 
         /* Pass 1 — find the highest effective z-index among all hit nodes
            that are hover-eligible.  This implements CSS stacking-context
@@ -5268,6 +5290,14 @@ void ca_widget_input_pass(Ca_Window *win)
             }
         }
 
+        for (Ca_Node *n = best; n; n = n->parent) {
+            if (n->widget_type == CA_WIDGET_SPLITTER &&
+                node_effective_z(n) == max_ez && point_in_splitter_handle(n, mx, my)) {
+                best = n;
+                break;
+            }
+        }
+
 #undef HOVER_CANDIDATE
         /* Tree-node containers wrap their clickable header row as
            children[0].  The container often auto-sizes to the same
@@ -5286,6 +5316,13 @@ void ca_widget_input_pass(Ca_Window *win)
             best = best->children[0];
         }
         win->hovered_node = best;
+    }
+
+    if (previous_hovered != win->hovered_node) {
+        if (previous_hovered && previous_hovered->widget_type == CA_WIDGET_SPLITTER)
+            previous_hovered->dirty |= CA_DIRTY_CONTENT;
+        if (win->hovered_node && win->hovered_node->widget_type == CA_WIDGET_SPLITTER)
+            win->hovered_node->dirty |= CA_DIRTY_CONTENT;
     }
 
     /* Mark any open select dropdown's node dirty every frame so paint_overlays

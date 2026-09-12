@@ -158,66 +158,21 @@ static ClipRect find_clip_for_node(Ca_Node *node)
     return clip;
 }
 
-/* Compute the clip rect for text glyphs of a node.
- *
- * Single-line glyphs are positioned around a baseline derived from
- * (ascent + descent) of the font tier; with tight rows (e.g. a 16 px
- * label rendering a 12 px font) the descender of letters like 'g' lands
- * a fraction of a pixel below node->y + node->h.  Intersecting the clip
- * with the node's own bounds would slice that descender off, even though
- * the parent container has plenty of room.  This mirrors the CSS rule
- * that a line-box does not vertically clip its own glyphs — only an
- * ancestor `overflow:hidden` should do so.
- *
- * Horizontally we still clip to the node so overflowing text does not
- * bleed into sibling widgets.  Vertically we honour the node's bounds
- * only if it explicitly opts in via overflow_y >= 1; otherwise we
- * inherit from the closest scrolling/clipping ancestor (if any). */
+/** Resolve glyph clipping from node overflow and clipping ancestors.
+ * node: Text owner; visible overflow preserves ink beyond its advance box.
+ */
 static ClipRect text_clip_for_node(Ca_Node *node)
 {
     ClipRect ancestor = find_clip_for_node(node);
-    const float vertical_pad = 2.0f;
+    bool clip_x = node->desc.overflow_x >= 1;
+    bool clip_y = node->desc.overflow_y >= 1;
+    if (!clip_x && !clip_y) return ancestor;
 
-    ClipRect r;
-    r.active = true;
-
-    /* Horizontal: clamp to node width, then intersect with ancestor. */
-    float x0 = node->x;
-    float x1 = node->x + node->w;
-    if (ancestor.active) {
-        if (ancestor.x > x0)            x0 = ancestor.x;
-        if (ancestor.x + ancestor.w < x1) x1 = ancestor.x + ancestor.w;
-    }
-    r.x = x0;
-    r.w = (x1 > x0) ? x1 - x0 : 0.0f;
-
-    /* Vertical: inherit ancestor unless the node itself requests clipping. */
-    bool clip_self_v = node->desc.overflow_y >= 1;
-    if (clip_self_v && ancestor.active) {
-        float y0_a = node->y - vertical_pad;
-        float y1_a = node->y + node->h + vertical_pad;
-        float y0 = y0_a > ancestor.y ? y0_a : ancestor.y;
-        float y1_b = ancestor.y + ancestor.h;
-        float y1 = y1_a < y1_b ? y1_a : y1_b;
-        r.y = y0;
-        r.h = (y1 > y0) ? y1 - y0 : 0.0f;
-    } else if (clip_self_v) {
-        r.y = node->y - vertical_pad;
-        r.h = node->h + vertical_pad * 2.0f;
-    } else if (ancestor.active) {
-        r.y = ancestor.y - vertical_pad;
-        r.h = ancestor.h + vertical_pad * 2.0f;
-    } else {
-        r.active = (r.w > 0.0f); /* no vertical clip needed */
-        r.y = 0.0f;
-        r.h = 0.0f;
-        if (!r.active) return r;
-        /* Width-only clip: encode with effectively unbounded y range so
-           the GPU scissor test never rejects on vertical bounds. */
-        r.y = -1.0e6f;
-        r.h =  2.0e6f;
-    }
-    return r;
+    float x = clip_x ? node->x : (ancestor.active ? ancestor.x : -1.0e6f);
+    float y = clip_y ? node->y : (ancestor.active ? ancestor.y : -1.0e6f);
+    float w = clip_x ? node->w : (ancestor.active ? ancestor.w : 2.0e6f);
+    float h = clip_y ? node->h : (ancestor.active ? ancestor.h : 2.0e6f);
+    return clip_intersect(ancestor, x, y, w, h, 0.0f);
 }
 
 /* Walk ancestors to check if any node in the chain is disabled. */
@@ -226,6 +181,108 @@ static bool is_node_effectively_disabled(Ca_Node *n)
     for (Ca_Node *cur = n; cur; cur = cur->parent)
         if (cur->desc.disabled) return true;
     return false;
+}
+
+/** Emit a bounded outer glow for source geometry using radius and RGBA color. */
+static void paint_glow(Ca_Window *win, const Ca_DrawCmd *source,
+                       float radius, uint32_t color)
+{
+    if (!isfinite(radius) || radius <= 0.0f || (color & 0xFFu) == 0u ||
+        source->w <= 0.0f || source->h <= 0.0f) return;
+    Ca_DrawCmd glow = *source;
+    glow.type = CA_DRAW_RECT;
+    glow.draw_mode = CA_DRAW_MODE_GLOW;
+    glow.x -= radius;
+    glow.y -= radius;
+    glow.w += radius * 2.0f;
+    glow.h += radius * 2.0f;
+    if (!isfinite(glow.x) || !isfinite(glow.y) ||
+        !isfinite(glow.w) || !isfinite(glow.h)) return;
+    glow.blur_radius = radius;
+    unpack_color(color, &glow.r, &glow.g, &glow.b, &glow.a);
+    glow.a *= source->a;
+    glow.in_use = true;
+    if (!ca_window_reserve_draw_commands(win, (size_t)win->draw_cmd_count + 1u)) return;
+    win->draw_cmds[win->draw_cmd_count++] = glow;
+}
+
+/** Paint the built-in splitter handle over its panes, respecting ancestor clip. */
+static void paint_splitter(Ca_Window *win, Ca_Node *node, ClipRect clip)
+{
+    if (node->widget_type != CA_WIDGET_SPLITTER || node->desc.visibility_hidden ||
+        is_node_effectively_disabled(node)) return;
+    float ui_s = win->ui_scale > 0.0f ? win->ui_scale : 1.0f;
+    Ca_Splitter *sp = (Ca_Splitter *)node->widget;
+    if (!sp || !sp->in_use) return;
+    /* Draw the divider bar between the two panes */
+    bool is_h = (sp->direction == CA_HORIZONTAL);
+    float bar_x, bar_y, bar_w, bar_h;
+    if (is_h) {
+        float pane_space = node->w - sp->bar_size;
+        if (pane_space < 0) pane_space = 0;
+        bar_x = node->x + pane_space * sp->ratio;
+        bar_y = node->y;
+        bar_w = sp->bar_size;
+        bar_h = node->h;
+    } else {
+        float pane_space = node->h - sp->bar_size;
+        if (pane_space < 0) pane_space = 0;
+        bar_x = node->x;
+        bar_y = node->y + pane_space * sp->ratio;
+        bar_w = node->w;
+        bar_h = sp->bar_size;
+    }
+    /* Visibility tracks sp->bar_hovered (maintained in ca_widget_input_pass
+       via the same point_in_splitter_handle hit-zone drag-start uses), not
+       win->hovered_node — hovered_node is arbitrated against every other
+       node in the tree by z-index/area, and the splitter's own node spans
+       its full container (both panes), so it routinely loses that
+       arbitration to a pane or ancestor div even while the cursor sits
+       exactly on the bar, leaving the handle invisible on hover despite
+       drag (which hit-tests the bar directly) working fine. */
+    if (!sp->dragging && !sp->bar_hovered) return;
+    float length = is_h ? bar_h : bar_w;
+    float thickness = is_h ? bar_w : bar_h;
+    if (length <= 0.0f || thickness <= 0.0f) return;
+    float dot = fminf(2.5f * ui_s, fminf(thickness, length / 17.0f));
+    float pitch = dot * 2.0f;
+    float gap = dot * 17.0f;
+    float line = fminf(ui_s, dot);
+    float center_x = bar_x + bar_w * 0.5f;
+    float center_y = bar_y + bar_h * 0.5f;
+    float segment = (length - gap) * 0.5f;
+    uint32_t line_color = sp->dragging ? 0xFFFFFFFFu : 0xE8E8E8FFu;
+    uint32_t dot_color  = sp->dragging ? 0xFFE58AFFu : 0xFFD34EFFu;
+    if (!ca_window_reserve_draw_commands(win, (size_t)win->draw_cmd_count + 18u)) return;
+    Ca_DrawCmd shapes[9];
+    unsigned count = 0;
+    for (int i = 0; i < 9; ++i) {
+        bool is_dot = i >= 2;
+        float extent = is_dot ? dot : segment;
+        if (extent <= 0.0f) continue;
+        float along = is_dot ? (float)(i - 5) * pitch - dot * 0.5f
+                             : (i == 0 ? -length * 0.5f : gap * 0.5f);
+        float across = is_dot ? dot : line;
+        Ca_DrawCmd *cmd = &shapes[count++];
+        memset(cmd, 0, sizeof(*cmd));
+        cmd->type = CA_DRAW_RECT;
+        cmd->x = center_x + (is_h ? -across * 0.5f : along);
+        cmd->y = center_y + (is_h ? along : -across * 0.5f);
+        cmd->w = is_h ? across : extent;
+        cmd->h = is_h ? extent : across;
+        cmd->corner_radius = is_dot ? dot * 0.5f : 0.0f;
+        cmd->corner_tl = cmd->corner_tr = cmd->corner_br = cmd->corner_bl = cmd->corner_radius;
+        unpack_color(is_dot ? dot_color : line_color, &cmd->r, &cmd->g, &cmd->b, &cmd->a);
+        cmd->z_index = node->desc.z_index;
+        cmd->in_use = true;
+        set_clip(cmd, clip);
+    }
+    float glow_radius = (sp->dragging ? 4.0f : 3.0f) * ui_s;
+    uint32_t glow_color = sp->dragging ? 0xFFD34E60u : 0xFFD34E40u;
+    for (unsigned i = 0; i < count; ++i)
+        paint_glow(win, &shapes[i], glow_radius, glow_color);
+    memcpy(&win->draw_cmds[win->draw_cmd_count], shapes, count * sizeof(*shapes));
+    win->draw_cmd_count += count;
 }
 
 /* Paint a single node's OWN visual content (background rect + widget-specific).
@@ -286,6 +343,20 @@ static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, Cli
         cmd->z_index     = node->desc.z_index;
         cmd->in_use      = true;
         set_clip(cmd, clip);
+    }
+
+    if (node->desc.glow_radius > 0.0f && (node->desc.glow_color & 0xFFu)) {
+        Ca_DrawCmd source = {0};
+        source.x = node->x; source.y = node->y;
+        source.w = node->w; source.h = node->h;
+        source.corner_tl = ca_desc_corner_tl(&node->desc);
+        source.corner_tr = ca_desc_corner_tr(&node->desc);
+        source.corner_br = ca_desc_corner_br(&node->desc);
+        source.corner_bl = ca_desc_corner_bl(&node->desc);
+        source.z_index = node->desc.z_index;
+        source.a = node->desc.opacity > 0.0f ? node->desc.opacity : 1.0f;
+        set_clip(&source, clip);
+        paint_glow(win, &source, node->desc.glow_radius, node->desc.glow_color);
     }
 
     /* ---- Background rect (or gradient) ---- */
@@ -688,43 +759,6 @@ static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, Cli
         txt_n.desc.padding_left = 0;
         txt_n.w = hdr->w - x_off;
         paint_text(win, font, &txt_n, tn->text, tn->text_color);
-        break;
-    }
-    case CA_WIDGET_SPLITTER: {
-        Ca_Splitter *sp = (Ca_Splitter *)node->widget;
-        if (!sp || !sp->in_use) break;
-        /* Draw the divider bar between the two panes */
-        bool is_h = (sp->direction == CA_HORIZONTAL);
-        float bar_x, bar_y, bar_w, bar_h;
-        if (is_h) {
-            float pane_space = node->w - sp->bar_size;
-            if (pane_space < 0) pane_space = 0;
-            bar_x = node->x + pane_space * sp->ratio;
-            bar_y = node->y;
-            bar_w = sp->bar_size;
-            bar_h = node->h;
-        } else {
-            float pane_space = node->h - sp->bar_size;
-            if (pane_space < 0) pane_space = 0;
-            bar_x = node->x;
-            bar_y = node->y + pane_space * sp->ratio;
-            bar_w = node->w;
-            bar_h = sp->bar_size;
-        }
-        bool active = win->hovered_node == node || sp->dragging;
-        uint32_t color = active ? sp->bar_hover_color : sp->bar_color;
-        if (ca_window_reserve_draw_commands(win, (size_t)win->draw_cmd_count + 1u)) {
-            Ca_DrawCmd *cmd = &win->draw_cmds[win->draw_cmd_count++];
-            memset(cmd, 0, sizeof(*cmd));
-            cmd->type   = CA_DRAW_RECT;
-            cmd->x      = bar_x;
-            cmd->y      = bar_y;
-            cmd->w      = bar_w;
-            cmd->h      = bar_h;
-            unpack_color(color, &cmd->r, &cmd->g, &cmd->b, &cmd->a);
-            cmd->in_use = true;
-            set_clip(cmd, clip);
-        }
         break;
     }
     case CA_WIDGET_IMAGE: {
@@ -1487,7 +1521,9 @@ static void paint_text_left(Ca_Window *win, Ca_Font *font,
     float glyph_raster_xpos = snap_text_position(left_logical * line_cs_eff, line_cs_eff,
                                                  font->display_scale);
 
-    ClipRect input_clip = text_clip_for_node(node);
+    ClipRect input_clip = clip_intersect(text_clip_for_node(node),
+                                         node->x, node->y, node->w, node->h,
+                                         node->desc.corner_radius);
 
     const char *p = text;
     while (*p) {
@@ -1869,6 +1905,7 @@ static void paint_tree_cached(Ca_Instance *inst, Ca_Window *win,
     /* ---- Post-children: border + scrollbars ---- */
     if (was_dirty) {
         uint32_t sb_start = win->draw_cmd_count;
+        paint_splitter(win, node, own_clip);
         paint_border(win, node, own_clip);
         paint_scrollbars(win, node, own_clip);
         uint32_t sb_count = win->draw_cmd_count - sb_start;

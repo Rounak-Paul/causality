@@ -769,6 +769,9 @@ typedef struct Ca_DivDesc {
     /* Border */
     float    border_width;         /* border thickness in px (0 = none)     */
     uint32_t border_color;         /* ca_color(r,g,b,a)                     */
+    /* Optional outer glow; radius in logical pixels, color alpha controls strength. */
+    float    glow_radius;
+    uint32_t glow_color;
     /* Box shadow */
     float    shadow_offset_x;      /* shadow X offset in px                 */
     float    shadow_offset_y;      /* shadow Y offset in px                 */
@@ -1088,6 +1091,9 @@ CA_API void ca_window_set_on_frame(Ca_Window *window, void (*fn)(void *), void *
 
    A splitter divides its area into two panes with a draggable divider.
    Nest exactly two children inside ca_split_begin / ca_split_end.
+   Causality owns the line-and-five-dot handle and its hover/drag colors.
+   The handle is hidden when neither hovered nor dragged; CSS styles the
+   container, not the handle.
 
        ca_split_begin(&(Ca_SplitDesc){ .direction = CA_HORIZONTAL, .ratio = 0.3f });
          ca_div_begin(NULL);  // left pane  (30%)
@@ -1105,9 +1111,7 @@ typedef struct Ca_SplitDesc {
     float    ratio;            /* 0.0–1.0: fraction for first pane (default 0.5) */
     float    min_ratio;        /* minimum ratio (default 0.1)           */
     float    max_ratio;        /* maximum ratio (default 0.9)           */
-    float    bar_size;         /* divider thickness in px (default 4)   */
-    uint32_t bar_color;        /* divider colour (default dark grey)    */
-    uint32_t bar_hover_color;  /* divider colour when hovered           */
+    float    bar_size;         /* layout gutter in px (default 4); handle appearance is built in */
     /* Optional: invoked when the user drags the divider and the
        ratio changes. Use this to persist the new ratio in your own
        data model so subsequent rebuilds pass it back via .ratio. */
