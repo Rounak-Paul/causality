@@ -1473,3 +1473,47 @@ void ca_window_set_bg_render(Ca_Window *window, Ca_BgRenderFn fn, void *user_dat
     window->bg_render_fn   = fn;
     window->bg_render_data = user_data;
 }
+
+/*
+ * Request that the registered background render callback run on the next
+ * frame for this window.
+ *
+ * The caller (whatever owns the background content — an animated shader
+ * effect, a one-shot theme/settings change, etc.) is responsible for calling
+ * this only when the background actually needs to redraw, so an event that
+ * merely wakes the loop for an unrelated reason (pointer motion, a keypress,
+ * a scroll) does not also re-run the background render and any GPU work
+ * chained after it.
+ *
+ * window  Target window; no-op if NULL or not open.
+ */
+void ca_window_request_bg_render(Ca_Window *window)
+{
+    if (!window || !window->glfw) return;
+    window->needs_render = true;
+    ca_instance_wake();
+}
+
+/*
+ * Request a background render on the next frame for every open window on
+ * the instance that has a background render source (its own per-window
+ * callback, or the instance-wide default).
+ *
+ * Convenience for callers whose background content is instance-wide (e.g.
+ * one animated effect shared by the primary window and every auxiliary
+ * window via ca_instance_set_bg_render) so they don't need to track and
+ * iterate windows themselves. Same "only when it actually needs to redraw"
+ * contract as ca_window_request_bg_render.
+ *
+ * instance  Instance whose windows should render their background; no-op if NULL.
+ */
+void ca_instance_request_bg_render(Ca_Instance *instance)
+{
+    if (!instance) return;
+    for (size_t i = 0; i < ca_pool_slot_count(&instance->windows); ++i) {
+        Ca_Window *window = CA_POOL_AT(instance->windows, Ca_Window, i);
+        if (window->in_use && (window->bg_render_fn || instance->default_bg_render_fn))
+            window->needs_render = true;
+    }
+    ca_instance_wake();
+}

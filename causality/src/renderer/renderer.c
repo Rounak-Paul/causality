@@ -796,7 +796,14 @@ void ca_renderer_frame(Ca_Instance *inst)
         }
 
         if (win->sc.swapchain == VK_NULL_HANDLE) continue;
-        if (win->bg_render_fn || inst->default_bg_render_fn) win->needs_render = true;
+        /* A registered bg_render_fn is no longer sufficient reason to render:
+           the caller (Sol's animation cadence, a one-shot settings change,
+           etc.) must explicitly request a frame via
+           ca_window_request_bg_render() / needs_render whenever the
+           background actually needs to redraw. This keeps an unrelated event
+           that merely wakes the loop (pointer motion, a keypress, a scroll)
+           from also re-running the background shader / backdrop blur at
+           that event's rate instead of the intended animation cadence. */
         if (!win->needs_render) continue;
         win->needs_render = false;
         ca_profile_begin(inst, "Platform Swapchain");

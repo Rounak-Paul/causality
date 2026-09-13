@@ -79,6 +79,36 @@ CA_API void ca_instance_set_bg_render(Ca_Instance *instance,
                                       Ca_BgRenderFn fn,
                                       void *user_data);
 
+/*
+ * Request that the registered background render callback run on the next
+ * frame for this window.
+ *
+ * The renderer never invokes a background callback just because one is
+ * registered — it only does so when the caller explicitly requests a frame
+ * here. Call this once per animation tick (or on any one-shot change that
+ * requires a background redraw, e.g. a theme/settings update); do NOT call
+ * it unconditionally every frame, or every tick regardless of cause, since
+ * that reintroduces uncapped background rendering driven by unrelated input
+ * events (pointer motion, keystrokes, scrolling).
+ *
+ * window  Target window; no-op if NULL or not open.
+ */
+CA_API void ca_window_request_bg_render(Ca_Window *window);
+
+/*
+ * Request a background render on the next frame for every open window on
+ * the instance that has a background render source (its own per-window
+ * callback via ca_window_set_bg_render, or the instance-wide default set via
+ * ca_instance_set_bg_render).
+ *
+ * Convenience for callers whose background content is instance-wide, so they
+ * don't need to track and iterate windows themselves. Same "only when it
+ * actually needs to redraw" contract as ca_window_request_bg_render.
+ *
+ * instance  Instance whose windows should render their background; no-op if NULL.
+ */
+CA_API void ca_instance_request_bg_render(Ca_Instance *instance);
+
 /* ============================================================
    GPU — Vulkan resource accessors
    ============================================================
