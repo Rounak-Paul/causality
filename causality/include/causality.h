@@ -903,6 +903,9 @@ CA_API void ca_ui_end(void);
  */
 CA_API void ca_div_clear(Ca_Div *div);
 
+/** Remove div and its subtree; all handles into it become invalid. */
+CA_API void ca_div_destroy(Ca_Div *div);
+
 /*
  * Register a reactive builder callback on a div.
  *

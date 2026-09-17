@@ -884,6 +884,12 @@ void ca_reconcile_key(const char *key)
     snprintf(g_ctx.next_key, sizeof(g_ctx.next_key), "%s", key);
 }
 
+/** Removes div and all owned widgets and reactive builders. */
+void ca_div_destroy(Ca_Div *div)
+{
+    if (div) ca_node_remove((Ca_Node *)div);
+}
+
 void ca_reconcile_begin(Ca_Div *div)
 {
     assert(g_ctx.active);

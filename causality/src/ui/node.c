@@ -354,6 +354,7 @@ static void free_subtree(Ca_Node *node)
        input handlers will dereference a freed slot next frame (UAF). */
     if (node->window) {
         Ca_Window *w = node->window;
+        if (w->focused_node        == node) w->focused_node        = NULL;
         if (w->hovered_node        == node) w->hovered_node        = NULL;
         if (w->drag_node           == node) w->drag_node           = NULL;
         if (w->user_drag_node      == node) w->user_drag_node      = NULL;

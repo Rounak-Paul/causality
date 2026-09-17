@@ -434,6 +434,7 @@ void ca_window_set_status_bar(Ca_Window      *window,
         window->root->dirty |= CA_DIRTY_LAYOUT | CA_DIRTY_CHILDREN;
     }
 
+    if (!fn) ca_node_clear(sb);
     window->statusbar_needs_rebuild = true;
 }
 
