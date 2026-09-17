@@ -4,6 +4,8 @@
 typedef struct GLFWwindow GLFWwindow;
 
 #include "ca_internal.h"
+#include "widget.h"
+#include "node.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -115,9 +117,67 @@ static bool test_consumed_key_query(void)
     return true;
 }
 
+/** Verifies reconciled text replacement leaves editing positions valid. */
+static bool test_reconciled_input_text(void)
+{
+    Ca_Instance instance = {0};
+    Ca_Window window = {0};
+    Ca_Node root = {0};
+    window.instance = &instance;
+    window.ui_scale = 1.0f;
+    window.root = &root;
+    root.window = &window;
+    root.in_use = true;
+    CHECK(ca_pool_init(&window.node_pool, sizeof(Ca_Node), 4));
+    CHECK(ca_pool_init(&window.input_pool, sizeof(Ca_TextInput), 4));
+
+    uint32_t typed = 'x';
+    window.char_buf = &typed;
+    const char *values[] = {"previous commit message", "", "short", "\xc3\xa9"};
+    Ca_TextInput *input = NULL;
+    for (size_t i = 0; i < sizeof(values) / sizeof(values[0]); ++i) {
+        ca_widget_ctx_enter(&window);
+        ca_reconcile_begin((Ca_Div *)&root);
+        Ca_TextInput *next = ca_input(&(Ca_InputDesc){ .text = values[i] });
+        ca_div_end();
+        ca_widget_ctx_leave();
+        CHECK(next && (!input || next == input));
+        input = next;
+        CHECK(input->cursor == (int)strlen(values[i]));
+        CHECK(input->sel_start == -1);
+
+        window.focused_node = input->node;
+        window.char_buf[0] = 'x';
+        window.char_count = 1;
+        ca_widget_input_pass(&window);
+        CHECK(input->cursor == (int)strlen(values[i]) + 1);
+        CHECK(input->text[input->cursor - 1] == 'x');
+        window.char_count = 0;
+        input->sel_start = 0;
+    }
+
+    input->cursor = 0;
+    input->sel_start = 1;
+    char unchanged[CA_INPUT_TEXT_MAX];
+    snprintf(unchanged, sizeof(unchanged), "%s", input->text);
+    ca_widget_ctx_enter(&window);
+    ca_reconcile_begin((Ca_Div *)&root);
+    CHECK(ca_input(&(Ca_InputDesc){ .text = unchanged }) == input);
+    ca_div_end();
+    ca_widget_ctx_leave();
+    CHECK(input->cursor == 0 && input->sel_start == 1);
+
+    ca_node_clear(&root);
+    ca_pool_destroy(&window.input_pool, NULL, NULL);
+    ca_pool_destroy(&window.node_pool, NULL, NULL);
+    ca_widget_ctx_release_instance(&instance);
+    return true;
+}
+
 /** Runs focused input ownership regression tests. */
 int main(void)
 {
+    if (!test_reconciled_input_text()) return 1;
     if (!test_focused_button_capture()) return 1;
     if (!test_splitter_pointer_capture()) return 1;
     if (!test_exclusive_keyboard_capture()) return 1;

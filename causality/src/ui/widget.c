@@ -1237,6 +1237,7 @@ Ca_TextInput *ca_input(const Ca_InputDesc *desc)
     inp->drag_speed = desc->drag_speed > 0.0f
         ? desc->drag_speed
         : (desc->input_mode == CA_INPUT_FLOAT ? 0.1f : 1.0f);
+    const bool text_changed = strcmp(inp->text, desc->text ? desc->text : "") != 0;
     WIDGET_SET_TEXT(node, reused, inp->text, CA_INPUT_TEXT_MAX, desc->text);
 
     if (desc->placeholder)
@@ -1244,10 +1245,8 @@ Ca_TextInput *ca_input(const Ca_InputDesc *desc)
     else
         inp->placeholder[0] = '\0';
 
-    /* Only reset cursor/selection on first creation, not on every rebuild.
-     * Resetting each frame would snap the cursor to end-of-text every tick,
-     * making it impossible to position the cursor or see it blink. */
-    if (!reused) {
+    /* Preserve editing positions on redraw; replacement text resets them. */
+    if (!reused || text_changed) {
         inp->cursor    = (int)strlen(inp->text);
         inp->sel_start = -1;
     }
