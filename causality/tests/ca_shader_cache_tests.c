@@ -135,8 +135,13 @@ static bool test_store_then_lookup_hit(void)
     CHECK(inst->shader_cache_writable == true);
 
     const char *source = "#version 450\nvoid main(){ gl_Position = vec4(0); }";
-    const uint32_t words[4] = { 0x07230203u, 1u, 2u, 3u };
-    ca_shader_cache_store(inst, source, VK_SHADER_STAGE_VERTEX_BIT, words, 4u);
+    /* Lookup validates SPIR-V structure, so the fixture is a real
+       physical layout: 5-word header then one 1-word instruction. */
+    const uint32_t words[6] = {
+        0x07230203u, 0x00010600u, 0u, 4u, 0u,
+        (1u << 16) | 1u,
+    };
+    ca_shader_cache_store(inst, source, VK_SHADER_STAGE_VERTEX_BIT, words, 6u);
 
     size_t size = 0u;
     uint32_t *blob = ca_shader_cache_lookup(inst, source,
@@ -196,8 +201,11 @@ static bool test_readonly_dir_serves_hits_but_not_writes(void)
     CHECK(writer->shader_cache_writable == true);
 
     const char *source = "readonly-probe-shader";
-    const uint32_t words[2] = { 0x07230203u, 42u };
-    ca_shader_cache_store(writer, source, VK_SHADER_STAGE_FRAGMENT_BIT, words, 2u);
+    const uint32_t words[6] = {
+        0x07230203u, 0x00010600u, 0u, 4u, 0u,
+        (1u << 16) | 1u,
+    };
+    ca_shader_cache_store(writer, source, VK_SHADER_STAGE_FRAGMENT_BIT, words, 6u);
     free(writer);
 
     /* Lock the directory down to read+execute, no write. */
@@ -305,8 +313,11 @@ static bool test_corrupt_cache_file_is_a_miss(void)
     CHECK(inst->shader_cache_writable == true);
 
     const char *source = "corrupt-probe-shader";
-    const uint32_t words[3] = { 0x07230203u, 1u, 2u };
-    ca_shader_cache_store(inst, source, VK_SHADER_STAGE_FRAGMENT_BIT, words, 3u);
+    const uint32_t words[6] = {
+        0x07230203u, 0x00010600u, 0u, 4u, 0u,
+        (1u << 16) | 1u,
+    };
+    ca_shader_cache_store(inst, source, VK_SHADER_STAGE_FRAGMENT_BIT, words, 6u);
 
     /* Sanity: the well-formed entry hits before we corrupt it. */
     size_t size = 0u;
@@ -340,6 +351,121 @@ static bool test_corrupt_cache_file_is_a_miss(void)
 #endif
 }
 
+/* A write cut short mid-payload must be a miss. This is the power-loss
+   case: the file keeps a valid container magic and stays word-aligned,
+   so only the recorded payload length distinguishes it from a complete
+   entry. */
+static bool test_truncated_payload_is_a_miss(void)
+{
+#ifdef _WIN32
+    return true;
+#else
+    char dir[1024];
+    test_tmp_dir(dir, sizeof(dir), "truncated");
+    test_cleanup_dir(dir);
+
+    Ca_Instance *inst = test_instance();
+    CHECK(inst);
+    ca_shader_cache_init_dir(inst, dir);
+
+    /* A minimal but structurally complete module: 5-word SPIR-V header
+       then one 2-word instruction, so a cut after the instruction still
+       lands on an instruction boundary. */
+    const char *source = "truncated-probe-shader";
+    const uint32_t words[8] = {
+        0x07230203u, 0x00010600u, 0u, 4u, 0u,   /* magic, version, gen, bound, schema */
+        (2u << 16) | 1u, 3u,                    /* one 2-word instruction */
+        (1u << 16) | 1u,                        /* one 1-word instruction */
+    };
+    ca_shader_cache_store(inst, source, VK_SHADER_STAGE_FRAGMENT_BIT, words, 8u);
+
+    size_t size = 0u;
+    uint32_t *good = ca_shader_cache_lookup(inst, source,
+                                            VK_SHADER_STAGE_FRAGMENT_BIT, &size);
+    CHECK(good != NULL);
+    CHECK(size == sizeof(words));
+    free(good);
+
+    char *cache_file = test_find_sole_cache_file(dir);
+    CHECK(cache_file != NULL);
+
+    /* Read the whole file, then rewrite it one payload word shorter —
+       the header still claims the original length. */
+    FILE *rf = fopen(cache_file, "rb");
+    CHECK(rf != NULL);
+    unsigned char whole[256];
+    const size_t whole_len = fread(whole, 1u, sizeof(whole), rf);
+    fclose(rf);
+    CHECK(whole_len > sizeof(uint32_t));
+
+    FILE *wf = fopen(cache_file, "wb");
+    CHECK(wf != NULL);
+    const size_t short_len = whole_len - sizeof(uint32_t);
+    CHECK(fwrite(whole, 1u, short_len, wf) == short_len);
+    fclose(wf);
+
+    size = 0u;
+    uint32_t *should_miss = ca_shader_cache_lookup(
+        inst, source, VK_SHADER_STAGE_FRAGMENT_BIT, &size);
+    CHECK(should_miss == NULL);
+    CHECK(size == 0u);
+
+    free(cache_file);
+    free(inst);
+    test_cleanup_dir(dir);
+    return true;
+#endif
+}
+
+/* A payload altered in place without changing its length must be a miss:
+   length alone cannot detect it, so the digest has to. */
+static bool test_altered_payload_is_a_miss(void)
+{
+#ifdef _WIN32
+    return true;
+#else
+    char dir[1024];
+    test_tmp_dir(dir, sizeof(dir), "altered");
+    test_cleanup_dir(dir);
+
+    Ca_Instance *inst = test_instance();
+    CHECK(inst);
+    ca_shader_cache_init_dir(inst, dir);
+
+    const char *source = "altered-probe-shader";
+    const uint32_t words[6] = {
+        0x07230203u, 0x00010600u, 0u, 4u, 0u,
+        (1u << 16) | 1u,
+    };
+    ca_shader_cache_store(inst, source, VK_SHADER_STAGE_FRAGMENT_BIT, words, 6u);
+
+    char *cache_file = test_find_sole_cache_file(dir);
+    CHECK(cache_file != NULL);
+
+    /* Flip a byte in the last payload word, leaving the file length and
+       every header field untouched. */
+    FILE *rw = fopen(cache_file, "r+b");
+    CHECK(rw != NULL);
+    CHECK(fseek(rw, -1, SEEK_END) == 0);
+    int last = fgetc(rw);
+    CHECK(last != EOF);
+    CHECK(fseek(rw, -1, SEEK_END) == 0);
+    CHECK(fputc((last ^ 0xff) & 0xff, rw) != EOF);
+    fclose(rw);
+
+    size_t size = 0u;
+    uint32_t *should_miss = ca_shader_cache_lookup(
+        inst, source, VK_SHADER_STAGE_FRAGMENT_BIT, &size);
+    CHECK(should_miss == NULL);
+    CHECK(size == 0u);
+
+    free(cache_file);
+    free(inst);
+    test_cleanup_dir(dir);
+    return true;
+#endif
+}
+
 int main(void)
 {
     bool ok = test_disabled_by_default() &&
@@ -348,7 +474,9 @@ int main(void)
               test_store_then_lookup_hit() &&
               test_readonly_dir_serves_hits_but_not_writes() &&
               test_inaccessible_dir_disables_entirely() &&
-              test_corrupt_cache_file_is_a_miss();
+              test_corrupt_cache_file_is_a_miss() &&
+              test_truncated_payload_is_a_miss() &&
+              test_altered_payload_is_a_miss();
     if (!ok) return 1;
     puts("causality shader cache tests passed");
     return 0;
