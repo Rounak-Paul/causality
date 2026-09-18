@@ -11,9 +11,11 @@
 #ifdef _WIN32
   #include <direct.h>
   #include <io.h>
+  #include <process.h>
   #include <windows.h>
   #define CA_MKDIR(path)   _mkdir(path)
   #define CA_DIR_READABLE(path) (_access((path), 0) == 0)
+  #define CA_GETPID()      _getpid()
 #else
   #include <fcntl.h>
   #include <sys/stat.h>
@@ -21,6 +23,7 @@
   #include <unistd.h>
   #define CA_MKDIR(path)   mkdir((path), 0755)
   #define CA_DIR_READABLE(path) (access((path), R_OK | X_OK) == 0)
+  #define CA_GETPID()      getpid()
 #endif
 
 /*
@@ -313,10 +316,17 @@ void ca_shader_cache_store(Ca_Instance *instance,
        concurrent reader (another Causality instance in another process
        sharing the same cache dir) never observes a partially written
        .spv — rename is atomic on both POSIX and Windows (NTFS) for a
-       destination on the same volume as the source. */
+       destination on the same volume as the source.
+
+       The name carries the process id, not a heap address: two processes
+       compiling the same shader can otherwise pick the same temp path and
+       write over each other, which is exactly the torn file this rename
+       exists to prevent. The source pointer is kept alongside it so two
+       compiles within one process still differ. */
     char tmp_path[1040];
-    const int written = snprintf(tmp_path, sizeof(tmp_path), "%s.%d.tmp",
-                                 path, (int)(uintptr_t)spirv);
+    const int written = snprintf(tmp_path, sizeof(tmp_path), "%s.%ld.%d.tmp",
+                                 path, (long)CA_GETPID(),
+                                 (int)((uintptr_t)spirv & 0xffffff));
     if (written <= 0 || (size_t)written >= sizeof(tmp_path)) return;
 
     FILE *f = fopen(tmp_path, "wb");
