@@ -204,8 +204,17 @@ bool ca_blur_pipeline_create(Ca_Instance *inst, VkFormat color_format)
     VkPipelineDynamicStateCreateInfo dyn = {
         .sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
         .dynamicStateCount = 2, .pDynamicStates = dyn_states };
-    /* Use R8G8B8A8_UNORM internally for the blur images (not sRGB — we want linear sampling) */
-    VkFormat blur_fmt = VK_FORMAT_R8G8B8A8_UNORM;
+    /* sRGB, matching the swapchain and every other sampled surface
+       (image.c's textures) in this renderer. The swapchain blit-in and the
+       final composite sample both cross a format boundary with the
+       swapchain's own R8G8B8A8_SRGB attachment; using UNORM here made the
+       hardware treat already-sRGB-encoded bytes as linear on both ends,
+       blurring in the wrong color space and skipping the linearization the
+       composite shader assumes every sampled texture already has. sRGB
+       views make the blit, the two blur passes, and the final sample all
+       decode/encode consistently, so the Gaussian averaging happens in
+       linear light like it should. */
+    VkFormat blur_fmt = VK_FORMAT_R8G8B8A8_SRGB;
     VkPipelineRenderingCreateInfo rendering_ci = {
         .sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO,
         .colorAttachmentCount = 1, .pColorAttachmentFormats = &blur_fmt };
@@ -269,7 +278,7 @@ static bool create_blur_image(Ca_Instance *inst,
     VkImageCreateInfo img_ci = {
         .sType         = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
         .imageType     = VK_IMAGE_TYPE_2D,
-        .format        = VK_FORMAT_R8G8B8A8_UNORM,
+        .format        = VK_FORMAT_R8G8B8A8_SRGB,
         .extent        = { w, h, 1 },
         .mipLevels     = 1, .arrayLayers = 1,
         .samples       = VK_SAMPLE_COUNT_1_BIT,
@@ -303,7 +312,7 @@ static bool create_blur_image(Ca_Instance *inst,
         .sType            = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
         .image            = *img,
         .viewType         = VK_IMAGE_VIEW_TYPE_2D,
-        .format           = VK_FORMAT_R8G8B8A8_UNORM,
+        .format           = VK_FORMAT_R8G8B8A8_SRGB,
         .subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 },
     };
     if (vkCreateImageView(inst->vk_device, &view_ci, NULL, view) != VK_SUCCESS) {
@@ -342,7 +351,7 @@ static bool alloc_desc_set(Ca_Instance *inst, VkImageView view, VkSampler sample
 bool ca_blur_window_create(Ca_Instance *inst, Ca_Window *win,
                            uint32_t width, uint32_t height, VkFormat format)
 {
-    (void)format; /* we always use UNORM internally */
+    (void)format; /* we always use sRGB internally, matching the swapchain */
 
     if (!inst->blur_h_pipeline) return true; /* pipeline not created yet — lazy */
     if (width == 0 || height == 0) return false;
