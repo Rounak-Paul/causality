@@ -5,6 +5,7 @@
 #include "paint.h"
 #include "node.h"
 #include "font.h"
+#include "inline_layout.h"
 #include "ca_theme.h"
 #include "style.h"
 #include "scrollbar.h"
@@ -132,6 +133,8 @@ static void paint_text(Ca_Window *win, Ca_Font *font,
 static void paint_text_wrapped(Ca_Window *win, Ca_Font *font,
                                Ca_Node *node,
                                const char *text, uint32_t packed_color);
+static void paint_inline_children(Ca_Window *win, Ca_Font *font,
+                                  Ca_Node *node, ClipRect clip);
 static void paint_text_left(Ca_Window *win, Ca_Font *font,
                             Ca_Node *node,
                             const char *text, uint32_t packed_color);
@@ -440,6 +443,18 @@ static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, Cli
 
     /* ---- Widget-specific content ---- */
     if (!font) return;
+
+    /* Inline formatting context — paints every resolved run from
+       ca_inline_layout in one pass instead of dispatching on
+       widget_type; an inline_flow div has no widget of its own
+       (CA_WIDGET_NONE), and its children that were consumed into the
+       inline layout are skipped by the normal per-node paint walk (see
+       paint_tree_cached's call site) so they are not also painted
+       independently here. */
+    if (node->desc.inline_flow) {
+        paint_inline_children(win, font, node, clip);
+        return;
+    }
 
     switch (node->widget_type) {
     case CA_WIDGET_LABEL: {
@@ -1383,6 +1398,114 @@ done:
     node->content_h = node->desc.padding_top + line_height * (cur_line + 1) + node->desc.padding_bottom;
 }
 
+/* Emits glyph draw commands for one resolved inline run (a word or a
+   full non-text child's box), positioned at the run's precomputed
+   x/baseline_y — no re-wrapping, no re-measuring, the layout pass
+   (ca_inline_layout) already decided exactly where every run goes. */
+static void paint_inline_run(Ca_Window *win, Ca_Font *font,
+                             const Ca_InlineRun *run,
+                             float origin_x, float origin_y, ClipRect clip)
+{
+    Ca_Node *child = run->child;
+    if (!child) return;
+
+    if (!run->text_start) {
+        /* Non-text inline child (e.g. an inline image placeholder): draw
+           its own background as a plain box at the resolved run rect.
+           Full per-widget content painting (an actual decoded image,
+           etc.) is out of scope for this first inline_flow pass — see
+           Ca_DivDesc.inline_flow's doc comment. */
+        if (child->desc.background == 0) return;
+        if (!ca_window_reserve_draw_commands(win, (size_t)win->draw_cmd_count + 1u)) return;
+        Ca_DrawCmd *cmd = &win->draw_cmds[win->draw_cmd_count++];
+        memset(cmd, 0, sizeof(*cmd));
+        cmd->type = CA_DRAW_RECT;
+        cmd->x = origin_x + run->x;
+        cmd->y = origin_y + run->y;
+        cmd->w = run->w;
+        cmd->h = run->h;
+        unpack_color(child->desc.background, &cmd->r, &cmd->g, &cmd->b, &cmd->a);
+        cmd->corner_radius = child->desc.corner_radius;
+        cmd->z_index = child->desc.z_index;
+        cmd->in_use = true;
+        set_clip(cmd, clip);
+        return;
+    }
+
+    if (child->widget_type != CA_WIDGET_LABEL || !child->widget) return;
+    Ca_Label *lbl = (Ca_Label *)child->widget;
+    uint32_t packed_color = lbl->color;
+
+    float r, g, b, a;
+    if (packed_color == 0) r = g = b = a = 1.0f;
+    else unpack_color(packed_color, &r, &g, &b, &a);
+
+    float ui_s = win->ui_scale > 0.0f ? win->ui_scale : 1.0f;
+    float cs   = font->content_scale / ui_s;
+    float desired_size = child->desc.font_size > 0.0f ? child->desc.font_size : font->default_size;
+    Ca_FontTier *tier  = ca_font_select_tier_for_size(font, desired_size * ui_s, child->desc.font_bold);
+    if (!tier) return;
+    float line_cs_eff = ca_font_glyph_cs_eff(tier, desired_size, cs);
+
+    float xpos = origin_x + run->x;
+    float glyph_raster_xpos = snap_text_position(xpos * line_cs_eff, line_cs_eff, font->display_scale);
+    float baseline_y = origin_y + run->baseline_y;
+
+    const char *p = run->text_start;
+    const char *end = p + run->text_len;
+    while (p < end) {
+        uint32_t cp = ca_utf8_decode(&p);
+        Ca_FontTier *glyph_tier = tier;
+        Ca_Glyph *pc = ca_font_glyph_from_tier(tier, cp, &glyph_tier);
+        if (!pc) continue;
+        if (!ca_window_reserve_draw_commands(win, (size_t)win->draw_cmd_count + 1u)) return;
+
+        Ca_GlyphQuad q;
+        float glyph_cs_eff = ca_font_glyph_cs_eff(glyph_tier, desired_size, cs);
+        float glyph_xpos = glyph_raster_xpos;
+        float glyph_ypos = floorf(baseline_y * glyph_cs_eff + 0.5f);
+        ca_font_get_quad(pc, font->atlas_w, font->atlas_h,
+                         &glyph_xpos, &glyph_ypos, &q);
+        float gw = (q.x1 - q.x0) / glyph_cs_eff;
+        float gh = (q.y1 - q.y0) / glyph_cs_eff;
+        float adv = pc->xadvance / glyph_cs_eff;
+        if (gw < 0.5f || gh < 0.5f) {
+            glyph_raster_xpos += pc->xadvance;
+            continue;
+        }
+
+        Ca_DrawCmd *cmd = &win->draw_cmds[win->draw_cmd_count++];
+        memset(cmd, 0, sizeof(*cmd));
+        cmd->type = CA_DRAW_GLYPH;
+        cmd->font_page_index = (int16_t)glyph_tier->page_index;
+        cmd->x = q.x0 / glyph_cs_eff; cmd->y = q.y0 / glyph_cs_eff;
+        cmd->w = gw; cmd->h = gh;
+        cmd->r = r; cmd->g = g; cmd->b = b; cmd->a = a;
+        cmd->u0 = q.s0; cmd->v0 = q.t0;
+        cmd->u1 = q.s1; cmd->v1 = q.t1;
+        cmd->z_index = child->desc.z_index;
+        cmd->in_use = true;
+        set_clip(cmd, clip);
+        (void)adv; /* run->x already accounts for cumulative word advance;
+                      only per-glyph xadvance within the word is needed */
+        glyph_raster_xpos += pc->xadvance;
+    }
+}
+
+/* Paints every resolved run of an inline_flow container's inline layout
+   (see ca_inline_layout in inline_layout.c) — the paint-side counterpart
+   to that layout pass. Runs are positioned relative to the container's
+   content-box origin (post-padding, pre-scroll), matching how
+   ca_inline_layout recorded them. */
+static void paint_inline_children(Ca_Window *win, Ca_Font *font, Ca_Node *node, ClipRect clip)
+{
+    if (!node->inline_layout) return;
+    float origin_x = node->x + node->desc.padding_left - node->scroll_x;
+    float origin_y = node->y + node->desc.padding_top  - node->scroll_y;
+    for (uint32_t i = 0; i < node->inline_layout->run_count; ++i)
+        paint_inline_run(win, font, &node->inline_layout->runs[i], origin_x, origin_y, clip);
+}
+
 /* Emit glyph draw commands for a text string centred in the given node rect. */
 static void paint_text(Ca_Window *win, Ca_Font *font,
                        Ca_Node *node,
@@ -1959,9 +2082,16 @@ static void paint_tree_cached(Ca_Instance *inst, Ca_Window *win,
     }
 
     /* ---- Recurse children (propagate effective_z and transform down) ---- */
-    for (uint32_t i = 0; i < node->child_count; ++i)
-        paint_tree_cached(inst, win, node->children[i], child_clip,
-                          effective_z, effective_xf);
+    /* A child of an inline_flow parent was already fully painted above via
+       paint_inline_children (its text/box content emitted per-run at the
+       positions ca_inline_layout resolved) — recursing into it here would
+       double-paint it at its own independent (and, for inline_flow
+       children, never-computed) x/y/w/h. */
+    if (!node->desc.inline_flow) {
+        for (uint32_t i = 0; i < node->child_count; ++i)
+            paint_tree_cached(inst, win, node->children[i], child_clip,
+                              effective_z, effective_xf);
+    }
 
     /* ---- Post-children: border + scrollbars ---- */
     if (was_dirty) {

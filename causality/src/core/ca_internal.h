@@ -241,6 +241,11 @@ typedef struct {
 
 typedef struct Ca_Node Ca_Node;
 
+/* Full definition in inline_layout.h; forward-declared here so Ca_Node
+   can hold a pointer without every ca_internal.h includer needing
+   inline_layout.h's full Ca_InlineRun/Ca_InlineLayout definitions. */
+typedef struct Ca_InlineLayout Ca_InlineLayout;
+
 /* ======================================================
    UI — dirty flags, layout enums, node descriptor.
    (These are internal; users work with widgets instead.)
@@ -379,6 +384,9 @@ typedef struct {
     int16_t      z_index;
     /* Text wrapping */
     uint8_t      text_wrap;      /* 0=nowrap (default), 1=wrap */
+    /* Inline formatting — see Ca_DivDesc.inline_flow in causality.h for
+       the full contract. */
+    bool         inline_flow;
     /* Percentage sizing (resolved during layout) */
     bool         width_pct;
     bool         height_pct;
@@ -727,6 +735,13 @@ struct Ca_Node {
        scroll position the same way it depends on any other signal,
        instead of polling ca_get_scroll_y every frame. */
     Ca_Signal    *scroll_y_signal;
+    /* Resolved inline formatting-context layout — only allocated for a
+       node with desc.inline_flow set (see inline_layout.h). NULL for
+       every other node; a node that stops being inline_flow keeps its
+       (now-unused) allocation for reuse rather than freeing/reallocating
+       every time inline_flow toggles, matching layout_scratch's
+       reuse-don't-reallocate convention elsewhere in the layout code. */
+    Ca_InlineLayout *inline_layout;
     /* Transition animations */
     Ca_DynArray   transition_storage;
     Ca_Transition *transitions;

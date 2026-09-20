@@ -3,10 +3,12 @@
 
 /* node.c — node pool, tree building, and subscription wiring */
 #include "node.h"
+#include "inline_layout.h"
 #include "menu_storage.h"
 #include "viewport.h"
 
 #include <math.h>
+#include <stdlib.h>
 #include <string.h>
 #include <assert.h>
 
@@ -346,6 +348,11 @@ static void free_subtree(Ca_Node *node)
     if (node->scroll_y_signal) {
         ca_signal_destroy(node->scroll_y_signal);
         node->scroll_y_signal = NULL;
+    }
+    if (node->inline_layout) {
+        ca_inline_layout_destroy(node->inline_layout);
+        free(node->inline_layout);
+        node->inline_layout = NULL;
     }
     ca_dyn_array_destroy(&node->transition_storage);
     ca_css_destroy(node->scoped_stylesheet);

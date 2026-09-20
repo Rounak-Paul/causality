@@ -800,6 +800,19 @@ typedef struct Ca_DivDesc {
     float    rotation;             /* degrees clockwise (0 = none)          */
     float    scale_bias_x, scale_bias_y;  /* actual scale minus 1           */
     float    pivot_off_x, pivot_off_y;    /* normalized pivot minus 0.5     */
+    /* Inline formatting: when true, this div's direct children are laid
+       out as an inline flow instead of flexbox — text-bearing leaf
+       children (ca_text labels) and other inline-flagged div children
+       are packed word-by-word onto shared lines that wrap at the
+       container's width, the way mixed <b>/<a>/plain-text content wraps
+       inside a paragraph in HTML. Non-text, non-inline children (e.g. a
+       fixed-size image) are treated as a single unbreakable inline box
+       on the line. direction/gap/align_items/justify_content are
+       ignored for a div with inline_flow set — line-breaking and
+       per-line baseline alignment replace them. Default false (0 in a
+       zero-initialized {0} desc) preserves every existing caller's
+       flexbox behaviour unchanged. */
+    bool     inline_flow;
 } Ca_DivDesc;
 
 /* <p> / text — leaf text element. */

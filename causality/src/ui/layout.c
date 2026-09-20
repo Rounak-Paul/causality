@@ -5,6 +5,7 @@
 #include "layout.h"
 #include "css.h"
 #include "font.h"
+#include "inline_layout.h"
 #include "scrollbar.h"
 #include "widget.h"
 
@@ -216,6 +217,25 @@ static float content_size(Ca_Node *node, bool want_height)
     if (node->child_count == 0) {
         if (!want_height) return measure_node_text_width(node);
         return 20.0f * node_ui_scale(node);
+    }
+
+    /* Inline formatting context: asking for height requires actually
+       running the line-breaking pass (there is no way to predict wrapped
+       line count without it, same reasoning as the flex-wrap row case
+       just below). Asking for width falls through to the normal
+       container width logic beneath — inline_flow containers are
+       expected to be block-level with a width already resolved by their
+       own parent (a paragraph-like container sized by its surrounding
+       layout, not by its own wrapped content), so no special width
+       simulation is attempted here. */
+    if (node->desc.inline_flow && want_height) {
+        float avail_w = node->desc.width;
+        if (avail_w <= 0.0f) avail_w = 9999.0f;
+        float inner_w = avail_w - node->desc.padding_left - node->desc.padding_right;
+        if (inner_w < 0.0f) inner_w = 0.0f;
+        ca_inline_layout(node, inner_w);
+        float content_h = node->inline_layout ? node->inline_layout->content_h : 0.0f;
+        return node->desc.padding_top + content_h + node->desc.padding_bottom;
     }
 
     /* Container: compute from children */
@@ -499,6 +519,42 @@ static void layout_node(Ca_Node *node, float x, float y, float avail_w, float av
         - node->desc.padding_top - node->desc.padding_bottom;
     if (inner_w < 0.0f) inner_w = 0.0f;
     if (inner_h < 0.0f) inner_h = 0.0f;
+
+    /* Inline formatting context: children are packed word-by-word onto
+       wrapped lines instead of flexbox — see inline_layout.c. Children
+       consumed into the resolved run list are NOT recursed into via the
+       normal layout_node() call below (their content is positioned and
+       later painted as part of the parent's inline layout, not as
+       independently laid-out boxes), so this branches straight to
+       out-of-flow (absolute/fixed children, which are unaffected by
+       inline_flow, still resolve normally there). */
+    if (node->desc.inline_flow) {
+        ca_inline_layout(node, inner_w);
+        node->content_w = inner_w + node->desc.padding_left + node->desc.padding_right;
+        node->content_h = (node->inline_layout ? node->inline_layout->content_h : 0.0f)
+            + node->desc.padding_top + node->desc.padding_bottom;
+        if (auto_h && node->desc.overflow_y == 0 && node->content_h > 0.0f)
+            node->h = node->content_h;
+
+        /* In-flow (relative-position) children were consumed into the
+           inline run list above and are never independently positioned
+           — but their dirty flags still need clearing and their geometry
+           still needs a defined (zeroed) value, exactly like the hidden-
+           node branch at the top of this function, otherwise they'd
+           perpetually re-trigger layout/paint dirty scans and read back
+           stale or garbage x/y/w/h to anything that queries them
+           directly (hit-testing, scrollbar math). Absolute/fixed
+           children are unaffected by inline_flow and still resolve
+           normally via the out_of_flow block below. */
+        for (uint32_t i = 0; i < node->child_count; ++i) {
+            Ca_Node *child = node->children[i];
+            if (child->desc.position == CA_POSITION_RELATIVE) {
+                child->x = child->y = 0; child->w = child->h = 0;
+                child->dirty &= ~(CA_DIRTY_LAYOUT | CA_DIRTY_CHILDREN);
+            }
+        }
+        goto out_of_flow;
+    }
 
     bool  is_row      = (node->desc.direction == CA_DIR_ROW);
     bool  do_wrap     = (node->desc.flex_wrap == 1);

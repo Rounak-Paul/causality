@@ -800,6 +800,7 @@ static Ca_NodeDesc div_to_nd(const Ca_DivDesc *d)
     nd.scale_bias_y   = d->scale_bias_y;
     nd.pivot_off_x    = d->pivot_off_x;
     nd.pivot_off_y    = d->pivot_off_y;
+    nd.inline_flow    = d->inline_flow;
     return nd;
 }
 
