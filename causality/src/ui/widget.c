@@ -4475,14 +4475,21 @@ void ca_widget_input_pass(Ca_Window *win)
 
     /* --- Click handling: focus + button activation --- */
     if (win->mouse_click_this_frame) {
-        /* Overlay priority: open menu dropdown captures all clicks */
+        /* Overlay priority: an open menu dropdown captures clicks that land
+           on it (an item, a separator, or another menu header to switch
+           to), same as the context-menu block below. A click anywhere else
+           just closes the dropdown WITHOUT consuming the event, so it can
+           still reach the tree node/button underneath — previously this
+           set click_consumed unconditionally the instant any menu was
+           open, so e.g. clicking the git panel's Commit button while a
+           menu happened to be open silently only closed the menu and the
+           button's own click never fired. */
         bool click_consumed = false;
         if (ca_pool_slot_count(&win->menubar_pool) > 0) {
             for (uint32_t i = 0; i < ca_pool_slot_count(&win->menubar_pool) && !click_consumed; ++i) {
                 Ca_MenuBar *mb = CA_POOL_AT(win->menubar_pool, Ca_MenuBar, i);
                 if (!mb->in_use || !mb->node || mb->active_menu < 0) continue;
 
-                click_consumed = true;
                 Ca_MenuBarMenu *am = &mb->menus[mb->active_menu];
                 Ca_Node *hdr = am->header_node;
                 if (hdr) {
@@ -4583,13 +4590,20 @@ void ca_widget_input_pass(Ca_Window *win)
                             }
                         }
                         if (!switched) {
-                            /* Click anywhere else closes dropdown */
+                            /* Click landed outside the menu entirely: close
+                               it but leave click_consumed false (set below
+                               only for item_hit/switched) so the click
+                               still reaches whatever is underneath. */
                             am->active_sub  = -1;
                             mb->active_menu = -1;
                             mb->hover_item = -1;
                             mb->hover_sub_item = -1;
                             mb->node->dirty |= CA_DIRTY_CONTENT;
+                        } else {
+                            click_consumed = true;
                         }
+                    } else {
+                        click_consumed = true;
                     }
                 }
             }
