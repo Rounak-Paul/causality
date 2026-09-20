@@ -166,10 +166,50 @@ static bool test_glow(void)
     return true;
 }
 
+/** Verify app CSS can resolve and paint directional scrollbar chrome. */
+static bool test_scrollbar_chrome(void)
+{
+    Ca_Node node = {0};
+    Ca_ResolvedStyle style = {0};
+    Ca_Stylesheet *css = ca_css_parse(
+        ".scroll { scrollbar-track-border-width: 1px;"
+        " scrollbar-track-border-top-color: #112233;"
+        " scrollbar-track-border-right-color: #223344;"
+        " scrollbar-track-border-bottom-color: #334455;"
+        " scrollbar-track-border-left-color: #445566;"
+        " scrollbar-thumb-border-width: 2px;"
+        " scrollbar-thumb-border-top-color: #556677;"
+        " scrollbar-thumb-border-right-color: #667788;"
+        " scrollbar-thumb-border-bottom-color: #778899;"
+        " scrollbar-thumb-border-left-color: #8899aa; }");
+    CHECK(css);
+    ca_style_resolve_layers(NULL, css, &node, CA_ELEM_DIV, "scroll", &style);
+    ca_style_apply_to_node(&style, &node.desc, NULL);
+    CHECK(node.desc.scrollbar_track_border_width == 1.0f);
+    CHECK(node.desc.scrollbar_thumb_border_width == 2.0f);
+    CHECK(node.desc.scrollbar_track_border_top_color == 0x112233FFu);
+    CHECK(node.desc.scrollbar_thumb_border_bottom_color == 0x778899FFu);
+
+    Ca_Window window = {0};
+    CHECK(ca_dyn_array_init(&window.draw_cmd_storage, sizeof(Ca_DrawCmd)));
+    paint_scrollbar_border(&window, 5.0f, 7.0f, 12.0f, 20.0f,
+                           node.desc.scrollbar_track_border_width,
+                           &node.desc, false, (ClipRect){0});
+    CHECK(window.draw_cmd_count == 4);
+    CHECK(window.draw_cmds[0].w == 12.0f && window.draw_cmds[0].h == 1.0f);
+    CHECK(window.draw_cmds[1].x == 16.0f && window.draw_cmds[1].h == 18.0f);
+    CHECK(window.draw_cmds[2].y == 26.0f && window.draw_cmds[2].w == 12.0f);
+    CHECK(window.draw_cmds[3].x == 5.0f && window.draw_cmds[3].h == 18.0f);
+    ca_dyn_array_destroy(&window.draw_cmd_storage);
+    ca_css_destroy(css);
+    return true;
+}
+
 /** Run both splitter orientations at standard and fractional UI scales. */
 int main(void)
 {
     if (!test_glow()) return 1;
+    if (!test_scrollbar_chrome()) return 1;
     const float scales[] = {1.0f, 1.12f, 2.0f};
     for (unsigned i = 0; i < sizeof(scales) / sizeof(scales[0]); ++i) {
         if (!test_splitter(CA_HORIZONTAL, scales[i])) return 1;

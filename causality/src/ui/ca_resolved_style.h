@@ -104,6 +104,16 @@ typedef struct {
     uint32_t scrollbar_thumb_color;
     uint32_t scrollbar_thumb_active_color;
     float    scrollbar_radius;
+    float    scrollbar_track_border_width;
+    uint32_t scrollbar_track_border_top_color;
+    uint32_t scrollbar_track_border_right_color;
+    uint32_t scrollbar_track_border_bottom_color;
+    uint32_t scrollbar_track_border_left_color;
+    float    scrollbar_thumb_border_width;
+    uint32_t scrollbar_thumb_border_top_color;
+    uint32_t scrollbar_thumb_border_right_color;
+    uint32_t scrollbar_thumb_border_bottom_color;
+    uint32_t scrollbar_thumb_border_left_color;
     /* Backdrop filter */
     float    backdrop_blur;
 } Ca_ResolvedStyle;

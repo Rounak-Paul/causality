@@ -755,6 +755,34 @@ static void style_resolve_sheet(Ca_Stylesheet *ss,
                     break;
                 case CA_CSS_PROP_SCROLLBAR_RADIUS:
                     out->scrollbar_radius = css_val_to_px(val); break;
+                case CA_CSS_PROP_SCROLLBAR_TRACK_BORDER_WIDTH:
+                    out->scrollbar_track_border_width = css_val_to_px(val); break;
+                case CA_CSS_PROP_SCROLLBAR_TRACK_BORDER_TOP_COLOR:
+                    if (val->type == CA_CSS_VAL_COLOR) out->scrollbar_track_border_top_color = val->color;
+                    break;
+                case CA_CSS_PROP_SCROLLBAR_TRACK_BORDER_RIGHT_COLOR:
+                    if (val->type == CA_CSS_VAL_COLOR) out->scrollbar_track_border_right_color = val->color;
+                    break;
+                case CA_CSS_PROP_SCROLLBAR_TRACK_BORDER_BOTTOM_COLOR:
+                    if (val->type == CA_CSS_VAL_COLOR) out->scrollbar_track_border_bottom_color = val->color;
+                    break;
+                case CA_CSS_PROP_SCROLLBAR_TRACK_BORDER_LEFT_COLOR:
+                    if (val->type == CA_CSS_VAL_COLOR) out->scrollbar_track_border_left_color = val->color;
+                    break;
+                case CA_CSS_PROP_SCROLLBAR_THUMB_BORDER_WIDTH:
+                    out->scrollbar_thumb_border_width = css_val_to_px(val); break;
+                case CA_CSS_PROP_SCROLLBAR_THUMB_BORDER_TOP_COLOR:
+                    if (val->type == CA_CSS_VAL_COLOR) out->scrollbar_thumb_border_top_color = val->color;
+                    break;
+                case CA_CSS_PROP_SCROLLBAR_THUMB_BORDER_RIGHT_COLOR:
+                    if (val->type == CA_CSS_VAL_COLOR) out->scrollbar_thumb_border_right_color = val->color;
+                    break;
+                case CA_CSS_PROP_SCROLLBAR_THUMB_BORDER_BOTTOM_COLOR:
+                    if (val->type == CA_CSS_VAL_COLOR) out->scrollbar_thumb_border_bottom_color = val->color;
+                    break;
+                case CA_CSS_PROP_SCROLLBAR_THUMB_BORDER_LEFT_COLOR:
+                    if (val->type == CA_CSS_VAL_COLOR) out->scrollbar_thumb_border_left_color = val->color;
+                    break;
                 case CA_CSS_PROP_TRANSITION: {
                     int tprop = val->keyword;
                     float dur = val->number;
@@ -1192,6 +1220,46 @@ void ca_style_apply_to_node(const Ca_ResolvedStyle *style,
     if (STYLE_SET(CA_CSS_PROP_SCROLLBAR_RADIUS)) {
         nd->scrollbar_radius = style->scrollbar_radius;
         nd->scrollbar_radius_set = true;
+    }
+    if (STYLE_SET(CA_CSS_PROP_SCROLLBAR_TRACK_BORDER_WIDTH)) {
+        nd->scrollbar_track_border_width = style->scrollbar_track_border_width;
+        nd->scrollbar_track_border_width_set = true;
+    }
+    if (STYLE_SET(CA_CSS_PROP_SCROLLBAR_TRACK_BORDER_TOP_COLOR)) {
+        nd->scrollbar_track_border_top_color = style->scrollbar_track_border_top_color;
+        nd->scrollbar_track_border_top_color_set = true;
+    }
+    if (STYLE_SET(CA_CSS_PROP_SCROLLBAR_TRACK_BORDER_RIGHT_COLOR)) {
+        nd->scrollbar_track_border_right_color = style->scrollbar_track_border_right_color;
+        nd->scrollbar_track_border_right_color_set = true;
+    }
+    if (STYLE_SET(CA_CSS_PROP_SCROLLBAR_TRACK_BORDER_BOTTOM_COLOR)) {
+        nd->scrollbar_track_border_bottom_color = style->scrollbar_track_border_bottom_color;
+        nd->scrollbar_track_border_bottom_color_set = true;
+    }
+    if (STYLE_SET(CA_CSS_PROP_SCROLLBAR_TRACK_BORDER_LEFT_COLOR)) {
+        nd->scrollbar_track_border_left_color = style->scrollbar_track_border_left_color;
+        nd->scrollbar_track_border_left_color_set = true;
+    }
+    if (STYLE_SET(CA_CSS_PROP_SCROLLBAR_THUMB_BORDER_WIDTH)) {
+        nd->scrollbar_thumb_border_width = style->scrollbar_thumb_border_width;
+        nd->scrollbar_thumb_border_width_set = true;
+    }
+    if (STYLE_SET(CA_CSS_PROP_SCROLLBAR_THUMB_BORDER_TOP_COLOR)) {
+        nd->scrollbar_thumb_border_top_color = style->scrollbar_thumb_border_top_color;
+        nd->scrollbar_thumb_border_top_color_set = true;
+    }
+    if (STYLE_SET(CA_CSS_PROP_SCROLLBAR_THUMB_BORDER_RIGHT_COLOR)) {
+        nd->scrollbar_thumb_border_right_color = style->scrollbar_thumb_border_right_color;
+        nd->scrollbar_thumb_border_right_color_set = true;
+    }
+    if (STYLE_SET(CA_CSS_PROP_SCROLLBAR_THUMB_BORDER_BOTTOM_COLOR)) {
+        nd->scrollbar_thumb_border_bottom_color = style->scrollbar_thumb_border_bottom_color;
+        nd->scrollbar_thumb_border_bottom_color_set = true;
+    }
+    if (STYLE_SET(CA_CSS_PROP_SCROLLBAR_THUMB_BORDER_LEFT_COLOR)) {
+        nd->scrollbar_thumb_border_left_color = style->scrollbar_thumb_border_left_color;
+        nd->scrollbar_thumb_border_left_color_set = true;
     }
 
     /* Flex grow/shrink/basis */

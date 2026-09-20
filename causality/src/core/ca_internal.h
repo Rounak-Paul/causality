@@ -318,11 +318,31 @@ typedef struct {
     uint32_t     scrollbar_thumb_color;
     uint32_t     scrollbar_thumb_active_color;
     float        scrollbar_radius;
+    float        scrollbar_track_border_width;
+    uint32_t     scrollbar_track_border_top_color;
+    uint32_t     scrollbar_track_border_right_color;
+    uint32_t     scrollbar_track_border_bottom_color;
+    uint32_t     scrollbar_track_border_left_color;
+    float        scrollbar_thumb_border_width;
+    uint32_t     scrollbar_thumb_border_top_color;
+    uint32_t     scrollbar_thumb_border_right_color;
+    uint32_t     scrollbar_thumb_border_bottom_color;
+    uint32_t     scrollbar_thumb_border_left_color;
     bool         scrollbar_width_set;
     bool         scrollbar_track_color_set;
     bool         scrollbar_thumb_color_set;
     bool         scrollbar_thumb_active_color_set;
     bool         scrollbar_radius_set;
+    bool         scrollbar_track_border_width_set;
+    bool         scrollbar_track_border_top_color_set;
+    bool         scrollbar_track_border_right_color_set;
+    bool         scrollbar_track_border_bottom_color_set;
+    bool         scrollbar_track_border_left_color_set;
+    bool         scrollbar_thumb_border_width_set;
+    bool         scrollbar_thumb_border_top_color_set;
+    bool         scrollbar_thumb_border_right_color_set;
+    bool         scrollbar_thumb_border_bottom_color_set;
+    bool         scrollbar_thumb_border_left_color_set;
     bool         hidden;          /* display: none */
     bool         visibility_hidden; /* visibility: hidden */
     bool         disabled;        /* non-interactive, visually dimmed */

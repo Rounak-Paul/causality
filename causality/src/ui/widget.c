@@ -532,6 +532,8 @@ static void scale_resolved_style(Ca_ResolvedStyle *style, float scale)
     style->flex_basis *= scale;
     style->scrollbar_width *= scale;
     style->scrollbar_radius *= scale;
+    style->scrollbar_track_border_width *= scale;
+    style->scrollbar_thumb_border_width *= scale;
 }
 
 /* Store a resolved foreground color in widgets that own text paint state. */

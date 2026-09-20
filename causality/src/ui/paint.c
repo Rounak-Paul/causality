@@ -1013,6 +1013,51 @@ static void paint_border(Ca_Window *win, Ca_Node *node, ClipRect clip)
     }
 }
 
+/* Paint optional CSS scrollbar edge chrome inside an existing scrollbar rect. */
+static void paint_scrollbar_border(Ca_Window *win, float x, float y, float w, float h,
+                                   float width, const Ca_NodeDesc *desc, bool thumb,
+                                   ClipRect clip)
+{
+    if (!win || !desc || width <= 0.0f || w <= 0.0f || h <= 0.0f) return;
+
+    bool top_set = thumb ? desc->scrollbar_thumb_border_top_color_set
+                         : desc->scrollbar_track_border_top_color_set;
+    bool right_set = thumb ? desc->scrollbar_thumb_border_right_color_set
+                           : desc->scrollbar_track_border_right_color_set;
+    bool bottom_set = thumb ? desc->scrollbar_thumb_border_bottom_color_set
+                            : desc->scrollbar_track_border_bottom_color_set;
+    bool left_set = thumb ? desc->scrollbar_thumb_border_left_color_set
+                          : desc->scrollbar_track_border_left_color_set;
+    if (!top_set && !right_set && !bottom_set && !left_set) return;
+
+    float edge = fminf(width, fminf(w, h) * 0.5f);
+    uint32_t colors[4] = {
+        thumb ? desc->scrollbar_thumb_border_top_color : desc->scrollbar_track_border_top_color,
+        thumb ? desc->scrollbar_thumb_border_right_color : desc->scrollbar_track_border_right_color,
+        thumb ? desc->scrollbar_thumb_border_bottom_color : desc->scrollbar_track_border_bottom_color,
+        thumb ? desc->scrollbar_thumb_border_left_color : desc->scrollbar_track_border_left_color,
+    };
+    bool enabled[4] = { top_set, right_set, bottom_set, left_set };
+    float edge_x[4] = { x, x + w - edge, x, x };
+    float edge_y[4] = { y, y + edge, y + h - edge, y + edge };
+    float edge_w[4] = { w, edge, w, edge };
+    float edge_h[4] = { edge, h - edge * 2.0f, edge, h - edge * 2.0f };
+
+    for (int i = 0; i < 4; ++i) {
+        if (!enabled[i] || edge_w[i] <= 0.0f || edge_h[i] <= 0.0f ||
+            !ca_window_reserve_draw_commands(win, (size_t)win->draw_cmd_count + 1u))
+            continue;
+        Ca_DrawCmd *cmd = &win->draw_cmds[win->draw_cmd_count++];
+        memset(cmd, 0, sizeof(*cmd));
+        cmd->type = CA_DRAW_RECT;
+        cmd->x = edge_x[i]; cmd->y = edge_y[i];
+        cmd->w = edge_w[i]; cmd->h = edge_h[i];
+        unpack_color(colors[i], &cmd->r, &cmd->g, &cmd->b, &cmd->a);
+        cmd->in_use = true;
+        set_clip(cmd, clip);
+    }
+}
+
 /* Paint scrollbar overlays for a node (post-children, so they draw on top). */
 static void paint_scrollbars(Ca_Window *win, Ca_Node *node, ClipRect clip)
 {
@@ -1054,6 +1099,10 @@ static void paint_scrollbars(Ca_Window *win, Ca_Node *node, ClipRect clip)
             cmd->in_use = true;
             set_clip(cmd, clip);
         }
+        paint_scrollbar_border(win, bar_x, node->y, bar_w, track_h,
+                               node->desc.scrollbar_track_border_width_set
+                                   ? node->desc.scrollbar_track_border_width : 0.0f,
+                               &node->desc, false, clip);
         /* Thumb */
         if (ca_window_reserve_draw_commands(win, (size_t)win->draw_cmd_count + 1u)) {
             Ca_DrawCmd *cmd = &win->draw_cmds[win->draw_cmd_count++];
@@ -1074,6 +1123,10 @@ static void paint_scrollbars(Ca_Window *win, Ca_Node *node, ClipRect clip)
             cmd->in_use = true;
             set_clip(cmd, clip);
         }
+        paint_scrollbar_border(win, bar_x, thumb_y, bar_w, thumb_h,
+                               node->desc.scrollbar_thumb_border_width_set
+                                   ? node->desc.scrollbar_thumb_border_width : 0.0f,
+                               &node->desc, true, clip);
     }
     /* ---- X scrollbar ---- */
     if (node->scrollbar_x_visible) {
@@ -1117,6 +1170,10 @@ static void paint_scrollbars(Ca_Window *win, Ca_Node *node, ClipRect clip)
             cmd->in_use        = true;
             set_clip(cmd, clip);
         }
+        paint_scrollbar_border(win, node->x + margin, bar_y, track_w, bar_h,
+                               node->desc.scrollbar_track_border_width_set
+                                   ? node->desc.scrollbar_track_border_width : 0.0f,
+                               &node->desc, false, clip);
         /* Thumb */
         if (ca_window_reserve_draw_commands(win, (size_t)win->draw_cmd_count + 1u)) {
             Ca_DrawCmd *cmd = &win->draw_cmds[win->draw_cmd_count++];
@@ -1131,6 +1188,10 @@ static void paint_scrollbars(Ca_Window *win, Ca_Node *node, ClipRect clip)
             cmd->in_use        = true;
             set_clip(cmd, clip);
         }
+        paint_scrollbar_border(win, thumb_x, bar_y, thumb_w, bar_h,
+                               node->desc.scrollbar_thumb_border_width_set
+                                   ? node->desc.scrollbar_thumb_border_width : 0.0f,
+                               &node->desc, true, clip);
     }
 
     /* Mark every scrollbar command as overlay so they render in phase 1,

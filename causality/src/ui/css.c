@@ -846,6 +846,16 @@ static Ca_CssPropId lookup_property(const char *name)
         { "scrollbar-thumb-color",      CA_CSS_PROP_SCROLLBAR_THUMB_COLOR },
         { "scrollbar-thumb-active-color", CA_CSS_PROP_SCROLLBAR_THUMB_ACTIVE_COLOR },
         { "scrollbar-radius",           CA_CSS_PROP_SCROLLBAR_RADIUS },
+        { "scrollbar-track-border-width", CA_CSS_PROP_SCROLLBAR_TRACK_BORDER_WIDTH },
+        { "scrollbar-track-border-top-color", CA_CSS_PROP_SCROLLBAR_TRACK_BORDER_TOP_COLOR },
+        { "scrollbar-track-border-right-color", CA_CSS_PROP_SCROLLBAR_TRACK_BORDER_RIGHT_COLOR },
+        { "scrollbar-track-border-bottom-color", CA_CSS_PROP_SCROLLBAR_TRACK_BORDER_BOTTOM_COLOR },
+        { "scrollbar-track-border-left-color", CA_CSS_PROP_SCROLLBAR_TRACK_BORDER_LEFT_COLOR },
+        { "scrollbar-thumb-border-width", CA_CSS_PROP_SCROLLBAR_THUMB_BORDER_WIDTH },
+        { "scrollbar-thumb-border-top-color", CA_CSS_PROP_SCROLLBAR_THUMB_BORDER_TOP_COLOR },
+        { "scrollbar-thumb-border-right-color", CA_CSS_PROP_SCROLLBAR_THUMB_BORDER_RIGHT_COLOR },
+        { "scrollbar-thumb-border-bottom-color", CA_CSS_PROP_SCROLLBAR_THUMB_BORDER_BOTTOM_COLOR },
+        { "scrollbar-thumb-border-left-color", CA_CSS_PROP_SCROLLBAR_THUMB_BORDER_LEFT_COLOR },
         { "backdrop-filter",            CA_CSS_PROP_BACKDROP_FILTER },
     };
     int count = (int)(sizeof(props) / sizeof(props[0]));
