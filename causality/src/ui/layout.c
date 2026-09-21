@@ -761,7 +761,27 @@ static void layout_node(Ca_Node *node, float x, float y, float avail_w, float av
                 }
             }
 
-            if (cc <= 0.0f) cc = line_avail_cross;
+            if (cc <= 0.0f) {
+                /* CSS default cross-axis sizing depends on align-items:
+                   "stretch" (the flex default) fills the line; any other
+                   alignment (start/center/end) implies shrink-to-fit, so
+                   the child's own natural size is used instead — matching
+                   real browsers, where align-items:center on a column only
+                   visibly centers content narrower than the container.
+                   Without this, a centered child that has no explicit
+                   width silently fills 100% of the cross axis and
+                   "center" has no visible effect (there is no free space
+                   left to center within). */
+                Ca_Align align = (child->desc.align_self != 0)
+                    ? child->desc.align_self
+                    : node->desc.align_items;
+                if (align == CA_ALIGN_CENTER || align == CA_ALIGN_END) {
+                    float nat_cross = content_size(child, is_row);
+                    cc = nat_cross > 0.0f ? nat_cross : line_avail_cross;
+                } else {
+                    cc = line_avail_cross;
+                }
+            }
 
             cm_arr[i] = cm;
             cc_arr[i] = cc;
