@@ -10,6 +10,9 @@
 #include "style.h"
 #include "scrollbar.h"
 #include "../../include/ca_icons.h"
+#ifndef GLFW_INCLUDE_NONE
+#define GLFW_INCLUDE_NONE
+#endif
 #include <GLFW/glfw3.h>
 #include <math.h>
 #include <stdio.h>
