@@ -41,6 +41,12 @@ typedef enum {
     TOK_DBLDASH,    /* '--' — start of a custom-property name */
     TOK_WS,         /* significant whitespace (descendant combinator) */
     TOK_FUNCTION,   /* ident( — e.g. rgb( */
+    TOK_AT,         /* '@' — introduces an at-rule (@media, @font-face,
+                        @import, @keyframes, etc.). None of these are
+                        implemented; see skip_at_rule in the top-level
+                        parse loop — they are recognized only so they
+                        can be skipped without aborting the rest of the
+                        stylesheet. */
 } TokType;
 
 typedef struct {
@@ -246,6 +252,7 @@ static Token next_token(Lexer *lex)
         case '+': tok.type = TOK_PLUS;      break;
         case '~': tok.type = TOK_TILDE;     break;
         case '!': tok.type = TOK_BANG;      break;
+        case '@': tok.type = TOK_AT;        break;
         default:  tok.type = TOK_EOF;       break; /* unexpected char, skip */
     }
     return tok;
@@ -2398,6 +2405,58 @@ static bool parse_selector_list(Parser *p, Ca_CssRule *rule)
 }
 
 /* ============================================================
+   AT-RULES (@media, @font-face, @import, @keyframes, etc.)
+   ============================================================
+   None are implemented — no responsive breakpoints, no custom fonts,
+   no animations. Real-world stylesheets almost universally contain at
+   least one at-rule, so the only correctness-preserving behavior for
+   an unimplemented one is to skip exactly its own syntactic extent and
+   keep parsing the rest of the stylesheet, never to treat it as a fatal
+   parse error — see ca_css_parse's dispatch on TOK_AT below and the
+   comment on TOK_AT's definition for why this matters (previously,
+   hitting the first '@' anywhere in a stylesheet silently truncated
+   parsing of everything after it). */
+
+/* Skips one at-rule, already positioned just after the '@'. Handles
+   both statement-style ("@import url(x.css);" — ends at the next
+   top-level ';') and block-style ("@media (...) { .a { color: red; } }"
+   — ends at the matching '}', tracking nested brace depth so a
+   selector block's own '{'/'}' inside the at-rule doesn't end the skip
+   early). Uses the token stream (not raw characters) so strings/
+   comments the tokenizer already understands are respected — a '{' or
+   ';' inside a quoted string never miscounts. */
+static void skip_at_rule(Parser *p)
+{
+    /* Consume tokens up to (and including) whichever comes first: the
+       ';' that ends a statement-style at-rule with no block at all, or
+       the '{' that opens this at-rule's own block. */
+    int depth = 0;
+    for (;;) {
+        Token t = parser_peek(p);
+        if (t.type == TOK_EOF) return;
+        if (t.type == TOK_SEMICOLON && depth == 0) {
+            parser_next(p);
+            return;
+        }
+        if (t.type == TOK_LBRACE) {
+            parser_next(p);
+            depth = 1;
+            break;
+        }
+        parser_next(p);
+    }
+
+    /* Now skip the block body, tracking nested braces (a @media block
+       contains full selector rules, each with their own '{'/'}'). */
+    while (depth > 0) {
+        Token t = parser_next(p);
+        if (t.type == TOK_EOF) return;
+        if (t.type == TOK_LBRACE) depth++;
+        else if (t.type == TOK_RBRACE) depth--;
+    }
+}
+
+/* ============================================================
    PARSE STYLESHEET
    ============================================================ */
 
@@ -2424,6 +2483,12 @@ Ca_Stylesheet *ca_css_parse(const char *css_text)
         skip_ws(&p);
         Token t = parser_peek(&p);
         if (t.type == TOK_EOF) break;
+
+        if (t.type == TOK_AT) {
+            parser_next(&p); /* consume '@' */
+            skip_at_rule(&p);
+            continue;
+        }
 
         Ca_CssRule parsed_rule = {0};
         parsed_rule.selector_storage =
