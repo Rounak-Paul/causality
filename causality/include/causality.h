@@ -813,6 +813,18 @@ typedef struct Ca_DivDesc {
        zero-initialized {0} desc) preserves every existing caller's
        flexbox behaviour unchanged. */
     bool     inline_flow;
+    /* Raw CSS declaration text, i.e. an HTML style="..." attribute's
+       value verbatim (e.g. "padding:6px;color:red") — no selector, no
+       braces. Applied AFTER `style`'s class-based cascade, so it wins
+       per real CSS precedence (inline beats any selector). NULL (the
+       zero-initialized default) applies nothing extra, identical to
+       every existing caller's behaviour. Parsed fresh on every
+       ca_div_begin call (not cached the way class-based rules are —
+       see ca_css_apply_inline's own doc comment for why), so prefer a
+       stable string (e.g. one already owned by the caller's parsed
+       document) over rebuilding it every frame if avoidable, though
+       correctness does not depend on that. */
+    const char *inline_style;
 } Ca_DivDesc;
 
 /* <p> / text — leaf text element. */
@@ -824,6 +836,9 @@ typedef struct Ca_TextDesc {
     const char *id;                /* CSS id  (without #)                   */
     const char *style;             /* space-separated CSS class names       */
     bool        hidden;            /* display: none — removed from layout   */
+    /* Raw CSS declaration text — see Ca_DivDesc.inline_style for the
+       full contract (identical here). */
+    const char *inline_style;
 } Ca_TextDesc;
 
 /* <button> — clickable nestable element. Use ca_btn_begin / ca_btn_end and

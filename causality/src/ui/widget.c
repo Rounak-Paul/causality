@@ -563,10 +563,20 @@ static void apply_widget_text_color(Ca_Node *node, uint32_t color)
 }
 
 /* Resolve CSS styles and apply to a node descriptor + set node metadata.
-   Inline (nonzero) descriptor values take precedence over CSS. */
+   Inline (nonzero) descriptor values take precedence over CSS.
+
+   inline_css: raw style="..." attribute text (NULL for widget types that
+   never carry one through this bridge — see the two real call sites in
+   ca_div_begin/ca_text vs. the ~18 widget call sites that pass NULL).
+   Applied via ca_css_apply_inline AFTER the class/selector cascade, so it
+   correctly wins per real CSS precedence, and is deliberately never
+   folded into ca_style_resolve_layers' per-node cache (see that
+   function's own doc comment) since it's unique per node, not shareable
+   across every node with the same classes. */
 static void apply_css(Ca_Node *node, Ca_NodeDesc *nd,
                       Ca_ElementType elem_type, const char *classes,
-                      const char *id, uint32_t *out_color)
+                      const char *id, uint32_t *out_color,
+                      const char *inline_css)
 {
     node->elem_type = (uint8_t)elem_type;
     if (classes)
@@ -588,11 +598,15 @@ static void apply_css(Ca_Node *node, Ca_NodeDesc *nd,
     node->has_base_desc = true;
 
     Ca_Instance *instance = g_ctx.window->instance;
-    if (!instance->system_stylesheet && !instance->stylesheet) return;
+    bool have_sheet = instance->system_stylesheet || instance->stylesheet;
+    if (!have_sheet && !inline_css) return;
 
-    Ca_ResolvedStyle rs;
-    ca_style_resolve_layers(instance->system_stylesheet, instance->stylesheet,
-                            node, elem_type, node->classes, &rs);
+    Ca_ResolvedStyle rs = {0};
+    if (have_sheet)
+        ca_style_resolve_layers(instance->system_stylesheet, instance->stylesheet,
+                                node, elem_type, node->classes, &rs);
+    if (inline_css)
+        ca_css_apply_inline(inline_css, &rs);
 
     scale_resolved_style(&rs, g_ctx.window->ui_scale);
 
@@ -830,7 +844,8 @@ void ca_ui_begin(Ca_Window *window, const Ca_DivDesc *root_desc)
     uint32_t dummy_color = 0;
     apply_css(root, &root->desc, CA_ELEM_DIV,
               root_desc ? root_desc->style : NULL,
-              root_desc ? root_desc->id : NULL, &dummy_color);
+              root_desc ? root_desc->id : NULL, &dummy_color,
+              root_desc ? root_desc->inline_style : NULL);
 
     /* The window's content_root is a system-managed flex slot between
        the title bar and (optional) status bar. User-supplied width/
@@ -925,7 +940,7 @@ Ca_Div *ca_div_begin(const Ca_DivDesc *desc)
     uint32_t dummy = 0;
     apply_css(node, &node->desc, CA_ELEM_DIV,
               desc ? desc->style : NULL,
-              id, &dummy);
+              id, &dummy, desc ? desc->inline_style : NULL);
 
     /* Store drag callbacks on the node */
     if (desc) {
@@ -1022,7 +1037,7 @@ Ca_Label *ca_text(const Ca_TextDesc *desc)
         uint32_t old_color = lbl->color;
         lbl->color = 0;
         apply_css(lbl->node, &lbl->node->desc, CA_ELEM_TEXT,
-                  desc->style, id, &lbl->color);
+                  desc->style, id, &lbl->color, desc->inline_style);
         /* Inline color overrides CSS — lets callers set per-instance colors. */
         if (desc->color) lbl->color = desc->color;
         if (reused && lbl->color != old_color)
@@ -1092,7 +1107,7 @@ Ca_Button *ca_btn_begin(const Ca_BtnDesc *desc)
     if (desc->hidden)   btn->node->desc.hidden   = true;
     if (desc->disabled) btn->node->desc.disabled = true;
     apply_css(btn->node, &btn->node->desc, CA_ELEM_BUTTON,
-              desc->style, id, &btn->text_color);
+              desc->style, id, &btn->text_color, NULL);
     /* Nestable buttons auto-size from children; only apply fallback
        if no CSS sets the dimension either. */
     ctx_push_mode(btn->node, ctx_top_reconcile());
@@ -1119,7 +1134,7 @@ void ca_list_begin(const Ca_DivDesc *desc)
     uint32_t dummy = 0;
     apply_css(node, &node->desc, CA_ELEM_LIST,
               desc ? desc->style : NULL,
-              id, &dummy);
+              id, &dummy, NULL);
 
     ctx_push_mode(node, ctx_top_reconcile());
 }
@@ -1144,7 +1159,7 @@ void ca_li_begin(const Ca_DivDesc *desc)
     uint32_t dummy = 0;
     apply_css(node, &node->desc, CA_ELEM_LI,
               desc ? desc->style : NULL,
-              id, &dummy);
+              id, &dummy, NULL);
 
     ctx_push_mode(node, ctx_top_reconcile());
 }
@@ -1169,7 +1184,7 @@ void ca_hr(const Ca_HrDesc *desc)
         uint32_t dummy = 0;
         apply_css(node, &node->desc, CA_ELEM_HR,
                   desc ? desc->style : NULL,
-                  id, &dummy);
+                  id, &dummy, NULL);
         /* Defaults after CSS */
         if (node->desc.height <= 0.0f) node->desc.height = s(1.0f);
         if (node->desc.background == 0)
@@ -1197,7 +1212,7 @@ void ca_spacer(const Ca_SpacerDesc *desc)
         uint32_t dummy = 0;
         apply_css(node, &node->desc, CA_ELEM_SPACER,
                   desc ? desc->style : NULL,
-                  id, &dummy);
+                  id, &dummy, NULL);
     }
 }
 
@@ -1269,7 +1284,7 @@ Ca_TextInput *ca_input(const Ca_InputDesc *desc)
     if (desc->disabled) node->desc.disabled = true;
 
     apply_css(node, &node->desc, CA_ELEM_INPUT,
-              desc->style, id, &inp->text_color);
+              desc->style, id, &inp->text_color, NULL);
 
     /* Default size if neither user nor CSS set it */
     if (node->desc.width  <= 0.0f) node->desc.width  = s(160.0f);
@@ -1292,7 +1307,7 @@ static Ca_Label *heading(const Ca_TextDesc *desc, float default_height,
     Ca_Label *lbl = add_label(g_ctx.window, ctx_top(), desc);
     if (lbl && lbl->node) {
         apply_css(lbl->node, &lbl->node->desc, elem_type,
-                  desc->style, desc->id, &lbl->color);
+                  desc->style, desc->id, &lbl->color, desc->inline_style);
         /* Default heading height if neither user nor CSS set it */
         if (lbl->node->desc.height <= 0.0f)
             lbl->node->desc.height = s(default_height);
@@ -2033,7 +2048,7 @@ Ca_Checkbox *ca_checkbox(const Ca_CheckboxDesc *desc)
     if (desc->no_hover) node->desc.no_hover = true;
 
     uint32_t dummy = 0;
-    apply_css(node, &node->desc, CA_ELEM_CHECKBOX, desc->style, id, &cb->text_color);
+    apply_css(node, &node->desc, CA_ELEM_CHECKBOX, desc->style, id, &cb->text_color, NULL);
 
     /* Auto-width from text */
     if (node->desc.width <= 0.0f) {
@@ -2100,7 +2115,7 @@ Ca_Radio *ca_radio(const Ca_RadioDesc *desc)
     if (desc->no_hover) node->desc.no_hover = true;
 
     uint32_t dummy = 0;
-    apply_css(node, &node->desc, CA_ELEM_RADIO, desc->style, id, &r->text_color);
+    apply_css(node, &node->desc, CA_ELEM_RADIO, desc->style, id, &r->text_color, NULL);
 
     if (node->desc.width <= 0.0f) {
         float tw = measure_text_px(g_ctx.window, desc->text);
@@ -2165,7 +2180,7 @@ Ca_Slider *ca_slider(const Ca_SliderDesc *desc)
     if (desc->no_hover) node->desc.no_hover = true;
 
     uint32_t dummy = 0;
-    apply_css(node, &node->desc, CA_ELEM_SLIDER, desc->style, id, &dummy);
+    apply_css(node, &node->desc, CA_ELEM_SLIDER, desc->style, id, &dummy, NULL);
     return sl;
 }
 
@@ -2225,7 +2240,7 @@ Ca_Toggle *ca_toggle(const Ca_ToggleDesc *desc)
     if (desc->no_hover) node->desc.no_hover = true;
 
     uint32_t dummy = 0;
-    apply_css(node, &node->desc, CA_ELEM_TOGGLE, desc->style, id, &dummy);
+    apply_css(node, &node->desc, CA_ELEM_TOGGLE, desc->style, id, &dummy, NULL);
     return t;
 }
 
@@ -2281,7 +2296,7 @@ Ca_Progress *ca_progress(const Ca_ProgressDesc *desc)
     if (desc->hidden) node->desc.hidden = true;
 
     uint32_t dummy = 0;
-    apply_css(node, &node->desc, CA_ELEM_PROGRESS, desc->style, id, &dummy);
+    apply_css(node, &node->desc, CA_ELEM_PROGRESS, desc->style, id, &dummy, NULL);
     return p;
 }
 
@@ -2364,7 +2379,7 @@ Ca_Select *ca_select(const Ca_SelectDesc *desc)
     if (desc->no_hover) node->desc.no_hover = true;
 
     uint32_t dummy = 0;
-    apply_css(node, &node->desc, CA_ELEM_SELECT, desc->style, id, &dummy);
+    apply_css(node, &node->desc, CA_ELEM_SELECT, desc->style, id, &dummy, NULL);
 
     /* Sensible fallbacks if neither desc nor CSS supplied a size */
     if (node->desc.width  <= 0.0f && !node->desc.width_pct)
@@ -2463,7 +2478,7 @@ Ca_TabBar *ca_tabs(const Ca_TabBarDesc *desc)
     if (desc->no_hover) node->desc.no_hover = true;
 
     uint32_t dummy = 0;
-    apply_css(node, &node->desc, CA_ELEM_TABBAR, desc->style, id, &dummy);
+    apply_css(node, &node->desc, CA_ELEM_TABBAR, desc->style, id, &dummy, NULL);
 
     float item_fs = node->desc.font_size; /* inherit font-size from CSS (e.g. panel-tab-bar) */
     float tab_pad_x = s(desc->tab_padding_x > 0.0f ? desc->tab_padding_x : 8.0f);
@@ -2529,7 +2544,7 @@ void ca_tree_begin(const Ca_DivDesc *desc)
     assert(node);
     uint32_t dummy = 0;
     apply_css(node, &node->desc, CA_ELEM_TREE,
-              desc ? desc->style : NULL, id, &dummy);
+              desc ? desc->style : NULL, id, &dummy, NULL);
     ctx_push_mode(node, ctx_top_reconcile());
 }
 
@@ -2598,7 +2613,7 @@ Ca_TreeNode *ca_tree_node_begin(const Ca_TreeNodeDesc *desc)
     }
 
     uint32_t dummy = 0;
-    apply_css(node, &node->desc, CA_ELEM_TREENODE, desc->style, id, &tn->text_color);
+    apply_css(node, &node->desc, CA_ELEM_TREENODE, desc->style, id, &tn->text_color, NULL);
 
     /* Create a header row node for the clickable label */
     Ca_NodeDesc hdr = {0};
@@ -2643,7 +2658,7 @@ Ca_TreeNode *ca_tree_node_begin(const Ca_TreeNodeDesc *desc)
         s_pre_css_node = hdr_node;
         hdr_node->desc = hdr;
         uint32_t dummy = 0;
-        apply_css(hdr_node, &hdr_node->desc, CA_ELEM_DIV, row_classes, NULL, &dummy);
+        apply_css(hdr_node, &hdr_node->desc, CA_ELEM_DIV, row_classes, NULL, &dummy, NULL);
         hdr_node->drag_fn_start = (void *)desc->on_drag_start;
         hdr_node->drag_fn_move = (void *)desc->on_drag;
         hdr_node->drag_fn_end = (void *)desc->on_drag_end;
@@ -2748,7 +2763,7 @@ void ca_table_begin(const Ca_TableDesc *desc)
         tbl->column_widths[i] = desc->column_widths ? s(desc->column_widths[i]) : s(80.0f);
 
     uint32_t dummy = 0;
-    apply_css(node, &node->desc, CA_ELEM_TABLE, desc->style, id, &dummy);
+    apply_css(node, &node->desc, CA_ELEM_TABLE, desc->style, id, &dummy, NULL);
     ctx_push_mode(node, ctx_top_reconcile());
 }
 
@@ -2765,7 +2780,7 @@ void ca_table_row_begin(const Ca_DivDesc *desc)
     assert(node);
     uint32_t dummy = 0;
     apply_css(node, &node->desc, CA_ELEM_TABLE_ROW,
-              desc ? desc->style : NULL, id, &dummy);
+              desc ? desc->style : NULL, id, &dummy, NULL);
 
     /* Apply column widths from the table ancestor */
     Ca_Node *p = node->parent;
@@ -2829,7 +2844,7 @@ void ca_table_cell(const Ca_TextDesc *desc)
     lbl->color = desc->color;
     WIDGET_SET_TEXT(node, reused, lbl->text, CA_LABEL_TEXT_MAX, desc->text);
 
-    apply_css(node, &node->desc, CA_ELEM_TABLE_CELL, desc->style, id, &lbl->color);
+    apply_css(node, &node->desc, CA_ELEM_TABLE_CELL, desc->style, id, &lbl->color, NULL);
 }
 
 /* ============================================================
@@ -3011,7 +3026,7 @@ Ca_MenuBar *ca_menu_bar(const Ca_MenuBarDesc *desc)
     mb->text_color       = desc->text_color       ? desc->text_color       : CA_THEME_TEXT_MUTED;
 
     uint32_t dummy = 0;
-    apply_css(bar, &bar->desc, CA_ELEM_DIV, desc->style, id, &dummy);
+    apply_css(bar, &bar->desc, CA_ELEM_DIV, desc->style, id, &dummy, NULL);
     /* Inline fallback: apply bar_height when no CSS class governs it */
     if (!desc->style && desc->bar_height > 0.0f) {
         bar->desc.height      = desc->bar_height;
@@ -3064,7 +3079,7 @@ Ca_MenuBar *ca_menu_bar(const Ca_MenuBarDesc *desc)
 
         uint32_t header_color = 0u;
         apply_css(hdr, &hdr->desc, CA_ELEM_DIV, desc->item_style, NULL,
-                  &header_color);
+                  &header_color, NULL);
         /* Inline fallback: apply padding/font_size when no CSS class governs it */
         if (!desc->item_style) {
             if (desc->item_padding_lr > 0.0f) {
@@ -3307,7 +3322,7 @@ Ca_Modal *ca_modal_begin(const Ca_ModalDesc *desc)
         : CA_THEME_MODAL_OVERLAY;
 
     uint32_t dummy = 0;
-    apply_css(node, &node->desc, CA_ELEM_MODAL, desc->style, id, &dummy);
+    apply_css(node, &node->desc, CA_ELEM_MODAL, desc->style, id, &dummy, NULL);
     ctx_push_mode(node, ctx_top_reconcile());
     return m;
 }
@@ -3375,7 +3390,7 @@ Ca_Splitter *ca_split_begin(const Ca_SplitDesc *desc)
 
     uint32_t dummy = 0;
     apply_css(node, &node->desc, CA_ELEM_SPLITTER,
-              desc->style, id, &dummy);
+              desc->style, id, &dummy, NULL);
 
     ctx_push_mode(node, ctx_top_reconcile());
     return sp;
@@ -3440,7 +3455,7 @@ void ca_image(const Ca_ImageDesc *desc)
     node->widget      = (void *)img;
 
     uint32_t dummy = 0;
-    apply_css(node, &node->desc, CA_ELEM_IMAGE, desc->style, id, &dummy);
+    apply_css(node, &node->desc, CA_ELEM_IMAGE, desc->style, id, &dummy, NULL);
 }
 
 /* ============================================================

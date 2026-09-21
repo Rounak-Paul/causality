@@ -581,6 +581,335 @@ static Ca_CssValue resolve_value(const Ca_Stylesheet *ss, const Ca_CssValue *in)
     return z;
 }
 
+/* Applies one already-resolved (var()-expanded) CSS declaration to a
+   Ca_ResolvedStyle, setting its set_mask bit. Shared by style_resolve_sheet
+   (the normal class/selector cascade) and ca_style_apply_inline (a
+   style="..." attribute's declarations, applied as an always-uncached
+   final pass — see that function's own comment for why inline styles are
+   never folded into the per-node style cache the way class-based rules
+   are). Extracted verbatim from style_resolve_sheet's own inline switch;
+   behavior for the existing cascade path is unchanged. */
+void ca_style_apply_one_declaration(Ca_ResolvedStyle *out, Ca_CssPropId prop,
+                                    const Ca_CssValue *val)
+{
+    if ((int)prop < 64)
+        out->set_mask  |= (1ULL << (int)prop);
+    else
+        out->set_mask2 |= (1ULL << ((int)prop - 64));
+
+    switch (prop) {
+        case CA_CSS_PROP_WIDTH:
+            out->width = css_val_to_px(val);
+            out->width_pct = (val->type == CA_CSS_VAL_PERCENT);
+            break;
+        case CA_CSS_PROP_HEIGHT:
+            out->height = css_val_to_px(val);
+            out->height_pct = (val->type == CA_CSS_VAL_PERCENT);
+            break;
+        case CA_CSS_PROP_MIN_WIDTH:        out->min_width       = css_val_to_px(val); break;
+        case CA_CSS_PROP_MAX_WIDTH:        out->max_width       = css_val_to_px(val); break;
+        case CA_CSS_PROP_MIN_HEIGHT:       out->min_height      = css_val_to_px(val); break;
+        case CA_CSS_PROP_MAX_HEIGHT:       out->max_height      = css_val_to_px(val); break;
+        case CA_CSS_PROP_POSITION:
+            if (val->type == CA_CSS_VAL_KEYWORD) out->position = val->keyword;
+            break;
+        case CA_CSS_PROP_LEFT:
+            out->left = css_val_to_px(val); out->left_pct = val->type == CA_CSS_VAL_PERCENT; break;
+        case CA_CSS_PROP_RIGHT:
+            out->right = css_val_to_px(val); out->right_pct = val->type == CA_CSS_VAL_PERCENT; break;
+        case CA_CSS_PROP_TOP:
+            out->top = css_val_to_px(val); out->top_pct = val->type == CA_CSS_VAL_PERCENT; break;
+        case CA_CSS_PROP_BOTTOM:
+            out->bottom = css_val_to_px(val); out->bottom_pct = val->type == CA_CSS_VAL_PERCENT; break;
+        case CA_CSS_PROP_PADDING_TOP:      out->padding[0]      = css_val_to_px(val); break;
+        case CA_CSS_PROP_PADDING_RIGHT:    out->padding[1]      = css_val_to_px(val); break;
+        case CA_CSS_PROP_PADDING_BOTTOM:   out->padding[2]      = css_val_to_px(val); break;
+        case CA_CSS_PROP_PADDING_LEFT:     out->padding[3]      = css_val_to_px(val); break;
+        case CA_CSS_PROP_MARGIN_TOP:       out->margin[0]       = css_val_to_px(val); break;
+        case CA_CSS_PROP_MARGIN_RIGHT:     out->margin[1]       = css_val_to_px(val); break;
+        case CA_CSS_PROP_MARGIN_BOTTOM:    out->margin[2]       = css_val_to_px(val); break;
+        case CA_CSS_PROP_MARGIN_LEFT:      out->margin[3]       = css_val_to_px(val); break;
+        case CA_CSS_PROP_GAP:              out->gap             = css_val_to_px(val); break;
+        case CA_CSS_PROP_BORDER_RADIUS:    out->border_radius   = css_val_to_px(val); break;
+        case CA_CSS_PROP_OPACITY:          out->opacity         = val->number;        break;
+        case CA_CSS_PROP_FONT_SIZE:        out->font_size       = css_val_to_px(val); break;
+        case CA_CSS_PROP_FONT_WEIGHT:
+            if (val->type == CA_CSS_VAL_NUMBER) {
+                out->font_weight = (int)val->number;
+                out->font_bold   = (val->number >= 700.0f);
+            } else if (val->type == CA_CSS_VAL_KEYWORD) {
+                out->font_bold   = (val->keyword != 0);
+                out->font_weight = out->font_bold ? 700 : 400;
+            }
+            break;
+        case CA_CSS_PROP_TEXT_ALIGN:
+            if (val->type == CA_CSS_VAL_KEYWORD)
+                out->text_align = val->keyword;
+            break;
+        case CA_CSS_PROP_FLEX_GROW:        out->flex_grow       = val->number;        break;
+        case CA_CSS_PROP_FLEX_SHRINK:      out->flex_shrink     = val->number;        break;
+        case CA_CSS_PROP_BACKGROUND_COLOR:
+            if (val->type == CA_CSS_VAL_COLOR)
+                out->background_color = val->color;
+            break;
+        case CA_CSS_PROP_COLOR:
+            if (val->type == CA_CSS_VAL_COLOR)
+                out->color = val->color;
+            break;
+        case CA_CSS_PROP_DISPLAY:
+            if (val->type == CA_CSS_VAL_KEYWORD)
+                out->display = val->keyword;
+            break;
+        case CA_CSS_PROP_FLEX_DIRECTION:
+            if (val->type == CA_CSS_VAL_KEYWORD)
+                out->flex_direction = val->keyword;
+            break;
+        case CA_CSS_PROP_FLEX_WRAP:
+            if (val->type == CA_CSS_VAL_KEYWORD)
+                out->flex_wrap = val->keyword;
+            break;
+        case CA_CSS_PROP_ALIGN_ITEMS:
+            if (val->type == CA_CSS_VAL_KEYWORD)
+                out->align_items = val->keyword;
+            break;
+        case CA_CSS_PROP_JUSTIFY_CONTENT:
+            if (val->type == CA_CSS_VAL_KEYWORD)
+                out->justify_content = val->keyword;
+            break;
+        case CA_CSS_PROP_OVERFLOW_X:
+            if (val->type == CA_CSS_VAL_KEYWORD)
+                out->overflow_x = val->keyword;
+            break;
+        case CA_CSS_PROP_OVERFLOW_Y:
+            if (val->type == CA_CSS_VAL_KEYWORD)
+                out->overflow_y = val->keyword;
+            break;
+        case CA_CSS_PROP_OVERFLOW:
+            if (val->type == CA_CSS_VAL_KEYWORD) {
+                out->overflow_x = val->keyword;
+                out->overflow_y = val->keyword;
+                out->set_mask |= (1ULL << (int)CA_CSS_PROP_OVERFLOW_X) |
+                                 (1ULL << (int)CA_CSS_PROP_OVERFLOW_Y);
+            }
+            break;
+        case CA_CSS_PROP_SCROLLBAR_WIDTH:
+            out->scrollbar_width = css_val_to_px(val); break;
+        case CA_CSS_PROP_SCROLLBAR_TRACK_COLOR:
+            if (val->type == CA_CSS_VAL_COLOR) out->scrollbar_track_color = val->color;
+            break;
+        case CA_CSS_PROP_SCROLLBAR_THUMB_COLOR:
+            if (val->type == CA_CSS_VAL_COLOR) out->scrollbar_thumb_color = val->color;
+            break;
+        case CA_CSS_PROP_SCROLLBAR_THUMB_ACTIVE_COLOR:
+            if (val->type == CA_CSS_VAL_COLOR) out->scrollbar_thumb_active_color = val->color;
+            break;
+        case CA_CSS_PROP_SCROLLBAR_RADIUS:
+            out->scrollbar_radius = css_val_to_px(val); break;
+        case CA_CSS_PROP_SCROLLBAR_TRACK_BORDER_WIDTH:
+            out->scrollbar_track_border_width = css_val_to_px(val); break;
+        case CA_CSS_PROP_SCROLLBAR_TRACK_BORDER_TOP_COLOR:
+            if (val->type == CA_CSS_VAL_COLOR) out->scrollbar_track_border_top_color = val->color;
+            break;
+        case CA_CSS_PROP_SCROLLBAR_TRACK_BORDER_RIGHT_COLOR:
+            if (val->type == CA_CSS_VAL_COLOR) out->scrollbar_track_border_right_color = val->color;
+            break;
+        case CA_CSS_PROP_SCROLLBAR_TRACK_BORDER_BOTTOM_COLOR:
+            if (val->type == CA_CSS_VAL_COLOR) out->scrollbar_track_border_bottom_color = val->color;
+            break;
+        case CA_CSS_PROP_SCROLLBAR_TRACK_BORDER_LEFT_COLOR:
+            if (val->type == CA_CSS_VAL_COLOR) out->scrollbar_track_border_left_color = val->color;
+            break;
+        case CA_CSS_PROP_SCROLLBAR_THUMB_BORDER_WIDTH:
+            out->scrollbar_thumb_border_width = css_val_to_px(val); break;
+        case CA_CSS_PROP_SCROLLBAR_THUMB_BORDER_TOP_COLOR:
+            if (val->type == CA_CSS_VAL_COLOR) out->scrollbar_thumb_border_top_color = val->color;
+            break;
+        case CA_CSS_PROP_SCROLLBAR_THUMB_BORDER_RIGHT_COLOR:
+            if (val->type == CA_CSS_VAL_COLOR) out->scrollbar_thumb_border_right_color = val->color;
+            break;
+        case CA_CSS_PROP_SCROLLBAR_THUMB_BORDER_BOTTOM_COLOR:
+            if (val->type == CA_CSS_VAL_COLOR) out->scrollbar_thumb_border_bottom_color = val->color;
+            break;
+        case CA_CSS_PROP_SCROLLBAR_THUMB_BORDER_LEFT_COLOR:
+            if (val->type == CA_CSS_VAL_COLOR) out->scrollbar_thumb_border_left_color = val->color;
+            break;
+        case CA_CSS_PROP_TRANSITION: {
+            int tprop = val->keyword;
+            float dur = val->number;
+            out->transition_duration = dur;
+            if (tprop == (int)CA_CSS_PROP_COUNT)
+                out->transition_props = ~0ULL; /* all */
+            else if (tprop > 0)
+                out->transition_props |= (1ULL << tprop);
+            break;
+        }
+        case CA_CSS_PROP_TRANSITION_EASING:
+            out->transition_easing = val->keyword;
+            break;
+        case CA_CSS_PROP_BORDER_WIDTH:
+            out->border_width = css_val_to_px(val); break;
+        case CA_CSS_PROP_BORDER_COLOR:
+            if (val->type == CA_CSS_VAL_COLOR)
+                out->border_color = val->color;
+            break;
+        case CA_CSS_PROP_BORDER_TOP_WIDTH:
+            out->border_top_w = css_val_to_px(val); break;
+        case CA_CSS_PROP_BORDER_TOP_COLOR:
+            if (val->type == CA_CSS_VAL_COLOR) out->border_top_c = val->color;
+            break;
+        case CA_CSS_PROP_BORDER_RIGHT_WIDTH:
+            out->border_right_w = css_val_to_px(val); break;
+        case CA_CSS_PROP_BORDER_RIGHT_COLOR:
+            if (val->type == CA_CSS_VAL_COLOR) out->border_right_c = val->color;
+            break;
+        case CA_CSS_PROP_BORDER_BOTTOM_WIDTH:
+            out->border_bottom_w = css_val_to_px(val); break;
+        case CA_CSS_PROP_BORDER_BOTTOM_COLOR:
+            if (val->type == CA_CSS_VAL_COLOR) out->border_bottom_c = val->color;
+            break;
+        case CA_CSS_PROP_BORDER_LEFT_WIDTH:
+            out->border_left_w = css_val_to_px(val); break;
+        case CA_CSS_PROP_BORDER_LEFT_COLOR:
+            if (val->type == CA_CSS_VAL_COLOR) out->border_left_c = val->color;
+            break;
+        case CA_CSS_PROP_BOX_SHADOW:
+            /* Two decls are emitted per box-shadow shorthand:
+               Decl A (keyword=0): type=COLOR — color=shadow_color,
+                                   keyword packs offset_x (upper 16 bits) and
+                                   offset_y (lower 16 bits) as signed int16.
+               Decl B (keyword=1): type=NUMBER — number=blur radius. */
+            if (val->keyword == 1) {
+                out->shadow_blur = val->number;
+            } else {
+                out->shadow_color    = val->color;
+                int16_t ox = (int16_t)((uint32_t)val->keyword >> 16);
+                int16_t oy = (int16_t)((uint32_t)val->keyword & 0xFFFF);
+                out->shadow_offset_x = (float)ox;
+                out->shadow_offset_y = (float)oy;
+            }
+            break;
+        case CA_CSS_PROP_Z_INDEX:
+            out->z_index = (int)val->number; break;
+        case CA_CSS_PROP_TEXT_WRAP:
+            if (val->type == CA_CSS_VAL_KEYWORD)
+                out->text_wrap = (val->keyword == CA_CSS_WRAP_WRAP) ? 1 : 0;
+            break;
+
+        /* New CSS3 properties */
+        case CA_CSS_PROP_ROW_GAP:    out->row_gap    = css_val_to_px(val); break;
+        case CA_CSS_PROP_COLUMN_GAP: out->column_gap = css_val_to_px(val); break;
+        case CA_CSS_PROP_ALIGN_SELF:
+            if (val->type == CA_CSS_VAL_KEYWORD) out->align_self = val->keyword;
+            break;
+        case CA_CSS_PROP_ALIGN_CONTENT:
+            if (val->type == CA_CSS_VAL_KEYWORD) out->align_content = val->keyword;
+            break;
+        case CA_CSS_PROP_JUSTIFY_SELF:
+            if (val->type == CA_CSS_VAL_KEYWORD) out->justify_self = val->keyword;
+            break;
+        case CA_CSS_PROP_FLEX_BASIS:  out->flex_basis = css_val_to_px(val); break;
+        case CA_CSS_PROP_ORDER:       out->flex_order = (int)val->number;   break;
+        case CA_CSS_PROP_BORDER_TOP_LEFT_RADIUS:
+            out->border_radius_tl = css_val_to_px(val); break;
+        case CA_CSS_PROP_BORDER_TOP_RIGHT_RADIUS:
+            out->border_radius_tr = css_val_to_px(val); break;
+        case CA_CSS_PROP_BORDER_BOTTOM_RIGHT_RADIUS:
+            out->border_radius_br = css_val_to_px(val); break;
+        case CA_CSS_PROP_BORDER_BOTTOM_LEFT_RADIUS:
+            out->border_radius_bl = css_val_to_px(val); break;
+        case CA_CSS_PROP_VISIBILITY:
+            if (val->type == CA_CSS_VAL_KEYWORD) out->visibility = val->keyword;
+            break;
+        case CA_CSS_PROP_FONT_STYLE:
+            if (val->type == CA_CSS_VAL_KEYWORD) out->font_style = val->keyword;
+            break;
+        case CA_CSS_PROP_LINE_HEIGHT:  out->line_height   = css_val_to_px(val); break;
+        case CA_CSS_PROP_LETTER_SPACING: out->letter_spacing = css_val_to_px(val); break;
+        case CA_CSS_PROP_WORD_SPACING:   out->word_spacing  = css_val_to_px(val); break;
+        case CA_CSS_PROP_TEXT_DECORATION:
+            if (val->type == CA_CSS_VAL_KEYWORD) out->text_decoration = val->keyword;
+            break;
+        case CA_CSS_PROP_TEXT_TRANSFORM:
+            if (val->type == CA_CSS_VAL_KEYWORD) out->text_transform = val->keyword;
+            break;
+        case CA_CSS_PROP_WHITE_SPACE:
+            if (val->type == CA_CSS_VAL_KEYWORD) out->white_space = val->keyword;
+            break;
+        case CA_CSS_PROP_BORDER_STYLE:
+            if (val->type == CA_CSS_VAL_KEYWORD) out->border_style = val->keyword;
+            break;
+        case CA_CSS_PROP_BORDER_TOP_STYLE:
+            if (val->type == CA_CSS_VAL_KEYWORD) out->border_top_style = val->keyword;
+            break;
+        case CA_CSS_PROP_BORDER_RIGHT_STYLE:
+            if (val->type == CA_CSS_VAL_KEYWORD) out->border_right_style = val->keyword;
+            break;
+        case CA_CSS_PROP_BORDER_BOTTOM_STYLE:
+            if (val->type == CA_CSS_VAL_KEYWORD) out->border_bottom_style = val->keyword;
+            break;
+        case CA_CSS_PROP_BORDER_LEFT_STYLE:
+            if (val->type == CA_CSS_VAL_KEYWORD) out->border_left_style = val->keyword;
+            break;
+        case CA_CSS_PROP_OUTLINE_WIDTH:  out->outline_width  = css_val_to_px(val); break;
+        case CA_CSS_PROP_OUTLINE_COLOR:
+            if (val->type == CA_CSS_VAL_COLOR) out->outline_color = val->color;
+            break;
+        case CA_CSS_PROP_OUTLINE_STYLE:
+            if (val->type == CA_CSS_VAL_KEYWORD) out->outline_style = val->keyword;
+            break;
+        case CA_CSS_PROP_OUTLINE_OFFSET:   out->outline_offset   = css_val_to_px(val); break;
+        case CA_CSS_PROP_SHADOW_OFFSET_X:  out->shadow_offset_x  = css_val_to_px(val); break;
+        case CA_CSS_PROP_SHADOW_OFFSET_Y:  out->shadow_offset_y  = css_val_to_px(val); break;
+        case CA_CSS_PROP_GLOW_RADIUS: out->glow_radius = css_val_to_px(val); break;
+        case CA_CSS_PROP_GLOW_COLOR:
+            if (val->type == CA_CSS_VAL_COLOR) out->glow_color = val->color;
+            break;
+        case CA_CSS_PROP_SHADOW_BLUR:      out->shadow_blur      = css_val_to_px(val); break;
+        case CA_CSS_PROP_SHADOW_COLOR:
+            if (val->type == CA_CSS_VAL_COLOR) out->shadow_color = val->color;
+            break;
+        case CA_CSS_PROP_ASPECT_RATIO:   out->aspect_ratio   = val->number;        break;
+        case CA_CSS_PROP_BOX_SIZING:
+            if (val->type == CA_CSS_VAL_KEYWORD) out->box_sizing = val->keyword;
+            break;
+        case CA_CSS_PROP_CURSOR:
+            if (val->type == CA_CSS_VAL_KEYWORD) out->cursor = val->keyword;
+            break;
+        case CA_CSS_PROP_POINTER_EVENTS:
+            if (val->type == CA_CSS_VAL_KEYWORD) out->pointer_events = val->keyword;
+            break;
+        case CA_CSS_PROP_USER_SELECT:
+            if (val->type == CA_CSS_VAL_KEYWORD) out->user_select = val->keyword;
+            break;
+        case CA_CSS_PROP_SCROLL_BEHAVIOR:
+            if (val->type == CA_CSS_VAL_KEYWORD) out->scroll_behavior = val->keyword;
+            break;
+        case CA_CSS_PROP_BACKGROUND:
+            /* Gradient start color; draw_mode encoded in keyword field (2=linear, 3=radial) */
+            if (val->type == CA_CSS_VAL_COLOR) {
+                out->background_color = val->color;
+                out->gradient_type = (uint8_t)val->keyword;
+            }
+            break;
+        case CA_CSS_PROP_GRADIENT_COLOR2:
+            if (val->type == CA_CSS_VAL_COLOR) out->gradient_color2 = val->color;
+            break;
+        case CA_CSS_PROP_GRADIENT_ANGLE:
+            if (val->type == CA_CSS_VAL_NUMBER) out->gradient_angle = val->number;
+            break;
+        case CA_CSS_PROP_GRADIENT_CX:
+            if (val->type == CA_CSS_VAL_NUMBER) out->gradient_cx = val->number;
+            break;
+        case CA_CSS_PROP_GRADIENT_CY:
+            if (val->type == CA_CSS_VAL_NUMBER) out->gradient_cy = val->number;
+            break;
+        case CA_CSS_PROP_BACKDROP_FILTER:
+            if (val->type == CA_CSS_VAL_NUMBER) out->backdrop_blur = val->number;
+            break;
+        default: break;
+    }
+}
+
 /* Resolve one cascade origin, optionally preserving an earlier origin. */
 static void style_resolve_sheet(Ca_Stylesheet *ss,
                                 Ca_Node *node,
@@ -642,322 +971,7 @@ static void style_resolve_sheet(Ca_Stylesheet *ss,
 
             if (val->type == CA_CSS_VAL_NONE) continue;
 
-            if ((int)prop < 64)
-                out->set_mask  |= (1ULL << (int)prop);
-            else
-                out->set_mask2 |= (1ULL << ((int)prop - 64));
-
-            switch (prop) {
-                case CA_CSS_PROP_WIDTH:
-                    out->width = css_val_to_px(val);
-                    out->width_pct = (val->type == CA_CSS_VAL_PERCENT);
-                    break;
-                case CA_CSS_PROP_HEIGHT:
-                    out->height = css_val_to_px(val);
-                    out->height_pct = (val->type == CA_CSS_VAL_PERCENT);
-                    break;
-                case CA_CSS_PROP_MIN_WIDTH:        out->min_width       = css_val_to_px(val); break;
-                case CA_CSS_PROP_MAX_WIDTH:        out->max_width       = css_val_to_px(val); break;
-                case CA_CSS_PROP_MIN_HEIGHT:       out->min_height      = css_val_to_px(val); break;
-                case CA_CSS_PROP_MAX_HEIGHT:       out->max_height      = css_val_to_px(val); break;
-                case CA_CSS_PROP_POSITION:
-                    if (val->type == CA_CSS_VAL_KEYWORD) out->position = val->keyword;
-                    break;
-                case CA_CSS_PROP_LEFT:
-                    out->left = css_val_to_px(val); out->left_pct = val->type == CA_CSS_VAL_PERCENT; break;
-                case CA_CSS_PROP_RIGHT:
-                    out->right = css_val_to_px(val); out->right_pct = val->type == CA_CSS_VAL_PERCENT; break;
-                case CA_CSS_PROP_TOP:
-                    out->top = css_val_to_px(val); out->top_pct = val->type == CA_CSS_VAL_PERCENT; break;
-                case CA_CSS_PROP_BOTTOM:
-                    out->bottom = css_val_to_px(val); out->bottom_pct = val->type == CA_CSS_VAL_PERCENT; break;
-                case CA_CSS_PROP_PADDING_TOP:      out->padding[0]      = css_val_to_px(val); break;
-                case CA_CSS_PROP_PADDING_RIGHT:    out->padding[1]      = css_val_to_px(val); break;
-                case CA_CSS_PROP_PADDING_BOTTOM:   out->padding[2]      = css_val_to_px(val); break;
-                case CA_CSS_PROP_PADDING_LEFT:     out->padding[3]      = css_val_to_px(val); break;
-                case CA_CSS_PROP_MARGIN_TOP:       out->margin[0]       = css_val_to_px(val); break;
-                case CA_CSS_PROP_MARGIN_RIGHT:     out->margin[1]       = css_val_to_px(val); break;
-                case CA_CSS_PROP_MARGIN_BOTTOM:    out->margin[2]       = css_val_to_px(val); break;
-                case CA_CSS_PROP_MARGIN_LEFT:      out->margin[3]       = css_val_to_px(val); break;
-                case CA_CSS_PROP_GAP:              out->gap             = css_val_to_px(val); break;
-                case CA_CSS_PROP_BORDER_RADIUS:    out->border_radius   = css_val_to_px(val); break;
-                case CA_CSS_PROP_OPACITY:          out->opacity         = val->number;        break;
-                case CA_CSS_PROP_FONT_SIZE:        out->font_size       = css_val_to_px(val); break;
-                case CA_CSS_PROP_FONT_WEIGHT:
-                    if (val->type == CA_CSS_VAL_NUMBER) {
-                        out->font_weight = (int)val->number;
-                        out->font_bold   = (val->number >= 700.0f);
-                    } else if (val->type == CA_CSS_VAL_KEYWORD) {
-                        out->font_bold   = (val->keyword != 0);
-                        out->font_weight = out->font_bold ? 700 : 400;
-                    }
-                    break;
-                case CA_CSS_PROP_TEXT_ALIGN:
-                    if (val->type == CA_CSS_VAL_KEYWORD)
-                        out->text_align = val->keyword;
-                    break;
-                case CA_CSS_PROP_FLEX_GROW:        out->flex_grow       = val->number;        break;
-                case CA_CSS_PROP_FLEX_SHRINK:      out->flex_shrink     = val->number;        break;
-                case CA_CSS_PROP_BACKGROUND_COLOR:
-                    if (val->type == CA_CSS_VAL_COLOR)
-                        out->background_color = val->color;
-                    break;
-                case CA_CSS_PROP_COLOR:
-                    if (val->type == CA_CSS_VAL_COLOR)
-                        out->color = val->color;
-                    break;
-                case CA_CSS_PROP_DISPLAY:
-                    if (val->type == CA_CSS_VAL_KEYWORD)
-                        out->display = val->keyword;
-                    break;
-                case CA_CSS_PROP_FLEX_DIRECTION:
-                    if (val->type == CA_CSS_VAL_KEYWORD)
-                        out->flex_direction = val->keyword;
-                    break;
-                case CA_CSS_PROP_FLEX_WRAP:
-                    if (val->type == CA_CSS_VAL_KEYWORD)
-                        out->flex_wrap = val->keyword;
-                    break;
-                case CA_CSS_PROP_ALIGN_ITEMS:
-                    if (val->type == CA_CSS_VAL_KEYWORD)
-                        out->align_items = val->keyword;
-                    break;
-                case CA_CSS_PROP_JUSTIFY_CONTENT:
-                    if (val->type == CA_CSS_VAL_KEYWORD)
-                        out->justify_content = val->keyword;
-                    break;
-                case CA_CSS_PROP_OVERFLOW_X:
-                    if (val->type == CA_CSS_VAL_KEYWORD)
-                        out->overflow_x = val->keyword;
-                    break;
-                case CA_CSS_PROP_OVERFLOW_Y:
-                    if (val->type == CA_CSS_VAL_KEYWORD)
-                        out->overflow_y = val->keyword;
-                    break;
-                case CA_CSS_PROP_OVERFLOW:
-                    if (val->type == CA_CSS_VAL_KEYWORD) {
-                        out->overflow_x = val->keyword;
-                        out->overflow_y = val->keyword;
-                        out->set_mask |= (1ULL << (int)CA_CSS_PROP_OVERFLOW_X) |
-                                         (1ULL << (int)CA_CSS_PROP_OVERFLOW_Y);
-                    }
-                    break;
-                case CA_CSS_PROP_SCROLLBAR_WIDTH:
-                    out->scrollbar_width = css_val_to_px(val); break;
-                case CA_CSS_PROP_SCROLLBAR_TRACK_COLOR:
-                    if (val->type == CA_CSS_VAL_COLOR) out->scrollbar_track_color = val->color;
-                    break;
-                case CA_CSS_PROP_SCROLLBAR_THUMB_COLOR:
-                    if (val->type == CA_CSS_VAL_COLOR) out->scrollbar_thumb_color = val->color;
-                    break;
-                case CA_CSS_PROP_SCROLLBAR_THUMB_ACTIVE_COLOR:
-                    if (val->type == CA_CSS_VAL_COLOR) out->scrollbar_thumb_active_color = val->color;
-                    break;
-                case CA_CSS_PROP_SCROLLBAR_RADIUS:
-                    out->scrollbar_radius = css_val_to_px(val); break;
-                case CA_CSS_PROP_SCROLLBAR_TRACK_BORDER_WIDTH:
-                    out->scrollbar_track_border_width = css_val_to_px(val); break;
-                case CA_CSS_PROP_SCROLLBAR_TRACK_BORDER_TOP_COLOR:
-                    if (val->type == CA_CSS_VAL_COLOR) out->scrollbar_track_border_top_color = val->color;
-                    break;
-                case CA_CSS_PROP_SCROLLBAR_TRACK_BORDER_RIGHT_COLOR:
-                    if (val->type == CA_CSS_VAL_COLOR) out->scrollbar_track_border_right_color = val->color;
-                    break;
-                case CA_CSS_PROP_SCROLLBAR_TRACK_BORDER_BOTTOM_COLOR:
-                    if (val->type == CA_CSS_VAL_COLOR) out->scrollbar_track_border_bottom_color = val->color;
-                    break;
-                case CA_CSS_PROP_SCROLLBAR_TRACK_BORDER_LEFT_COLOR:
-                    if (val->type == CA_CSS_VAL_COLOR) out->scrollbar_track_border_left_color = val->color;
-                    break;
-                case CA_CSS_PROP_SCROLLBAR_THUMB_BORDER_WIDTH:
-                    out->scrollbar_thumb_border_width = css_val_to_px(val); break;
-                case CA_CSS_PROP_SCROLLBAR_THUMB_BORDER_TOP_COLOR:
-                    if (val->type == CA_CSS_VAL_COLOR) out->scrollbar_thumb_border_top_color = val->color;
-                    break;
-                case CA_CSS_PROP_SCROLLBAR_THUMB_BORDER_RIGHT_COLOR:
-                    if (val->type == CA_CSS_VAL_COLOR) out->scrollbar_thumb_border_right_color = val->color;
-                    break;
-                case CA_CSS_PROP_SCROLLBAR_THUMB_BORDER_BOTTOM_COLOR:
-                    if (val->type == CA_CSS_VAL_COLOR) out->scrollbar_thumb_border_bottom_color = val->color;
-                    break;
-                case CA_CSS_PROP_SCROLLBAR_THUMB_BORDER_LEFT_COLOR:
-                    if (val->type == CA_CSS_VAL_COLOR) out->scrollbar_thumb_border_left_color = val->color;
-                    break;
-                case CA_CSS_PROP_TRANSITION: {
-                    int tprop = val->keyword;
-                    float dur = val->number;
-                    out->transition_duration = dur;
-                    if (tprop == (int)CA_CSS_PROP_COUNT)
-                        out->transition_props = ~0ULL; /* all */
-                    else if (tprop > 0)
-                        out->transition_props |= (1ULL << tprop);
-                    break;
-                }
-                case CA_CSS_PROP_TRANSITION_EASING:
-                    out->transition_easing = val->keyword;
-                    break;
-                case CA_CSS_PROP_BORDER_WIDTH:
-                    out->border_width = css_val_to_px(val); break;
-                case CA_CSS_PROP_BORDER_COLOR:
-                    if (val->type == CA_CSS_VAL_COLOR)
-                        out->border_color = val->color;
-                    break;
-                case CA_CSS_PROP_BORDER_TOP_WIDTH:
-                    out->border_top_w = css_val_to_px(val); break;
-                case CA_CSS_PROP_BORDER_TOP_COLOR:
-                    if (val->type == CA_CSS_VAL_COLOR) out->border_top_c = val->color;
-                    break;
-                case CA_CSS_PROP_BORDER_RIGHT_WIDTH:
-                    out->border_right_w = css_val_to_px(val); break;
-                case CA_CSS_PROP_BORDER_RIGHT_COLOR:
-                    if (val->type == CA_CSS_VAL_COLOR) out->border_right_c = val->color;
-                    break;
-                case CA_CSS_PROP_BORDER_BOTTOM_WIDTH:
-                    out->border_bottom_w = css_val_to_px(val); break;
-                case CA_CSS_PROP_BORDER_BOTTOM_COLOR:
-                    if (val->type == CA_CSS_VAL_COLOR) out->border_bottom_c = val->color;
-                    break;
-                case CA_CSS_PROP_BORDER_LEFT_WIDTH:
-                    out->border_left_w = css_val_to_px(val); break;
-                case CA_CSS_PROP_BORDER_LEFT_COLOR:
-                    if (val->type == CA_CSS_VAL_COLOR) out->border_left_c = val->color;
-                    break;
-                case CA_CSS_PROP_BOX_SHADOW:
-                    /* Two decls are emitted per box-shadow shorthand:
-                       Decl A (keyword=0): type=COLOR — color=shadow_color,
-                                           keyword packs offset_x (upper 16 bits) and
-                                           offset_y (lower 16 bits) as signed int16.
-                       Decl B (keyword=1): type=NUMBER — number=blur radius. */
-                    if (val->keyword == 1) {
-                        out->shadow_blur = val->number;
-                    } else {
-                        out->shadow_color    = val->color;
-                        int16_t ox = (int16_t)((uint32_t)val->keyword >> 16);
-                        int16_t oy = (int16_t)((uint32_t)val->keyword & 0xFFFF);
-                        out->shadow_offset_x = (float)ox;
-                        out->shadow_offset_y = (float)oy;
-                    }
-                    break;
-                case CA_CSS_PROP_Z_INDEX:
-                    out->z_index = (int)val->number; break;
-                case CA_CSS_PROP_TEXT_WRAP:
-                    if (val->type == CA_CSS_VAL_KEYWORD)
-                        out->text_wrap = (val->keyword == CA_CSS_WRAP_WRAP) ? 1 : 0;
-                    break;
-
-                /* New CSS3 properties */
-                case CA_CSS_PROP_ROW_GAP:    out->row_gap    = css_val_to_px(val); break;
-                case CA_CSS_PROP_COLUMN_GAP: out->column_gap = css_val_to_px(val); break;
-                case CA_CSS_PROP_ALIGN_SELF:
-                    if (val->type == CA_CSS_VAL_KEYWORD) out->align_self = val->keyword;
-                    break;
-                case CA_CSS_PROP_ALIGN_CONTENT:
-                    if (val->type == CA_CSS_VAL_KEYWORD) out->align_content = val->keyword;
-                    break;
-                case CA_CSS_PROP_JUSTIFY_SELF:
-                    if (val->type == CA_CSS_VAL_KEYWORD) out->justify_self = val->keyword;
-                    break;
-                case CA_CSS_PROP_FLEX_BASIS:  out->flex_basis = css_val_to_px(val); break;
-                case CA_CSS_PROP_ORDER:       out->flex_order = (int)val->number;   break;
-                case CA_CSS_PROP_BORDER_TOP_LEFT_RADIUS:
-                    out->border_radius_tl = css_val_to_px(val); break;
-                case CA_CSS_PROP_BORDER_TOP_RIGHT_RADIUS:
-                    out->border_radius_tr = css_val_to_px(val); break;
-                case CA_CSS_PROP_BORDER_BOTTOM_RIGHT_RADIUS:
-                    out->border_radius_br = css_val_to_px(val); break;
-                case CA_CSS_PROP_BORDER_BOTTOM_LEFT_RADIUS:
-                    out->border_radius_bl = css_val_to_px(val); break;
-                case CA_CSS_PROP_VISIBILITY:
-                    if (val->type == CA_CSS_VAL_KEYWORD) out->visibility = val->keyword;
-                    break;
-                case CA_CSS_PROP_FONT_STYLE:
-                    if (val->type == CA_CSS_VAL_KEYWORD) out->font_style = val->keyword;
-                    break;
-                case CA_CSS_PROP_LINE_HEIGHT:  out->line_height   = css_val_to_px(val); break;
-                case CA_CSS_PROP_LETTER_SPACING: out->letter_spacing = css_val_to_px(val); break;
-                case CA_CSS_PROP_WORD_SPACING:   out->word_spacing  = css_val_to_px(val); break;
-                case CA_CSS_PROP_TEXT_DECORATION:
-                    if (val->type == CA_CSS_VAL_KEYWORD) out->text_decoration = val->keyword;
-                    break;
-                case CA_CSS_PROP_TEXT_TRANSFORM:
-                    if (val->type == CA_CSS_VAL_KEYWORD) out->text_transform = val->keyword;
-                    break;
-                case CA_CSS_PROP_WHITE_SPACE:
-                    if (val->type == CA_CSS_VAL_KEYWORD) out->white_space = val->keyword;
-                    break;
-                case CA_CSS_PROP_BORDER_STYLE:
-                    if (val->type == CA_CSS_VAL_KEYWORD) out->border_style = val->keyword;
-                    break;
-                case CA_CSS_PROP_BORDER_TOP_STYLE:
-                    if (val->type == CA_CSS_VAL_KEYWORD) out->border_top_style = val->keyword;
-                    break;
-                case CA_CSS_PROP_BORDER_RIGHT_STYLE:
-                    if (val->type == CA_CSS_VAL_KEYWORD) out->border_right_style = val->keyword;
-                    break;
-                case CA_CSS_PROP_BORDER_BOTTOM_STYLE:
-                    if (val->type == CA_CSS_VAL_KEYWORD) out->border_bottom_style = val->keyword;
-                    break;
-                case CA_CSS_PROP_BORDER_LEFT_STYLE:
-                    if (val->type == CA_CSS_VAL_KEYWORD) out->border_left_style = val->keyword;
-                    break;
-                case CA_CSS_PROP_OUTLINE_WIDTH:  out->outline_width  = css_val_to_px(val); break;
-                case CA_CSS_PROP_OUTLINE_COLOR:
-                    if (val->type == CA_CSS_VAL_COLOR) out->outline_color = val->color;
-                    break;
-                case CA_CSS_PROP_OUTLINE_STYLE:
-                    if (val->type == CA_CSS_VAL_KEYWORD) out->outline_style = val->keyword;
-                    break;
-                case CA_CSS_PROP_OUTLINE_OFFSET:   out->outline_offset   = css_val_to_px(val); break;
-                case CA_CSS_PROP_SHADOW_OFFSET_X:  out->shadow_offset_x  = css_val_to_px(val); break;
-                case CA_CSS_PROP_SHADOW_OFFSET_Y:  out->shadow_offset_y  = css_val_to_px(val); break;
-                case CA_CSS_PROP_GLOW_RADIUS: out->glow_radius = css_val_to_px(val); break;
-                case CA_CSS_PROP_GLOW_COLOR:
-                    if (val->type == CA_CSS_VAL_COLOR) out->glow_color = val->color;
-                    break;
-                case CA_CSS_PROP_SHADOW_BLUR:      out->shadow_blur      = css_val_to_px(val); break;
-                case CA_CSS_PROP_SHADOW_COLOR:
-                    if (val->type == CA_CSS_VAL_COLOR) out->shadow_color = val->color;
-                    break;
-                case CA_CSS_PROP_ASPECT_RATIO:   out->aspect_ratio   = val->number;        break;
-                case CA_CSS_PROP_BOX_SIZING:
-                    if (val->type == CA_CSS_VAL_KEYWORD) out->box_sizing = val->keyword;
-                    break;
-                case CA_CSS_PROP_CURSOR:
-                    if (val->type == CA_CSS_VAL_KEYWORD) out->cursor = val->keyword;
-                    break;
-                case CA_CSS_PROP_POINTER_EVENTS:
-                    if (val->type == CA_CSS_VAL_KEYWORD) out->pointer_events = val->keyword;
-                    break;
-                case CA_CSS_PROP_USER_SELECT:
-                    if (val->type == CA_CSS_VAL_KEYWORD) out->user_select = val->keyword;
-                    break;
-                case CA_CSS_PROP_SCROLL_BEHAVIOR:
-                    if (val->type == CA_CSS_VAL_KEYWORD) out->scroll_behavior = val->keyword;
-                    break;
-                case CA_CSS_PROP_BACKGROUND:
-                    /* Gradient start color; draw_mode encoded in keyword field (2=linear, 3=radial) */
-                    if (val->type == CA_CSS_VAL_COLOR) {
-                        out->background_color = val->color;
-                        out->gradient_type = (uint8_t)val->keyword;
-                    }
-                    break;
-                case CA_CSS_PROP_GRADIENT_COLOR2:
-                    if (val->type == CA_CSS_VAL_COLOR) out->gradient_color2 = val->color;
-                    break;
-                case CA_CSS_PROP_GRADIENT_ANGLE:
-                    if (val->type == CA_CSS_VAL_NUMBER) out->gradient_angle = val->number;
-                    break;
-                case CA_CSS_PROP_GRADIENT_CX:
-                    if (val->type == CA_CSS_VAL_NUMBER) out->gradient_cx = val->number;
-                    break;
-                case CA_CSS_PROP_GRADIENT_CY:
-                    if (val->type == CA_CSS_VAL_NUMBER) out->gradient_cy = val->number;
-                    break;
-                case CA_CSS_PROP_BACKDROP_FILTER:
-                    if (val->type == CA_CSS_VAL_NUMBER) out->backdrop_blur = val->number;
-                    break;
-                default: break;
-            }
+            ca_style_apply_one_declaration(out, prop, val);
         }
     }
     } /* end pass loop */

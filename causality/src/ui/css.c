@@ -2457,6 +2457,72 @@ static void skip_at_rule(Parser *p)
 }
 
 /* ============================================================
+   INLINE DECLARATIONS (style="..." attributes)
+   ============================================================ */
+
+/**
+ * Parses a bare declaration list (no selector, no surrounding braces —
+ * exactly the text of an HTML style="..." attribute) into a Ca_CssRule
+ * holding only decls (selector_count stays 0). Reuses parse_declarations
+ * unmodified by synthesizing a trailing '}' the parser expects: the
+ * Parser is positioned at the start of decl_text as if '{' had already
+ * been consumed, and parse_declarations naturally stops at EOF the same
+ * way it stops at a real '}' (both are checked in its loop condition),
+ * so no literal brace needs to be added to the text at all.
+ *
+ * out_rule  Zero this before calling. On return, out_rule->decls/
+ *           decl_count hold the parsed declarations (both NULL/0 if
+ *           decl_text is NULL/empty/unparseable) — free with
+ *           rule_destroy when done.
+ */
+static void parse_inline_declarations(const char *decl_text, Ca_CssRule *out_rule)
+{
+    memset(out_rule, 0, sizeof(*out_rule));
+    out_rule->decl_storage = (Ca_DynArray)CA_DYN_ARRAY_INIT(Ca_CssDecl);
+    if (!decl_text || decl_text[0] == '\0') return;
+
+    Parser p;
+    parser_init(&p, decl_text);
+    p.ss = NULL;             /* no stylesheet — var() won't resolve, see
+                                 ca_css_apply_inline's own doc comment */
+    p.in_root_rule = false;  /* custom properties are never hoisted from
+                                 an inline style */
+
+    parse_declarations(&p, out_rule);
+}
+
+void ca_css_apply_inline(const char *decl_text, Ca_ResolvedStyle *out)
+{
+    if (!decl_text || decl_text[0] == '\0') return;
+
+    Ca_CssRule rule;
+    parse_inline_declarations(decl_text, &rule);
+
+    for (int d = 0; d < rule.decl_count; ++d) {
+        const Ca_CssDecl *decl = &rule.decls[d];
+        /* important has no extra meaning inside an inline style (there is
+           nothing for it to out-rank — inline already wins over every
+           selector-based rule) — applied unconditionally, in source
+           order, same as any other single-origin decl list.
+
+           var() is NOT resolved here (unlike the normal stylesheet
+           cascade, which resolves it against the stylesheet's :root
+           custom properties via resolve_value) — an inline style has no
+           stylesheet of its own to hold custom-property definitions, and
+           threading the page's actual author stylesheet through just for
+           this would need a real Ca_Stylesheet* parameter this function
+           doesn't take. var() inside style="..." is rare in practice;
+           falls through as CA_CSS_VAL_NONE (skipped) rather than crashing
+           or applying garbage. */
+        if (decl->value.type == CA_CSS_VAL_NONE ||
+            decl->value.type == CA_CSS_VAL_VAR) continue;
+        ca_style_apply_one_declaration(out, decl->prop, &decl->value);
+    }
+
+    rule_destroy(&rule);
+}
+
+/* ============================================================
    PARSE STYLESHEET
    ============================================================ */
 

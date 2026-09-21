@@ -111,3 +111,47 @@ void ca_style_classify_position_dependent(Ca_Stylesheet *ss);
     targeted by a position-dependent selector in `ss` (or `ss` has no such
     selectors at all). NULL ss is always cacheable (nothing to match). */
 bool ca_style_node_is_cacheable(const Ca_Stylesheet *ss, const char *classes);
+
+/**
+ * Applies one already-resolved (var()-expanded) CSS declaration to a
+ * Ca_ResolvedStyle, setting its set_mask bit for the given property.
+ * Shared by the normal class/selector cascade (style_resolve_sheet,
+ * internal to style.c) and ca_css_apply_inline (css.c, for style="..."
+ * attribute declarations) — the single place that knows how each
+ * Ca_CssPropId maps onto a Ca_ResolvedStyle field.
+ *
+ * out   Resolved style to update in place.
+ * prop  Which property this declaration sets.
+ * val   The declaration's value, already resolved (var() expanded).
+ */
+void ca_style_apply_one_declaration(Ca_ResolvedStyle *out, Ca_CssPropId prop,
+                                    const Ca_CssValue *val);
+
+/**
+ * Parses a bare CSS declaration list (no selector/braces — the contents
+ * of an HTML style="..." attribute, e.g. "padding:6px;color:red") and
+ * applies each declaration directly to an already-resolved style,
+ * exactly as if it were the highest-specificity, source-last rule in
+ * the cascade (matches real CSS: inline style always wins over any
+ * selector-based rule). Implemented in css.c (needs the tokenizer/
+ * declaration-list parser that already lives there); applies each
+ * parsed declaration via ca_style_apply_one_declaration above, so
+ * behavior for a given property is identical whether it came from a
+ * stylesheet or an inline attribute.
+ *
+ * Deliberately NOT threaded through ca_style_resolve_layers or its
+ * per-node cache: an inline style is unique to one specific node, so
+ * caching it the way class-based rules are cached (keyed on a
+ * class-string fingerprint shared across every node with those classes)
+ * would be incorrect — two nodes with the same classes but different
+ * inline styles must not share a cache entry. Call this AFTER
+ * ca_style_resolve_layers, directly on its output, once per apply_css
+ * call — the normal cadence already matches how often inline styles
+ * need to be freshly applied (a node's own style="..." never changes
+ * without also re-running apply_css).
+ *
+ * decl_text  Raw declaration list text (no surrounding braces/selector);
+ *            NULL or empty is a no-op.
+ * out        Resolved style to apply declarations onto, in place.
+ */
+void ca_css_apply_inline(const char *decl_text, Ca_ResolvedStyle *out);
