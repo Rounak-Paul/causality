@@ -1107,7 +1107,7 @@ Ca_Button *ca_btn_begin(const Ca_BtnDesc *desc)
     if (desc->hidden)   btn->node->desc.hidden   = true;
     if (desc->disabled) btn->node->desc.disabled = true;
     apply_css(btn->node, &btn->node->desc, CA_ELEM_BUTTON,
-              desc->style, id, &btn->text_color, NULL);
+              desc->style, id, &btn->text_color, desc->inline_style);
     /* Nestable buttons auto-size from children; only apply fallback
        if no CSS sets the dimension either. */
     ctx_push_mode(btn->node, ctx_top_reconcile());
@@ -1284,7 +1284,7 @@ Ca_TextInput *ca_input(const Ca_InputDesc *desc)
     if (desc->disabled) node->desc.disabled = true;
 
     apply_css(node, &node->desc, CA_ELEM_INPUT,
-              desc->style, id, &inp->text_color, NULL);
+              desc->style, id, &inp->text_color, desc->inline_style);
 
     /* Default size if neither user nor CSS set it */
     if (node->desc.width  <= 0.0f) node->desc.width  = s(160.0f);
