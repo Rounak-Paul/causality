@@ -15,6 +15,7 @@ static shaderc_shader_kind stage_to_shaderc(VkShaderStageFlagBits stage)
     switch (stage) {
     case VK_SHADER_STAGE_VERTEX_BIT:   return shaderc_glsl_vertex_shader;
     case VK_SHADER_STAGE_FRAGMENT_BIT: return shaderc_glsl_fragment_shader;
+    case VK_SHADER_STAGE_COMPUTE_BIT:  return shaderc_glsl_compute_shader;
     default:                           return shaderc_glsl_infer_from_source;
     }
 }
