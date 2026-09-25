@@ -507,10 +507,20 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
         return;
     }
 
-    /* Transition to COLOR_ATTACHMENT_OPTIMAL */
+    /* Transition to COLOR_ATTACHMENT_OPTIMAL. srcStage must be
+       COLOR_ATTACHMENT_OUTPUT, not TOP_OF_PIPE: this image index was last
+       read by the presentation engine's previous present of it, and
+       image_available only orders the ACQUIRE (queue submission), not this
+       barrier's stages against that prior read. TOP_OF_PIPE establishes no
+       execution dependency at all, so the driver had no ordering guarantee
+       against the previous present and had to insert its own (variable-
+       cost) implicit synchronization every frame — confirmed by the
+       synchronization2 validation layer flagging a WRITE_AFTER_READ hazard
+       here on every frame (found chasing frame-to-frame GPU-time jitter,
+       2026-09-26). */
     transition_image(f->cmd, sc->images[image_index],
         VK_IMAGE_LAYOUT_UNDEFINED,               VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-        VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT,     VK_ACCESS_2_NONE,
+        VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_NONE,
         VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
         VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
 
