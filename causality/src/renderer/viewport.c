@@ -333,8 +333,10 @@ void ca_viewport_render_all(Ca_Instance *inst, Ca_Window *win,
            actual latency win double-buffering provides over the old
            single-fence design. */
         ca_profile_begin(inst, "Platform Viewport Fence");
+        double timing_start = glfwGetTime();
         vkWaitForFences(inst->vk_device, 1, &f->render_fence, VK_TRUE, UINT64_MAX);
         vkResetFences(inst->vk_device, 1, &f->render_fence);
+        inst->frame_timing.viewport_fence_ms += (glfwGetTime() - timing_start) * 1000.0;
         ca_profile_end(inst, "Platform Viewport Fence");
 
         /* Begin command buffer */
@@ -366,7 +368,9 @@ void ca_viewport_render_all(Ca_Instance *inst, Ca_Window *win,
 
         /* Let the engine render */
         ca_profile_begin(inst, "Platform Viewport Render");
+        timing_start = glfwGetTime();
         vp->on_render(vp, vp->render_data);
+        inst->frame_timing.viewport_record_ms += (glfwGetTime() - timing_start) * 1000.0;
         ca_profile_end(inst, "Platform Viewport Render");
 
         vp->needs_redraw = false;
@@ -410,7 +414,9 @@ void ca_viewport_render_all(Ca_Instance *inst, Ca_Window *win,
             .pSignalSemaphores    = &f->render_done,
         };
         ca_profile_begin(inst, "Platform Viewport Submit");
+        timing_start = glfwGetTime();
         vr = vkQueueSubmit(inst->gfx_queue, 1, &submit, f->render_fence);
+        inst->frame_timing.viewport_submit_ms += (glfwGetTime() - timing_start) * 1000.0;
         ca_profile_end(inst, "Platform Viewport Submit");
         if (vr != VK_SUCCESS) {
             fprintf(stderr, "[viewport] vkQueueSubmit failed: %d\n", vr);

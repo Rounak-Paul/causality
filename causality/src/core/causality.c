@@ -138,32 +138,53 @@ void ca_instance_destroy(Ca_Instance *instance)
  */
 bool ca_instance_tick(Ca_Instance *instance)
 {
+    const double tick_start = glfwGetTime();
+    Ca_FrameTiming *timing = &instance->frame_timing;
+    *timing = (Ca_FrameTiming){ .frame_index = instance->frame_timing_index };
+
+    double phase_start = glfwGetTime();
     ca_profile_begin(instance, "Platform Events");
     bool window_open = ca_window_system_tick(instance);
     ca_profile_end(instance, "Platform Events");
     if (!window_open) return false;
+    timing->events_ms = (glfwGetTime() - phase_start) * 1000.0;
 
+    phase_start = glfwGetTime();
     ca_profile_begin(instance, "Platform Popups");
     ca_popup_system_tick(instance);
     ca_profile_end(instance, "Platform Popups");
+    timing->popups_ms = (glfwGetTime() - phase_start) * 1000.0;
 
     /* Run reactive effects scheduled since the previous tick. */
+    phase_start = glfwGetTime();
     ca_profile_begin(instance, "Platform Reactive");
     ca_reactive_flush(instance);
     ca_profile_end(instance, "Platform Reactive");
+    timing->reactive_ms = (glfwGetTime() - phase_start) * 1000.0;
 
     /* Run every ca_frame_effect unconditionally, every tick. */
+    phase_start = glfwGetTime();
     ca_profile_begin(instance, "Platform Frame Effects");
     ca_reactive_run_frame_effects(instance);
     ca_profile_end(instance, "Platform Frame Effects");
+    timing->frame_effects_ms = (glfwGetTime() - phase_start) * 1000.0;
 
+    phase_start = glfwGetTime();
     ca_profile_begin(instance, "Platform UI");
     ca_ui_update(instance);
     ca_profile_end(instance, "Platform UI");
+    timing->ui_ms = (glfwGetTime() - phase_start) * 1000.0;
 
+    phase_start = glfwGetTime();
     ca_profile_begin(instance, "Platform Renderer");
     ca_renderer_frame(instance);
     ca_profile_end(instance, "Platform Renderer");
+    timing->renderer_ms = (glfwGetTime() - phase_start) * 1000.0;
+    timing->interval_ms = (glfwGetTime() - tick_start) * 1000.0;
+
+    if (instance->frame_timing_callback)
+        instance->frame_timing_callback(instance->frame_timing_user_data, timing);
+    instance->frame_timing_index++;
     return true;
 }
 
@@ -172,6 +193,15 @@ void ca_instance_set_profile_hooks(Ca_Instance *instance,
 {
     if (!instance) return;
     instance->profile_hooks = hooks ? *hooks : (Ca_ProfileHooks){0};
+}
+
+void ca_instance_set_frame_timing_callback(Ca_Instance *instance,
+                                           Ca_FrameTimingFn callback,
+                                           void *user_data)
+{
+    if (!instance) return;
+    instance->frame_timing_callback = callback;
+    instance->frame_timing_user_data = callback ? user_data : NULL;
 }
 
 /*

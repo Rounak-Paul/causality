@@ -38,6 +38,29 @@ typedef struct Ca_ProfileHooks {
     void *user_data;
 } Ca_ProfileHooks;
 
+/** Raw CPU and presentation timings for one completed instance tick. */
+typedef struct Ca_FrameTiming {
+    uint64_t frame_index;
+    double interval_ms;  /**< Complete ca_instance_tick duration. */
+    double events_ms;
+    double popups_ms;
+    double reactive_ms;
+    double frame_effects_ms;
+    double ui_ms;
+    double renderer_ms;
+    double viewport_fence_ms;
+    double viewport_record_ms;
+    double viewport_submit_ms;
+    double swapchain_fence_ms;
+    double swapchain_acquire_ms;
+    double swapchain_record_ms;
+    double swapchain_submit_ms;
+    double present_ms;
+} Ca_FrameTiming;
+
+/** Receives one immutable timing sample after each completed instance tick. */
+typedef void (*Ca_FrameTimingFn)(void *user_data, const Ca_FrameTiming *timing);
+
 /* ---- Widget handles ---- */
 
 typedef struct Ca_Label     Ca_Label;
@@ -154,6 +177,17 @@ CA_API bool         ca_instance_tick(Ca_Instance *instance);
  */
 CA_API void ca_instance_set_profile_hooks(Ca_Instance *instance,
                                           const Ca_ProfileHooks *hooks);
+
+/**
+ * Installs or clears the raw per-frame timing callback.
+ *
+ * @param instance Instance to instrument.
+ * @param callback Callback invoked after each completed tick, or NULL to clear.
+ * @param user_data Opaque pointer passed to callback.
+ */
+CA_API void ca_instance_set_frame_timing_callback(Ca_Instance *instance,
+                                                   Ca_FrameTimingFn callback,
+                                                   void *user_data);
 
 /* Wake the event loop from another thread (e.g. after posting async data). */
 CA_API void         ca_instance_wake(void);

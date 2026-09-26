@@ -1450,6 +1450,10 @@ struct Ca_Instance {
     bool continuous;
 
     Ca_ProfileHooks profile_hooks;
+    Ca_FrameTiming  frame_timing;
+    Ca_FrameTimingFn frame_timing_callback;
+    void            *frame_timing_user_data;
+    uint64_t         frame_timing_index;
 
     /* Earliest requested timed frame, in GLFW monotonic seconds. */
     double frame_deadline;

@@ -447,7 +447,9 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
     Ca_Frame     *f  = &sc->frames[sc->current_frame];
 
     ca_profile_begin(inst, "Platform Swapchain Fence");
+    double timing_start = glfwGetTime();
     vkWaitForFences(inst->vk_device, 1, &f->in_flight, VK_TRUE, UINT64_MAX);
+    inst->frame_timing.swapchain_fence_ms += (glfwGetTime() - timing_start) * 1000.0;
     ca_profile_end(inst, "Platform Swapchain Fence");
 
     ca_profile_begin(inst, "Platform UI Buffer Ensure");
@@ -462,9 +464,11 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
 
     uint32_t image_index;
     ca_profile_begin(inst, "Platform Swapchain Acquire");
+    timing_start = glfwGetTime();
     VkResult result = vkAcquireNextImageKHR(
         inst->vk_device, sc->swapchain, UINT64_MAX,
         f->image_available, VK_NULL_HANDLE, &image_index);
+    inst->frame_timing.swapchain_acquire_ms += (glfwGetTime() - timing_start) * 1000.0;
     ca_profile_end(inst, "Platform Swapchain Acquire");
 
     if (result == VK_ERROR_OUT_OF_DATE_KHR) {
@@ -500,6 +504,7 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
         .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
     };
     ca_profile_begin(inst, "Platform UI Command Build");
+    timing_start = glfwGetTime();
     result = vkBeginCommandBuffer(f->cmd, &begin);
     if (result != VK_SUCCESS) {
         ca_profile_end(inst, "Platform UI Command Build");
@@ -1266,6 +1271,7 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
         VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT,  VK_ACCESS_2_NONE);
 
     result = vkEndCommandBuffer(f->cmd);
+    inst->frame_timing.swapchain_record_ms += (glfwGetTime() - timing_start) * 1000.0;
     ca_profile_end(inst, "Platform UI Command Build");
     if (result != VK_SUCCESS) {
         fprintf(stderr, "[vk] vkEndCommandBuffer failed: %d\n", result);
@@ -1303,7 +1309,9 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
         .pSignalSemaphores    = &render_finished,
     };
     ca_profile_begin(inst, "Platform Swapchain Submit");
+    timing_start = glfwGetTime();
     result = vkQueueSubmit(inst->gfx_queue, 1, &submit, f->in_flight);
+    inst->frame_timing.swapchain_submit_ms += (glfwGetTime() - timing_start) * 1000.0;
     ca_profile_end(inst, "Platform Swapchain Submit");
     if (result != VK_SUCCESS) {
         fprintf(stderr, "[vk] vkQueueSubmit failed: %d\n", result);
@@ -1329,7 +1337,9 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
         .pImageIndices      = &image_index,
     };
     ca_profile_begin(inst, "Platform Present");
+    timing_start = glfwGetTime();
     result = vkQueuePresentKHR(inst->present_queue, &present);
+    inst->frame_timing.present_ms += (glfwGetTime() - timing_start) * 1000.0;
     ca_profile_end(inst, "Platform Present");
     if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR) {
         int w, h;
