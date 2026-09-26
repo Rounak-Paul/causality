@@ -3496,7 +3496,7 @@ Ca_Viewport *ca_viewport(const Ca_ViewportDesc *desc)
         return NULL;
     }
 
-    VkFormat fmt = desc->format ? (VkFormat)desc->format : VK_FORMAT_R8G8B8A8_UNORM;
+    VkFormat fmt = desc->format ? (VkFormat)desc->format : VK_FORMAT_B8G8R8A8_SRGB;
 
     /* Calculate initial pixel dimensions from content scale */
     float content_scale = 1.0f;

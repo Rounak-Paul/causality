@@ -1388,7 +1388,7 @@ typedef struct Ca_ViewportDesc {
     Ca_ViewportResizeFn  on_resize;         /* optional — called on size change  */
     void                *resize_data;
     uint32_t             format;            /* backend colour format id (VkFormat
-                                               value); 0 = default 8-bit RGBA     */
+                                               value); 0 = 8-bit sRGB BGRA        */
     float                clear_color[4];    /* background clear colour (RGBA)    */
     const char          *id, *style;
 } Ca_ViewportDesc;
