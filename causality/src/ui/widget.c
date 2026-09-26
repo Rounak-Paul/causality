@@ -3859,6 +3859,39 @@ static Ca_Button *button_for_node(Ca_Window *win, Ca_Node *n)
     return NULL;
 }
 
+/*
+ * Drop native keyboard focus and restyle the previously focused chain so
+ * :focus / :focus-within rules stop matching immediately.
+ *
+ * window  Window whose focus is cleared.
+ */
+void ca_window_clear_focus(Ca_Window *window)
+{
+    if (!window || !window->focused_node) return;
+    Ca_Node *old = window->focused_node;
+    window->focused_node = NULL;
+    old->dirty |= CA_DIRTY_CONTENT;
+    for (Ca_Node *n = old; n; n = n->parent)
+        ca_widget_reapply_css(n);
+}
+
+/*
+ * Switch the window between native and application-owned keyboard routing.
+ * Entering application mode evicts a focused button, which could otherwise
+ * still be activated by Enter/Space typed into an application surface.
+ *
+ * window   Window to configure.
+ * enabled  true when the application routes keyboard input itself.
+ */
+void ca_window_set_app_keyboard(Ca_Window *window, bool enabled)
+{
+    if (!window) return;
+    window->app_keyboard = enabled;
+    if (enabled && window->focused_node &&
+        !input_for_node(window, window->focused_node))
+        ca_window_clear_focus(window);
+}
+
 /** Collects all focusable nodes in document order into growable storage. */
 static bool collect_focusable(Ca_Node *node, Ca_DynArray *out, Ca_Window *win)
 {
@@ -4355,7 +4388,7 @@ void ca_widget_input_pass(Ca_Window *win)
     }
 
     /* --- Tab focus navigation --- */
-    for (uint32_t ki = 0; ki < win->key_count; ++ki) {
+    for (uint32_t ki = 0; !win->app_keyboard && ki < win->key_count; ++ki) {
         int key = win->key_buf[ki];
         if (key != 258 /* GLFW_KEY_TAB */) continue;
 
@@ -4394,7 +4427,8 @@ void ca_widget_input_pass(Ca_Window *win)
 
     /* --- Enter/Space to activate focused button --- */
     if (win->focused_node && !is_effectively_disabled(win->focused_node)) {
-        Ca_Button *fbtn = button_for_node(win, win->focused_node);
+        Ca_Button *fbtn = win->app_keyboard
+            ? NULL : button_for_node(win, win->focused_node);
         if (fbtn && fbtn->on_click) {
             for (uint32_t ki = 0; ki < win->key_count; ++ki) {
                 int key = win->key_buf[ki];
@@ -4697,7 +4731,7 @@ void ca_widget_input_pass(Ca_Window *win)
             }
         }
 
-        if (!clicked_focus &&
+        if (!clicked_focus && !win->app_keyboard &&
             ca_pool_slot_count(&win->button_pool) > 0) {
             for (uint32_t i = 0; i < ca_pool_slot_count(&win->button_pool); ++i) {
                 Ca_Button *btn = CA_POOL_AT(win->button_pool, Ca_Button, i);

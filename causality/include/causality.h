@@ -263,6 +263,30 @@ CA_API void ca_window_input_capture(const Ca_Window *window,
  */
 CA_API bool ca_window_key_consumed(const Ca_Window *window, int key);
 
+/*
+ * Hands keyboard routing for a window to the application. While enabled,
+ * buttons never take native keyboard focus (neither by click nor by Tab),
+ * Tab focus navigation is disabled, and Enter/Space never activate a
+ * button, so keys the application routes itself cannot also trigger a
+ * stale widget. Text inputs stay focusable by click or ca_input_focus()
+ * and receive keys while focused; ca_window_input_capture() reports that
+ * ownership so the application can stand down. Enabling drops any focus a
+ * button currently holds.
+ *
+ * window   Window to configure.
+ * enabled  true to let the application own keyboard routing.
+ */
+CA_API void ca_window_set_app_keyboard(Ca_Window *window, bool enabled);
+
+/*
+ * Drops native keyboard focus from whichever widget holds it, so a focused
+ * text input stops receiving keys. Use when the application moves keyboard
+ * focus to a surface it routes itself.
+ *
+ * window  Window whose focus is cleared.
+ */
+CA_API void ca_window_clear_focus(Ca_Window *window);
+
 /* Return framebuffer pixels per logical window unit for the current display. */
 CA_API float      ca_window_get_pixel_ratio(Ca_Window *window);
 

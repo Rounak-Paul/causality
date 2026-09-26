@@ -1227,6 +1227,7 @@ struct Ca_Window {
 
     /* Keyboard / focus state */
     Ca_Node      *focused_node;           /* NULL = nothing focused */
+    bool          app_keyboard;           /* app owns keyboard; only text inputs take native focus */
     Ca_DynArray   char_storage;
     uint32_t     *char_buf;               /* Unicode codepoints this frame */
     uint32_t      char_count;

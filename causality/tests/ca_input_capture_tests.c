@@ -174,6 +174,82 @@ static bool test_reconciled_input_text(void)
     return true;
 }
 
+/** Counts activations of the test button. */
+static void count_click(Ca_Button *button, void *user_data)
+{
+    (void)button;
+    ++*(int *)user_data;
+}
+
+/** Verifies app-owned keyboard routing never activates or Tab-focuses a button. */
+static bool test_app_keyboard_blocks_button_activation(void)
+{
+    Ca_Instance instance = {0};
+    Ca_Window window = {0};
+    Ca_Node root = {0};
+    window.instance = &instance;
+    window.ui_scale = 1.0f;
+    window.root = &root;
+    root.window = &window;
+    root.in_use = true;
+    CHECK(ca_pool_init(&window.node_pool, sizeof(Ca_Node), 4));
+    CHECK(ca_pool_init(&window.button_pool, sizeof(Ca_Button), 2));
+    CHECK(ca_pool_init(&window.input_pool, sizeof(Ca_TextInput), 2));
+
+    int clicks = 0;
+    ca_widget_ctx_enter(&window);
+    ca_reconcile_begin((Ca_Div *)&root);
+    Ca_Button *button = ca_btn_begin(&(Ca_BtnDesc){
+        .text = "Open", .on_click = count_click, .click_data = &clicks });
+    ca_btn_end();
+    Ca_TextInput *input = ca_input(&(Ca_InputDesc){ .text = "" });
+    ca_div_end();
+    ca_widget_ctx_leave();
+    CHECK(button && button->keyboard_focusable && input);
+
+    int keys[2] = { CA_KEY_ENTER, CA_KEY_SPACE };
+    int actions[2] = { 1, 1 };
+    int mods[2] = { 0, 0 };
+    window.key_buf = keys;
+    window.key_action_buf = actions;
+    window.key_mods_buf = mods;
+
+    window.focused_node = button->node;
+    window.key_count = 1;
+    ca_widget_input_pass(&window);
+    CHECK(clicks == 1);
+
+    memset(window.key_consumed, 0, sizeof(window.key_consumed));
+    ca_window_set_app_keyboard(&window, true);
+    CHECK(window.focused_node == NULL);
+    window.focused_node = button->node;
+    window.key_count = 2;
+    ca_widget_input_pass(&window);
+    CHECK(clicks == 1);
+    CHECK(!ca_window_key_consumed(&window, CA_KEY_ENTER));
+
+    window.focused_node = NULL;
+    keys[0] = CA_KEY_TAB;
+    window.key_count = 1;
+    ca_widget_input_pass(&window);
+    CHECK(window.focused_node == NULL);
+    CHECK(!ca_window_key_consumed(&window, CA_KEY_TAB));
+
+    window.key_count = 0;
+    window.focused_node = input->node;
+    ca_window_set_app_keyboard(&window, true);
+    CHECK(window.focused_node == input->node);
+    ca_window_clear_focus(&window);
+    CHECK(window.focused_node == NULL);
+
+    ca_node_clear(&root);
+    ca_pool_destroy(&window.input_pool, NULL, NULL);
+    ca_pool_destroy(&window.button_pool, NULL, NULL);
+    ca_pool_destroy(&window.node_pool, NULL, NULL);
+    ca_widget_ctx_release_instance(&instance);
+    return true;
+}
+
 /** Runs focused input ownership regression tests. */
 int main(void)
 {
@@ -182,6 +258,7 @@ int main(void)
     if (!test_splitter_pointer_capture()) return 1;
     if (!test_exclusive_keyboard_capture()) return 1;
     if (!test_consumed_key_query()) return 1;
+    if (!test_app_keyboard_blocks_button_activation()) return 1;
     puts("causality input capture tests passed");
     return 0;
 }
