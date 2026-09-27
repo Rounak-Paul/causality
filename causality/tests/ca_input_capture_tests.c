@@ -250,6 +250,98 @@ static bool test_app_keyboard_blocks_button_activation(void)
     return true;
 }
 
+/** Places node n at the given window-space box. */
+static void place_node(Ca_Node *n, float x, float y, float w, float h)
+{
+    n->x = x;
+    n->y = y;
+    n->w = w;
+    n->h = h;
+}
+
+/** Verifies a higher stacking layer occludes clicks and wheel from layers beneath it. */
+static bool test_stacking_layer_occludes_pointer(void)
+{
+    Ca_Instance instance = {0};
+    Ca_Window window = {0};
+    Ca_Node root = {0};
+    window.instance = &instance;
+    window.ui_scale = 1.0f;
+    window.root = &root;
+    root.window = &window;
+    root.in_use = true;
+    CHECK(ca_pool_init(&window.node_pool, sizeof(Ca_Node), 8));
+    CHECK(ca_pool_init(&window.button_pool, sizeof(Ca_Button), 4));
+
+    int under_clicks = 0;
+    int top_clicks = 0;
+    ca_widget_ctx_enter(&window);
+    ca_reconcile_begin((Ca_Div *)&root);
+    Ca_Div *scroller = ca_div_begin(&(Ca_DivDesc){ .direction = CA_VERTICAL });
+    Ca_Button *under = ca_btn_begin(&(Ca_BtnDesc){
+        .text = "Under", .on_click = count_click, .click_data = &under_clicks });
+    ca_btn_end();
+    ca_div_end();
+    Ca_Div *overlay = ca_div_begin(&(Ca_DivDesc){
+        .direction = CA_VERTICAL, .z_index = 40 });
+    Ca_Button *top = ca_btn_begin(&(Ca_BtnDesc){
+        .text = "Top", .on_click = count_click, .click_data = &top_clicks });
+    ca_btn_end();
+    ca_div_end();
+    ca_div_end();
+    ca_widget_ctx_leave();
+    CHECK(scroller && under && overlay && top);
+
+    Ca_Node *scroll_node = (Ca_Node *)scroller;
+    Ca_Node *overlay_node = (Ca_Node *)overlay;
+    place_node(&root, 0.0f, 0.0f, 200.0f, 200.0f);
+    place_node(scroll_node, 0.0f, 0.0f, 200.0f, 200.0f);
+    place_node(under->node, 0.0f, 0.0f, 100.0f, 100.0f);
+    place_node(overlay_node, 0.0f, 0.0f, 200.0f, 200.0f);
+    place_node(top->node, 150.0f, 150.0f, 20.0f, 20.0f);
+    scroll_node->desc.overflow_y = 2;
+    scroll_node->content_h = 1000.0f;
+
+    window.mouse_x = 50.0;
+    window.mouse_y = 50.0;
+    window.mouse_click_this_frame = true;
+    ca_widget_input_pass(&window);
+    CHECK(under_clicks == 0);
+    CHECK(top_clicks == 0);
+
+    window.mouse_click_this_frame = false;
+    window.scroll_this_frame = true;
+    window.scroll_dy = -1.0;
+    ca_widget_input_pass(&window);
+    CHECK(scroll_node->scroll_y == 0.0f);
+
+    window.scroll_this_frame = false;
+    window.mouse_x = 160.0;
+    window.mouse_y = 160.0;
+    window.mouse_click_this_frame = true;
+    ca_widget_input_pass(&window);
+    CHECK(top_clicks == 1);
+    CHECK(under_clicks == 0);
+
+    overlay_node->desc.hidden = true;
+    window.mouse_x = 50.0;
+    window.mouse_y = 50.0;
+    ca_widget_input_pass(&window);
+    CHECK(under_clicks == 1);
+    CHECK(top_clicks == 1);
+
+    window.mouse_click_this_frame = false;
+    window.scroll_this_frame = true;
+    ca_widget_input_pass(&window);
+    CHECK(scroll_node->scroll_y > 0.0f);
+
+    ca_node_clear(&root);
+    ca_pool_destroy(&window.button_pool, NULL, NULL);
+    ca_pool_destroy(&window.node_pool, NULL, NULL);
+    ca_widget_ctx_release_instance(&instance);
+    return true;
+}
+
 /** Runs focused input ownership regression tests. */
 int main(void)
 {
@@ -259,6 +351,7 @@ int main(void)
     if (!test_exclusive_keyboard_capture()) return 1;
     if (!test_consumed_key_query()) return 1;
     if (!test_app_keyboard_blocks_button_activation()) return 1;
+    if (!test_stacking_layer_occludes_pointer()) return 1;
     puts("causality input capture tests passed");
     return 0;
 }

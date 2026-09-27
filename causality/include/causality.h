@@ -1161,6 +1161,17 @@ CA_API float ca_get_scroll_y(Ca_Window *window, const char *id);
 CA_API void  ca_set_scroll_y(Ca_Window *window, const char *id, float y);
 
 /*
+ * Apply a mouse-wheel delta to a scroll container exactly as a native wheel
+ * event over it would. Lets an overlay that visually belongs to a scroller
+ * (e.g. sticky headers) forward the wheel it receives to that scroller.
+ *
+ * window  Window owning the container.
+ * id      CSS id of the scroll container.
+ * dy      Vertical wheel delta (positive scrolls toward the top).
+ */
+CA_API void  ca_scroll_wheel(Ca_Window *window, const char *id, double dy);
+
+/*
  * Return a Ca_Signal mirroring a scroll container's vertical offset,
  * lazily creating it on first call. The signal is updated (via
  * ca_signal_set_float — a no-op when the value is unchanged) at every

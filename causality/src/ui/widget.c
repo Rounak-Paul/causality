@@ -36,6 +36,9 @@
 
 #include <GLFW/glfw3.h>
 
+/* Scroll distance of one wheel notch, in author pixels (scaled by ui_scale). */
+#define CA_WHEEL_SCROLL_PX 30.0f
+
 static float glyph_adv(Ca_FontTier *tier, uint32_t cp,
                        float cs, float desired_size)
 {
@@ -1986,6 +1989,25 @@ void ca_set_scroll_y(Ca_Window *window, const char *id, float y)
     n->scroll_y    = y;
     n->dirty      |= CA_DIRTY_LAYOUT;
     ca_node_sync_scroll_y_signal(n);
+}
+
+/* Scroll overflow container n by one wheel step of dy, clamped to its range. */
+static void node_apply_wheel(Ca_Node *n, double dy)
+{
+    const float ui_s = n->window && n->window->ui_scale > 0.0f ? n->window->ui_scale : 1.0f;
+    n->scroll_y -= (float)dy * CA_WHEEL_SCROLL_PX * ui_s;
+    const float max_scroll = ca_scrollbar_max_y(n);
+    if (n->scroll_y > max_scroll) n->scroll_y = max_scroll;
+    if (n->scroll_y < 0.0f)       n->scroll_y = 0.0f;
+    n->dirty |= CA_DIRTY_LAYOUT | CA_DIRTY_CONTENT;
+    ca_node_sync_scroll_y_signal(n);
+}
+
+void ca_scroll_wheel(Ca_Window *window, const char *id, double dy)
+{
+    Ca_Node *n = find_node_by_id(window, id);
+    if (!n || n->desc.overflow_y < 2) return;
+    node_apply_wheel(n, dy);
 }
 
 Ca_Signal *ca_get_scroll_y_signal(Ca_Window *window, const char *id)
@@ -4091,6 +4113,65 @@ static bool point_in_splitter_handle(Ca_Node *n, float px, float py)
            along >= start - expand && along <= start + sp->bar_size + expand;
 }
 
+/* True when node n is a pointer hit-test candidate at (px, py): visible, not
+   flagged no_hover, and under the point (splitters only in their handle
+   gutter). no_hover nodes are transparent; their descendants still qualify. */
+static bool node_is_pointer_candidate(Ca_Node *n, float px, float py)
+{
+    return n->in_use && !n->desc.hidden && !n->desc.no_hover &&
+           point_in_node(n, px, py) && !node_is_ancestor_hidden(n) &&
+           (n->widget_type != CA_WIDGET_SPLITTER || point_in_splitter_handle(n, px, py));
+}
+
+/* Highest effective z-index among pointer candidates at (px, py). Anything
+   painted in a lower stacking layer is occluded at that point and must not
+   receive clicks, wheel or drags (CSS stacking-context semantics). */
+static int16_t pointer_top_z(Ca_Window *win, float px, float py)
+{
+    int16_t top_z = 0;
+    for (uint32_t i = 0; i < ca_pool_slot_count(&win->node_pool); ++i) {
+        Ca_Node *n = CA_POOL_AT(win->node_pool, Ca_Node, i);
+        if (!node_is_pointer_candidate(n, px, py)) continue;
+        int16_t ez = node_effective_z(n);
+        if (ez > top_z) top_z = ez;
+    }
+    return top_z;
+}
+
+/* True when (px, py) lies inside n and n belongs to the topmost stacking
+   layer at that point (top_z from pointer_top_z). */
+static bool point_reaches_node(Ca_Node *n, float px, float py, int16_t top_z)
+{
+    return node_effective_z(n) >= top_z && point_in_node(n, px, py);
+}
+
+/* Most specific (smallest) pointer candidate at (px, py) within layer top_z. */
+static Ca_Node *pointer_top_node(Ca_Window *win, float px, float py, int16_t top_z)
+{
+    Ca_Node *best = NULL;
+    float best_area = 1e18f;
+    for (uint32_t i = 0; i < ca_pool_slot_count(&win->node_pool); ++i) {
+        Ca_Node *n = CA_POOL_AT(win->node_pool, Ca_Node, i);
+        if (!node_is_pointer_candidate(n, px, py)) continue;
+        if (node_effective_z(n) != top_z) continue;
+        const float area = n->w * n->h;
+        if (area < best_area) { best_area = area; best = n; }
+    }
+    return best;
+}
+
+/* True when a wheel at (px, py) may reach scroll consumer n: n is under the
+   point and either lies in the topmost layer or is an ancestor of top_hit. */
+static bool wheel_reaches_node(Ca_Node *n, float px, float py,
+                               int16_t top_z, Ca_Node *top_hit)
+{
+    if (!point_in_node(n, px, py)) return false;
+    if (node_effective_z(n) >= top_z) return true;
+    for (Ca_Node *p = top_hit; p; p = p->parent)
+        if (p == n) return true;
+    return false;
+}
+
 void ca_widget_input_pass(Ca_Window *win)
 {
     float mx = (float)win->mouse_x;
@@ -4102,6 +4183,10 @@ void ca_widget_input_pass(Ca_Window *win)
        physical release. */
     bool left_down = ca_window_left_button_held(win);
     if (!left_down) win->mouse_buttons[0] = false;
+    const int16_t top_z =
+        (left_down || win->mouse_buttons[1] ||
+         win->mouse_click_this_frame || win->scroll_this_frame)
+            ? pointer_top_z(win, mx, my) : 0;
 
     /* --- Scrollbar drag handling ---
        Scrollbars are paint-only overlays (no nodes).  We hit-test them here
@@ -4125,6 +4210,7 @@ void ca_widget_input_pass(Ca_Window *win)
             for (uint32_t i = 0; i < ca_pool_slot_count(&win->node_pool); ++i) {
                 Ca_Node *n = CA_POOL_AT(win->node_pool, Ca_Node, i);
                 if (!n->in_use || node_is_ancestor_hidden(n)) continue;
+                if (node_effective_z(n) < top_z) continue;
 
                 /* Y scrollbar */
                 if (n->scrollbar_y_visible) {
@@ -4279,7 +4365,7 @@ void ca_widget_input_pass(Ca_Window *win)
                     is_effectively_disabled(input->node))
                     continue;
                 if (!point_within_clip_ancestors(input->node, mx, my) ||
-                    !point_in_node(input->node, mx, my))
+                    !point_reaches_node(input->node, mx, my, top_z))
                     continue;
 
                 char *end = NULL;
@@ -4320,8 +4406,6 @@ void ca_widget_input_pass(Ca_Window *win)
     if (win->scroll_this_frame &&
         ca_pool_slot_count(&win->node_pool) > 0 &&
         !win->scrollbar_drag_node) {
-        const float SCROLL_SPEED = 30.0f * ui_s;
-
         /* First: if any select dropdown is open and the cursor is over it, scroll its list */
         bool select_scroll_consumed = false;
         if (ca_pool_slot_count(&win->select_pool) > 0) {
@@ -4360,13 +4444,19 @@ void ca_widget_input_pass(Ca_Window *win)
 
         /* Then: normal scroll container handling (skipped if dropdown consumed scroll) */
         if (!select_scroll_consumed) {
+            /* Wheel bubbles like DOM wheel events: a scroll consumer is
+               reachable when it sits in the topmost stacking layer or is an
+               ancestor of the topmost hit, so an overlay's own descendants
+               still scroll their container while occluded layers do not. */
+            Ca_Node *top_hit = pointer_top_node(win, mx, my, top_z);
+
             /* First try custom scroll callbacks (e.g. node graph canvas zoom) */
             Ca_Node *scroll_cb_node = NULL;
             float min_area = 1e30f;
             for (uint32_t i = 0; i < ca_pool_slot_count(&win->node_pool); ++i) {
                 Ca_Node *n = CA_POOL_AT(win->node_pool, Ca_Node, i);
                 if (!n->in_use || !n->scroll_fn) continue;
-                if (!point_in_node(n, mx, my)) continue;
+                if (!wheel_reaches_node(n, mx, my, top_z, top_hit)) continue;
                 float area = n->w * n->h;
                 if (area < min_area) { min_area = area; scroll_cb_node = n; }
             }
@@ -4380,18 +4470,11 @@ void ca_widget_input_pass(Ca_Window *win)
                     Ca_Node *n = CA_POOL_AT(win->node_pool, Ca_Node, i);
                     if (!n->in_use) continue;
                     if (n->desc.overflow_y < 2) continue;
-                    if (!point_in_node(n, mx, my)) continue;
+                    if (!wheel_reaches_node(n, mx, my, top_z, top_hit)) continue;
                     if (!scroll_target || (n->w * n->h < scroll_target->w * scroll_target->h))
                         scroll_target = n;
                 }
-                if (scroll_target) {
-                    scroll_target->scroll_y -= (float)win->scroll_dy * SCROLL_SPEED;
-                    float max_scroll = ca_scrollbar_max_y(scroll_target);
-                    if (scroll_target->scroll_y < 0) scroll_target->scroll_y = 0;
-                    if (scroll_target->scroll_y > max_scroll) scroll_target->scroll_y = max_scroll;
-                    scroll_target->dirty |= CA_DIRTY_LAYOUT | CA_DIRTY_CONTENT;
-                    ca_node_sync_scroll_y_signal(scroll_target);
-                }
+                if (scroll_target) node_apply_wheel(scroll_target, win->scroll_dy);
             }
         }
     }
@@ -4733,7 +4816,7 @@ void ca_widget_input_pass(Ca_Window *win)
                 Ca_TextInput *inp = CA_POOL_AT(win->input_pool, Ca_TextInput, i);
                 if (!inp->in_use || !inp->node) continue;
                 if (is_effectively_disabled(inp->node)) continue;
-                if (point_in_node(inp->node, mx, my)) {
+                if (point_reaches_node(inp->node, mx, my, top_z)) {
                     clicked_focus = inp->node;
                     break;
                 }
@@ -4747,7 +4830,7 @@ void ca_widget_input_pass(Ca_Window *win)
                 if (!btn->in_use || !btn->node) continue;
                 if (!btn->keyboard_focusable) continue;
                 if (is_effectively_disabled(btn->node)) continue;
-                if (point_in_node(btn->node, mx, my)) {
+                if (point_reaches_node(btn->node, mx, my, top_z)) {
                     clicked_focus = btn->node;
                     break;
                 }
@@ -4769,19 +4852,20 @@ void ca_widget_input_pass(Ca_Window *win)
            would overwrite the earlier state.  Match hover picking: highest
            stacking context first, then the most specific/smallest node. */
         if (ca_pool_slot_count(&win->button_pool) > 0) {
-            int16_t top_z = INT16_MIN;
+            int16_t best_z = INT16_MIN;
             Ca_Button *best_btn = NULL;
             float best_area = 1e18f;
             for (uint32_t i = 0; i < ca_pool_slot_count(&win->button_pool); ++i) {
                 Ca_Button *btn = CA_POOL_AT(win->button_pool, Ca_Button, i);
                 if (!btn->in_use || !btn->on_click || !btn->node) continue;
                 if (is_effectively_disabled(btn->node)) continue;
-                if (!point_in_node(btn->node, mx, my)) continue;
-                if (btn->node->desc.z_index > top_z) {
-                    top_z = btn->node->desc.z_index;
+                if (!point_reaches_node(btn->node, mx, my, top_z)) continue;
+                const int16_t btn_z = node_effective_z(btn->node);
+                if (btn_z > best_z) {
+                    best_z = btn_z;
                     best_area = btn->node->w * btn->node->h;
                     best_btn = btn;
-                } else if (btn->node->desc.z_index == top_z) {
+                } else if (btn_z == best_z) {
                     float area = btn->node->w * btn->node->h;
                     if (!best_btn || area < best_area) {
                         best_area = area;
@@ -4803,7 +4887,7 @@ void ca_widget_input_pass(Ca_Window *win)
                 Ca_Checkbox *cb = CA_POOL_AT(win->checkbox_pool, Ca_Checkbox, i);
                 if (!cb->in_use || !cb->node) continue;
                 if (is_effectively_disabled(cb->node)) continue;
-                if (point_in_node(cb->node, mx, my)) {
+                if (point_reaches_node(cb->node, mx, my, top_z)) {
                     cb->checked = !cb->checked;
                     cb->node->dirty |= CA_DIRTY_CONTENT;
                     if (cb->on_change) cb->on_change(cb, cb->change_data);
@@ -4817,7 +4901,7 @@ void ca_widget_input_pass(Ca_Window *win)
                 Ca_Radio *r = CA_POOL_AT(win->radio_pool, Ca_Radio, i);
                 if (!r->in_use || !r->node) continue;
                 if (is_effectively_disabled(r->node)) continue;
-                if (point_in_node(r->node, mx, my)) {
+                if (point_reaches_node(r->node, mx, my, top_z)) {
                     /* Deselect all radios in the same group */
                     for (uint32_t j = 0; j < ca_pool_slot_count(&win->radio_pool); ++j) {
                         Ca_Radio *o = CA_POOL_AT(win->radio_pool, Ca_Radio, j);
@@ -4839,7 +4923,7 @@ void ca_widget_input_pass(Ca_Window *win)
                 Ca_Toggle *t = CA_POOL_AT(win->toggle_pool, Ca_Toggle, i);
                 if (!t->in_use || !t->node) continue;
                 if (is_effectively_disabled(t->node)) continue;
-                if (point_in_node(t->node, mx, my)) {
+                if (point_reaches_node(t->node, mx, my, top_z)) {
                     t->on = !t->on;
                     t->node->dirty |= CA_DIRTY_CONTENT;
                     if (t->on_change) t->on_change(t, t->change_data);
@@ -4892,7 +4976,7 @@ void ca_widget_input_pass(Ca_Window *win)
                         sel->node->dirty |= CA_DIRTY_CONTENT;
                         select_handled = true;
                     }
-                } else if (point_in_node(sel->node, mx, my)) {
+                } else if (point_reaches_node(sel->node, mx, my, top_z)) {
                     sel->open = true;
                     /* Scroll so selected item is visible */
                     {
@@ -4916,7 +5000,7 @@ void ca_widget_input_pass(Ca_Window *win)
                 if (!mb->in_use || !mb->node || mb->active_menu >= 0) continue;
                 for (int mi = 0; mi < mb->menu_count; ++mi) {
                     if (mb->menus[mi].header_node &&
-                        point_in_node(mb->menus[mi].header_node, mx, my)) {
+                        point_reaches_node(mb->menus[mi].header_node, mx, my, top_z)) {
                         mb->active_menu = mi;
                         mb->hover_item = -1;
                         mb->hover_sub_item = -1;
@@ -4935,7 +5019,7 @@ void ca_widget_input_pass(Ca_Window *win)
                 if (is_effectively_disabled(tb->node)) continue;
                 for (int ti = 0; ti < tb->count; ++ti) {
                     if (!tb->tab_nodes[ti]) continue;
-                    if (point_in_node(tb->tab_nodes[ti], mx, my)) {
+                    if (point_reaches_node(tb->tab_nodes[ti], mx, my, top_z)) {
                         if (tb->active != ti) {
                             /* Update backgrounds */
                             if (tb->active >= 0 && tb->active < tb->count && tb->tab_nodes[tb->active]) {
@@ -4962,7 +5046,7 @@ void ca_widget_input_pass(Ca_Window *win)
                 /* Click on the first child (header row) */
                 if (tn->node->child_count > 0) {
                     Ca_Node *hdr = tn->node->children[0];
-                    if (point_in_node(hdr, mx, my)) {
+                    if (point_reaches_node(hdr, mx, my, top_z)) {
                         if (!tn->is_leaf) {
                             tn->expanded = !tn->expanded;
                             /* Hide/show children after the header */
@@ -5006,7 +5090,7 @@ void ca_widget_input_pass(Ca_Window *win)
                 if (node_is_ancestor_hidden(cm->node)) continue;
                 if (is_effectively_disabled(cm->node)) continue;
                 if (!point_within_clip_ancestors(cm->node, mx, my)) continue;
-                if (point_in_node(cm->node, mx, my)) {
+                if (point_reaches_node(cm->node, mx, my, top_z)) {
                     float area = cm->node->w * cm->node->h;
                     if (area < best_area) { best_area = area; best = cm; }
                 }
@@ -5037,7 +5121,7 @@ void ca_widget_input_pass(Ca_Window *win)
                 Ca_Slider *sl = CA_POOL_AT(win->slider_pool, Ca_Slider, i);
                 if (!sl->in_use || !sl->node) continue;
                 if (is_effectively_disabled(sl->node)) continue;
-                if (point_in_node(sl->node, mx, my)) {
+                if (point_reaches_node(sl->node, mx, my, top_z)) {
                     win->drag_node = sl->node;
                     win->drag_start_x = mx;
                     win->drag_start_value = sl->value;
@@ -5144,9 +5228,9 @@ void ca_widget_input_pass(Ca_Window *win)
                     if (is_effectively_disabled(n)) continue;
                     if (!n->drag_fn_start && !n->drag_fn_move && !n->drag_fn_end) continue;
                     if (!point_within_clip_ancestors(n, mx, my)) continue;
-                    if (!point_in_node(n, mx, my)) continue;
+                    if (!point_reaches_node(n, mx, my, top_z)) continue;
 
-                    int z = n->desc.z_index;
+                    int z = node_effective_z(n);
                     if (!best || z > best_z ||
                         (z == best_z && node_paints_after(n, best))) {
                         best_z = z;
@@ -5329,14 +5413,6 @@ void ca_widget_input_pass(Ca_Window *win)
         Ca_Node *best = NULL;
         float    best_area = 1e18f;
 
-        /* Shared helper: returns true when node n should be considered as a
-           hover candidate at (mx, my).  Nodes flagged no_hover are treated
-           as transparent to hit-testing (their descendants still qualify). */
-#define HOVER_CANDIDATE(n) \
-            ((n)->in_use && !(n)->desc.hidden && !(n)->desc.no_hover && \
-             point_in_node((n), mx, my) && !node_is_ancestor_hidden(n) && \
-             ((n)->widget_type != CA_WIDGET_SPLITTER || point_in_splitter_handle((n), mx, my)))
-
         /* Pass 1 — find the highest effective z-index among all hit nodes
            that are hover-eligible.  This implements CSS stacking-context
            semantics: every node in a z>0 subtree (e.g. the sticky overlay,
@@ -5345,19 +5421,13 @@ void ca_widget_input_pass(Ca_Window *win)
            Nodes marked no_hover (e.g. the full-window popup_host overlay)
            are excluded so they cannot inflate max_ez and block everything
            else when no popup is active. */
-        int16_t max_ez = 0;
-        for (uint32_t i = 0; i < ca_pool_slot_count(&win->node_pool); ++i) {
-            Ca_Node *n = CA_POOL_AT(win->node_pool, Ca_Node, i);
-            if (!HOVER_CANDIDATE(n)) continue;
-            int16_t ez = node_effective_z(n);
-            if (ez > max_ez) max_ez = ez;
-        }
+        const int16_t max_ez = pointer_top_z(win, mx, my);
 
         /* Pass 2 — among nodes whose effective z matches max_ez, pick the
            most-specific one using the original area + descendant logic. */
         for (uint32_t i = 0; i < ca_pool_slot_count(&win->node_pool); ++i) {
             Ca_Node *n = CA_POOL_AT(win->node_pool, Ca_Node, i);
-            if (!HOVER_CANDIDATE(n)) continue;
+            if (!node_is_pointer_candidate(n, mx, my)) continue;
             if (node_effective_z(n) != max_ez) continue;
             float area = n->w * n->h;
             if (area < best_area) {
@@ -5378,7 +5448,6 @@ void ca_widget_input_pass(Ca_Window *win)
             }
         }
 
-#undef HOVER_CANDIDATE
         /* Tree-node containers wrap their clickable header row as
            children[0].  The container often auto-sizes to the same
            bounds as the header, producing an area-tie that the loop
