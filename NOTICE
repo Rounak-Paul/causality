@@ -40,6 +40,18 @@ This product includes the following third-party software:
       Nerd Fonts patcher (MIT) - https://github.com/ryanoasis/nerd-fonts
       Embedded as a static byte array in src/renderer/embedded_symbols_font.c.
 
+  - Embedded monospace symbol font: Causality Mono Symbols
+      Modified (subset and renamed) version of JuliaMono 0.063.
+      Copyright (c) 2020 - 2023, cormullion, with Reserved Font Name JuliaMono.
+      SIL Open Font License, Version 1.1 - https://scripts.sil.org/OFL
+      Upstream: https://github.com/cormullion/juliamono
+      Renamed as required by OFL section 3 for modified versions. Provides
+      monospace glyphs for Unicode symbol blocks (arrows, math, technical,
+      box/block, geometric shapes, dingbats, Braille) so terminal and TUI
+      text stays on the character grid. Rebuilt with
+      tools/subset_mono_symbols.py; embedded as a static byte array in
+      src/renderer/embedded_mono_symbols_font.c.
+
   - Embedded Unicode fallback font: DejaVu Sans (version 2.37)
       Bitstream Vera Fonts Copyright (c) 2003 by Bitstream, Inc.
       DejaVu changes are in the public domain.

@@ -137,6 +137,8 @@ set_source_files_properties(src/renderer/embedded_font_bold.c
     PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
 set_source_files_properties(src/renderer/embedded_symbols_font.c
     PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
+set_source_files_properties(src/renderer/embedded_mono_symbols_font.c
+    PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
 set_source_files_properties(src/renderer/embedded_fallback_font.c
     PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
 set_source_files_properties(src/renderer/embedded_emoji_font.c
@@ -211,6 +213,16 @@ if(BUILD_TESTING)
         causality Vulkan::Vulkan VulkanMemoryAllocator glfw freetype
     )
     add_test(NAME causality_text_clip_tests COMMAND causality_text_clip_tests)
+
+    add_executable(causality_font_grid_tests tests/ca_font_grid_tests.c)
+    target_include_directories(causality_font_grid_tests PRIVATE
+        src/core src/ui src/renderer
+    )
+    target_compile_definitions(causality_font_grid_tests PRIVATE causality_EXPORTS)
+    target_link_libraries(causality_font_grid_tests PRIVATE
+        causality Vulkan::Vulkan VulkanMemoryAllocator glfw freetype
+    )
+    add_test(NAME causality_font_grid_tests COMMAND causality_font_grid_tests)
 
     add_executable(causality_shader_cache_tests tests/ca_shader_cache_tests.c)
     target_include_directories(causality_shader_cache_tests PRIVATE

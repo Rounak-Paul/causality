@@ -11,11 +11,13 @@
    bitmaps.                                                             */
 
 #include "font.h"
+#include "embedded_font.h"
 
 #include <ft2build.h>
 #include FT_FREETYPE_H
 #include FT_LCD_FILTER_H
 #include FT_MODULE_H
+#include FT_TRUETYPE_TABLES_H
 
 #include <stdio.h>
 #include <string.h>
@@ -594,7 +596,8 @@ static void font_clear_page(Ca_Font *font, Ca_FontTier *tier, bool clear_pixels)
 /*
  * Query FreeType face metrics and store them (scaled to logical pixels) on a tier.
  *
- * Sets tier->ascent, descent, and line_gap by querying the face at baked_px
+ * Sets tier->ascent, descent, line_gap and the underline/strikeout line
+ * metrics by querying the face at baked_px
  * then converting back to logical pixel space.
  *
  * font  Font owning the FreeType faces.
@@ -617,6 +620,26 @@ static bool font_set_page_metrics(Ca_Font *font, Ca_FontTier *tier)
     tier->ascent   = ascent * to_logical;
     tier->descent  = descent * to_logical;
     tier->line_gap = (height - (ascent - descent)) * to_logical;
+
+    const FT_Fixed y_scale = face->size->metrics.y_scale;
+    float underline_pos = -(float)FT_MulFix(face->underline_position, y_scale) / 64.0f;
+    float underline_th  = (float)FT_MulFix(face->underline_thickness, y_scale) / 64.0f;
+    if (!(underline_th > 0.0f)) underline_th = height / 16.0f;
+    if (!(underline_pos > 0.0f)) underline_pos = -descent * 0.4f;
+    float strike_pos = ascent * 0.25f;
+    float strike_th  = underline_th;
+    const TT_OS2 *os2 = (const TT_OS2 *)FT_Get_Sfnt_Table(face, FT_SFNT_OS2);
+    if (os2 && os2->yStrikeoutSize > 0 && os2->yStrikeoutPosition > 0) {
+        strike_th  = (float)FT_MulFix(os2->yStrikeoutSize, y_scale) / 64.0f;
+        strike_pos = (float)FT_MulFix(os2->yStrikeoutPosition, y_scale) / 64.0f;
+        strike_pos = -(strike_pos - strike_th * 0.5f);
+    } else {
+        strike_pos = -strike_pos;
+    }
+    tier->underline_position  = underline_pos * to_logical;
+    tier->underline_thickness = underline_th * to_logical;
+    tier->strikeout_position  = strike_pos * to_logical;
+    tier->strikeout_thickness = strike_th * to_logical;
     return true;
 }
 
@@ -848,6 +871,23 @@ static bool font_set_face_size(FT_Face face, float baked_px)
 {
     return face &&
            FT_Set_Pixel_Sizes(face, 0, (FT_UInt)(baked_px + 0.5f)) == 0;
+}
+
+/*
+ * Set a FreeType face to a fractional pixel size (26.6 fixed point).
+ *
+ * Used for glyphs scaled down to fit a monospace cell, where rounding to a
+ * whole pixel size could leave the glyph wider than its cell.
+ *
+ * face  FreeType face to configure.
+ * px    Target pixel size.
+ * Returns true on success; false if face is NULL, px is not positive, or FT
+ *         returns an error.
+ */
+static bool font_set_face_size_exact(FT_Face face, float px)
+{
+    return face && px > 0.0f &&
+           FT_Set_Char_Size(face, 0, (FT_F26Dot6)(px * 64.0f + 0.5f), 72, 72) == 0;
 }
 
 /*
@@ -1104,6 +1144,39 @@ static Ca_Glyph *font_render_glyph_on_page(Ca_FontTier *page,
 }
 
 /*
+ * Measure (once per tier) the advance of one monospace text cell.
+ *
+ * The cell is the advance of '0' in the tier's primary text face, loaded
+ * with exactly the size, supersampling and hinting that ordinary text
+ * glyphs of this tier use, so snapped fallback glyphs line up with them to
+ * the sub-pixel. Proportional primary faces have no cell.
+ *
+ * font  Font owning the faces.
+ * tier  Tier whose cell advance is cached in tier->cell_advance.
+ * Returns the cell advance in baked pixels, or a negative value when the
+ *         primary face is proportional or cannot be measured.
+ */
+static float font_tier_cell_advance(Ca_Font *font, Ca_FontTier *tier)
+{
+    if (tier->cell_advance != 0.0f) return tier->cell_advance;
+    tier->cell_advance = -1.0f;
+    FT_Face primary = font_primary_face_for_range(font, tier->style, false);
+    if (!primary || !FT_IS_FIXED_WIDTH(primary)) return tier->cell_advance;
+    const int supersample = font_supersample_for_glyph(font, tier, false);
+    const int32_t load_flags = font_should_use_lcd_glyph(font, tier, false)
+        ? (FT_LOAD_DEFAULT | FT_LOAD_TARGET_LCD | FT_LOAD_NO_BITMAP)
+        : (FT_LOAD_DEFAULT | FT_LOAD_TARGET_LIGHT | FT_LOAD_NO_BITMAP);
+    const FT_UInt gi = FT_Get_Char_Index(primary, '0');
+    if (gi == 0 ||
+        !font_set_face_size(primary, tier->baked_px * (float)supersample) ||
+        FT_Load_Glyph(primary, gi, load_flags) != 0)
+        return tier->cell_advance;
+    const float advance = ((float)primary->glyph->advance.x / 64.0f) / (float)supersample;
+    if (advance > 0.0f) tier->cell_advance = advance;
+    return tier->cell_advance;
+}
+
+/*
  * Rasterise a single glyph and pack it into the atlas page.
  *
  * Selects the FT face, sets size, determines supersampling and LCD mode,
@@ -1154,39 +1227,35 @@ static bool font_render_glyph(Ca_FontTier *tier, uint32_t cp, Ca_Glyph *g)
             }
         }
     }
-    /* Unicode fallback face.  Kept after the styled and regular lookups so
-       a codepoint present in the chosen font always renders from that
-       font. */
-    if (gi == 0 && font->fallback_face &&
-        face != (FT_Face)font->fallback_face) {
-        FT_Face fallback = (FT_Face)font->fallback_face;
-        if (font_set_face_size(fallback, tier->baked_px)) {
-            FT_UInt fallback_gi = FT_Get_Char_Index(fallback, cp);
-            if (fallback_gi != 0) {
-                face = fallback;
-                gi = fallback_gi;
+    /* Fallback layers, consulted only when neither the styled nor the
+       regular face maps the codepoint, so a codepoint present in the chosen
+       font always renders from that font. */
+    bool snap_to_grid = false;
+    if (gi == 0) {
+        void *const layers[] = {
+            font->mono_symbols_face, font->emoji_face, font->fallback_face,
+        };
+        for (size_t i = 0; i < sizeof(layers) / sizeof(layers[0]) && gi == 0; ++i) {
+            FT_Face layer = (FT_Face)layers[i];
+            if (!layer || layer == face) continue;
+            FT_UInt layer_gi = FT_Get_Char_Index(layer, cp);
+            if (layer_gi != 0) {
+                face = layer;
+                gi = layer_gi;
                 is_icon_range = false;
+                snap_to_grid = true;
             }
         }
     }
-    /* Last resort before '?': the emoji face.  DejaVu covers text/symbol
-       blocks (arrows, Braille, geometric shapes) but has essentially no
-       emoji pictograph coverage, so pictograph/emoticon codepoints fall
-       through to here. */
-    if (gi == 0 && font->emoji_face &&
-        face != (FT_Face)font->emoji_face) {
-        FT_Face emoji = (FT_Face)font->emoji_face;
-        if (font_set_face_size(emoji, tier->baked_px)) {
-            FT_UInt emoji_gi = FT_Get_Char_Index(emoji, cp);
-            if (emoji_gi != 0) {
-                face = emoji;
-                gi = emoji_gi;
-                is_icon_range = false;
-            }
-        }
+    const int cell_width = ca_codepoint_cell_width(cp);
+    if (gi == 0 && cell_width == 0) {
+        g->valid = 1;
+        return true;
     }
-    if (gi == 0 && cp != '?')
+    if (gi == 0 && cp != '?') {
         gi = FT_Get_Char_Index(face, '?');
+        snap_to_grid = true;
+    }
     if (gi == 0) {
         g->xadvance = tier->logical_px * 0.5f * (tier->baked_px / tier->logical_px);
         g->valid = 1;
@@ -1199,13 +1268,37 @@ static bool font_render_glyph(Ca_FontTier *tier, uint32_t cp, Ca_Glyph *g)
             ? (FT_LOAD_DEFAULT | FT_LOAD_TARGET_LCD | FT_LOAD_NO_BITMAP)
             : (FT_LOAD_DEFAULT | FT_LOAD_TARGET_LIGHT | FT_LOAD_NO_BITMAP));
     const float icon_scale = font_icon_face_scale(font, face, is_icon_range);
-    const float render_px = tier->baked_px * icon_scale;
-    if (!font_set_face_size(face, render_px * (float)supersample))
+    float render_px = tier->baked_px * icon_scale;
+
+    /* Glyphs borrowed from another face (or the '?' stand-in) get exactly
+       cell_width primary cells of advance when the primary face is
+       monospace, so any run of text keeps its column alignment. Wider
+       glyphs are scaled down to fit and every snapped glyph is centred. */
+    const float cell = snap_to_grid
+        ? font_tier_cell_advance(font, tier)
+        : -1.0f;
+    const float snapped_advance = cell > 0.0f ? cell * (float)cell_width : -1.0f;
+    if (snapped_advance > 0.0f) {
+        if (!font_set_face_size(face, render_px * (float)supersample) ||
+            FT_Load_Glyph(face, gi, load_flags) != 0)
+            return false;
+        const float natural = ((float)face->glyph->advance.x / 64.0f) / (float)supersample;
+        if (natural > snapped_advance) render_px *= snapped_advance / natural;
+        if (!font_set_face_size_exact(face, render_px * (float)supersample))
+            return false;
+    } else if (!font_set_face_size(face, render_px * (float)supersample)) {
         return false;
+    }
     if (FT_Load_Glyph(face, gi, load_flags) != 0) return false;
     FT_GlyphSlot slot = face->glyph;
     FT_Render_Mode mode = use_lcd ? FT_RENDER_MODE_LCD : FT_RENDER_MODE_NORMAL;
     if (FT_Render_Glyph(slot, mode) != 0) return false;
+
+    const float natural_advance = ((float)slot->advance.x / 64.0f) / (float)supersample;
+    const float advance = snapped_advance >= 0.0f ? snapped_advance : natural_advance;
+    const float centre_shift = snapped_advance > 0.0f
+        ? (snapped_advance - natural_advance) * 0.5f
+        : 0.0f;
 
     const FT_Bitmap *bmp = &slot->bitmap;
     int src_pixel_w = (bmp->pixel_mode == FT_PIXEL_MODE_LCD)
@@ -1216,7 +1309,7 @@ static bool font_render_glyph(Ca_FontTier *tier, uint32_t cp, Ca_Glyph *g)
     int pixel_h = (src_pixel_h + supersample - 1) / supersample;
 
     if (pixel_w <= 0 || pixel_h <= 0) {
-        g->xadvance = ((float)slot->advance.x / 64.0f) / (float)supersample;
+        g->xadvance = advance;
         g->valid = 1;
         return true;
     }
@@ -1240,13 +1333,13 @@ static bool font_render_glyph(Ca_FontTier *tier, uint32_t cp, Ca_Glyph *g)
     g->y0 = (uint16_t)ry;
     g->x1 = (uint16_t)(rx + pixel_w);
     g->y1 = (uint16_t)(ry + pixel_h);
-    g->xoff  = (float)slot->bitmap_left / (float)supersample;
+    g->xoff  = (float)slot->bitmap_left / (float)supersample + centre_shift;
     g->yoff  = ((float)(-slot->bitmap_top) / (float)supersample) -
                font_icon_baseline_raise(font, face, is_icon_range,
                                         tier->baked_px);
     g->xoff2 = g->xoff + (float)pixel_w;
     g->yoff2 = g->yoff + (float)pixel_h;
-    g->xadvance = ((float)slot->advance.x / 64.0f) / (float)supersample;
+    g->xadvance = advance;
     g->valid = 1;
 
     font_mark_dirty(font, (uint16_t)(rx - 1), (uint16_t)(ry - 1),
@@ -1521,6 +1614,44 @@ void ca_font_flush_uploads(Ca_Instance *inst, Ca_Font *font)
  * bold_size     Byte count of bold_data; 0 if bold_data is NULL.
  * Returns       true on success; false if any FreeType or Vulkan call fails.
  */
+/*
+ * Copy an embedded font blob and open it as a FreeType face.
+ *
+ * FreeType reads memory faces lazily, so the blob copy must outlive the
+ * face; both are released by ca_font_destroy. On failure every output is
+ * cleared and the layer is simply absent.
+ *
+ * lib       FreeType library owning the face.
+ * data      Embedded font bytes.
+ * size      Byte count of data; 0 disables the layer.
+ * label     Layer name for diagnostics.
+ * out_face  Receives the FT_Face, or NULL.
+ * out_data  Receives the owned blob copy, or NULL.
+ * out_size  Receives the blob size, or 0.
+ */
+static void font_load_embedded_face(FT_Library lib,
+                                    const unsigned char *data, unsigned int size,
+                                    const char *label, void **out_face,
+                                    unsigned char **out_data, size_t *out_size)
+{
+    *out_face = NULL;
+    *out_data = NULL;
+    *out_size = 0;
+    if (size == 0u) return;
+    unsigned char *copy = (unsigned char *)CA_MALLOC(size);
+    if (!copy) return;
+    memcpy(copy, data, size);
+    FT_Face face = NULL;
+    if (FT_New_Memory_Face(lib, copy, (FT_Long)size, 0, &face) != 0) {
+        fprintf(stderr, "[font] FT_New_Memory_Face %s failed; layer disabled\n", label);
+        CA_FREE(copy);
+        return;
+    }
+    *out_face = face;
+    *out_data = copy;
+    *out_size = size;
+}
+
 static bool font_create_internal(Ca_Instance *inst, GLFWwindow *glfw_win,
                                  Ca_Font *out_font,
                                  const unsigned char *regular_data,
@@ -1588,85 +1719,31 @@ static bool font_create_internal(Ca_Instance *inst, GLFWwindow *glfw_win,
         }
     }
 
-    extern const unsigned char ca_embedded_symbols_font_data[];
-    extern const unsigned int  ca_embedded_symbols_font_size;
-    if (ca_embedded_symbols_font_size > 0u) {
-        out_font->icon_data =
-            (unsigned char *)CA_MALLOC(ca_embedded_symbols_font_size);
-        if (out_font->icon_data) {
-            memcpy(out_font->icon_data, ca_embedded_symbols_font_data,
-                   ca_embedded_symbols_font_size);
-            out_font->icon_size = ca_embedded_symbols_font_size;
-            FT_Face icon_face = NULL;
-            if (FT_New_Memory_Face(lib, out_font->icon_data,
-                                   (FT_Long)out_font->icon_size,
-                                   0, &icon_face) == 0) {
-                out_font->icon_face = icon_face;
-            } else {
-                fprintf(stderr, "[font] FT_New_Memory_Face icons failed; using regular\n");
-                CA_FREE(out_font->icon_data);
-                out_font->icon_data = NULL;
-                out_font->icon_size = 0;
-            }
-        }
-    }
+    font_load_embedded_face(lib, ca_embedded_symbols_font_data,
+                            ca_embedded_symbols_font_size, "icons",
+                            &out_font->icon_face, &out_font->icon_data,
+                            &out_font->icon_size);
 
-    /* Unicode fallback layer.  The Nerd Font faces patch icons into the
-       private-use area but do not extend coverage of ordinary Unicode text
-       blocks (arrows, Braille, geometric shapes, dingbats, math operators).
-       This face is consulted only when neither the styled face nor the
-       regular face maps the codepoint, so it never overrides font choice. */
-    extern const unsigned char ca_embedded_fallback_font_data[];
-    extern const unsigned int  ca_embedded_fallback_font_size;
-    if (ca_embedded_fallback_font_size > 0u) {
-        out_font->fallback_data =
-            (unsigned char *)CA_MALLOC(ca_embedded_fallback_font_size);
-        if (out_font->fallback_data) {
-            memcpy(out_font->fallback_data, ca_embedded_fallback_font_data,
-                   ca_embedded_fallback_font_size);
-            out_font->fallback_size = ca_embedded_fallback_font_size;
-            FT_Face fallback_face = NULL;
-            if (FT_New_Memory_Face(lib, out_font->fallback_data,
-                                   (FT_Long)out_font->fallback_size,
-                                   0, &fallback_face) == 0) {
-                out_font->fallback_face = fallback_face;
-            } else {
-                fprintf(stderr, "[font] FT_New_Memory_Face fallback failed; "
-                                "missing glyphs will render as '?'\n");
-                CA_FREE(out_font->fallback_data);
-                out_font->fallback_data = NULL;
-                out_font->fallback_size = 0;
-            }
-        }
-    }
-
-    /* Emoji layer.  DejaVu's fallback covers text/symbol blocks but has
-       essentially no emoji pictograph coverage, so this face is consulted
-       only when neither the styled, regular, nor DejaVu fallback face maps
-       the codepoint. */
-    extern const unsigned char ca_embedded_emoji_font_data[];
-    extern const unsigned int  ca_embedded_emoji_font_size;
-    if (ca_embedded_emoji_font_size > 0u) {
-        out_font->emoji_data =
-            (unsigned char *)CA_MALLOC(ca_embedded_emoji_font_size);
-        if (out_font->emoji_data) {
-            memcpy(out_font->emoji_data, ca_embedded_emoji_font_data,
-                   ca_embedded_emoji_font_size);
-            out_font->emoji_size = ca_embedded_emoji_font_size;
-            FT_Face emoji_face = NULL;
-            if (FT_New_Memory_Face(lib, out_font->emoji_data,
-                                   (FT_Long)out_font->emoji_size,
-                                   0, &emoji_face) == 0) {
-                out_font->emoji_face = emoji_face;
-            } else {
-                fprintf(stderr, "[font] FT_New_Memory_Face emoji failed; "
-                                "missing glyphs will render as '?'\n");
-                CA_FREE(out_font->emoji_data);
-                out_font->emoji_data = NULL;
-                out_font->emoji_size = 0;
-            }
-        }
-    }
+    /* Unicode fallback layers, consulted in this order only when neither the
+       styled nor the regular face maps a codepoint (see font_render_glyph):
+       - Causality Mono Symbols: monospace arrows, math, technical, box,
+         geometric, dingbat and Braille glyphs, so terminal/TUI symbols keep
+         the text grid.
+       - Noto Emoji: emoji pictographs.
+       - DejaVu Sans: remaining text blocks (other scripts, rare symbols). */
+    font_load_embedded_face(lib, ca_embedded_mono_symbols_font_data,
+                            ca_embedded_mono_symbols_font_size, "mono symbols",
+                            &out_font->mono_symbols_face,
+                            &out_font->mono_symbols_data,
+                            &out_font->mono_symbols_size);
+    font_load_embedded_face(lib, ca_embedded_emoji_font_data,
+                            ca_embedded_emoji_font_size, "emoji",
+                            &out_font->emoji_face, &out_font->emoji_data,
+                            &out_font->emoji_size);
+    font_load_embedded_face(lib, ca_embedded_fallback_font_data,
+                            ca_embedded_fallback_font_size, "fallback",
+                            &out_font->fallback_face, &out_font->fallback_data,
+                            &out_font->fallback_size);
 
     out_font->ft_library = lib;
 
@@ -1862,6 +1939,8 @@ void ca_font_destroy(Ca_Instance *inst, Ca_Font *font)
         FT_Done_Face((FT_Face)font->bold_face);
     if (font->icon_face)
         FT_Done_Face((FT_Face)font->icon_face);
+    if (font->mono_symbols_face)
+        FT_Done_Face((FT_Face)font->mono_symbols_face);
     if (font->fallback_face)
         FT_Done_Face((FT_Face)font->fallback_face);
     if (font->emoji_face)
@@ -1873,6 +1952,7 @@ void ca_font_destroy(Ca_Instance *inst, Ca_Font *font)
     CA_FREE(font->regular_data);
     CA_FREE(font->bold_data);
     CA_FREE(font->icon_data);
+    CA_FREE(font->mono_symbols_data);
     CA_FREE(font->fallback_data);
     CA_FREE(font->emoji_data);
     CA_FREE(font->atlas_rgba);

@@ -126,6 +126,14 @@ typedef enum {
     CA_DRAW_MODE_SHADOW      = 1,  /* SDF Gaussian shadow — blur via GPU       */
     CA_DRAW_MODE_LINEAR_GRAD = 2,  /* linear-gradient(angle, color, color2)    */
     CA_DRAW_MODE_RADIAL_GRAD = 3,  /* radial-gradient(circle, color, color2)   */
+    /* Anti-aliased sine stroke centred in the rect (wavy text decoration):
+       blur_radius = wavelength, gradient_cx = stroke thickness. The phase
+       follows absolute x so adjacent rects continue one wave. */
+    CA_DRAW_MODE_WAVE        = 5,
+    /* Repeating horizontal dashes filling the rect height (dotted/dashed
+       text decoration): blur_radius = period, gradient_cx = dash length.
+       The pattern follows absolute x so adjacent rects stay in phase. */
+    CA_DRAW_MODE_DASH        = 6,
 } Ca_DrawMode;
 
 /* GPU-side instance data — must exactly match RectData in VERT_GLSL (std430).
@@ -313,7 +321,9 @@ typedef struct {
     uint8_t      font_weight;    /* 0=normal, 1=bold, 2=lighter, 3=bolder */
     uint8_t      font_style;     /* 0=normal, 1=italic, 2=oblique */
     uint8_t      text_align;     /* 0=left (default), 1=center, 2=right */
-    uint8_t      text_decoration; /* text-decoration keyword */
+    uint8_t      text_decoration; /* CA_TEXT_DECORATION_* line flags */
+    uint8_t      text_decoration_style; /* CA_TEXT_DECORATION_STYLE_* */
+    uint32_t     text_decoration_color; /* RRGGBBAA; 0 = text colour */
     uint8_t      text_transform;  /* text-transform keyword */
     uint8_t      white_space;     /* white-space keyword */
     uint8_t      overflow_x;     /* 0=visible, 1=hidden, 2=scroll, 3=auto */

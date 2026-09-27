@@ -73,6 +73,13 @@ typedef struct Ca_FontTier {
     float         ascent;
     float         descent;
     float         line_gap;
+    /* Decoration line centres relative to the baseline (positive = below)
+       and thicknesses, in logical pixels, from the primary face's post
+       (underline) and OS/2 (strikeout) tables. */
+    float         underline_position;
+    float         underline_thickness;
+    float         strikeout_position;
+    float         strikeout_thickness;
     bool          packed;
     struct Ca_Font     *owner;
     bool          dynamic_page;
@@ -82,6 +89,10 @@ typedef struct Ca_FontTier {
     uint16_t      shelf_x, shelf_y, shelf_h;
     uint32_t      size_key;
     uint64_t      last_used_frame;
+    /* Primary-face cell advance in baked pixels, used to snap fallback-face
+       glyphs onto the monospace grid. 0 = not measured yet, negative =
+       primary face is proportional (no snapping). */
+    float         cell_advance;
 } Ca_FontTier;
 
 typedef struct Ca_FontDirtyRect {
@@ -110,6 +121,7 @@ typedef struct Ca_Font {
     void       *regular_face;
     void       *bold_face;
     void       *icon_face;
+    void       *mono_symbols_face;
     void       *fallback_face;
     void       *emoji_face;
     unsigned char *regular_data;
@@ -118,6 +130,8 @@ typedef struct Ca_Font {
     size_t      bold_size;
     unsigned char *icon_data;
     size_t      icon_size;
+    unsigned char *mono_symbols_data;
+    size_t      mono_symbols_size;
     unsigned char *fallback_data;
     size_t      fallback_size;
     unsigned char *emoji_data;

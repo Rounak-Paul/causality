@@ -192,6 +192,18 @@ CA_API void ca_instance_set_frame_timing_callback(Ca_Instance *instance,
 /* Wake the event loop from another thread (e.g. after posting async data). */
 CA_API void         ca_instance_wake(void);
 
+/*
+ * Number of monospace cells a codepoint occupies, following the wcwidth(3)
+ * conventions of modern terminal emulators (Unicode East_Asian_Width and
+ * General_Category tables compiled in from the UCD).
+ *
+ * cp       Unicode codepoint.
+ * Returns  0 for combining marks, format and control characters (zero-width
+ *          joiner, variation selectors, ...), 2 for East Asian wide/fullwidth
+ *          characters and emoji with default emoji presentation, else 1.
+ */
+CA_API int          ca_codepoint_cell_width(uint32_t cp);
+
 /**
  * Request an event-loop frame after a minimum delay.
  *
@@ -897,6 +909,10 @@ typedef struct Ca_TextDesc {
     /* Raw CSS declaration text — see Ca_DivDesc.inline_style for the
        full contract (identical here). */
     const char *inline_style;
+    /* Colour of text-decoration lines (RRGGBBAA). Like `color`, a non-zero
+       value overrides CSS text-decoration-color; 0 keeps the CSS value, or
+       the text colour when CSS sets none. */
+    uint32_t    decoration_color;
 } Ca_TextDesc;
 
 /* <button> — clickable nestable element. Use ca_btn_begin / ca_btn_end and

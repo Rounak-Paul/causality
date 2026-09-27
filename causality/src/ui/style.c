@@ -827,7 +827,21 @@ void ca_style_apply_one_declaration(Ca_ResolvedStyle *out, Ca_CssPropId prop,
         case CA_CSS_PROP_LETTER_SPACING: out->letter_spacing = css_val_to_px(val); break;
         case CA_CSS_PROP_WORD_SPACING:   out->word_spacing  = css_val_to_px(val); break;
         case CA_CSS_PROP_TEXT_DECORATION:
-            if (val->type == CA_CSS_VAL_KEYWORD) out->text_decoration = val->keyword;
+            if (val->type == CA_CSS_VAL_NUMBER) out->text_decoration = (int)val->number;
+            break;
+        case CA_CSS_PROP_TEXT_DECORATION_COLOR:
+            if (val->type == CA_CSS_VAL_COLOR)              out->text_decoration_color = val->color;
+            else if (val->type == CA_CSS_VAL_CURRENT_COLOR) out->text_decoration_color = 0u;
+            break;
+        case CA_CSS_PROP_TEXT_DECORATION_STYLE:
+            if (val->type != CA_CSS_VAL_KEYWORD) break;
+            switch (val->keyword) {
+            case CA_CSS_TEXT_DECORATION_STYLE_DOUBLE: out->text_decoration_style = CA_TEXT_DECORATION_STYLE_DOUBLE; break;
+            case CA_CSS_TEXT_DECORATION_STYLE_DOTTED: out->text_decoration_style = CA_TEXT_DECORATION_STYLE_DOTTED; break;
+            case CA_CSS_TEXT_DECORATION_STYLE_DASHED: out->text_decoration_style = CA_TEXT_DECORATION_STYLE_DASHED; break;
+            case CA_CSS_TEXT_DECORATION_STYLE_WAVY:   out->text_decoration_style = CA_TEXT_DECORATION_STYLE_WAVY;   break;
+            default:                                  out->text_decoration_style = CA_TEXT_DECORATION_STYLE_SOLID;  break;
+            }
             break;
         case CA_CSS_PROP_TEXT_TRANSFORM:
             if (val->type == CA_CSS_VAL_KEYWORD) out->text_transform = val->keyword;
@@ -1307,6 +1321,10 @@ void ca_style_apply_to_node(const Ca_ResolvedStyle *style,
         }
     }
     if (STYLE_SET(CA_CSS_PROP_TEXT_DECORATION)) nd->text_decoration = (uint8_t)style->text_decoration;
+    if (STYLE_SET(CA_CSS_PROP_TEXT_DECORATION_STYLE))
+        nd->text_decoration_style = (uint8_t)style->text_decoration_style;
+    if (STYLE_SET(CA_CSS_PROP_TEXT_DECORATION_COLOR))
+        nd->text_decoration_color = style->text_decoration_color;
     if (STYLE_SET(CA_CSS_PROP_TEXT_TRANSFORM))  nd->text_transform  = (uint8_t)style->text_transform;
     if (STYLE_SET(CA_CSS_PROP_WHITE_SPACE))     nd->white_space     = (uint8_t)style->white_space;
     if (nd->text_wrap == 0 && STYLE_SET(CA_CSS_PROP_TEXT_WRAP))

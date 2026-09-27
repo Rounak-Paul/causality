@@ -1242,6 +1242,131 @@ static inline float snap_text_position(float value, float raster_scale,
 }
 
 /* Emit glyph draw commands for a multi-line word-wrapped text string. */
+/*
+ * Append one decoration rect draw command.
+ *
+ * win     Window receiving the command.
+ * node    Text node (z-index source).
+ * x, y    Top-left in layout units.
+ * w, h    Size in layout units.
+ * rgba    Colour.
+ * clip    Clip applied to the owning text.
+ * mode    CA_DRAW_MODE_NORMAL, _WAVE or _DASH.
+ * period  Wavelength / dash period (layout units) for WAVE and DASH.
+ * extent  Stroke thickness (WAVE) or dash length (DASH), layout units.
+ * Returns false when the draw-command buffer cannot grow.
+ */
+static bool paint_decoration_rect(Ca_Window *win, const Ca_Node *node,
+                                  float x, float y, float w, float h,
+                                  const float rgba[4], ClipRect clip,
+                                  Ca_DrawMode mode, float period, float extent)
+{
+    if (!ca_window_reserve_draw_commands(win, (size_t)win->draw_cmd_count + 1u)) return false;
+    Ca_DrawCmd *cmd = &win->draw_cmds[win->draw_cmd_count++];
+    memset(cmd, 0, sizeof(*cmd));
+    cmd->type = CA_DRAW_RECT;
+    cmd->draw_mode = mode;
+    cmd->x = x; cmd->y = y; cmd->w = w; cmd->h = h;
+    cmd->r = rgba[0]; cmd->g = rgba[1]; cmd->b = rgba[2]; cmd->a = rgba[3];
+    cmd->blur_radius = period;
+    cmd->gradient_cx = extent;
+    cmd->z_index = node->desc.z_index;
+    cmd->in_use = true;
+    set_clip(cmd, clip);
+    return true;
+}
+
+/*
+ * Emit the text-decoration lines (underline, line-through, overline) of one
+ * horizontal span of painted text in the text colour, drawn in the node's
+ * text-decoration-style (solid, double, dotted, dashed or wavy).
+ *
+ * Positions and thicknesses come from the tier's font metrics and are
+ * snapped to whole raster pixels (at least one) so lines stay crisp.
+ * Dotted/dashed/wavy patterns are phased on absolute x, so the lines of
+ * adjacent spans (e.g. terminal attribute runs) continue seamlessly.
+ *
+ * win           Window receiving the draw commands.
+ * node          Text node whose desc.text_decoration* select the lines.
+ * tier          Font tier the span was laid out with.
+ * metric_scale  Tier logical metrics to layout units (font_scale * ui_scale).
+ * cs_eff        Layout units to raster pixels for this tier.
+ * x0, x1        Horizontal extent of the span in layout units.
+ * baseline      Baseline y of the span in layout units.
+ * text_rgba     Text colour; lines use desc.text_decoration_color instead
+ *               when it is set.
+ * clip          Clip applied to the span's glyphs.
+ */
+static void paint_text_decoration(Ca_Window *win, const Ca_Node *node,
+                                  const Ca_FontTier *tier, float metric_scale,
+                                  float cs_eff, float x0, float x1, float baseline,
+                                  const float text_rgba[4], ClipRect clip)
+{
+    const unsigned flags = node->desc.text_decoration;
+    if (flags == 0u || !(x1 > x0) || !(cs_eff > 0.0f)) return;
+    float line_rgba[4] = { text_rgba[0], text_rgba[1], text_rgba[2], text_rgba[3] };
+    if (node->desc.text_decoration_color != 0u)
+        unpack_color(node->desc.text_decoration_color,
+                     &line_rgba[0], &line_rgba[1], &line_rgba[2], &line_rgba[3]);
+    const float *rgba = line_rgba;
+    const unsigned style = node->desc.text_decoration_style;
+    const float em_raster = tier->logical_px * metric_scale * cs_eff;
+    const struct { unsigned flag; float centre; float thickness; } lines[] = {
+        { CA_TEXT_DECORATION_UNDERLINE, tier->underline_position, tier->underline_thickness },
+        { CA_TEXT_DECORATION_LINE_THROUGH, tier->strikeout_position, tier->strikeout_thickness },
+        { CA_TEXT_DECORATION_OVERLINE, -tier->ascent + tier->underline_thickness * 0.5f,
+          tier->underline_thickness },
+    };
+    for (size_t i = 0; i < sizeof(lines) / sizeof(lines[0]); ++i) {
+        if (!(flags & lines[i].flag)) continue;
+        float t = floorf(lines[i].thickness * metric_scale * cs_eff + 0.5f);
+        if (t < 1.0f) t = 1.0f;
+        const float centre = (baseline + lines[i].centre * metric_scale) * cs_eff;
+        const float w = x1 - x0;
+        bool ok = true;
+        switch (style) {
+        case CA_TEXT_DECORATION_STYLE_DOUBLE: {
+            const float top = floorf(centre - t * 1.5f + 0.5f);
+            ok = paint_decoration_rect(win, node, x0, top / cs_eff, w, t / cs_eff,
+                                       rgba, clip, CA_DRAW_MODE_NORMAL, 0.0f, 0.0f) &&
+                 paint_decoration_rect(win, node, x0, (top + 2.0f * t) / cs_eff, w, t / cs_eff,
+                                       rgba, clip, CA_DRAW_MODE_NORMAL, 0.0f, 0.0f);
+            break;
+        }
+        case CA_TEXT_DECORATION_STYLE_DOTTED:
+        case CA_TEXT_DECORATION_STYLE_DASHED: {
+            const bool dotted = style == CA_TEXT_DECORATION_STYLE_DOTTED;
+            const float dash   = (dotted ? t : 3.0f * t) / cs_eff;
+            const float period = (dotted ? 2.0f * t : 5.0f * t) / cs_eff;
+            const float top = floorf(centre - t * 0.5f + 0.5f);
+            ok = paint_decoration_rect(win, node, x0, top / cs_eff, w, t / cs_eff,
+                                       rgba, clip, CA_DRAW_MODE_DASH, period, dash);
+            break;
+        }
+        case CA_TEXT_DECORATION_STYLE_WAVY: {
+            /* A curve crosses pixel centres at arbitrary phase, so a stroke
+               of exactly t pixels renders fainter than a straight line of
+               the same width; half a pixel extra restores its weight. */
+            const float stroke = t + 0.5f;
+            const float height = fmaxf(4.0f * t + 1.0f, floorf(em_raster * 0.3f + 0.5f));
+            const float period = fmaxf(4.0f * t, floorf(em_raster * 0.6f + 0.5f));
+            const float top = floorf(centre - height * 0.5f + 0.5f);
+            ok = paint_decoration_rect(win, node, x0, top / cs_eff, w, height / cs_eff,
+                                       rgba, clip, CA_DRAW_MODE_WAVE,
+                                       period / cs_eff, stroke / cs_eff);
+            break;
+        }
+        default: {
+            const float top = floorf(centre - t * 0.5f + 0.5f);
+            ok = paint_decoration_rect(win, node, x0, top / cs_eff, w, t / cs_eff,
+                                       rgba, clip, CA_DRAW_MODE_NORMAL, 0.0f, 0.0f);
+            break;
+        }
+        }
+        if (!ok) return;
+    }
+}
+
 static void paint_text_wrapped(Ca_Window *win, Ca_Font *font,
                                Ca_Node *node,
                                const char *text, uint32_t packed_color)
@@ -1319,7 +1444,9 @@ static void paint_text_wrapped(Ca_Window *win, Ca_Font *font,
     float line_cs_eff = ca_font_glyph_cs_eff(tier, desired_size, cs);
     float xpos = left_x;
     float glyph_raster_xpos = snap_text_position(left_x * line_cs_eff, line_cs_eff, font->display_scale);
+    float line_start_raster = glyph_raster_xpos;
     float baseline_y = start_y;
+    const float rgba[4] = { r, g, b, a };
 
     ClipRect node_clip = text_clip_for_node(node);
 
@@ -1334,10 +1461,15 @@ static void paint_text_wrapped(Ca_Window *win, Ca_Font *font,
         }
         float with_space = (cur_line_w > 0.0f) ? cur_line_w + space_adv + word_w : word_w;
         if (cur_line_w > 0.0f && with_space > max_w) {
+            paint_text_decoration(win, node, tier, metric_scale, line_cs_eff,
+                                  line_start_raster / line_cs_eff,
+                                  glyph_raster_xpos / line_cs_eff,
+                                  baseline_y, rgba, node_clip);
             cur_line++;
             cur_line_w = word_w;
             xpos = left_x;
             glyph_raster_xpos = snap_text_position(left_x * line_cs_eff, line_cs_eff, font->display_scale);
+            line_start_raster = glyph_raster_xpos;
             baseline_y = start_y + line_height * cur_line;
         } else {
             if (cur_line_w > 0.0f) {
@@ -1387,16 +1519,25 @@ static void paint_text_wrapped(Ca_Window *win, Ca_Font *font,
             glyph_raster_xpos += pc->xadvance;
         }
         if (*p == '\n') {
+            paint_text_decoration(win, node, tier, metric_scale, line_cs_eff,
+                                  line_start_raster / line_cs_eff,
+                                  glyph_raster_xpos / line_cs_eff,
+                                  baseline_y, rgba, node_clip);
             cur_line++;
             cur_line_w = 0;
             xpos = left_x;
             glyph_raster_xpos = snap_text_position(left_x * line_cs_eff, line_cs_eff, font->display_scale);
+            line_start_raster = glyph_raster_xpos;
             baseline_y = start_y + line_height * cur_line;
             p++;
         } else if (*p == ' ') {
             p++;
         }
     }
+    paint_text_decoration(win, node, tier, metric_scale, line_cs_eff,
+                          line_start_raster / line_cs_eff,
+                          glyph_raster_xpos / line_cs_eff,
+                          baseline_y, rgba, node_clip);
 done:
     node->content_h = node->desc.padding_top + line_height * (cur_line + 1) + node->desc.padding_bottom;
 }
@@ -1452,6 +1593,7 @@ static void paint_inline_run(Ca_Window *win, Ca_Font *font,
 
     float xpos = origin_x + run->x;
     float glyph_raster_xpos = snap_text_position(xpos * line_cs_eff, line_cs_eff, font->display_scale);
+    const float run_start_raster = glyph_raster_xpos;
     float baseline_y = origin_y + run->baseline_y;
 
     const char *p = run->text_start;
@@ -1493,6 +1635,10 @@ static void paint_inline_run(Ca_Window *win, Ca_Font *font,
                       only per-glyph xadvance within the word is needed */
         glyph_raster_xpos += pc->xadvance;
     }
+    const float rgba[4] = { r, g, b, a };
+    paint_text_decoration(win, child, tier, desired_size / tier->logical_px * ui_s,
+                          line_cs_eff, run_start_raster / line_cs_eff,
+                          glyph_raster_xpos / line_cs_eff, baseline_y, rgba, clip);
 }
 
 /* Paints every resolved run of an inline_flow container's inline layout
@@ -1588,6 +1734,7 @@ static void paint_text(Ca_Window *win, Ca_Font *font,
     float glyph_raster_xpos = snap_text_position(left_logical * line_cs_eff, line_cs_eff,
                                                  font->display_scale);
     float letter_spacing_raster = node->desc.letter_spacing * line_cs_eff;
+    const float line_start_raster = glyph_raster_xpos;
 
     ClipRect node_clip = text_clip_for_node(node);
 
@@ -1627,6 +1774,11 @@ static void paint_text(Ca_Window *win, Ca_Font *font,
         set_clip(cmd, node_clip);
         glyph_raster_xpos += pc->xadvance + letter_spacing_raster;
     }
+    const float rgba[4] = { r, g, b, a };
+    paint_text_decoration(win, node, tier, metric_scale, line_cs_eff,
+                          line_start_raster / line_cs_eff,
+                          glyph_raster_xpos / line_cs_eff,
+                          baseline_logical, rgba, node_clip);
 }
 
 /* Build the masked glyph string for a CA_INPUT_PASSWORD field: one
@@ -1711,6 +1863,7 @@ static void paint_text_left(Ca_Window *win, Ca_Font *font,
     ClipRect input_clip = clip_intersect(text_clip_for_node(node),
                                          node->x, node->y, node->w, node->h,
                                          node->desc.corner_radius);
+    const float line_start_raster = glyph_raster_xpos;
 
     const char *p = text;
     while (*p) {
@@ -1747,6 +1900,11 @@ static void paint_text_left(Ca_Window *win, Ca_Font *font,
         set_clip(cmd, input_clip);
         glyph_raster_xpos += pc->xadvance;
     }
+    const float rgba[4] = { r, g, b, a };
+    paint_text_decoration(win, node, tier, metric_scale, line_cs_eff,
+                          line_start_raster / line_cs_eff,
+                          glyph_raster_xpos / line_cs_eff,
+                          baseline_logical, rgba, input_clip);
 }
 
 /* Measure x-advance for the first cp_count codepoints of text.

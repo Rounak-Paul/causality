@@ -112,6 +112,8 @@ typedef enum {
     CA_CSS_PROP_WORD_SPACING,
     CA_CSS_PROP_TEXT_ALIGN,
     CA_CSS_PROP_TEXT_DECORATION,
+    CA_CSS_PROP_TEXT_DECORATION_STYLE,
+    CA_CSS_PROP_TEXT_DECORATION_COLOR,
     CA_CSS_PROP_TEXT_TRANSFORM,
     CA_CSS_PROP_WHITE_SPACE,
     /* Overflow */
@@ -254,6 +256,12 @@ typedef enum {
     CA_CSS_TEXT_DECORATION_UNDERLINE,
     CA_CSS_TEXT_DECORATION_LINE_THROUGH,
     CA_CSS_TEXT_DECORATION_OVERLINE,
+    /* text-decoration-style */
+    CA_CSS_TEXT_DECORATION_STYLE_SOLID,
+    CA_CSS_TEXT_DECORATION_STYLE_DOUBLE,
+    CA_CSS_TEXT_DECORATION_STYLE_DOTTED,
+    CA_CSS_TEXT_DECORATION_STYLE_DASHED,
+    CA_CSS_TEXT_DECORATION_STYLE_WAVY,
     /* text-transform */
     CA_CSS_TEXT_TRANSFORM_NONE,
     CA_CSS_TEXT_TRANSFORM_UPPERCASE,
@@ -322,6 +330,19 @@ typedef enum {
     CA_CSS_EASE_STEP_START,
     CA_CSS_EASE_STEP_END,
 } Ca_CssKeyword;
+
+/* Resolved text-decoration line flags (Ca_NodeDesc.text_decoration). The
+   CA_CSS_TEXT_DECORATION_* keywords above are only parser tokens. */
+#define CA_TEXT_DECORATION_UNDERLINE    0x1u
+#define CA_TEXT_DECORATION_LINE_THROUGH 0x2u
+#define CA_TEXT_DECORATION_OVERLINE     0x4u
+
+/* Resolved text-decoration-style (Ca_NodeDesc.text_decoration_style). */
+#define CA_TEXT_DECORATION_STYLE_SOLID  0u
+#define CA_TEXT_DECORATION_STYLE_DOUBLE 1u
+#define CA_TEXT_DECORATION_STYLE_DOTTED 2u
+#define CA_TEXT_DECORATION_STYLE_DASHED 3u
+#define CA_TEXT_DECORATION_STYLE_WAVY   4u
 
 /* ============================================================
    CSS DECLARATION

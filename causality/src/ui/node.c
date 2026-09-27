@@ -456,6 +456,9 @@ bool content_desc_changed(const Ca_NodeDesc *a, const Ca_NodeDesc *b)
            a->font_size       != b->font_size       ||
            a->font_bold       != b->font_bold       ||
            a->text_align      != b->text_align      ||
+           a->text_decoration != b->text_decoration ||
+           a->text_decoration_style != b->text_decoration_style ||
+           a->text_decoration_color != b->text_decoration_color ||
            a->disabled        != b->disabled        ||
            a->hidden          != b->hidden          ||
            a->overflow_x      != b->overflow_x      ||

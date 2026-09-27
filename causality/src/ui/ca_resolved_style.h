@@ -54,7 +54,9 @@ typedef struct {
     int      justify_self;
     int      overflow_x, overflow_y;
     int      text_align;
-    int      text_decoration;
+    int      text_decoration;   /* CA_TEXT_DECORATION_* line flags */
+    int      text_decoration_style; /* CA_TEXT_DECORATION_STYLE_* */
+    uint32_t text_decoration_color; /* RRGGBBAA; 0 = currentColor */
     int      text_transform;
     int      white_space;
     int      font_weight;

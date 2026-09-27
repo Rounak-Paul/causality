@@ -1035,12 +1035,20 @@ Ca_Label *ca_text(const Ca_TextDesc *desc)
            lbl->color is NOT part of node->desc so content_desc_changed() never
            catches color-only changes — we must do it manually here. */
         uint32_t old_color = lbl->color;
+        /* apply_css consumes the pre-CSS snapshot, so take the previous
+           frame's resolved decoration colour before it runs. */
+        const uint32_t old_decoration_color = (s_pre_css_node == lbl->node)
+            ? s_pre_css_desc.text_decoration_color
+            : lbl->node->desc.text_decoration_color;
         lbl->color = 0;
         apply_css(lbl->node, &lbl->node->desc, CA_ELEM_TEXT,
                   desc->style, id, &lbl->color, desc->inline_style);
         /* Inline color overrides CSS — lets callers set per-instance colors. */
         if (desc->color) lbl->color = desc->color;
-        if (reused && lbl->color != old_color)
+        if (desc->decoration_color)
+            lbl->node->desc.text_decoration_color = desc->decoration_color;
+        if (reused && (lbl->color != old_color ||
+                       lbl->node->desc.text_decoration_color != old_decoration_color))
             lbl->node->dirty |= CA_DIRTY_CONTENT;
         /* Default height if neither user nor CSS set it.
            Skip for wrapped labels — their height is computed at layout time

@@ -809,6 +809,8 @@ static Ca_CssPropId lookup_property(const char *name)
         { "word-spacing",              CA_CSS_PROP_WORD_SPACING },
         { "text-align",                CA_CSS_PROP_TEXT_ALIGN },
         { "text-decoration",           CA_CSS_PROP_TEXT_DECORATION },
+        { "text-decoration-style",     CA_CSS_PROP_TEXT_DECORATION_STYLE },
+        { "text-decoration-color",     CA_CSS_PROP_TEXT_DECORATION_COLOR },
         { "text-transform",            CA_CSS_PROP_TEXT_TRANSFORM },
         { "white-space",               CA_CSS_PROP_WHITE_SPACE },
         { "overflow",                  CA_CSS_PROP_OVERFLOW },
@@ -958,6 +960,14 @@ static bool lookup_keyword(const char *name, Ca_CssPropId prop, int *out)
         { "line-through", CA_CSS_TEXT_DECORATION_LINE_THROUGH },
         { "overline",     CA_CSS_TEXT_DECORATION_OVERLINE },
     };
+    /* text-decoration-style */
+    static Ca_KwEntry textdecostyle_kw[] = {
+        { "solid",  CA_CSS_TEXT_DECORATION_STYLE_SOLID },
+        { "double", CA_CSS_TEXT_DECORATION_STYLE_DOUBLE },
+        { "dotted", CA_CSS_TEXT_DECORATION_STYLE_DOTTED },
+        { "dashed", CA_CSS_TEXT_DECORATION_STYLE_DASHED },
+        { "wavy",   CA_CSS_TEXT_DECORATION_STYLE_WAVY },
+    };
     /* text-transform */
     static Ca_KwEntry texttrans_kw[] = {
         { "none",       CA_CSS_TEXT_TRANSFORM_NONE },
@@ -1069,6 +1079,10 @@ static bool lookup_keyword(const char *name, Ca_CssPropId prop, int *out)
             tbl = fontstyle_kw; count = 3; break;
         case CA_CSS_PROP_TEXT_DECORATION:
             tbl = textdeco_kw; count = 4; break;
+        case CA_CSS_PROP_TEXT_DECORATION_STYLE:
+            tbl = textdecostyle_kw;
+            count = (int)(sizeof(textdecostyle_kw) / sizeof(textdecostyle_kw[0]));
+            break;
         case CA_CSS_PROP_TEXT_TRANSFORM:
             tbl = texttrans_kw; count = 4; break;
         case CA_CSS_PROP_WHITE_SPACE:
@@ -1578,6 +1592,82 @@ static void parse_declarations(Parser *p, Ca_CssRule *rule)
                 int from = rule->decl_count;
                 Ca_CssValue val = parse_value(p, CA_CSS_PROP_BACKGROUND_COLOR);
                 add_decl(rule, CA_CSS_PROP_BACKGROUND_COLOR, val);
+                consume_important(p, rule, from);
+            }
+            skip_ws(p);
+            t = parser_peek(p);
+            if (t.type == TOK_SEMICOLON) parser_next(p);
+            continue;
+        }
+
+        /* `text-decoration`: any combination of underline / line-through /
+           overline (e.g. "underline line-through"), stored as a
+           CA_TEXT_DECORATION_* flag set in a NUMBER value, optionally with a
+           line style (e.g. "underline wavy") and colour ("underline red"),
+           which are emitted as text-decoration-style / -color declarations.
+           "none" clears all lines; unknown tokens drop the declaration. */
+        if (prop_id == CA_CSS_PROP_TEXT_DECORATION) {
+            int from = rule->decl_count;
+            Ca_CssValue val = {0};
+            val.type = CA_CSS_VAL_NUMBER;
+            unsigned flags = 0u;
+            int line_style = -1;
+            Ca_CssValue line_color = {0};
+            bool valid = true;
+            bool any = false;
+            while (1) {
+                skip_ws(p);
+                Token pk = parser_peek(p);
+                if (pk.type == TOK_SEMICOLON || pk.type == TOK_RBRACE ||
+                    pk.type == TOK_EOF || pk.type == TOK_BANG)
+                    break;
+                uint32_t named = 0u;
+                if (pk.type == TOK_HASH || pk.type == TOK_FUNCTION ||
+                    (pk.type == TOK_IDENT &&
+                     (lookup_named_color(pk.text, &named) ||
+                      strcasecmp(pk.text, "currentColor") == 0))) {
+                    line_color = parse_value(p, CA_CSS_PROP_TEXT_DECORATION_COLOR);
+                    if (line_color.type != CA_CSS_VAL_COLOR &&
+                        line_color.type != CA_CSS_VAL_CURRENT_COLOR)
+                        valid = false;
+                    any = true;
+                    continue;
+                }
+                Token tok = parser_next(p);
+                int kw = 0;
+                any = true;
+                if (tok.type == TOK_IDENT && strcasecmp(tok.text, "inherit") == 0) {
+                    val.type = CA_CSS_VAL_INHERIT;
+                } else if (tok.type == TOK_IDENT &&
+                           (strcasecmp(tok.text, "initial") == 0 ||
+                            strcasecmp(tok.text, "unset") == 0)) {
+                    flags = 0u;
+                } else if (tok.type == TOK_IDENT &&
+                           lookup_keyword(tok.text, CA_CSS_PROP_TEXT_DECORATION_STYLE, &kw)) {
+                    line_style = kw;
+                } else if (tok.type == TOK_IDENT &&
+                           lookup_keyword(tok.text, prop_id, &kw)) {
+                    switch (kw) {
+                    case CA_CSS_TEXT_DECORATION_UNDERLINE:    flags |= CA_TEXT_DECORATION_UNDERLINE; break;
+                    case CA_CSS_TEXT_DECORATION_LINE_THROUGH: flags |= CA_TEXT_DECORATION_LINE_THROUGH; break;
+                    case CA_CSS_TEXT_DECORATION_OVERLINE:     flags |= CA_TEXT_DECORATION_OVERLINE; break;
+                    default:                                  flags = 0u; break;
+                    }
+                } else {
+                    valid = false;
+                }
+            }
+            if (valid && any) {
+                val.number = (float)flags;
+                add_decl(rule, prop_id, val);
+                if (line_style >= 0) {
+                    Ca_CssValue style_val = {0};
+                    style_val.type    = CA_CSS_VAL_KEYWORD;
+                    style_val.keyword = line_style;
+                    add_decl(rule, CA_CSS_PROP_TEXT_DECORATION_STYLE, style_val);
+                }
+                if (line_color.type != CA_CSS_VAL_NONE)
+                    add_decl(rule, CA_CSS_PROP_TEXT_DECORATION_COLOR, line_color);
                 consume_important(p, rule, from);
             }
             skip_ws(p);
