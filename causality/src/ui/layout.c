@@ -860,7 +860,21 @@ static void layout_node(Ca_Node *node, float x, float y, float avail_w, float av
                 cw = cc_content;  ch = cm_content;
             }
 
+            /* cw/ch are already the child's resolved box (percentages were
+               resolved against this container above); present them to
+               layout_node as definite sizes so it does not resolve the
+               percentage a second time against its own box. */
+            const float authored_w = child->desc.width;
+            const float authored_h = child->desc.height;
+            const bool  authored_w_pct = child->desc.width_pct;
+            const bool  authored_h_pct = child->desc.height_pct;
+            if (authored_w_pct) { child->desc.width  = cw; child->desc.width_pct  = false; }
+            if (authored_h_pct) { child->desc.height = ch; child->desc.height_pct = false; }
             layout_node(child, cx, cy, cw, ch);
+            child->desc.width      = authored_w;
+            child->desc.height     = authored_h;
+            child->desc.width_pct  = authored_w_pct;
+            child->desc.height_pct = authored_h_pct;
 
             /* Use the child's actual laid-out main-axis size for positioning.
                This is critical: if the child grew (e.g. flex-wrap creating

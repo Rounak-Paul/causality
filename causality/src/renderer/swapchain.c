@@ -28,7 +28,8 @@ static int cmp_z_cmd(const void *a, const void *b)
 
 /* Paint bands, drawn strictly in order 0..3. Draw commands are submitted
    batched by TYPE within each band (rects, then glyphs, then images, then
-   viewports, then backdrop-blur — see the per-type loops below), so two
+   viewports — see record_range; backdrop-filter elements split a band into
+   separately recorded ranges, see record_band), so two
    commands of different types with the same z_index would otherwise not
    respect z_index = "absolute paint order" (documented in causality.h) if
    they were left in a single band together. Splitting into z<0 / z==0 / z>0
@@ -441,6 +442,564 @@ static void transition_image(VkCommandBuffer cmd, VkImage image,
 
 /* ---- Frame ---- */
 
+/* Per-frame recording state shared by the paint-order range recorders
+   below. Positions are indices into paint order: sorted_idx when z-sorting
+   is active, raw draw_cmds order otherwise. */
+typedef struct {
+    Ca_Instance               *inst;
+    Ca_Window                 *win;
+    Ca_Frame                  *f;
+    const uint32_t            *sorted_idx;
+    uint32_t                   root_bg_idx;
+    float                      scale_x, scale_y;
+    int                        log_w, log_h;
+    VkExtent2D                 extent;
+    VkRect2D                   full_scissor;
+    VkViewport                 viewport;
+    VkImage                    swapchain_image;
+    VkRenderingAttachmentInfo  reload_attach;
+    bool                       can_blur;
+    Ca_RectPushConst          *rect_base;
+    Ca_TextInstance           *ti_base;
+    uint32_t                   rect_n;   /* rect instances written        */
+    uint32_t                   ti_n;     /* text/image instances written  */
+    uint32_t                   batch_n;  /* vkCmdDraw calls recorded      */
+} PaintCtx;
+
+enum {
+    RANGE_HAS_RECT     = 1u << 0,
+    RANGE_HAS_GLYPH    = 1u << 1,
+    RANGE_HAS_IMAGE    = 1u << 2,
+    RANGE_HAS_VIEWPORT = 1u << 3,
+};
+
+/**
+ * Maps a paint-order position to its draw command index.
+ *
+ * @param ctx Frame recording state.
+ * @param pos Paint-order position.
+ */
+static uint32_t paint_index(const PaintCtx *ctx, uint32_t pos)
+{
+    return ctx->sorted_idx ? ctx->sorted_idx[pos] : pos;
+}
+
+/**
+ * Converts a command's logical clip rect to a physical scissor.
+ *
+ * @param ctx       Frame recording state.
+ * @param cmd       Draw command.
+ * @param round_out Floor the origin and ceil the far edge (rect path: a
+ *                  truncated scissor can shave the outermost column/row off
+ *                  thin content hugging the clip edge at fractional scales);
+ *                  false truncates, as the glyph/image paths always have.
+ * @return The scissor, or the full framebuffer when the command is unclipped.
+ */
+static VkRect2D cmd_scissor(const PaintCtx *ctx, const Ca_DrawCmd *cmd,
+                            bool round_out)
+{
+    if (!cmd->has_clip) return ctx->full_scissor;
+    int32_t cx, cy, cw, ch;
+    if (round_out) {
+        cx = (int32_t)floorf(cmd->clip_x * ctx->scale_x);
+        cy = (int32_t)floorf(cmd->clip_y * ctx->scale_y);
+        cw = (int32_t)ceilf((cmd->clip_x + cmd->clip_w) * ctx->scale_x) - cx;
+        ch = (int32_t)ceilf((cmd->clip_y + cmd->clip_h) * ctx->scale_y) - cy;
+    } else {
+        cx = (int32_t)(cmd->clip_x * ctx->scale_x);
+        cy = (int32_t)(cmd->clip_y * ctx->scale_y);
+        cw = (int32_t)(cmd->clip_w * ctx->scale_x);
+        ch = (int32_t)(cmd->clip_h * ctx->scale_y);
+    }
+    if (cx < 0) { cw += cx; cx = 0; }
+    if (cy < 0) { ch += cy; cy = 0; }
+    if (cw < 0) cw = 0;
+    if (ch < 0) ch = 0;
+    return (VkRect2D){ .offset = { cx, cy },
+                       .extent = { (uint32_t)cw, (uint32_t)ch } };
+}
+
+/**
+ * Fills the fields every text/image-pipeline instance shares.
+ *
+ * @param ctx Frame recording state.
+ * @param cmd Source draw command.
+ * @param dst Instance record to fill.
+ */
+static void pack_textured_instance(const PaintCtx *ctx, const Ca_DrawCmd *cmd,
+                                   Ca_TextInstance *dst)
+{
+    ca_instance_pack_transform(cmd, cmd->x, cmd->y, dst->pos, dst->xf_ab, dst->xf_cd);
+    dst->size[0] = cmd->w;               dst->size[1] = cmd->h;
+    dst->uv[0] = cmd->u0;                dst->uv[1] = cmd->v0;
+    dst->uv[2] = cmd->u1;                dst->uv[3] = cmd->v1;
+    dst->color[0] = cmd->r;              dst->color[1] = cmd->g;
+    dst->color[2] = cmd->b;              dst->color[3] = cmd->a;
+    dst->viewport[0] = (float)ctx->log_w; dst->viewport[1] = (float)ctx->log_h;
+}
+
+/**
+ * Returns which command types occur in `band` within paint positions [lo, hi).
+ *
+ * @param ctx  Frame recording state.
+ * @param band Paint band (see cmd_paint_band).
+ * @param lo   First paint-order position.
+ * @param hi   One past the last paint-order position.
+ * @return Bitmask of RANGE_HAS_* flags.
+ */
+static uint32_t range_types(const PaintCtx *ctx, int band, uint32_t lo, uint32_t hi)
+{
+    uint32_t mask = 0;
+    for (uint32_t pos = lo; pos < hi; ++pos) {
+        uint32_t idx = paint_index(ctx, pos);
+        const Ca_DrawCmd *cmd = &ctx->win->draw_cmds[idx];
+        if (!cmd->in_use || cmd_paint_band(cmd) != band) continue;
+        switch (cmd->type) {
+        case CA_DRAW_RECT:     if (idx != ctx->root_bg_idx) mask |= RANGE_HAS_RECT; break;
+        case CA_DRAW_GLYPH:    mask |= RANGE_HAS_GLYPH;    break;
+        case CA_DRAW_IMAGE:    mask |= RANGE_HAS_IMAGE;    break;
+        case CA_DRAW_VIEWPORT: mask |= RANGE_HAS_VIEWPORT; break;
+        case CA_DRAW_BACKDROP_BLUR: break;
+        }
+    }
+    return mask;
+}
+
+/**
+ * Records every rect of `band` within paint positions [lo, hi), batched by
+ * scissor and rounded-clip push constant.
+ *
+ * @param ctx  Frame recording state.
+ * @param band Paint band.
+ * @param lo   First paint-order position.
+ * @param hi   One past the last paint-order position.
+ */
+static void record_rects(PaintCtx *ctx, int band, uint32_t lo, uint32_t hi)
+{
+    Ca_Instance *inst = ctx->inst;
+    VkCommandBuffer cb = ctx->f->cmd;
+    vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, inst->rect_pipeline.pipeline);
+    vkCmdSetViewport(cb, 0, 1, &ctx->viewport);
+    vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                            inst->rect_pipeline.layout, 0, 1, &ctx->f->ssbo_set, 0, NULL);
+
+    uint32_t batch_start = ctx->rect_n;
+    VkRect2D cur_sc = ctx->full_scissor;
+    Ca_ClipPushConst cur_clip = { 0 };
+    cur_clip.edge_aa_scale = ctx->scale_x;
+    bool first = true;
+
+    for (uint32_t pos = lo; pos < hi; ++pos) {
+        uint32_t idx = paint_index(ctx, pos);
+        if (idx == ctx->root_bg_idx) continue;
+        const Ca_DrawCmd *cmd = &ctx->win->draw_cmds[idx];
+        if (!cmd->in_use || cmd->type != CA_DRAW_RECT || cmd->a < 0.004f) continue;
+        if (cmd_paint_band(cmd) != band) continue;
+
+        /* Rounded-clip push constant is in logical/node space, matching
+           v_node_pos. */
+        VkRect2D sc_new = cmd_scissor(ctx, cmd, true);
+        Ca_ClipPushConst clip_new = { 0 };
+        clip_new.edge_aa_scale = ctx->scale_x;
+        if (cmd->has_clip) {
+            clip_new.pos[0]  = cmd->clip_x;
+            clip_new.pos[1]  = cmd->clip_y;
+            clip_new.size[0] = cmd->clip_w;
+            clip_new.size[1] = cmd->clip_h;
+            clip_new.radius  = cmd->clip_radius;
+        }
+
+        /* Flush on scissor OR clip-shape change: a plain rectangular clip
+           and a rounded one can share identical scissor bounds while still
+           needing separate push constants. */
+        bool clip_changed = memcmp(&clip_new, &cur_clip, sizeof(clip_new)) != 0;
+        if (!first && (memcmp(&sc_new, &cur_sc, sizeof(VkRect2D)) != 0 || clip_changed)) {
+            if (ctx->rect_n > batch_start) {
+                vkCmdSetScissor(cb, 0, 1, &cur_sc);
+                vkCmdPushConstants(cb, inst->rect_pipeline.layout,
+                                   VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                                   sizeof(cur_clip), &cur_clip);
+                vkCmdDraw(cb, 6, ctx->rect_n - batch_start, 0, batch_start);
+                ctx->batch_n++;
+            }
+            batch_start = ctx->rect_n;
+        }
+        cur_sc   = sc_new;
+        cur_clip = clip_new;
+        first    = false;
+
+        Ca_RectPushConst *dst = &ctx->rect_base[ctx->rect_n++];
+        ca_instance_pack_transform(cmd, cmd->x, cmd->y, dst->pos, dst->xf_ab, dst->xf_cd);
+        dst->size[0]     = cmd->w;              dst->size[1]     = cmd->h;
+        dst->color[0]    = cmd->r;              dst->color[1]    = cmd->g;
+        dst->color[2]    = cmd->b;              dst->color[3]    = cmd->a;
+        dst->viewport[0] = (float)ctx->log_w;   dst->viewport[1] = (float)ctx->log_h;
+        /* Per-corner values are authoritative as a set so an explicit zero
+           can keep one edge square while another is rounded. */
+        bool has_per_corner = cmd->corner_tl != 0.0f || cmd->corner_tr != 0.0f ||
+                              cmd->corner_br != 0.0f || cmd->corner_bl != 0.0f;
+        dst->corner_radii[0] = has_per_corner ? cmd->corner_tl : cmd->corner_radius;
+        dst->corner_radii[1] = has_per_corner ? cmd->corner_tr : cmd->corner_radius;
+        dst->corner_radii[2] = has_per_corner ? cmd->corner_br : cmd->corner_radius;
+        dst->corner_radii[3] = has_per_corner ? cmd->corner_bl : cmd->corner_radius;
+        dst->border_color[0] = cmd->border_r;   dst->border_color[1] = cmd->border_g;
+        dst->border_color[2] = cmd->border_b;   dst->border_color[3] = cmd->border_a;
+        dst->color2[0]       = cmd->color2_r;   dst->color2[1]       = cmd->color2_g;
+        dst->color2[2]       = cmd->color2_b;   dst->color2[3]       = cmd->color2_a;
+        dst->border_width    = cmd->border_width;
+        dst->blur_radius     = cmd->blur_radius;
+        dst->draw_mode       = (uint32_t)cmd->draw_mode;
+        dst->gradient_angle  = cmd->gradient_angle;
+        dst->gradient_cx     = cmd->gradient_cx;
+        dst->gradient_cy     = cmd->gradient_cy;
+    }
+    if (ctx->rect_n > batch_start) {
+        vkCmdSetScissor(cb, 0, 1, &cur_sc);
+        vkCmdPushConstants(cb, inst->rect_pipeline.layout,
+                           VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(cur_clip), &cur_clip);
+        vkCmdDraw(cb, 6, ctx->rect_n - batch_start, 0, batch_start);
+        ctx->batch_n++;
+    }
+}
+
+/**
+ * Records every glyph of `band` within paint positions [lo, hi), batched by
+ * scissor against the shared font atlas.
+ *
+ * @param ctx  Frame recording state.
+ * @param band Paint band.
+ * @param lo   First paint-order position.
+ * @param hi   One past the last paint-order position.
+ */
+static void record_glyphs(PaintCtx *ctx, int band, uint32_t lo, uint32_t hi)
+{
+    Ca_Instance *inst = ctx->inst;
+    VkCommandBuffer cb = ctx->f->cmd;
+    vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, inst->text_pipeline.pipeline);
+    vkCmdSetViewport(cb, 0, 1, &ctx->viewport);
+    vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                            inst->text_pipeline.layout, 0, 1, &ctx->f->ssbo_set, 0, NULL);
+    vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                            inst->text_pipeline.layout, 1, 1,
+                            &inst->text_pipeline.desc_set, 0, NULL);
+
+    uint32_t batch_start = ctx->ti_n;
+    VkRect2D cur_sc = ctx->full_scissor;
+    bool first = true;
+
+    for (uint32_t pos = lo; pos < hi; ++pos) {
+        const Ca_DrawCmd *cmd = &ctx->win->draw_cmds[paint_index(ctx, pos)];
+        if (!cmd->in_use || cmd->type != CA_DRAW_GLYPH || cmd->a < 0.004f) continue;
+        if (cmd_paint_band(cmd) != band) continue;
+
+        VkRect2D sc_new = cmd_scissor(ctx, cmd, false);
+        if (!first && memcmp(&sc_new, &cur_sc, sizeof(VkRect2D)) != 0) {
+            if (ctx->ti_n > batch_start) {
+                vkCmdSetScissor(cb, 0, 1, &cur_sc);
+                vkCmdDraw(cb, 6, ctx->ti_n - batch_start, 0, batch_start);
+                ctx->batch_n++;
+            }
+            batch_start = ctx->ti_n;
+        }
+        cur_sc = sc_new;
+        first  = false;
+        pack_textured_instance(ctx, cmd, &ctx->ti_base[ctx->ti_n++]);
+    }
+    if (ctx->ti_n > batch_start) {
+        vkCmdSetScissor(cb, 0, 1, &cur_sc);
+        vkCmdDraw(cb, 6, ctx->ti_n - batch_start, 0, batch_start);
+        ctx->batch_n++;
+    }
+}
+
+/**
+ * Records every user image of `band` within paint positions [lo, hi),
+ * batched by scissor and bound texture.
+ *
+ * @param ctx  Frame recording state.
+ * @param band Paint band.
+ * @param lo   First paint-order position.
+ * @param hi   One past the last paint-order position.
+ */
+static void record_images(PaintCtx *ctx, int band, uint32_t lo, uint32_t hi)
+{
+    Ca_Instance *inst = ctx->inst;
+    VkCommandBuffer cb = ctx->f->cmd;
+    vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, inst->image_pipeline);
+    vkCmdSetViewport(cb, 0, 1, &ctx->viewport);
+    vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                            inst->text_pipeline.layout, 0, 1, &ctx->f->ssbo_set, 0, NULL);
+
+    uint32_t batch_start = ctx->ti_n;
+    VkRect2D cur_sc = ctx->full_scissor;
+    uint32_t cur_img = UINT32_MAX;
+    bool first = true;
+
+    for (uint32_t pos = lo; pos < hi; ++pos) {
+        const Ca_DrawCmd *cmd = &ctx->win->draw_cmds[paint_index(ctx, pos)];
+        if (!cmd->in_use || cmd->type != CA_DRAW_IMAGE || cmd->a < 0.004f) continue;
+        if (cmd_paint_band(cmd) != band) continue;
+
+        uint32_t ii = cmd->image_index;
+        if ((size_t)ii >= ca_pool_slot_count(&inst->images)) continue;
+        Ca_Image *image = CA_POOL_AT(inst->images, Ca_Image, ii);
+        if (!image->in_use) continue;
+
+        VkRect2D sc_new = cmd_scissor(ctx, cmd, false);
+        bool sc_change  = !first && memcmp(&sc_new, &cur_sc, sizeof(VkRect2D)) != 0;
+        bool img_change = ii != cur_img;
+        if (sc_change || img_change) {
+            if (ctx->ti_n > batch_start) {
+                vkCmdSetScissor(cb, 0, 1, &cur_sc);
+                vkCmdDraw(cb, 6, ctx->ti_n - batch_start, 0, batch_start);
+                ctx->batch_n++;
+            }
+            batch_start = ctx->ti_n;
+        }
+        if (img_change) {
+            vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                    inst->text_pipeline.layout, 1, 1,
+                                    &image->desc_set, 0, NULL);
+            cur_img = ii;
+        }
+        cur_sc = sc_new;
+        first  = false;
+
+        Ca_TextInstance *dst = &ctx->ti_base[ctx->ti_n++];
+        pack_textured_instance(ctx, cmd, dst);
+        image_instance_pack_corner_radii(dst, cmd, ctx->scale_x);
+    }
+    if (ctx->ti_n > batch_start) {
+        vkCmdSetScissor(cb, 0, 1, &cur_sc);
+        vkCmdDraw(cb, 6, ctx->ti_n - batch_start, 0, batch_start);
+        ctx->batch_n++;
+    }
+}
+
+/**
+ * Records every offscreen viewport of `band` within paint positions
+ * [lo, hi), composited as textured quads.
+ *
+ * @param ctx  Frame recording state.
+ * @param band Paint band.
+ * @param lo   First paint-order position.
+ * @param hi   One past the last paint-order position.
+ */
+static void record_viewports(PaintCtx *ctx, int band, uint32_t lo, uint32_t hi)
+{
+    Ca_Instance *inst = ctx->inst;
+    Ca_Window *win = ctx->win;
+    VkCommandBuffer cb = ctx->f->cmd;
+    vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, inst->image_pipeline);
+    vkCmdSetViewport(cb, 0, 1, &ctx->viewport);
+    vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                            inst->text_pipeline.layout, 0, 1, &ctx->f->ssbo_set, 0, NULL);
+
+    uint32_t batch_start = ctx->ti_n;
+    VkRect2D cur_sc = ctx->full_scissor;
+    uint32_t cur_vp = UINT32_MAX;
+    bool first = true;
+
+    for (uint32_t pos = lo; pos < hi; ++pos) {
+        const Ca_DrawCmd *cmd = &win->draw_cmds[paint_index(ctx, pos)];
+        if (!cmd->in_use || cmd->type != CA_DRAW_VIEWPORT || cmd->a < 0.004f) continue;
+        if (cmd_paint_band(cmd) != band) continue;
+
+        uint32_t vi = cmd->viewport_index;
+        if (vi >= ca_pool_slot_count(&win->viewport_pool) ||
+            !CA_POOL_AT(win->viewport_pool, Ca_Viewport, vi)->in_use)
+            continue;
+        /* Composite the slot that was actually just rendered
+           (last_rendered_frame), not whatever frame_index currently points
+           at — frame_index already names the NEXT slot
+           ca_viewport_render_all will use by the time this submit runs. */
+        Ca_Viewport *vp = CA_POOL_AT(win->viewport_pool, Ca_Viewport, vi);
+        Ca_ViewportFrame *vpf = &vp->frame[vp->last_rendered_frame];
+        if (vpf->desc_set == VK_NULL_HANDLE || !vpf->has_rendered_once) continue;
+
+        VkRect2D sc_new = cmd_scissor(ctx, cmd, false);
+        bool sc_change = !first && memcmp(&sc_new, &cur_sc, sizeof(VkRect2D)) != 0;
+        bool vp_change = vi != cur_vp;
+        if (sc_change || vp_change) {
+            if (ctx->ti_n > batch_start) {
+                vkCmdSetScissor(cb, 0, 1, &cur_sc);
+                vkCmdDraw(cb, 6, ctx->ti_n - batch_start, 0, batch_start);
+                ctx->batch_n++;
+            }
+            batch_start = ctx->ti_n;
+        }
+        if (vp_change) {
+            vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                    inst->text_pipeline.layout, 1, 1,
+                                    &vpf->desc_set, 0, NULL);
+            cur_vp = vi;
+        }
+        cur_sc = sc_new;
+        first  = false;
+
+        Ca_TextInstance *dst = &ctx->ti_base[ctx->ti_n++];
+        pack_textured_instance(ctx, cmd, dst);
+        image_instance_pack_corner_radii(dst, cmd, ctx->scale_x);
+    }
+    if (ctx->ti_n > batch_start) {
+        vkCmdSetScissor(cb, 0, 1, &cur_sc);
+        vkCmdDraw(cb, 6, ctx->ti_n - batch_start, 0, batch_start);
+        ctx->batch_n++;
+    }
+}
+
+/**
+ * Records all non-backdrop content of `band` within paint positions
+ * [lo, hi). Within a range, commands are batched by type (rects, glyphs,
+ * images, viewports); ranges themselves are recorded strictly in order.
+ *
+ * @param ctx  Frame recording state.
+ * @param band Paint band.
+ * @param lo   First paint-order position.
+ * @param hi   One past the last paint-order position.
+ */
+static void record_range(PaintCtx *ctx, int band, uint32_t lo, uint32_t hi)
+{
+    if (lo >= hi) return;
+    Ca_Instance *inst = ctx->inst;
+    uint32_t types = range_types(ctx, band, lo, hi);
+    if ((types & RANGE_HAS_RECT) && inst->rect_pipeline.pipeline != VK_NULL_HANDLE)
+        record_rects(ctx, band, lo, hi);
+    if ((types & RANGE_HAS_GLYPH) && inst->text_pipeline.pipeline != VK_NULL_HANDLE &&
+        inst->font != NULL)
+        record_glyphs(ctx, band, lo, hi);
+    if ((types & RANGE_HAS_IMAGE) && inst->image_pipeline != VK_NULL_HANDLE)
+        record_images(ctx, band, lo, hi);
+    if ((types & RANGE_HAS_VIEWPORT) && inst->image_pipeline != VK_NULL_HANDLE &&
+        ca_pool_slot_count(&ctx->win->viewport_pool) > 0)
+        record_viewports(ctx, band, lo, hi);
+}
+
+/**
+ * Computes the physical-pixel region a backdrop command covers on screen:
+ * its (possibly transformed) border box, intersected with its scissor.
+ *
+ * @param ctx     Frame recording state.
+ * @param cmd     CA_DRAW_BACKDROP_BLUR command.
+ * @param scissor The command's clip scissor.
+ * @param out     Receives the region.
+ * @return false when the region is empty.
+ */
+static bool backdrop_region(const PaintCtx *ctx, const Ca_DrawCmd *cmd,
+                            VkRect2D scissor, VkRect2D *out)
+{
+    float xs[4] = { cmd->x, cmd->x + cmd->w, cmd->x,          cmd->x + cmd->w };
+    float ys[4] = { cmd->y, cmd->y,          cmd->y + cmd->h, cmd->y + cmd->h };
+    float min_x = INFINITY, min_y = INFINITY, max_x = -INFINITY, max_y = -INFINITY;
+    for (int i = 0; i < 4; ++i) {
+        float px = xs[i], py = ys[i];
+        if (cmd->xf_active) {
+            px = cmd->xf_a * xs[i] + cmd->xf_c * ys[i] + cmd->xf_tx;
+            py = cmd->xf_b * xs[i] + cmd->xf_d * ys[i] + cmd->xf_ty;
+        }
+        min_x = fminf(min_x, px); max_x = fmaxf(max_x, px);
+        min_y = fminf(min_y, py); max_y = fmaxf(max_y, py);
+    }
+    if (!isfinite(min_x) || !isfinite(min_y) || !isfinite(max_x) || !isfinite(max_y))
+        return false;
+
+    float x0 = fmaxf(floorf(min_x * ctx->scale_x), (float)scissor.offset.x);
+    float y0 = fmaxf(floorf(min_y * ctx->scale_y), (float)scissor.offset.y);
+    float x1 = fminf(ceilf(max_x * ctx->scale_x),
+                     (float)scissor.offset.x + (float)scissor.extent.width);
+    float y1 = fminf(ceilf(max_y * ctx->scale_y),
+                     (float)scissor.offset.y + (float)scissor.extent.height);
+    x0 = fmaxf(x0, 0.0f);
+    y0 = fmaxf(y0, 0.0f);
+    x1 = fminf(x1, (float)ctx->extent.width);
+    y1 = fminf(y1, (float)ctx->extent.height);
+    if (x1 <= x0 || y1 <= y0) return false;
+    *out = (VkRect2D){ .offset = { (int32_t)x0, (int32_t)y0 },
+                       .extent = { (uint32_t)(x1 - x0), (uint32_t)(y1 - y0) } };
+    return true;
+}
+
+/**
+ * Paints one element's CSS backdrop-filter: blur() at its exact position in
+ * paint order. Everything recorded so far is its backdrop; dynamic
+ * rendering is suspended for the region capture/blur and resumed with
+ * LOAD_OP_LOAD, then the blurred region is composited inside the element's
+ * rounded border box before the element's own shadow/background/children.
+ *
+ * @param ctx Frame recording state.
+ * @param cmd CA_DRAW_BACKDROP_BLUR command.
+ */
+static void record_backdrop(PaintCtx *ctx, const Ca_DrawCmd *cmd)
+{
+    if (!ctx->can_blur || cmd->backdrop_blur_radius <= 0.0f) return;
+    Ca_Instance *inst = ctx->inst;
+    Ca_Window *win = ctx->win;
+    VkCommandBuffer cb = ctx->f->cmd;
+
+    VkRect2D scissor = cmd_scissor(ctx, cmd, true);
+    VkRect2D region;
+    if (!backdrop_region(ctx, cmd, scissor, &region)) return;
+
+    float uv_scale[2];
+    vkCmdEndRendering(cb);
+    bool captured = ca_blur_capture_region(inst, win, cb, ctx->swapchain_image,
+                                           ctx->extent, region,
+                                           cmd->backdrop_blur_radius * ctx->scale_x,
+                                           uv_scale);
+    VkRenderingInfo reload_info = {
+        .sType                = VK_STRUCTURE_TYPE_RENDERING_INFO,
+        .renderArea           = { .offset = { 0, 0 }, .extent = ctx->extent },
+        .layerCount           = 1,
+        .colorAttachmentCount = 1,
+        .pColorAttachments    = &ctx->reload_attach,
+    };
+    vkCmdBeginRendering(cb, &reload_info);
+    if (!captured) return;
+
+    vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, inst->backdrop_pipeline);
+    vkCmdSetViewport(cb, 0, 1, &ctx->viewport);
+    vkCmdSetScissor(cb, 0, 1, &region);
+    vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                            inst->text_pipeline.layout, 0, 1, &ctx->f->ssbo_set, 0, NULL);
+    vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                            inst->text_pipeline.layout, 1, 1, &win->blur_desc_set, 0, NULL);
+
+    Ca_TextInstance *dst = &ctx->ti_base[ctx->ti_n];
+    pack_textured_instance(ctx, cmd, dst);
+    dst->uv[0] = uv_scale[0];
+    dst->uv[1] = uv_scale[1];
+    dst->uv[2] = 0.0f;
+    dst->uv[3] = 0.0f;
+    image_instance_pack_corner_radii(dst, cmd, ctx->scale_x);
+    vkCmdDraw(cb, 6, 1, 0, ctx->ti_n);
+    ctx->ti_n++;
+    ctx->batch_n++;
+}
+
+/**
+ * Records one paint band in strict paint order: content is recorded in
+ * type-batched ranges split at each backdrop-filter element, so every
+ * element's backdrop is exactly what painted before it.
+ *
+ * @param ctx  Frame recording state.
+ * @param band Paint band.
+ */
+static void record_band(PaintCtx *ctx, int band)
+{
+    const uint32_t count = ctx->win->draw_cmd_count;
+    uint32_t lo = 0;
+    for (uint32_t pos = 0; pos < count; ++pos) {
+        const Ca_DrawCmd *cmd = &ctx->win->draw_cmds[paint_index(ctx, pos)];
+        if (!cmd->in_use || cmd->type != CA_DRAW_BACKDROP_BLUR ||
+            cmd_paint_band(cmd) != band)
+            continue;
+        record_range(ctx, band, lo, pos);
+        record_backdrop(ctx, cmd);
+        lo = pos + 1;
+    }
+    record_range(ctx, band, lo, count);
+}
+
 void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
 {
     Ca_Swapchain *sc = &win->sc;
@@ -560,19 +1119,6 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
         bg_a = win->draw_cmds[root_bg_idx].a;
     }
 
-    /* Backdrop blur: capture the swapchain image and blur it, but NOT here.
-       A backdrop-filter must blur the actually-painted UI sitting behind the
-       node — the paint band it's already sorted into (see cmd_paint_band)
-       exists precisely to guarantee "everything below" has painted first.
-       Capturing once at the very top of the frame (the old approach) instead
-       blurred whatever was left over in this swapchain image slot from 2-3
-       frames ago — visually indistinguishable from no blur at all whenever
-       the UI is mostly static, which is why panel-level backdrop-filter
-       never actually worked despite recording correct Vulkan state.
-       The real per-band capture is spliced into the band loop below, right
-       before painting the first band that contains a blur consumer — see
-       "Backdrop blur: real per-band capture" inside the loop. */
-
     /* Dynamic rendering — load if bg_render wrote content, clear otherwise */
     VkRenderingAttachmentInfo color_attach = {
         .sType       = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
@@ -642,607 +1188,61 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
     float scale_y = (log_h > 0) ? (float)sc->extent.height / (float)log_h : 1.0f;
     VkRect2D full_scissor = { .offset = {0, 0}, .extent = sc->extent };
 
-    /* Backdrop blur: find the max blur radius requested per band, and the
-       highest blur radius of any band at or below each band (so a capture
-       at band N reflects every backdrop-filter strength that could apply to
-       content painted by band N, matching CSS "blur everything under me"
-       semantics even when multiple distinct blur radii are in play). Bands
-       that need a fresh capture get one spliced into the band loop below,
-       right before that band's own content paints — see
-       "Backdrop blur: real per-band capture". */
-    float band_max_blur[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
-    bool  band_has_backdrop[4] = { false, false, false, false };
-    bool  any_backdrop = false;
-    for (uint32_t d = 0; d < win->draw_cmd_count; ++d) {
-        const Ca_DrawCmd *c = &win->draw_cmds[d];
-        if (!c->in_use || c->type != CA_DRAW_BACKDROP_BLUR) continue;
-        int b = cmd_paint_band(c);
-        band_has_backdrop[b] = true;
-        any_backdrop = true;
-        if (c->backdrop_blur_radius > band_max_blur[b])
-            band_max_blur[b] = c->backdrop_blur_radius;
-    }
-    const bool can_blur = win->blur_image != VK_NULL_HANDLE &&
-        (sc->image_usage & VK_IMAGE_USAGE_TRANSFER_SRC_BIT) != 0u;
-
-    /* ================================================================
-       Instanced rendering with scissor-aware batching.
-       Instance data is packed into fixed-size SSBO slots:
-         Region 0: rect instances
-         Region 1: text/image/viewport instances after the rect range
-       Within each section, draws are batched and flushed on scissor change.
-       ================================================================ */
-
-    /* Count actual rect commands to compute the text region start.
-       Avoids over-reserving rect space when most commands are glyphs. */
+    /* Instance data is packed into fixed-size SSBO slots — region 0: rect
+       instances; region 1: text/image/viewport/backdrop instances after the
+       rect range. Count actual rects so the text region starts right after
+       them instead of over-reserving when most commands are glyphs. */
     uint32_t rect_cmd_count = 0;
     for (uint32_t d = 0; d < win->draw_cmd_count; ++d) {
         if (win->draw_cmds[d].in_use &&
             win->draw_cmds[d].type == CA_DRAW_RECT)
             rect_cmd_count++;
     }
-    uint32_t text_instance_start = rect_cmd_count;
 
-    Ca_RectPushConst *rect_base = (Ca_RectPushConst *)f->instance_mapped;
-    Ca_TextInstance  *ti_base   = (Ca_TextInstance *)f->instance_mapped;
-    uint32_t          rect_n   = 0;   /* total rect instances written */
-    uint32_t          ti_n     = text_instance_start;
-    uint32_t          batch_n  = 0;   /* total vkCmdDraw calls (batches) */
-
-    VkViewport viewport = {
-        .x = 0.0f, .y = 0.0f,
-        .width  = (float)sc->extent.width,
-        .height = (float)sc->extent.height,
-        .minDepth = 0.0f, .maxDepth = 1.0f,
+    PaintCtx paint = {
+        .inst            = inst,
+        .win             = win,
+        .f               = f,
+        .sorted_idx      = sorted_idx,
+        .root_bg_idx     = root_bg_idx,
+        .scale_x         = scale_x,
+        .scale_y         = scale_y,
+        .log_w           = log_w,
+        .log_h           = log_h,
+        .extent          = sc->extent,
+        .full_scissor    = full_scissor,
+        .viewport        = {
+            .x = 0.0f, .y = 0.0f,
+            .width  = (float)sc->extent.width,
+            .height = (float)sc->extent.height,
+            .minDepth = 0.0f, .maxDepth = 1.0f,
+        },
+        .swapchain_image = sc->images[image_index],
+        .reload_attach   = {
+            .sType       = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+            .imageView   = sc->image_views[image_index],
+            .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+            .loadOp      = VK_ATTACHMENT_LOAD_OP_LOAD,
+            .storeOp     = VK_ATTACHMENT_STORE_OP_STORE,
+        },
+        .can_blur        = inst->backdrop_pipeline != VK_NULL_HANDLE &&
+                           win->blur_image != VK_NULL_HANDLE &&
+                           (sc->image_usage & VK_IMAGE_USAGE_TRANSFER_SRC_BIT) != 0u,
+        .rect_base       = (Ca_RectPushConst *)f->instance_mapped,
+        .ti_base         = (Ca_TextInstance *)f->instance_mapped,
+        .rect_n          = 0,
+        .ti_n            = rect_cmd_count,
+        .batch_n         = 0,
     };
-
-    for (int band = 0; band < 4; ++band) {
-
-        /* ---- Backdrop blur: real per-band capture ----
-           If THIS band contains a backdrop-filter consumer, snapshot the
-           swapchain image now — every earlier band has already painted into
-           it this frame (the render pass has been open and accumulating
-           since before band 0), so this capture reflects exactly what a
-           CSS backdrop-filter is supposed to blur: the real UI sitting
-           behind the node, not a stale frame from 2-3 presents ago. The
-           blit requires the image out of a rendering scope, so end/re-begin
-           dynamic rendering around it (LOAD_OP_LOAD preserves everything
-           already painted; nothing here clears or discards). */
-        if (any_backdrop && can_blur && band_has_backdrop[band]) {
-            vkCmdEndRendering(f->cmd);
-            ca_blur_capture_and_blur(inst, win, f->cmd,
-                                     sc->images[image_index],
-                                     sc->extent.width, sc->extent.height,
-                                     band_max_blur[band]);
-            VkRenderingAttachmentInfo reload_attach = {
-                .sType       = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
-                .imageView   = sc->image_views[image_index],
-                .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-                .loadOp      = VK_ATTACHMENT_LOAD_OP_LOAD,
-                .storeOp     = VK_ATTACHMENT_STORE_OP_STORE,
-            };
-            VkRenderingInfo reload_info = {
-                .sType                = VK_STRUCTURE_TYPE_RENDERING_INFO,
-                .renderArea           = { .offset = {0, 0}, .extent = sc->extent },
-                .layerCount           = 1,
-                .colorAttachmentCount = 1,
-                .pColorAttachments    = &reload_attach,
-            };
-            vkCmdBeginRendering(f->cmd, &reload_info);
-        }
-
-        /* ---- Rects ---- */
-        if (inst->rect_pipeline.pipeline != VK_NULL_HANDLE && win->draw_cmd_count > 1) {
-            vkCmdBindPipeline(f->cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                              inst->rect_pipeline.pipeline);
-            vkCmdSetViewport(f->cmd, 0, 1, &viewport);
-
-            vkCmdBindDescriptorSets(f->cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                    inst->rect_pipeline.layout,
-                                    0, 1, &f->ssbo_set, 0, NULL);
-
-            uint32_t batch_start = rect_n;
-            VkRect2D cur_sc      = full_scissor;
-            Ca_ClipPushConst cur_clip = { 0 };
-            cur_clip.edge_aa_scale = scale_x;
-            bool     first       = true;
-
-            /* When sorted_idx is set, position 0 is always root_bg_idx
-               (pinned there above) — start at 1 to skip it cheaply. When
-               unsorted, d IS the raw command index, so root_bg_idx can be
-               anywhere and must be skipped explicitly instead. */
-            uint32_t d_start = sorted_idx ? 1 : 0;
-            for (uint32_t d = d_start; d < win->draw_cmd_count; ++d) {
-                uint32_t idx = sorted_idx ? sorted_idx[d] : d;
-                if (!sorted_idx && idx == root_bg_idx) continue;
-                const Ca_DrawCmd *cmd = &win->draw_cmds[idx];
-                if (!cmd->in_use || cmd->type != CA_DRAW_RECT || cmd->a < 0.004f)
-                    continue;
-                if (cmd_paint_band(cmd) != band) continue;
-
-                /* Compute scissor (physical pixels) and the rounded-clip
-                   push constant (logical/node-space pixels, matching
-                   v_node_pos) for this command. */
-                VkRect2D sc_new = full_scissor;
-                Ca_ClipPushConst clip_new = { 0 };
-                clip_new.edge_aa_scale = scale_x;
-                if (cmd->has_clip) {
-                    /* Floor the origin, ceil the far edge: a scissor that
-                       truncates both origin and extent can end up half a
-                       physical pixel short of the clip's true right/bottom
-                       edge at fractional logical-to-physical scale factors,
-                       silently shaving the outermost column/row off thin
-                       content (e.g. a 1-2px border ring) hugging that edge
-                       while staying invisible against an opaque fill. */
-                    int32_t cx = (int32_t)floorf(cmd->clip_x * scale_x);
-                    int32_t cy = (int32_t)floorf(cmd->clip_y * scale_y);
-                    int32_t cx1 = (int32_t)ceilf((cmd->clip_x + cmd->clip_w) * scale_x);
-                    int32_t cy1 = (int32_t)ceilf((cmd->clip_y + cmd->clip_h) * scale_y);
-                    int32_t cw = cx1 - cx;
-                    int32_t ch = cy1 - cy;
-                    if (cx < 0) { cw += cx; cx = 0; }
-                    if (cy < 0) { ch += cy; cy = 0; }
-                    if (cw < 0) cw = 0;
-                    if (ch < 0) ch = 0;
-                    sc_new = (VkRect2D){ .offset = {cx, cy},
-                                         .extent = {(uint32_t)cw, (uint32_t)ch} };
-                    clip_new.pos[0]  = cmd->clip_x;
-                    clip_new.pos[1]  = cmd->clip_y;
-                    clip_new.size[0] = cmd->clip_w;
-                    clip_new.size[1] = cmd->clip_h;
-                    clip_new.radius  = cmd->clip_radius;
-                }
-
-                /* Flush batch on scissor OR clip-shape change (a plain
-                   rectangular clip and a rounded one can share identical
-                   scissor bounds while still needing separate push
-                   constants, e.g. a rounded-panel clip nested inside an
-                   unrelated square scroll clip of the same size). */
-                bool clip_changed = memcmp(&clip_new, &cur_clip, sizeof(clip_new)) != 0;
-                if (!first && (memcmp(&sc_new, &cur_sc, sizeof(VkRect2D)) != 0 || clip_changed)) {
-                    if (rect_n > batch_start) {
-                        vkCmdSetScissor(f->cmd, 0, 1, &cur_sc);
-                        vkCmdPushConstants(f->cmd, inst->rect_pipeline.layout,
-                                           VK_SHADER_STAGE_FRAGMENT_BIT, 0,
-                                           sizeof(cur_clip), &cur_clip);
-                        vkCmdDraw(f->cmd, 6, rect_n - batch_start, 0, batch_start);
-                        batch_n++;
-                    }
-                    batch_start = rect_n;
-                }
-                cur_sc   = sc_new;
-                cur_clip = clip_new;
-                first    = false;
-
-                /* Pack instance data into SSBO */
-                Ca_RectPushConst *dst = &rect_base[rect_n++];
-                ca_instance_pack_transform(cmd, cmd->x, cmd->y,
-                                           dst->pos, dst->xf_ab, dst->xf_cd);
-                dst->size[0]       = cmd->w;           dst->size[1]       = cmd->h;
-                dst->color[0]      = cmd->r;           dst->color[1]      = cmd->g;
-                dst->color[2]      = cmd->b;           dst->color[3]      = cmd->a;
-                dst->viewport[0]   = (float)log_w;     dst->viewport[1]   = (float)log_h;
-                /* Per-corner values are authoritative as a set so an explicit
-                   zero can keep one edge square while another is rounded. */
-                {
-                    bool has_per_corner = cmd->corner_tl != 0.0f ||
-                                          cmd->corner_tr != 0.0f ||
-                                          cmd->corner_br != 0.0f ||
-                                          cmd->corner_bl != 0.0f;
-                    float tl = has_per_corner ? cmd->corner_tl : cmd->corner_radius;
-                    float tr = has_per_corner ? cmd->corner_tr : cmd->corner_radius;
-                    float br = has_per_corner ? cmd->corner_br : cmd->corner_radius;
-                    float bl = has_per_corner ? cmd->corner_bl : cmd->corner_radius;
-                    dst->corner_radii[0] = tl;
-                    dst->corner_radii[1] = tr;
-                    dst->corner_radii[2] = br;
-                    dst->corner_radii[3] = bl;
-                }
-                dst->border_color[0]  = cmd->border_r;
-                dst->border_color[1]  = cmd->border_g;
-                dst->border_color[2]  = cmd->border_b;
-                dst->border_color[3]  = cmd->border_a;
-                dst->color2[0]        = cmd->color2_r;
-                dst->color2[1]        = cmd->color2_g;
-                dst->color2[2]        = cmd->color2_b;
-                dst->color2[3]        = cmd->color2_a;
-                dst->border_width     = cmd->border_width;
-                dst->blur_radius      = cmd->blur_radius;
-                dst->draw_mode        = (uint32_t)cmd->draw_mode;
-                dst->gradient_angle   = cmd->gradient_angle;
-                dst->gradient_cx      = cmd->gradient_cx;
-                dst->gradient_cy      = cmd->gradient_cy;
-            }
-            /* Flush final batch */
-            if (rect_n > batch_start) {
-                vkCmdSetScissor(f->cmd, 0, 1, &cur_sc);
-                vkCmdPushConstants(f->cmd, inst->rect_pipeline.layout,
-                                   VK_SHADER_STAGE_FRAGMENT_BIT, 0,
-                                   sizeof(cur_clip), &cur_clip);
-                vkCmdDraw(f->cmd, 6, rect_n - batch_start, 0, batch_start);
-                batch_n++;
-            }
-        }
-
-        /* ---- Text glyphs ---- */
-        if (inst->text_pipeline.pipeline != VK_NULL_HANDLE && inst->font != NULL) {
-
-            bool has_glyphs = false;
-            for (uint32_t d = 0; d < win->draw_cmd_count; ++d) {
-                if (win->draw_cmds[d].in_use &&
-                    win->draw_cmds[d].type == CA_DRAW_GLYPH &&
-                    cmd_paint_band(&win->draw_cmds[d]) == band) {
-                    has_glyphs = true;
-                    break;
-                }
-            }
-
-            if (has_glyphs) {
-                vkCmdBindPipeline(f->cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                  inst->text_pipeline.pipeline);
-                vkCmdSetViewport(f->cmd, 0, 1, &viewport);
-
-                /* Bind shared instance SSBO at set 0. */
-                vkCmdBindDescriptorSets(f->cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                        inst->text_pipeline.layout,
-                                        0, 1, &f->ssbo_set, 0, NULL);
-                /* Bind font atlas at set 1 */
-                vkCmdBindDescriptorSets(f->cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                        inst->text_pipeline.layout,
-                                        1, 1, &inst->text_pipeline.desc_set,
-                                        0, NULL);
-
-                uint32_t batch_start = ti_n;
-                VkRect2D cur_sc      = full_scissor;
-                bool     first       = true;
-
-                for (uint32_t d = 0; d < win->draw_cmd_count; ++d) {
-                    uint32_t idx = sorted_idx ? sorted_idx[d] : d;
-                    const Ca_DrawCmd *cmd = &win->draw_cmds[idx];
-                    if (!cmd->in_use || cmd->type != CA_DRAW_GLYPH || cmd->a < 0.004f)
-                        continue;
-                    if (cmd_paint_band(cmd) != band) continue;
-
-                    VkRect2D sc_new = full_scissor;
-                    if (cmd->has_clip) {
-                        int32_t cx = (int32_t)(cmd->clip_x * scale_x);
-                        int32_t cy = (int32_t)(cmd->clip_y * scale_y);
-                        int32_t cw = (int32_t)(cmd->clip_w * scale_x);
-                        int32_t ch = (int32_t)(cmd->clip_h * scale_y);
-                        if (cx < 0) { cw += cx; cx = 0; }
-                        if (cy < 0) { ch += cy; cy = 0; }
-                        if (cw < 0) cw = 0;
-                        if (ch < 0) ch = 0;
-                        sc_new = (VkRect2D){ .offset = {cx, cy},
-                                             .extent = {(uint32_t)cw, (uint32_t)ch} };
-                    }
-
-                    if (!first && memcmp(&sc_new, &cur_sc, sizeof(VkRect2D)) != 0) {
-                        if (ti_n > batch_start) {
-                            vkCmdSetScissor(f->cmd, 0, 1, &cur_sc);
-                            vkCmdDraw(f->cmd, 6, ti_n - batch_start, 0, batch_start);
-                            batch_n++;
-                        }
-                        batch_start = ti_n;
-                    }
-                    cur_sc = sc_new;
-                    first  = false;
-
-                    Ca_TextInstance *dst = &ti_base[ti_n++];
-                    ca_instance_pack_transform(cmd, cmd->x, cmd->y,
-                                               dst->pos, dst->xf_ab, dst->xf_cd);
-                    dst->size[0] = cmd->w;            dst->size[1] = cmd->h;
-                    dst->uv[0] = cmd->u0;             dst->uv[1] = cmd->v0;
-                    dst->uv[2] = cmd->u1;             dst->uv[3] = cmd->v1;
-                    dst->color[0] = cmd->r;            dst->color[1] = cmd->g;
-                    dst->color[2] = cmd->b;            dst->color[3] = cmd->a;
-                    dst->viewport[0] = (float)log_w;   dst->viewport[1] = (float)log_h;
-                }
-                if (ti_n > batch_start) {
-                    vkCmdSetScissor(f->cmd, 0, 1, &cur_sc);
-                    vkCmdDraw(f->cmd, 6, ti_n - batch_start, 0, batch_start);
-                    batch_n++;
-                }
-            }
-        }
-
-        /* ---- Images (RGBA textured quads) ---- */
-        if (inst->image_pipeline != VK_NULL_HANDLE) {
-
-            bool has_images = false;
-            for (uint32_t d = 0; d < win->draw_cmd_count; ++d) {
-                if (win->draw_cmds[d].in_use &&
-                    win->draw_cmds[d].type == CA_DRAW_IMAGE &&
-                    cmd_paint_band(&win->draw_cmds[d]) == band) {
-                    has_images = true;
-                    break;
-                }
-            }
-            if (has_images) {
-                vkCmdBindPipeline(f->cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                  inst->image_pipeline);
-                vkCmdSetViewport(f->cmd, 0, 1, &viewport);
-
-                /* Bind SSBO at set 0 with text/image region offset */
-                vkCmdBindDescriptorSets(f->cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                        inst->text_pipeline.layout,
-                                        0, 1, &f->ssbo_set, 0, NULL);
-
-                uint32_t batch_start = ti_n;
-                VkRect2D cur_sc      = full_scissor;
-                uint32_t cur_img     = UINT32_MAX;
-                bool     first       = true;
-
-                for (uint32_t d = 0; d < win->draw_cmd_count; ++d) {
-                    uint32_t idx = sorted_idx ? sorted_idx[d] : d;
-                    const Ca_DrawCmd *cmd = &win->draw_cmds[idx];
-                    if (!cmd->in_use || cmd->type != CA_DRAW_IMAGE || cmd->a < 0.004f)
-                        continue;
-                    if (cmd_paint_band(cmd) != band) continue;
-
-                    uint32_t ii = cmd->image_index;
-                    if ((size_t)ii >= ca_pool_slot_count(&inst->images))
-                        continue;
-                    Ca_Image *image = CA_POOL_AT(inst->images, Ca_Image, ii);
-                    if (!image->in_use) continue;
-
-                    VkRect2D sc_new = full_scissor;
-                    if (cmd->has_clip) {
-                        int32_t cx = (int32_t)(cmd->clip_x * scale_x);
-                        int32_t cy = (int32_t)(cmd->clip_y * scale_y);
-                        int32_t cw = (int32_t)(cmd->clip_w * scale_x);
-                        int32_t ch = (int32_t)(cmd->clip_h * scale_y);
-                        if (cx < 0) { cw += cx; cx = 0; }
-                        if (cy < 0) { ch += cy; cy = 0; }
-                        if (cw < 0) cw = 0;
-                        if (ch < 0) ch = 0;
-                        sc_new = (VkRect2D){ .offset = {cx, cy},
-                                             .extent = {(uint32_t)cw, (uint32_t)ch} };
-                    }
-
-                    bool sc_change  = !first && memcmp(&sc_new, &cur_sc, sizeof(VkRect2D)) != 0;
-                    bool img_change = (ii != cur_img);
-
-                    if (sc_change || img_change) {
-                        if (ti_n > batch_start) {
-                            vkCmdSetScissor(f->cmd, 0, 1, &cur_sc);
-                            vkCmdDraw(f->cmd, 6, ti_n - batch_start, 0, batch_start);
-                            batch_n++;
-                        }
-                        batch_start = ti_n;
-                    }
-                    if (img_change) {
-                        /* Bind per-image sampler at set 1 */
-                        vkCmdBindDescriptorSets(f->cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                                inst->text_pipeline.layout,
-                                                1, 1, &image->desc_set,
-                                                0, NULL);
-                        cur_img = ii;
-                    }
-                    cur_sc = sc_new;
-                    first  = false;
-
-                    Ca_TextInstance *dst = &ti_base[ti_n++];
-                    ca_instance_pack_transform(cmd, cmd->x, cmd->y,
-                                               dst->pos, dst->xf_ab, dst->xf_cd);
-                    dst->size[0] = cmd->w;            dst->size[1] = cmd->h;
-                    dst->uv[0] = cmd->u0;             dst->uv[1] = cmd->v0;
-                    dst->uv[2] = cmd->u1;             dst->uv[3] = cmd->v1;
-                    dst->color[0] = cmd->r;            dst->color[1] = cmd->g;
-                    dst->color[2] = cmd->b;            dst->color[3] = cmd->a;
-                    dst->viewport[0] = (float)log_w;   dst->viewport[1] = (float)log_h;
-                    image_instance_pack_corner_radii(dst, cmd, scale_x);
-                }
-                if (ti_n > batch_start) {
-                    vkCmdSetScissor(f->cmd, 0, 1, &cur_sc);
-                    vkCmdDraw(f->cmd, 6, ti_n - batch_start, 0, batch_start);
-                    batch_n++;
-                }
-            }
-        }
-
-        /* ---- Viewports (offscreen render targets composited as textured quads) ---- */
-        if (inst->image_pipeline != VK_NULL_HANDLE &&
-            ca_pool_slot_count(&win->viewport_pool) > 0) {
-
-            bool has_viewports = false;
-            for (uint32_t d = 0; d < win->draw_cmd_count; ++d) {
-                if (win->draw_cmds[d].in_use &&
-                    win->draw_cmds[d].type == CA_DRAW_VIEWPORT &&
-                    cmd_paint_band(&win->draw_cmds[d]) == band) {
-                    has_viewports = true;
-                    break;
-                }
-            }
-            if (has_viewports) {
-                vkCmdBindPipeline(f->cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                  inst->image_pipeline);
-                vkCmdSetViewport(f->cmd, 0, 1, &viewport);
-
-                /* Bind SSBO at set 0 with text/image region offset */
-                vkCmdBindDescriptorSets(f->cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                        inst->text_pipeline.layout,
-                                        0, 1, &f->ssbo_set, 0, NULL);
-
-                uint32_t batch_start = ti_n;
-                VkRect2D cur_sc      = full_scissor;
-                int16_t  cur_vp_idx  = -1;
-                bool     first       = true;
-
-                for (uint32_t d = 0; d < win->draw_cmd_count; ++d) {
-                    uint32_t idx = sorted_idx ? sorted_idx[d] : d;
-                    const Ca_DrawCmd *cmd = &win->draw_cmds[idx];
-                    if (!cmd->in_use || cmd->type != CA_DRAW_VIEWPORT || cmd->a < 0.004f)
-                        continue;
-                    if (cmd_paint_band(cmd) != band) continue;
-
-                    uint32_t vi = cmd->viewport_index;
-                    if (vi >= ca_pool_slot_count(&win->viewport_pool) ||
-                        !CA_POOL_AT(win->viewport_pool, Ca_Viewport, vi)->in_use)
-                        continue;
-                    /* Composite the slot that was actually just rendered
-                       (last_rendered_frame), not whatever frame_index
-                       currently points at — frame_index already names the
-                       NEXT slot ca_viewport_render_all will use by the time
-                       this compositor submit runs. */
-                    Ca_Viewport *viewport =
-                        CA_POOL_AT(win->viewport_pool, Ca_Viewport, vi);
-                    Ca_ViewportFrame *vpf =
-                        &viewport->frame[viewport->last_rendered_frame];
-                    if (vpf->desc_set == VK_NULL_HANDLE || !vpf->has_rendered_once)
-                        continue;
-
-                    VkRect2D sc_new = full_scissor;
-                    if (cmd->has_clip) {
-                        int32_t cx = (int32_t)(cmd->clip_x * scale_x);
-                        int32_t cy = (int32_t)(cmd->clip_y * scale_y);
-                        int32_t cw = (int32_t)(cmd->clip_w * scale_x);
-                        int32_t ch = (int32_t)(cmd->clip_h * scale_y);
-                        if (cx < 0) { cw += cx; cx = 0; }
-                        if (cy < 0) { ch += cy; cy = 0; }
-                        if (cw < 0) cw = 0;
-                        if (ch < 0) ch = 0;
-                        sc_new = (VkRect2D){ .offset = {cx, cy},
-                                             .extent = {(uint32_t)cw, (uint32_t)ch} };
-                    }
-
-                    bool sc_change = !first && memcmp(&sc_new, &cur_sc, sizeof(VkRect2D)) != 0;
-                    bool vp_change = (vi != cur_vp_idx);
-
-                    if (sc_change || vp_change) {
-                        if (ti_n > batch_start) {
-                            vkCmdSetScissor(f->cmd, 0, 1, &cur_sc);
-                            vkCmdDraw(f->cmd, 6, ti_n - batch_start, 0, batch_start);
-                            batch_n++;
-                        }
-                        batch_start = ti_n;
-                    }
-                    if (vp_change) {
-                        vkCmdBindDescriptorSets(f->cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                                inst->text_pipeline.layout,
-                                                1, 1, &vpf->desc_set,
-                                                0, NULL);
-                        cur_vp_idx = vi;
-                    }
-                    cur_sc = sc_new;
-                    first  = false;
-
-                    Ca_TextInstance *dst = &ti_base[ti_n++];
-                    ca_instance_pack_transform(cmd, cmd->x, cmd->y,
-                                               dst->pos, dst->xf_ab, dst->xf_cd);
-                    dst->size[0] = cmd->w;            dst->size[1] = cmd->h;
-                    dst->uv[0] = cmd->u0;             dst->uv[1] = cmd->v0;
-                    dst->uv[2] = cmd->u1;             dst->uv[3] = cmd->v1;
-                    dst->color[0] = cmd->r;            dst->color[1] = cmd->g;
-                    dst->color[2] = cmd->b;            dst->color[3] = cmd->a;
-                    dst->viewport[0] = (float)log_w;   dst->viewport[1] = (float)log_h;
-                    image_instance_pack_corner_radii(dst, cmd, scale_x);
-                }
-                if (ti_n > batch_start) {
-                    vkCmdSetScissor(f->cmd, 0, 1, &cur_sc);
-                    vkCmdDraw(f->cmd, 6, ti_n - batch_start, 0, batch_start);
-                    batch_n++;
-                }
-            }
-        }
-
-        /* ---- Backdrop blur quads ---- */
-        if (inst->image_pipeline != VK_NULL_HANDLE &&
-            win->blur_image_valid && win->blur_desc_set != VK_NULL_HANDLE) {
-
-            bool has_backdrop = false;
-            for (uint32_t d = 0; d < win->draw_cmd_count; ++d) {
-                if (win->draw_cmds[d].in_use &&
-                    win->draw_cmds[d].type == CA_DRAW_BACKDROP_BLUR &&
-                    cmd_paint_band(&win->draw_cmds[d]) == band) {
-                    has_backdrop = true;
-                    break;
-                }
-            }
-            if (has_backdrop) {
-                vkCmdBindPipeline(f->cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                  inst->image_pipeline);
-                vkCmdSetViewport(f->cmd, 0, 1, &viewport);
-
-                vkCmdBindDescriptorSets(f->cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                        inst->text_pipeline.layout,
-                                        0, 1, &f->ssbo_set, 0, NULL);
-                /* Bind blurred image as sampler */
-                vkCmdBindDescriptorSets(f->cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                        inst->text_pipeline.layout,
-                                        1, 1, &win->blur_desc_set, 0, NULL);
-
-                uint32_t batch_start = ti_n;
-                VkRect2D cur_sc      = full_scissor;
-                bool     first       = true;
-
-                for (uint32_t d = 0; d < win->draw_cmd_count; ++d) {
-                    uint32_t idx = sorted_idx ? sorted_idx[d] : d;
-                    const Ca_DrawCmd *cmd = &win->draw_cmds[idx];
-                    if (!cmd->in_use || cmd->type != CA_DRAW_BACKDROP_BLUR)
-                        continue;
-                    if (cmd_paint_band(cmd) != band) continue;
-
-                    VkRect2D sc_new = full_scissor;
-                    if (cmd->has_clip) {
-                        int32_t cx = (int32_t)(cmd->clip_x * scale_x);
-                        int32_t cy = (int32_t)(cmd->clip_y * scale_y);
-                        int32_t cw = (int32_t)(cmd->clip_w * scale_x);
-                        int32_t ch = (int32_t)(cmd->clip_h * scale_y);
-                        if (cx < 0) { cw += cx; cx = 0; }
-                        if (cy < 0) { ch += cy; cy = 0; }
-                        if (cw < 0) cw = 0;
-                        if (ch < 0) ch = 0;
-                        sc_new = (VkRect2D){ .offset = {cx, cy},
-                                             .extent = {(uint32_t)cw, (uint32_t)ch} };
-                    }
-
-                    if (!first && memcmp(&sc_new, &cur_sc, sizeof(VkRect2D)) != 0) {
-                        if (ti_n > batch_start) {
-                            vkCmdSetScissor(f->cmd, 0, 1, &cur_sc);
-                            vkCmdDraw(f->cmd, 6, ti_n - batch_start, 0, batch_start);
-                            batch_n++;
-                        }
-                        batch_start = ti_n;
-                    }
-                    cur_sc = sc_new;
-                    first  = false;
-
-                    /* UV: map node screen-space position to swapchain [0,1] UV space */
-                    float u0 = cmd->x / (float)log_w;
-                    float v0 = cmd->y / (float)log_h;
-                    float u1 = (cmd->x + cmd->w) / (float)log_w;
-                    float v1 = (cmd->y + cmd->h) / (float)log_h;
-
-                    Ca_TextInstance *dst = &ti_base[ti_n++];
-                    ca_instance_pack_transform(cmd, cmd->x, cmd->y,
-                                               dst->pos, dst->xf_ab, dst->xf_cd);
-                    dst->size[0] = cmd->w;            dst->size[1] = cmd->h;
-                    dst->uv[0] = u0;                  dst->uv[1] = v0;
-                    dst->uv[2] = u1;                  dst->uv[3] = v1;
-                    /* color = white (full opacity) to show blurred image as-is */
-                    dst->color[0] = 1.0f;  dst->color[1] = 1.0f;
-                    dst->color[2] = 1.0f;  dst->color[3] = 1.0f;
-                    dst->viewport[0] = (float)log_w;  dst->viewport[1] = (float)log_h;
-                    image_instance_pack_corner_radii(dst, cmd, scale_x);
-                }
-                if (ti_n > batch_start) {
-                    vkCmdSetScissor(f->cmd, 0, 1, &cur_sc);
-                    vkCmdDraw(f->cmd, 6, ti_n - batch_start, 0, batch_start);
-                    batch_n++;
-                }
-            }
-        }
-    } /* end phase loop */
-
-#undef ALIGN_UP
+    for (int band = 0; band < 4; ++band)
+        record_band(&paint, band);
 
     /* Store debug stats for the overlay */
     win->dbg_frames_rendered++;
     win->dbg_draw_cmds       = win->draw_cmd_count;
-    win->dbg_rect_instances  = rect_n;
-    win->dbg_ti_instances    = ti_n;
-    win->dbg_batches         = batch_n;
+    win->dbg_rect_instances  = paint.rect_n;
+    win->dbg_ti_instances    = paint.ti_n;
+    win->dbg_batches         = paint.batch_n;
 
     /* Frame timing for FPS / frame-time display */
     {

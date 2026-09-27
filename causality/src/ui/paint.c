@@ -346,6 +346,8 @@ static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, Cli
         cmd->corner_br   = ca_desc_corner_br(&node->desc);
         cmd->corner_bl   = ca_desc_corner_bl(&node->desc);
         cmd->blur_radius = blur;
+        cmd->gradient_cx = node->desc.shadow_offset_x;
+        cmd->gradient_cy = node->desc.shadow_offset_y;
         cmd->z_index     = node->desc.z_index;
         cmd->in_use      = true;
         set_clip(cmd, clip);

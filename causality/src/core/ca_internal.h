@@ -123,7 +123,10 @@ typedef struct Ca_Font Ca_Font;
 typedef enum {
     CA_DRAW_MODE_GLOW        = 4,  /* outer glow around the unexpanded source shape */
     CA_DRAW_MODE_NORMAL      = 0,  /* solid fill + uniform border              */
-    CA_DRAW_MODE_SHADOW      = 1,  /* SDF Gaussian shadow — blur via GPU       */
+    /* Outer box-shadow: SDF Gaussian falloff, clipped out of the caster's
+       own box. gradient_cx/cy = shadow offset (caster = quad shrunk by
+       blur_radius and shifted back by the offset). */
+    CA_DRAW_MODE_SHADOW      = 1,
     CA_DRAW_MODE_LINEAR_GRAD = 2,  /* linear-gradient(angle, color, color2)    */
     CA_DRAW_MODE_RADIAL_GRAD = 3,  /* radial-gradient(circle, color, color2)   */
     /* Anti-aliased sine stroke centred in the rect (wavy text decoration):
@@ -1140,22 +1143,22 @@ struct Ca_Window {
     Ca_DynArray   sorted_index_storage;
     uint32_t     *sorted_idx;
 
-    /* Backdrop blur — per-window offscreen image holding a blurred snapshot
-       of the background.  Created lazily when the first backdrop-blur node
-       is painted; destroyed on window shutdown or swapchain recreation.
-       The snapshot is captured from the current swapchain image before the
-       UI render pass begins (after any bg_render_fn has executed). */
-    /* blur_image: result of applying Gaussian blur to the captured background.
-       blur_temp:  intermediate image for the horizontal blur pass.
-       Both live at swapchain resolution; recreated on resize.              */
+    /* Backdrop blur (CSS backdrop-filter: blur()) — per-window scratch
+       images at 1/CA_BACKDROP_BLUR_DOWNSAMPLE of the swapchain extent.
+       Each backdrop-filter element re-captures only its own region of the
+       swapchain (plus the kernel margin) at its exact paint position, so
+       blur_image holds valid pixels only for the element composited most
+       recently. Recreated with the swapchain; see renderer/blur.c.
+       blur_image: capture target, then final blurred result (sampled).
+       blur_temp:  horizontal-pass intermediate.                          */
     VkImage          blur_image;
     VkDeviceMemory   blur_memory;
     VkImageView      blur_view;
     VkSampler        blur_sampler;
-    VkDescriptorSet  blur_desc_set;   /* combined-image-sampler for the blur tex */
+    VkDescriptorSet  blur_desc_set;
     VkDescriptorPool blur_desc_pool;
 
-    VkImage          blur_temp;       /* horizontal-pass intermediate */
+    VkImage          blur_temp;
     VkDeviceMemory   blur_temp_memory;
     VkImageView      blur_temp_view;
     VkDescriptorSet  blur_temp_desc_set;
@@ -1163,7 +1166,6 @@ struct Ca_Window {
 
     uint32_t         blur_image_w;
     uint32_t         blur_image_h;
-    bool             blur_image_valid; /* true once the snapshot is up to date */
     /* Incremental paint cache — mirrors draw_cmds for per-node caching */
     Ca_DynArray   paint_cache_storage;
     Ca_DrawCmd   *paint_cache;
@@ -1440,12 +1442,13 @@ struct Ca_Instance {
     /* Image pipeline — RGBA textured quad (shares text pipeline layout) */
     VkPipeline       image_pipeline;
 
-    /* Backdrop blur pipeline — two-pass separable Gaussian.
-       blur_h_pipeline == blur_v_pipeline (same code, direction via push constant).
-       blur_pipeline_layout is the VkPipelineLayout for push constants.          */
-    VkPipeline       blur_h_pipeline;
-    VkPipeline       blur_v_pipeline;
+    /* Backdrop blur — blur_pipeline runs both separable Gaussian passes
+       (direction via push constant, layout blur_pipeline_layout);
+       backdrop_pipeline composites the blurred region under an element,
+       sampling by framebuffer position (shares the text pipeline layout). */
+    VkPipeline       blur_pipeline;
     VkPipelineLayout blur_pipeline_layout;
+    VkPipeline       backdrop_pipeline;
 
     /* Stable user-image handles and growable sampled-image descriptor pools. */
     Ca_Pool           images;

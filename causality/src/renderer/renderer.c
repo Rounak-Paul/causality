@@ -711,8 +711,8 @@ bool ca_renderer_window_init(Ca_Instance *inst, Ca_Window *win)
     }
 
     /* Create per-window blur images if the blur pipeline is ready */
-    if (inst->blur_h_pipeline != VK_NULL_HANDLE && win->blur_image == VK_NULL_HANDLE)
-        ca_blur_window_create(inst, win, win->sc.extent.width, win->sc.extent.height, win->sc.format);
+    if (inst->blur_pipeline != VK_NULL_HANDLE && win->blur_image == VK_NULL_HANDLE)
+        ca_blur_window_create(inst, win, win->sc.extent.width, win->sc.extent.height);
 
     return true;
 }
@@ -751,8 +751,8 @@ bool ca_renderer_window_resize(Ca_Instance *inst, Ca_Window *win, int w, int h)
     if (!ca_swapchain_create(inst, win, (uint32_t)w, (uint32_t)h))
         return false;
     /* Resize backdrop blur images to match new swapchain extent */
-    if (inst->blur_h_pipeline != VK_NULL_HANDLE)
-        ca_blur_window_resize(inst, win, win->sc.extent.width, win->sc.extent.height, win->sc.format);
+    if (inst->blur_pipeline != VK_NULL_HANDLE)
+        ca_blur_window_resize(inst, win, win->sc.extent.width, win->sc.extent.height);
     return true;
 }
 

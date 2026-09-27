@@ -191,9 +191,18 @@ static const char *FRAG_GLSL =
     "        out_color = vec4(srgb_to_linear(v_color.rgb), halo * v_color.a);\n"
     "        return;\n"
     "    }\n"
+    /* Outer box-shadow. The quad is the caster grown by v_blur, offset
+       by v_grad_center (shadow offset); per CSS the shadow is clipped out
+       of the caster's own border box, so a translucent element never
+       darkens its own backdrop/background. */
     "    if (v_mode == MODE_SHADOW) {\n"
     "        float d   = roundedBoxSDF(p, box_half, r);\n"
     "        float alp = shadowAlpha(d, v_blur) * v_color.a;\n"
+    "        float hw  = 0.875 / max(clip_pc.edge_aa_scale, 1e-4);\n"
+    "        vec2  caster_half = max(box_half - vec2(v_blur), vec2(0.0));\n"
+    "        float d_caster = roundedBoxSDF(p + v_grad_center, caster_half, r);\n"
+    "        alp *= smoothstep(-hw, hw, d_caster);\n"
+    "        if (alp < 0.001) discard;\n"
     "        out_color = vec4(srgb_to_linear(v_color.rgb), alp);\n"
     "        return;\n"
     "    }\n"

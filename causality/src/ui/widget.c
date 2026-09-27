@@ -512,6 +512,7 @@ static void scale_resolved_style(Ca_ResolvedStyle *style, float scale)
     style->shadow_offset_x *= scale;
     style->shadow_offset_y *= scale;
     style->shadow_blur *= scale;
+    style->backdrop_blur *= scale;
     style->glow_radius *= scale;
     /* font_size is intentionally left in author (CSS) space here — see the
        identical comment on rescale_desc() in ui.c. Every consumer of
