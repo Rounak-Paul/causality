@@ -181,6 +181,14 @@ static void count_click(Ca_Button *button, void *user_data)
     ++*(int *)user_data;
 }
 
+/** Counts wheel callbacks received by a transparent overlay. */
+static void count_scroll(double dx, double dy, void *user_data)
+{
+    (void)dx;
+    (void)dy;
+    ++*(int *)user_data;
+}
+
 /** Verifies app-owned keyboard routing never activates or Tab-focuses a button. */
 static bool test_app_keyboard_blocks_button_activation(void)
 {
@@ -342,6 +350,74 @@ static bool test_stacking_layer_occludes_pointer(void)
     return true;
 }
 
+/** Verifies a no-hover overlay only receives wheel through its descendants. */
+static bool test_transparent_overlay_wheel_routing(void)
+{
+    Ca_Instance instance = {0};
+    Ca_Window window = {0};
+    Ca_Node root = {0};
+    window.instance = &instance;
+    window.ui_scale = 1.0f;
+    window.root = &root;
+    root.window = &window;
+    root.in_use = true;
+    CHECK(ca_pool_init(&window.node_pool, sizeof(Ca_Node), 8));
+
+    int overlay_scrolls = 0;
+    ca_widget_ctx_enter(&window);
+    ca_reconcile_begin((Ca_Div *)&root);
+    Ca_Div *scroller = ca_div_begin(&(Ca_DivDesc){ .direction = CA_VERTICAL });
+    ca_div_end();
+    Ca_Div *overlay = ca_div_begin(&(Ca_DivDesc){
+        .direction = CA_VERTICAL,
+        .z_index = 5,
+        .no_hover = true,
+        .on_scroll = count_scroll,
+        .scroll_data = &overlay_scrolls,
+    });
+    Ca_Div *overlay_child = ca_div_begin(&(Ca_DivDesc){ .direction = CA_VERTICAL });
+    ca_div_end();
+    ca_div_end();
+    ca_div_end();
+    ca_widget_ctx_leave();
+    CHECK(scroller && overlay && overlay_child);
+
+    Ca_Node *scroll_node = (Ca_Node *)scroller;
+    Ca_Node *overlay_node = (Ca_Node *)overlay;
+    Ca_Node *overlay_child_node = (Ca_Node *)overlay_child;
+    place_node(&root, 0.0f, 0.0f, 200.0f, 200.0f);
+    place_node(scroll_node, 0.0f, 0.0f, 200.0f, 200.0f);
+    place_node(overlay_node, 0.0f, 0.0f, 200.0f, 200.0f);
+    place_node(overlay_child_node, 0.0f, 0.0f, 20.0f, 20.0f);
+    scroll_node->desc.overflow_y = 2;
+    scroll_node->content_h = 1000.0f;
+
+    window.scroll_this_frame = true;
+    window.scroll_dy = -1.0;
+    window.mouse_x = 100.0;
+    window.mouse_y = 100.0;
+    ca_widget_input_pass(&window);
+    CHECK(scroll_node->scroll_y > 0.0f);
+    CHECK(overlay_scrolls == 0);
+
+    const float scroll_y = scroll_node->scroll_y;
+    window.mouse_x = 10.0;
+    window.mouse_y = 10.0;
+    ca_widget_input_pass(&window);
+    CHECK(scroll_node->scroll_y == scroll_y);
+    CHECK(overlay_scrolls == 1);
+
+    overlay_node->desc.hidden = true;
+    ca_widget_input_pass(&window);
+    CHECK(scroll_node->scroll_y > scroll_y);
+    CHECK(overlay_scrolls == 1);
+
+    ca_node_clear(&root);
+    ca_pool_destroy(&window.node_pool, NULL, NULL);
+    ca_widget_ctx_release_instance(&instance);
+    return true;
+}
+
 /** Runs focused input ownership regression tests. */
 int main(void)
 {
@@ -352,6 +428,7 @@ int main(void)
     if (!test_consumed_key_query()) return 1;
     if (!test_app_keyboard_blocks_button_activation()) return 1;
     if (!test_stacking_layer_occludes_pointer()) return 1;
+    if (!test_transparent_overlay_wheel_routing()) return 1;
     puts("causality input capture tests passed");
     return 0;
 }

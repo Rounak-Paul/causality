@@ -4165,11 +4165,10 @@ static Ca_Node *pointer_top_node(Ca_Window *win, float px, float py, int16_t top
 static bool wheel_reaches_node(Ca_Node *n, float px, float py,
                                int16_t top_z, Ca_Node *top_hit)
 {
-    if (!point_in_node(n, px, py)) return false;
-    if (node_effective_z(n) >= top_z) return true;
+    if (node_is_ancestor_hidden(n) || !point_in_node(n, px, py)) return false;
     for (Ca_Node *p = top_hit; p; p = p->parent)
         if (p == n) return true;
-    return false;
+    return !n->desc.no_hover && node_effective_z(n) >= top_z;
 }
 
 void ca_widget_input_pass(Ca_Window *win)
