@@ -568,6 +568,10 @@ typedef struct {
     float       u0, v0, u1, v1;
     bool        in_use;
     bool        overlay;
+    /* Starts a new type-batched range within its paint band, so everything
+       earlier in paint order (including glyphs) is recorded before it while
+       later commands still paint over it. */
+    bool        paint_barrier;
     bool        has_clip;
     float       clip_x, clip_y, clip_w, clip_h;
     /* Corner radius of the clip rect itself (uniform). Zero means the

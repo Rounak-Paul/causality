@@ -205,11 +205,36 @@ static bool test_scrollbar_chrome(void)
     return true;
 }
 
+/** Verify scrollbars stay in their node's paint band behind later siblings. */
+static bool test_scrollbar_paint_order(void)
+{
+    Ca_Node node = {0};
+    node.x = 0.0f; node.y = 0.0f; node.w = 100.0f; node.h = 50.0f;
+    node.content_h = 200.0f;
+    node.scrollbar_y_visible = true;
+    node.desc.overflow_y = 1;
+
+    Ca_Window window = {0};
+    window.ui_scale = 1.0f;
+    CHECK(ca_dyn_array_init(&window.draw_cmd_storage, sizeof(Ca_DrawCmd)));
+    paint_scrollbars(&window, &node, (ClipRect){0});
+    CHECK(window.draw_cmd_count == 2);
+    CHECK(window.draw_cmds[0].paint_barrier);
+    CHECK(!window.draw_cmds[1].paint_barrier);
+    for (uint32_t i = 0; i < window.draw_cmd_count; ++i) {
+        CHECK(!window.draw_cmds[i].overlay);
+        CHECK(window.draw_cmds[i].z_index == 0);
+    }
+    ca_dyn_array_destroy(&window.draw_cmd_storage);
+    return true;
+}
+
 /** Run both splitter orientations at standard and fractional UI scales. */
 int main(void)
 {
     if (!test_glow()) return 1;
     if (!test_scrollbar_chrome()) return 1;
+    if (!test_scrollbar_paint_order()) return 1;
     const float scales[] = {1.0f, 1.12f, 2.0f};
     for (unsigned i = 0; i < sizeof(scales) / sizeof(scales[0]); ++i) {
         if (!test_splitter(CA_HORIZONTAL, scales[i])) return 1;

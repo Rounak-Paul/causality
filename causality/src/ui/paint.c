@@ -1078,14 +1078,9 @@ static void paint_scrollbar_border(Ca_Window *win, float x, float y, float w, fl
     }
 }
 
-/* Paint scrollbar overlays for a node (post-children, so they draw on top). */
+/* Paint scrollbars for a node (post-children, so they draw over its content). */
 static void paint_scrollbars(Ca_Window *win, Ca_Node *node, ClipRect clip)
 {
-    /* Scrollbars are painted as overlay so they appear on top of child
-       text glyphs.  The renderer draws all rects before all glyphs within
-       each phase; using phase 0 for the scrollbar rects would let every
-       glyph in the scroll container render over them.  Marking them
-       overlay = true puts them in phase 1, after all phase-0 glyphs. */
     uint32_t sb_first = win->draw_cmd_count;
     float ui_s = win->ui_scale > 0.0f ? win->ui_scale : 1.0f;
     if (node->scrollbar_y_visible) {
@@ -1214,12 +1209,13 @@ static void paint_scrollbars(Ca_Window *win, Ca_Node *node, ClipRect clip)
                                &node->desc, true, clip);
     }
 
-    /* Mark every scrollbar command as overlay so they render in phase 1,
-       after all phase-0 text glyphs that belong to the scroll container's
-       children.  Without this the renderer draws all rects (incl. scrollbar)
-       first and then all glyphs last, so child text paints over the bar. */
-    for (uint32_t si = sb_first; si < win->draw_cmd_count; ++si)
-        win->draw_cmds[si].overlay = true;
+    /* The renderer batches rects before glyphs within a range, so without a
+       barrier the scroll container's child text would paint over the bar.
+       A barrier keeps the bar in its node's own z band: children paint
+       beneath it, and anything later in paint order (floating panels,
+       higher z) still covers it. */
+    if (win->draw_cmd_count > sb_first)
+        win->draw_cmds[sb_first].paint_barrier = true;
 }
 
 /* Helper: glyph advance for a codepoint */

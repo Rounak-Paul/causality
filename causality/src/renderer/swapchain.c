@@ -979,7 +979,8 @@ static void record_backdrop(PaintCtx *ctx, const Ca_DrawCmd *cmd)
 /**
  * Records one paint band in strict paint order: content is recorded in
  * type-batched ranges split at each backdrop-filter element, so every
- * element's backdrop is exactly what painted before it.
+ * element's backdrop is exactly what painted before it, and at each
+ * paint_barrier command, so it paints over every earlier glyph.
  *
  * @param ctx  Frame recording state.
  * @param band Paint band.
@@ -990,12 +991,16 @@ static void record_band(PaintCtx *ctx, int band)
     uint32_t lo = 0;
     for (uint32_t pos = 0; pos < count; ++pos) {
         const Ca_DrawCmd *cmd = &ctx->win->draw_cmds[paint_index(ctx, pos)];
-        if (!cmd->in_use || cmd->type != CA_DRAW_BACKDROP_BLUR ||
-            cmd_paint_band(cmd) != band)
+        if (!cmd->in_use || cmd_paint_band(cmd) != band)
             continue;
-        record_range(ctx, band, lo, pos);
-        record_backdrop(ctx, cmd);
-        lo = pos + 1;
+        if (cmd->type == CA_DRAW_BACKDROP_BLUR) {
+            record_range(ctx, band, lo, pos);
+            record_backdrop(ctx, cmd);
+            lo = pos + 1;
+        } else if (cmd->paint_barrier) {
+            record_range(ctx, band, lo, pos);
+            lo = pos;
+        }
     }
     record_range(ctx, band, lo, count);
 }
