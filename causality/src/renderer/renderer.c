@@ -370,19 +370,21 @@ static bool create_logical_device(Ca_Instance *inst)
         !available.features.samplerAnisotropy ||
         !available.features.fillModeNonSolid ||
         !available.features.multiDrawIndirect ||
-        !available.features.fragmentStoresAndAtomics) {
+        !available.features.fragmentStoresAndAtomics ||
+        !available.features.independentBlend) {
         fprintf(stderr,
                 "[vk] required Vulkan 1.3 features unavailable "
                 "(dynamicRendering=%u, synchronization2=%u, shaderDemoteToHelperInvocation=%u, "
                 "samplerAnisotropy=%u, fillModeNonSolid=%u, multiDrawIndirect=%u, "
-                "fragmentStoresAndAtomics=%u)\n",
+                "fragmentStoresAndAtomics=%u, independentBlend=%u)\n",
                 available13.dynamicRendering,
                 available13.synchronization2,
                 available13.shaderDemoteToHelperInvocation,
                 available.features.samplerAnisotropy,
                 available.features.fillModeNonSolid,
                 available.features.multiDrawIndirect,
-                available.features.fragmentStoresAndAtomics);
+                available.features.fragmentStoresAndAtomics,
+                available.features.independentBlend);
         return false;
     }
     /* shaderDrawParameters (Vulkan 1.1, VK_KHR_shader_draw_parameters
@@ -468,6 +470,8 @@ static bool create_logical_device(Ca_Instance *inst)
                fragment stage — the standard fragment-shader voxelization
                technique (rasterize triangles, atomic-write occupancy). */
             .fragmentStoresAndAtomics = VK_TRUE,
+            /* Per-attachment color write masks (pipelines that skip some targets). */
+            .independentBlend = VK_TRUE,
         },
     };
 
