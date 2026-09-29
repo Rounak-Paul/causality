@@ -76,10 +76,10 @@ static bool test_splitter(int direction, float scale)
         window.mouse_y = pane->h - 2.0f * scale;
     }
     ca_widget_input_pass(&window);
-    CHECK(window.hovered_node == node);
+    CHECK(window.hovered_node == node && splitter->bar_hovered);
     pane->desc.z_index = 5;
     ca_widget_input_pass(&window);
-    CHECK(window.hovered_node == pane);
+    CHECK(window.hovered_node == pane && !splitter->bar_hovered);
     pane->desc.z_index = 0;
     window.mouse_x = 5.0f * scale;
     window.mouse_y = 5.0f * scale;

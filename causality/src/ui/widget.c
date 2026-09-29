@@ -4184,7 +4184,8 @@ void ca_widget_input_pass(Ca_Window *win)
     if (!left_down) win->mouse_buttons[0] = false;
     const int16_t top_z =
         (left_down || win->mouse_buttons[1] ||
-         win->mouse_click_this_frame || win->scroll_this_frame)
+         win->mouse_click_this_frame || win->scroll_this_frame ||
+         ca_pool_slot_count(&win->splitter_pool) > 0)
             ? pointer_top_z(win, mx, my) : 0;
 
     /* --- Scrollbar drag handling ---
@@ -5161,7 +5162,7 @@ void ca_widget_input_pass(Ca_Window *win)
                 Ca_Splitter *sp = CA_POOL_AT(win->splitter_pool, Ca_Splitter, i);
                 if (!sp->in_use || !sp->node) continue;
                 Ca_Node *n = sp->node;
-                if (point_in_splitter_handle(n, mx, my)) {
+                if (node_effective_z(n) >= top_z && point_in_splitter_handle(n, mx, my)) {
                     sp->dragging = true;
                     n->dirty |= CA_DIRTY_CONTENT;
                 }
@@ -5172,11 +5173,13 @@ void ca_widget_input_pass(Ca_Window *win)
            win->hovered_node is not used for this: it is arbitrated against
            every other node by z-index/area, and the splitter's own node
            spans its full container (both panes), so it routinely loses
-           that arbitration even while the cursor sits on the bar. */
+           that arbitration even while the cursor sits on the bar. A bar
+           covered by a higher stacking layer is occluded. */
         for (uint32_t i = 0; i < ca_pool_slot_count(&win->splitter_pool); ++i) {
             Ca_Splitter *sp = CA_POOL_AT(win->splitter_pool, Ca_Splitter, i);
             if (!sp->in_use || !sp->node) continue;
-            bool now_hovered = point_in_splitter_handle(sp->node, mx, my);
+            bool now_hovered = node_effective_z(sp->node) >= top_z &&
+                               point_in_splitter_handle(sp->node, mx, my);
             if (now_hovered != sp->bar_hovered) {
                 sp->bar_hovered = now_hovered;
                 sp->node->dirty |= CA_DIRTY_CONTENT;
