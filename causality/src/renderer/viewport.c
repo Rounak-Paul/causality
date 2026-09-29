@@ -179,19 +179,15 @@ void ca_viewport_gpu_destroy(Ca_Instance *inst, Ca_Viewport *vp)
 {
     if (!vp) return;
 
-    /* Wait only on this viewport's own in-flight submissions rather than
-       the whole device (vkDeviceWaitIdle) — ca_viewport_gpu_resize calls
-       this from the per-frame render loop, so stalling every other window's
-       and viewport's GPU work here on every resize is a real, easily
-       user-triggered hitch (e.g. dragging to resize a panel). Each slot's
-       fence is CA_FENCE_CREATE_SIGNALED_BIT at creation and reset only
-       right before that slot's own submit, so waiting on it here is safe
-       even for a slot that never rendered. */
-    for (uint32_t fi = 0; fi < CA_FRAMES_IN_FLIGHT; fi++) {
-        Ca_ViewportFrame *f = &vp->frame[fi];
-        if (f->render_fence != VK_NULL_HANDLE)
-            vkWaitForFences(inst->vk_device, 1, &f->render_fence, VK_TRUE, UINT64_MAX);
-    }
+    /* Each slot's render_fence only covers this viewport's own render
+       submit. render_done and desc_set are also consumed by the swapchain
+       compositing submit, which is fenced separately per window, so waiting
+       on render_fence alone lets resize destroy a semaphore and descriptor
+       set still referenced by an in-flight composite (GPU address fault /
+       device loss). All command-buffer submission goes through gfx_queue
+       (see ca_image_destroy_impl), so idling that queue covers both without
+       stalling the whole device. */
+    vkQueueWaitIdle(inst->gfx_queue);
 
     for (uint32_t fi = 0; fi < CA_FRAMES_IN_FLIGHT; fi++) {
         Ca_ViewportFrame *f = &vp->frame[fi];
@@ -316,7 +312,7 @@ void ca_viewport_render_all(Ca_Instance *inst, Ca_Window *win,
             if (new_w != vp->width || new_h != vp->height) {
                 ca_viewport_gpu_resize(inst, vp, new_w, new_h);
                 /* Resize destroys+recreates every slot (ca_viewport_gpu_destroy
-                   is a full vkDeviceWaitIdle teardown), so re-fetch f — the
+                   idles gfx_queue before teardown), so re-fetch f — the
                    old pointer is dangling and fi may now be past a reset
                    frame_index (ca_viewport_gpu_create sets it back to 0). */
                 fi = vp->frame_index;
