@@ -270,6 +270,8 @@ bool ca_swapchain_create(Ca_Instance *inst, Ca_Window *win,
             (Ca_DynArray)CA_DYN_ARRAY_INIT(VkSemaphore);
         sc->submit_stage_storage =
             (Ca_DynArray)CA_DYN_ARRAY_INIT(VkPipelineStageFlags);
+        sc->retired_viewport_storage =
+            (Ca_DynArray)CA_DYN_ARRAY_INIT(Ca_ViewportRetired);
     }
 
     uint32_t actual_image_count = 0;
@@ -372,6 +374,7 @@ void ca_swapchain_destroy(Ca_Instance *inst, Ca_Window *win)
     if (sc->swapchain == VK_NULL_HANDLE) return;
 
     vkDeviceWaitIdle(inst->vk_device);
+    ca_viewport_collect_retired(inst, win, true);
 
     for (uint32_t i = 0; i < CA_FRAMES_IN_FLIGHT; ++i) {
         Ca_Frame *f = &sc->frames[i];
@@ -404,6 +407,7 @@ void ca_swapchain_destroy(Ca_Instance *inst, Ca_Window *win)
     ca_dyn_array_destroy(&sc->viewport_wait_storage);
     ca_dyn_array_destroy(&sc->submit_wait_storage);
     ca_dyn_array_destroy(&sc->submit_stage_storage);
+    ca_dyn_array_destroy(&sc->retired_viewport_storage);
 }
 
 /* ---- Image layout transition helper ---- */
@@ -1005,6 +1009,54 @@ static void record_band(PaintCtx *ctx, int band)
     record_range(ctx, band, lo, count);
 }
 
+/* Recovers from a frame that fails after its in_flight fence was reset and
+   a swapchain image was acquired. Command-free submits consume the acquire
+   semaphore and every viewport render_done semaphore (a signaled binary
+   semaphore must be waited before it is signaled again), the last one
+   signaling in_flight — vkQueueSubmit fences cover all earlier submissions
+   on the queue. The swapchain is then recreated to release the acquired,
+   never-presented image; otherwise repeated failures exhaust the images and
+   vkAcquireNextImageKHR blocks forever. Allocation-free, since the failure
+   being handled may itself be an allocation failure.
+
+   inst            Owning instance.
+   win             Window whose frame is abandoned. Its swapchain frame
+                   state is invalid on return.
+   f               Frame slot whose fence was reset.
+   viewport_sems   render_done semaphores submitted by this frame's viewport
+                   pass.
+   viewport_count  Number of entries in viewport_sems. */
+static void swapchain_abandon_frame(Ca_Instance *inst, Ca_Window *win,
+                                    Ca_Frame *f,
+                                    const VkSemaphore *viewport_sems,
+                                    uint32_t viewport_count)
+{
+    Ca_Swapchain *sc = &win->sc;
+    const VkPipelineStageFlags stage = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+
+    for (uint32_t i = 0; i <= viewport_count; ++i) {
+        bool last = i == viewport_count;
+        VkSubmitInfo drain = {
+            .sType              = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+            .waitSemaphoreCount = 1,
+            .pWaitSemaphores    = last ? &f->image_available : &viewport_sems[i],
+            .pWaitDstStageMask  = &stage,
+        };
+        if (last)
+            f->submit_serial = ++sc->submit_serial;
+        if (vkQueueSubmit(inst->gfx_queue, 1, &drain,
+                          last ? f->in_flight : VK_NULL_HANDLE) != VK_SUCCESS) {
+            fprintf(stderr, "[vk] unable to drain abandoned frame\n");
+            return;
+        }
+    }
+
+    VkExtent2D extent = sc->extent;
+    ca_swapchain_destroy(inst, win);
+    if (!ca_swapchain_create(inst, win, extent.width, extent.height))
+        fprintf(stderr, "[vk] swapchain recreation after abandoned frame failed\n");
+}
+
 void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
 {
     Ca_Swapchain *sc = &win->sc;
@@ -1073,6 +1125,7 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
     if (result != VK_SUCCESS) {
         ca_profile_end(inst, "Platform UI Command Build");
         fprintf(stderr, "[vk] vkBeginCommandBuffer failed: %d\n", result);
+        swapchain_abandon_frame(inst, win, f, viewport_wait_sems, viewport_wait_count);
         return;
     }
 
@@ -1280,6 +1333,7 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
     ca_profile_end(inst, "Platform UI Command Build");
     if (result != VK_SUCCESS) {
         fprintf(stderr, "[vk] vkEndCommandBuffer failed: %d\n", result);
+        swapchain_abandon_frame(inst, win, f, viewport_wait_sems, viewport_wait_count);
         return;
     }
 
@@ -1292,6 +1346,7 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
     if (!ca_dyn_array_resize(&sc->submit_wait_storage, wait_count) ||
         !ca_dyn_array_resize(&sc->submit_stage_storage, wait_count)) {
         fprintf(stderr, "[vk] unable to allocate submit wait storage\n");
+        swapchain_abandon_frame(inst, win, f, viewport_wait_sems, viewport_wait_count);
         return;
     }
     VkSemaphore *wait_sems = sc->submit_wait_storage.data;
@@ -1315,20 +1370,17 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
     };
     ca_profile_begin(inst, "Platform Swapchain Submit");
     timing_start = glfwGetTime();
+    /* Tagged before submitting; the abandon path below re-tags on failure. */
+    f->submit_serial = ++sc->submit_serial;
     result = vkQueueSubmit(inst->gfx_queue, 1, &submit, f->in_flight);
     inst->frame_timing.swapchain_submit_ms += (glfwGetTime() - timing_start) * 1000.0;
     ca_profile_end(inst, "Platform Swapchain Submit");
     if (result != VK_SUCCESS) {
         fprintf(stderr, "[vk] vkQueueSubmit failed: %d\n", result);
-        /* f->in_flight was already reset above (line ~422) in anticipation
-           of this submit signaling it — if we bail out here without
-           signaling it some other way, next frame's vkWaitForFences on
-           this same fence hangs forever. An empty submit still signals
-           the fence once it completes, so use that purely to keep the
-           frame's fence lifecycle consistent; the frame's content is
-           simply dropped (skip present) since nothing was drawn. */
-        VkSubmitInfo empty_submit = { .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO };
-        vkQueueSubmit(inst->gfx_queue, 1, &empty_submit, f->in_flight);
+        /* The real submit did not happen, so its waits were never consumed
+           and in_flight (reset above) would never signal; the frame's
+           content is dropped. */
+        swapchain_abandon_frame(inst, win, f, viewport_wait_sems, viewport_wait_count);
         return;
     }
 

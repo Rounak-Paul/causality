@@ -321,7 +321,7 @@ static void release_widget(Ca_Node *node)
            lifetime from the pool slot — must be torn down explicitly or
            they leak every time a viewport node is removed (panel close,
            reconciled subtree drop), not just on full window/app teardown. */
-        ca_viewport_gpu_destroy(vp->instance, vp);
+        ca_viewport_gpu_retire(vp->instance, window, vp);
         ca_pool_release(&window->viewport_pool, vp);
         break;
     }

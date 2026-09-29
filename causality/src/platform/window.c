@@ -922,7 +922,7 @@ void ca_window_destroy(Ca_Window *window)
         window->on_close(window, window->on_close_data);
 
     /* Renderer shutdown must precede UI shutdown: ca_renderer_window_shutdown
-       calls ca_viewport_gpu_destroy on viewport_pool entries, which must still
+       calls ca_viewport_gpu_retire on viewport_pool entries, which must still
        be alive.  ca_ui_window_shutdown frees viewport_pool, so reversing this
        order would be a use-after-free. */
     if (window->instance && window->instance->vk_device != VK_NULL_HANDLE)

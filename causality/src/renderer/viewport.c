@@ -9,6 +9,122 @@
 
 /* ---- GPU resource lifecycle ---- */
 
+/* Destroys one generation of per-slot viewport objects plus its sampler.
+   The caller guarantees no pending GPU work references any of them. */
+static void viewport_frames_release(Ca_Instance *inst,
+                                    Ca_ViewportFrame frames[CA_FRAMES_IN_FLIGHT],
+                                    VkSampler sampler)
+{
+    for (uint32_t fi = 0; fi < CA_FRAMES_IN_FLIGHT; fi++) {
+        Ca_ViewportFrame *f = &frames[fi];
+        if (f->render_fence != VK_NULL_HANDLE)
+            vkDestroyFence(inst->vk_device, f->render_fence, NULL);
+        if (f->render_done != VK_NULL_HANDLE)
+            vkDestroySemaphore(inst->vk_device, f->render_done, NULL);
+        if (f->cmd != VK_NULL_HANDLE)
+            vkFreeCommandBuffers(inst->vk_device, inst->cmd_pool, 1, &f->cmd);
+        if (f->desc_set != VK_NULL_HANDLE)
+            ca_image_descriptor_free(inst, f->desc_pool, f->desc_set);
+        if (f->color_view != VK_NULL_HANDLE)
+            vkDestroyImageView(inst->vk_device, f->color_view, NULL);
+        if (f->color_image != VK_NULL_HANDLE)
+            vkDestroyImage(inst->vk_device, f->color_image, NULL);
+        if (f->color_memory != VK_NULL_HANDLE)
+            vkFreeMemory(inst->vk_device, f->color_memory, NULL);
+        *f = (Ca_ViewportFrame){0};
+    }
+    if (sampler != VK_NULL_HANDLE)
+        vkDestroySampler(inst->vk_device, sampler, NULL);
+}
+
+/* Immediately releases vp's current GPU objects and resets its size. Only
+   valid when the GPU cannot reference them: a partially built generation
+   inside ca_viewport_gpu_create, or when the owning swapchain is gone (its
+   destruction idles the device first). */
+static void viewport_gpu_release(Ca_Instance *inst, Ca_Viewport *vp)
+{
+    viewport_frames_release(inst, vp->frame, vp->sampler);
+    vp->sampler = VK_NULL_HANDLE;
+    vp->width   = 0;
+    vp->height  = 0;
+}
+
+/* True once every GPU submission that can reference r has completed.
+   A compositing slot whose latest submit is newer than r's retirement is
+   done with r (its older submits were fence-waited before the slot was
+   reused); every other slot must have signaled its in_flight fence. The
+   retired render_fences are never reset again, so their status is exact. */
+static bool viewport_retired_idle(Ca_Instance *inst, const Ca_Swapchain *sc,
+                                  const Ca_ViewportRetired *r)
+{
+    for (uint32_t i = 0; i < CA_FRAMES_IN_FLIGHT; ++i) {
+        const Ca_Frame *f = &sc->frames[i];
+        if (f->submit_serial > r->submit_serial || f->in_flight == VK_NULL_HANDLE)
+            continue;
+        if (vkGetFenceStatus(inst->vk_device, f->in_flight) != VK_SUCCESS)
+            return false;
+    }
+    for (uint32_t fi = 0; fi < CA_FRAMES_IN_FLIGHT; ++fi) {
+        VkFence fence = r->frame[fi].render_fence;
+        if (fence != VK_NULL_HANDLE &&
+            vkGetFenceStatus(inst->vk_device, fence) != VK_SUCCESS)
+            return false;
+    }
+    return true;
+}
+
+void ca_viewport_gpu_retire(Ca_Instance *inst, Ca_Window *win, Ca_Viewport *vp)
+{
+    if (!inst || !vp) return;
+    /* The sampler is created first and released last, so a NULL sampler
+       means vp holds no GPU generation (never created, or already retired). */
+    if (vp->sampler == VK_NULL_HANDLE) return;
+
+    Ca_Swapchain *sc = win ? &win->sc : NULL;
+    if (sc && sc->swapchain == VK_NULL_HANDLE) {
+        /* No swapchain: its destruction idled the device, and viewports only
+           render or composite inside ca_swapchain_frame. */
+        viewport_gpu_release(inst, vp);
+        return;
+    }
+
+    Ca_ViewportRetired retired = {
+        .sampler       = vp->sampler,
+        .submit_serial = sc ? sc->submit_serial : 0,
+    };
+    memcpy(retired.frame, vp->frame, sizeof retired.frame);
+    if (!sc || !ca_dyn_array_push(&sc->retired_viewport_storage, &retired)) {
+        /* Cannot defer: wait synchronously instead. All submission goes
+           through gfx_queue (see ca_image_destroy_impl). */
+        vkQueueWaitIdle(inst->gfx_queue);
+        viewport_gpu_release(inst, vp);
+        return;
+    }
+
+    memset(vp->frame, 0, sizeof vp->frame);
+    vp->sampler = VK_NULL_HANDLE;
+    vp->width   = 0;
+    vp->height  = 0;
+}
+
+void ca_viewport_collect_retired(Ca_Instance *inst, Ca_Window *win, bool device_idle)
+{
+    if (!inst || !win) return;
+    Ca_Swapchain *sc = &win->sc;
+    Ca_DynArray *retired = &sc->retired_viewport_storage;
+
+    size_t i = 0;
+    while (i < retired->count) {
+        Ca_ViewportRetired *r = ca_dyn_array_at(retired, i);
+        if (!device_idle && !viewport_retired_idle(inst, sc, r)) {
+            ++i;
+            continue;
+        }
+        viewport_frames_release(inst, r->frame, r->sampler);
+        ca_dyn_array_erase_unordered(retired, i);
+    }
+}
+
 bool ca_viewport_gpu_create(Ca_Instance *inst, Ca_Viewport *vp,
                             uint32_t width, uint32_t height, VkFormat format)
 {
@@ -61,7 +177,7 @@ bool ca_viewport_gpu_create(Ca_Instance *inst, Ca_Viewport *vp,
         };
         if (vkCreateImage(inst->vk_device, &img_ci, NULL, &f->color_image) != VK_SUCCESS) {
             fprintf(stderr, "[viewport] vkCreateImage failed\n");
-            ca_viewport_gpu_destroy(inst, vp);
+            viewport_gpu_release(inst, vp);
             return false;
         }
 
@@ -71,7 +187,7 @@ bool ca_viewport_gpu_create(Ca_Instance *inst, Ca_Viewport *vp,
                                             VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
         if (mem_idx == UINT32_MAX) {
             fprintf(stderr, "[viewport] no suitable memory type\n");
-            ca_viewport_gpu_destroy(inst, vp);
+            viewport_gpu_release(inst, vp);
             return false;
         }
         VkMemoryAllocateInfo mem_ai = {
@@ -81,12 +197,12 @@ bool ca_viewport_gpu_create(Ca_Instance *inst, Ca_Viewport *vp,
         };
         if (vkAllocateMemory(inst->vk_device, &mem_ai, NULL, &f->color_memory) != VK_SUCCESS) {
             fprintf(stderr, "[viewport] vkAllocateMemory failed\n");
-            ca_viewport_gpu_destroy(inst, vp);
+            viewport_gpu_release(inst, vp);
             return false;
         }
         if (vkBindImageMemory(inst->vk_device, f->color_image, f->color_memory, 0) != VK_SUCCESS) {
             fprintf(stderr, "[viewport] vkBindImageMemory failed\n");
-            ca_viewport_gpu_destroy(inst, vp);
+            viewport_gpu_release(inst, vp);
             return false;
         }
 
@@ -100,7 +216,7 @@ bool ca_viewport_gpu_create(Ca_Instance *inst, Ca_Viewport *vp,
         };
         if (vkCreateImageView(inst->vk_device, &view_ci, NULL, &f->color_view) != VK_SUCCESS) {
             fprintf(stderr, "[viewport] vkCreateImageView failed\n");
-            ca_viewport_gpu_destroy(inst, vp);
+            viewport_gpu_release(inst, vp);
             return false;
         }
 
@@ -115,7 +231,7 @@ bool ca_viewport_gpu_create(Ca_Instance *inst, Ca_Viewport *vp,
                                           &f->desc_set,
                                           &f->desc_pool)) {
             fprintf(stderr, "[viewport] descriptor set alloc failed\n");
-            ca_viewport_gpu_destroy(inst, vp);
+            viewport_gpu_release(inst, vp);
             return false;
         }
 
@@ -143,7 +259,7 @@ bool ca_viewport_gpu_create(Ca_Instance *inst, Ca_Viewport *vp,
         };
         if (vkAllocateCommandBuffers(inst->vk_device, &cmd_ai, &f->cmd) != VK_SUCCESS) {
             fprintf(stderr, "[viewport] vkAllocateCommandBuffers failed\n");
-            ca_viewport_gpu_destroy(inst, vp);
+            viewport_gpu_release(inst, vp);
             return false;
         }
 
@@ -158,7 +274,7 @@ bool ca_viewport_gpu_create(Ca_Instance *inst, Ca_Viewport *vp,
         };
         if (vkCreateFence(inst->vk_device, &fence_ci, NULL, &f->render_fence) != VK_SUCCESS) {
             fprintf(stderr, "[viewport] vkCreateFence failed\n");
-            ca_viewport_gpu_destroy(inst, vp);
+            viewport_gpu_release(inst, vp);
             return false;
         }
 
@@ -167,7 +283,7 @@ bool ca_viewport_gpu_create(Ca_Instance *inst, Ca_Viewport *vp,
         VkSemaphoreCreateInfo sem_ci = { .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO };
         if (vkCreateSemaphore(inst->vk_device, &sem_ci, NULL, &f->render_done) != VK_SUCCESS) {
             fprintf(stderr, "[viewport] vkCreateSemaphore failed\n");
-            ca_viewport_gpu_destroy(inst, vp);
+            viewport_gpu_release(inst, vp);
             return false;
         }
     }
@@ -175,71 +291,14 @@ bool ca_viewport_gpu_create(Ca_Instance *inst, Ca_Viewport *vp,
     return true;
 }
 
-void ca_viewport_gpu_destroy(Ca_Instance *inst, Ca_Viewport *vp)
-{
-    if (!vp) return;
-
-    /* Each slot's render_fence only covers this viewport's own render
-       submit. render_done and desc_set are also consumed by the swapchain
-       compositing submit, which is fenced separately per window, so waiting
-       on render_fence alone lets resize destroy a semaphore and descriptor
-       set still referenced by an in-flight composite (GPU address fault /
-       device loss). All command-buffer submission goes through gfx_queue
-       (see ca_image_destroy_impl), so idling that queue covers both without
-       stalling the whole device. */
-    vkQueueWaitIdle(inst->gfx_queue);
-
-    for (uint32_t fi = 0; fi < CA_FRAMES_IN_FLIGHT; fi++) {
-        Ca_ViewportFrame *f = &vp->frame[fi];
-        if (f->render_fence != VK_NULL_HANDLE) {
-            vkDestroyFence(inst->vk_device, f->render_fence, NULL);
-            f->render_fence = VK_NULL_HANDLE;
-        }
-        if (f->render_done != VK_NULL_HANDLE) {
-            vkDestroySemaphore(inst->vk_device, f->render_done, NULL);
-            f->render_done = VK_NULL_HANDLE;
-        }
-        if (f->cmd != VK_NULL_HANDLE) {
-            vkFreeCommandBuffers(inst->vk_device, inst->cmd_pool, 1, &f->cmd);
-            f->cmd = VK_NULL_HANDLE;
-        }
-        if (f->desc_set != VK_NULL_HANDLE) {
-            ca_image_descriptor_free(inst, f->desc_pool, f->desc_set);
-            f->desc_set = VK_NULL_HANDLE;
-            f->desc_pool = VK_NULL_HANDLE;
-        }
-        if (f->color_view != VK_NULL_HANDLE) {
-            vkDestroyImageView(inst->vk_device, f->color_view, NULL);
-            f->color_view = VK_NULL_HANDLE;
-        }
-        if (f->color_image != VK_NULL_HANDLE) {
-            vkDestroyImage(inst->vk_device, f->color_image, NULL);
-            f->color_image = VK_NULL_HANDLE;
-        }
-        if (f->color_memory != VK_NULL_HANDLE) {
-            vkFreeMemory(inst->vk_device, f->color_memory, NULL);
-            f->color_memory = VK_NULL_HANDLE;
-        }
-        f->has_rendered_once = false;
-    }
-
-    if (vp->sampler != VK_NULL_HANDLE) {
-        vkDestroySampler(inst->vk_device, vp->sampler, NULL);
-        vp->sampler = VK_NULL_HANDLE;
-    }
-
-    vp->width  = 0;
-    vp->height = 0;
-}
-
-bool ca_viewport_gpu_resize(Ca_Instance *inst, Ca_Viewport *vp,
+bool ca_viewport_gpu_resize(Ca_Instance *inst, Ca_Window *win, Ca_Viewport *vp,
                             uint32_t width, uint32_t height)
 {
     if (width == 0 || height == 0) return true;
     if (vp->width == width && vp->height == height) return true;
 
     VkFormat fmt = vp->format;
-    ca_viewport_gpu_destroy(inst, vp);
+    ca_viewport_gpu_retire(inst, win, vp);
     return ca_viewport_gpu_create(inst, vp, width, height, fmt);
 }
 
@@ -310,13 +369,15 @@ void ca_viewport_render_all(Ca_Instance *inst, Ca_Window *win,
             if (new_h < 1) new_h = 1;
 
             if (new_w != vp->width || new_h != vp->height) {
-                ca_viewport_gpu_resize(inst, vp, new_w, new_h);
-                /* Resize destroys+recreates every slot (ca_viewport_gpu_destroy
-                   idles gfx_queue before teardown), so re-fetch f — the
-                   old pointer is dangling and fi may now be past a reset
-                   frame_index (ca_viewport_gpu_create sets it back to 0). */
+                /* Resize retires every slot for deferred release (still
+                   referenced by in-flight composites) and recreates them, so
+                   re-fetch f — fi may now be past a reset frame_index
+                   (ca_viewport_gpu_create sets it back to 0). A failed
+                   recreate leaves no GPU objects to render into. */
+                bool resized = ca_viewport_gpu_resize(inst, win, vp, new_w, new_h);
                 fi = vp->frame_index;
                 f  = &vp->frame[fi];
+                if (!resized || f->color_image == VK_NULL_HANDLE) continue;
                 vp->needs_redraw = true;
                 if (vp->on_resize)
                     vp->on_resize(vp, new_w, new_h, vp->resize_data);

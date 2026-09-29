@@ -30,6 +30,10 @@ typedef struct {
     VkDescriptorSet ssbo_set;
     VkDescriptorPool ssbo_pool;
     uint32_t        instance_capacity;
+    /* Ca_Swapchain.submit_serial value of the most recent submit that
+       signals in_flight. Earlier submits on this slot are known complete
+       because in_flight is CPU-waited before it is reset for the next one. */
+    uint64_t        submit_serial;
 } Ca_Frame;
 
 typedef struct {
@@ -49,6 +53,12 @@ typedef struct {
     Ca_DynArray     submit_stage_storage;
     Ca_Frame        frames[CA_FRAMES_IN_FLIGHT];
     uint32_t        current_frame;
+    /* Monotonic count of compositing submits, never reset across swapchain
+       recreation. Tags retired viewport generations (Ca_ViewportRetired). */
+    uint64_t        submit_serial;
+    /* Ca_ViewportRetired entries awaiting GPU completion before release —
+       see ca_viewport_gpu_retire / ca_viewport_collect_retired. */
+    Ca_DynArray     retired_viewport_storage;
 } Ca_Swapchain;
 
 /* ======================================================
@@ -1033,6 +1043,17 @@ typedef struct {
        compositing must not bind/sample it before then. */
     bool                 has_rendered_once;
 } Ca_ViewportFrame;
+
+/* One generation of a viewport's GPU objects, detached by a resize or node
+   removal while the owning window's compositing submits (which wait on
+   render_done and sample desc_set) or the slots' own renders may still be
+   in flight. Released by ca_viewport_collect_retired once every compositing
+   submit up to submit_serial and every render_fence has completed. */
+typedef struct {
+    Ca_ViewportFrame frame[CA_FRAMES_IN_FLIGHT];
+    VkSampler        sampler;
+    uint64_t         submit_serial; /* Ca_Swapchain.submit_serial at retirement */
+} Ca_ViewportRetired;
 
 struct Ca_Viewport {
     Ca_Node             *node;

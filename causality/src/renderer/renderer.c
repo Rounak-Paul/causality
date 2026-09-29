@@ -726,11 +726,12 @@ void ca_renderer_window_shutdown(Ca_Instance *inst, Ca_Window *win)
     /* Destroy backdrop blur images */
     ca_blur_window_destroy(inst, win);
 
-    /* Destroy viewport GPU resources before tearing down the swapchain */
+    /* Retire viewport GPU resources before tearing down the swapchain,
+       whose destruction idles the device and releases the retired list. */
     if (ca_pool_slot_count(&win->viewport_pool) > 0) {
         for (int i = 0; i < ca_pool_slot_count(&win->viewport_pool); ++i) {
             if (CA_POOL_AT(win->viewport_pool, Ca_Viewport, i)->in_use)
-                ca_viewport_gpu_destroy(inst, CA_POOL_AT(win->viewport_pool, Ca_Viewport, i));
+                ca_viewport_gpu_retire(inst, win, CA_POOL_AT(win->viewport_pool, Ca_Viewport, i));
         }
     }
 
@@ -800,6 +801,9 @@ void ca_renderer_frame(Ca_Instance *inst)
         }
 
         if (win->sc.swapchain == VK_NULL_HANDLE) continue;
+        /* Runs even when this window skips rendering so retired viewport
+           memory is returned as soon as the GPU is done with it. */
+        ca_viewport_collect_retired(inst, win, false);
         /* A registered bg_render_fn is no longer sufficient reason to render:
            the caller (Sol's animation cadence, a one-shot settings change,
            etc.) must explicitly request a frame via
