@@ -40,6 +40,7 @@ typedef enum {
     CA_ELEM_MODAL,
     CA_ELEM_SPLITTER,
     CA_ELEM_IMAGE,
+    CA_ELEM_COLOR_PICKER,
     CA_ELEM_COUNT
 } Ca_ElementType;
 

@@ -39,6 +39,15 @@ typedef void (*Ca_CheckFn)(Ca_Checkbox *cb, void *user_data);
 typedef void (*Ca_SliderFn)(Ca_Slider *slider, void *user_data);
 
 /*
+ * Callback fired by a color picker: on_change for every value change while
+ * dragging, on_commit once when the drag gesture ends.
+ *
+ * picker     The color picker.
+ * user_data  Caller-supplied context pointer.
+ */
+typedef void (*Ca_ColorPickerFn)(Ca_ColorPicker *picker, void *user_data);
+
+/*
  * Callback fired when a toggle switch changes state.
  *
  * toggle     The toggle that changed.
@@ -135,6 +144,20 @@ typedef struct Ca_SliderDesc {
     bool        disabled;
     bool        no_hover;      /* transparent to hover/input-capture detection */
 } Ca_SliderDesc;
+
+/* Color picker: a swatch that expands (on click) into a saturation/value
+   square, hue bar and optional alpha bar. Colors are RGBA in 0..1. */
+typedef struct Ca_ColorPickerDesc {
+    float            color[4];
+    bool             alpha;          /* show the alpha bar */
+    float            width;          /* 0 = 200px unless CSS sets a width */
+    Ca_ColorPickerFn on_change;
+    Ca_ColorPickerFn on_commit;
+    void            *change_data;
+    const char      *id, *style;
+    bool             hidden;
+    bool             disabled;
+} Ca_ColorPickerDesc;
 
 typedef struct Ca_ToggleDesc {
     bool        on;
@@ -340,6 +363,17 @@ CA_API void         ca_progress_set(Ca_Progress *p, float value);
 
 /* Update the progress bar fill colour. */
 CA_API void         ca_progress_set_color(Ca_Progress *p, uint32_t color);
+
+/* ---- Color picker ---- */
+
+/* Emit a color picker; its expanded state survives rebuilds of the same id. */
+CA_API Ca_ColorPicker *ca_color_picker(const Ca_ColorPickerDesc *desc);
+
+/* Set the color (RGBA 0..1) without firing callbacks. */
+CA_API void            ca_color_picker_set(Ca_ColorPicker *p, const float rgba[4]);
+
+/* Read the current color (RGBA 0..1). */
+CA_API void            ca_color_picker_get(const Ca_ColorPicker *p, float out_rgba[4]);
 
 /* ---- Select / dropdown ---- */
 

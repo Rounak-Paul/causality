@@ -124,7 +124,9 @@ bool ca_node_system_init(Ca_Window *win)
         ca_pool_init(&win->viewport_pool, sizeof(Ca_Viewport),
                      ca_pool_recommended_chunk_capacity(sizeof(Ca_Viewport))) &&
         ca_pool_init(&win->menubar_pool, sizeof(Ca_MenuBar),
-                     ca_pool_recommended_chunk_capacity(sizeof(Ca_MenuBar)));
+                     ca_pool_recommended_chunk_capacity(sizeof(Ca_MenuBar))) &&
+        ca_pool_init(&win->color_picker_pool, sizeof(Ca_ColorPicker),
+                     ca_pool_recommended_chunk_capacity(sizeof(Ca_ColorPicker)));
     if (!pools_ready) {
         ca_node_system_shutdown(win);
         return false;
@@ -196,6 +198,7 @@ void ca_node_system_shutdown(Ca_Window *win)
     ca_pool_destroy(&win->splitter_pool, NULL, NULL);
     ca_pool_destroy(&win->viewport_pool, NULL, NULL);
     ca_pool_destroy(&win->menubar_pool, NULL, NULL);
+    ca_pool_destroy(&win->color_picker_pool, NULL, NULL);
     ca_dyn_array_destroy(&win->paint_cache_storage);
     ca_dyn_array_destroy(&win->layout_scratch_storage);
     ca_dyn_array_destroy(&win->paint_cache_spans);
@@ -326,6 +329,7 @@ static void release_widget(Ca_Node *node)
         break;
     }
     case CA_WIDGET_MODAL: ca_pool_release(&window->modal_pool, node->widget); break;
+    case CA_WIDGET_COLOR_PICKER: ca_pool_release(&window->color_picker_pool, node->widget); break;
     case CA_WIDGET_MENUBAR: {
         Ca_MenuBar *menu_bar = node->widget;
         ca_menu_storage_destroy(&menu_bar->menu_storage, &menu_bar->menus);

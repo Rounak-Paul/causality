@@ -85,6 +85,7 @@ typedef struct Ca_Tooltip   Ca_Tooltip;
 typedef struct Ca_CtxMenu   Ca_CtxMenu;
 typedef struct Ca_Modal     Ca_Modal;
 typedef struct Ca_MenuBar   Ca_MenuBar;
+typedef struct Ca_ColorPicker Ca_ColorPicker;
 /* Menu descriptor types — defined fully in ca_components.h (included below). */
 typedef struct Ca_MenuItemDesc Ca_MenuItemDesc;
 typedef struct Ca_MenuDesc     Ca_MenuDesc;

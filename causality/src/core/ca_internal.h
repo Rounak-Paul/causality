@@ -668,6 +668,7 @@ typedef enum {
     CA_WIDGET_VIEWPORT   = 15,
     CA_WIDGET_MODAL      = 16,
     CA_WIDGET_MENUBAR    = 17,
+    CA_WIDGET_COLOR_PICKER = 18,
 } Ca_WidgetType;
 
 /* ======================================================
@@ -899,6 +900,41 @@ struct Ca_Slider {
     void         *change_data;
     bool          in_use;
 };
+
+enum {
+    CA_COLOR_PICKER_PART_NONE = 0,
+    CA_COLOR_PICKER_PART_SWATCH,
+    CA_COLOR_PICKER_PART_SV,
+    CA_COLOR_PICKER_PART_HUE,
+    CA_COLOR_PICKER_PART_ALPHA,
+};
+
+struct Ca_ColorPicker {
+    Ca_Node          *node;
+    float             h, s, v;   /* edited in HSV so hue survives s == 0 or v == 0 */
+    float             rgba[4];
+    bool              alpha;
+    bool              expanded;
+    uint8_t           drag_part;
+    Ca_ColorPickerFn  on_change;
+    Ca_ColorPickerFn  on_commit;
+    void             *change_data;
+    bool              in_use;
+};
+
+/* Picker sub-rects in node-local logical pixels (already ui-scaled). */
+typedef struct Ca_ColorPickerRects {
+    float swatch_h;
+    float sv_y, sv_h;
+    float hue_y, hue_h;
+    float alpha_y, alpha_h;
+    float total_h;
+} Ca_ColorPickerRects;
+
+void ca_color_picker_rects(const Ca_ColorPicker *p, float ui_scale, Ca_ColorPickerRects *out);
+void ca_hsv_to_rgb(float h, float s, float v, float out_rgb[3]);
+void ca_color_picker_input(Ca_Window *win, float mx, float my, bool down, bool click,
+                           int16_t top_z, float ui_s);
 
 struct Ca_Toggle {
     Ca_Node      *node;
@@ -1223,6 +1259,7 @@ struct Ca_Window {
     Ca_Pool       splitter_pool;
     Ca_Pool       viewport_pool;
     Ca_Pool       menubar_pool;
+    Ca_Pool       color_picker_pool;
 
     /* Hover / drag state for interactive widgets */
     Ca_Node      *hovered_node;

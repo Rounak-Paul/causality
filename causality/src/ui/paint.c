@@ -293,6 +293,92 @@ static void paint_splitter(Ca_Window *win, Ca_Node *node, ClipRect clip)
 
 /* Paint a single node's OWN visual content (background rect + widget-specific).
    Does NOT recurse into children.  Does NOT paint scrollbars (post-children). */
+static Ca_DrawCmd *picker_rect(Ca_Window *win, float x, float y, float w, float h,
+                               const float rgba[4], float radius)
+{
+    if (!ca_window_reserve_draw_commands(win, (size_t)win->draw_cmd_count + 1u)) return NULL;
+    Ca_DrawCmd *c = &win->draw_cmds[win->draw_cmd_count++];
+    memset(c, 0, sizeof(*c));
+    c->type = CA_DRAW_RECT;
+    c->x = x; c->y = y; c->w = w; c->h = h;
+    c->corner_radius = radius;
+    c->r = rgba[0]; c->g = rgba[1]; c->b = rgba[2]; c->a = rgba[3];
+    c->in_use = true;
+    return c;
+}
+
+static Ca_DrawCmd *picker_gradient(Ca_Window *win, float x, float y, float w, float h,
+                                   const float from[4], const float to[4], float angle)
+{
+    Ca_DrawCmd *c = picker_rect(win, x, y, w, h, from, 0.0f);
+    if (!c) return NULL;
+    c->draw_mode = CA_DRAW_MODE_LINEAR_GRAD;
+    c->color2_r = to[0]; c->color2_g = to[1]; c->color2_b = to[2]; c->color2_a = to[3];
+    c->gradient_angle = angle;
+    return c;
+}
+
+/* Ring marker: transparent fill, dark outer and white inner border. */
+static void picker_marker(Ca_Window *win, float cx, float cy, float w, float h, float ui_s)
+{
+    static const float clear[4] = { 0, 0, 0, 0 };
+    float radius = fminf(w, h) * 0.5f;
+    Ca_DrawCmd *outer = picker_rect(win, cx - w * 0.5f, cy - h * 0.5f, w, h, clear, radius);
+    if (outer) { outer->border_width = 3.0f * ui_s; outer->border_a = 0.6f; }
+    Ca_DrawCmd *inner = picker_rect(win, cx - w * 0.5f + ui_s, cy - h * 0.5f + ui_s,
+                                    w - 2.0f * ui_s, h - 2.0f * ui_s, clear, radius - ui_s);
+    if (inner) {
+        inner->border_width = 1.5f * ui_s;
+        inner->border_r = inner->border_g = inner->border_b = inner->border_a = 1.0f;
+    }
+}
+
+static void paint_color_picker(Ca_Window *win, Ca_Node *node, const Ca_ColorPicker *p, float ui_s)
+{
+    Ca_ColorPickerRects r;
+    ca_color_picker_rects(p, ui_s, &r);
+    const float x = node->x, y = node->y, w = node->w;
+    const float radius = 3.0f * ui_s;
+    float back[4];
+    unpack_color(CA_THEME_BG_SURFACE, &back[0], &back[1], &back[2], &back[3]);
+
+    picker_rect(win, x, y, w, r.swatch_h, back, radius);
+    Ca_DrawCmd *sw = picker_rect(win, x, y, w, r.swatch_h, p->rgba, radius);
+    if (sw) { sw->border_width = ui_s; sw->border_r = sw->border_g = sw->border_b = 0.5f; sw->border_a = 1.0f; }
+    if (!p->expanded) return;
+
+    float hue[4] = { 0, 0, 0, 1 };
+    ca_hsv_to_rgb(p->h, 1.0f, 1.0f, hue);
+    static const float white[4] = { 1, 1, 1, 1 };
+    static const float clear_black[4] = { 0, 0, 0, 0 };
+    static const float black[4] = { 0, 0, 0, 1 };
+    picker_gradient(win, x, y + r.sv_y, w, r.sv_h, white, hue, 90.0f);
+    picker_gradient(win, x, y + r.sv_y, w, r.sv_h, clear_black, black, 180.0f);
+
+    const float seg = w / 6.0f;
+    for (int i = 0; i < 6; i++) {
+        float a[4] = { 0, 0, 0, 1 }, b[4] = { 0, 0, 0, 1 };
+        ca_hsv_to_rgb((float)i / 6.0f, 1.0f, 1.0f, a);
+        ca_hsv_to_rgb((float)(i + 1) / 6.0f, 1.0f, 1.0f, b);
+        picker_gradient(win, x + seg * (float)i, y + r.hue_y, seg + (i < 5 ? ui_s : 0.0f),
+                        r.hue_h, a, b, 90.0f);
+    }
+
+    if (p->alpha) {
+        float from[4] = { p->rgba[0], p->rgba[1], p->rgba[2], 0.0f };
+        float to[4]   = { p->rgba[0], p->rgba[1], p->rgba[2], 1.0f };
+        picker_rect(win, x, y + r.alpha_y, w, r.alpha_h, back, 0.0f);
+        picker_gradient(win, x, y + r.alpha_y, w, r.alpha_h, from, to, 90.0f);
+    }
+
+    const float m = 10.0f * ui_s;
+    picker_marker(win, x + p->s * w, y + r.sv_y + (1.0f - p->v) * r.sv_h, m, m, ui_s);
+    picker_marker(win, x + p->h * w, y + r.hue_y + r.hue_h * 0.5f, 6.0f * ui_s, r.hue_h + 4.0f * ui_s, ui_s);
+    if (p->alpha)
+        picker_marker(win, x + p->rgba[3] * w, y + r.alpha_y + r.alpha_h * 0.5f,
+                      6.0f * ui_s, r.alpha_h + 4.0f * ui_s, ui_s);
+}
+
 static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, ClipRect clip)
 {
     if (!node->in_use) return;
@@ -579,6 +665,12 @@ static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, Cli
             tn.w = node->w - bs - 6.0f * ui_s;
             paint_text(win, font, &tn, r->text, r->text_color);
         }
+        break;
+    }
+    case CA_WIDGET_COLOR_PICKER: {
+        Ca_ColorPicker *p = (Ca_ColorPicker *)node->widget;
+        if (!p || !p->in_use) break;
+        paint_color_picker(win, node, p, ui_s);
         break;
     }
     case CA_WIDGET_SLIDER: {
@@ -2201,6 +2293,10 @@ static void paint_tree_cached(Ca_Instance *inst, Ca_Window *win,
         uint32_t start = win->draw_cmd_count;
         paint_node_content(win, inst->font, node, clip);
         uint32_t count = win->draw_cmd_count - start;
+        /* Widget visuals that did not pick their own clip inherit the
+           ancestors' clip, so they never draw outside a scrolled panel. */
+        for (uint32_t ci = start; clip.active && ci < start + count; ++ci)
+            if (!win->draw_cmds[ci].has_clip) set_clip(&win->draw_cmds[ci], clip);
         apply_inherited_z(win, start, count, effective_z);
         apply_transform(win, start, count, effective_xf, false);
         cache_commands(win, node, start, count, false);

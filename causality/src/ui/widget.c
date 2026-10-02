@@ -161,6 +161,7 @@ ALLOC_POOL_FN(checkbox,  Ca_Checkbox,  checkbox_pool)
 ALLOC_POOL_FN(radio,     Ca_Radio,     radio_pool)
 ALLOC_POOL_FN(slider,    Ca_Slider,    slider_pool)
 ALLOC_POOL_FN(toggle,    Ca_Toggle,    toggle_pool)
+ALLOC_POOL_FN(color_picker, Ca_ColorPicker, color_picker_pool)
 ALLOC_POOL_FN(progress,  Ca_Progress,  progress_pool)
 ALLOC_POOL_FN(select,    Ca_Select,    select_pool)
 ALLOC_POOL_FN(tabbar,    Ca_TabBar,    tabbar_pool)
@@ -2231,6 +2232,209 @@ float ca_slider_get(const Ca_Slider *s)
 }
 
 /* ============================================================
+   PUBLIC — Color picker
+   ============================================================ */
+
+void ca_hsv_to_rgb(float h, float s, float v, float out[3])
+{
+    h = (h - floorf(h)) * 6.0f;
+    int   i = (int)h;
+    float f = h - (float)i;
+    float p = v * (1.0f - s), q = v * (1.0f - s * f), t = v * (1.0f - s * (1.0f - f));
+    switch (i % 6) {
+    case 0:  out[0] = v; out[1] = t; out[2] = p; break;
+    case 1:  out[0] = q; out[1] = v; out[2] = p; break;
+    case 2:  out[0] = p; out[1] = v; out[2] = t; break;
+    case 3:  out[0] = p; out[1] = q; out[2] = v; break;
+    case 4:  out[0] = t; out[1] = p; out[2] = v; break;
+    default: out[0] = v; out[1] = p; out[2] = q; break;
+    }
+}
+
+static float clamp01(float x) { return x < 0.0f ? 0.0f : (x > 1.0f ? 1.0f : x); }
+
+/* Derives HSV from p->rgba, keeping the previous hue (and saturation) where
+   RGB no longer determines them. */
+static void color_picker_sync_hsv(Ca_ColorPicker *p)
+{
+    float r = clamp01(p->rgba[0]), g = clamp01(p->rgba[1]), b = clamp01(p->rgba[2]);
+    float mx = fmaxf(r, fmaxf(g, b)), mn = fminf(r, fminf(g, b)), d = mx - mn;
+    p->v = mx;
+    if (mx <= 0.0f) return;
+    p->s = d / mx;
+    if (d <= 0.0f) return;
+    float h;
+    if (mx == r)      h = (g - b) / d + (g < b ? 6.0f : 0.0f);
+    else if (mx == g) h = (b - r) / d + 2.0f;
+    else              h = (r - g) / d + 4.0f;
+    p->h = h / 6.0f;
+}
+
+void ca_color_picker_rects(const Ca_ColorPicker *p, float ui_s, Ca_ColorPickerRects *r)
+{
+    const float gap = 6.0f * ui_s;
+    memset(r, 0, sizeof(*r));
+    r->swatch_h = 18.0f * ui_s;
+    r->total_h  = r->swatch_h;
+    if (!p->expanded) return;
+    r->sv_y  = r->total_h + gap;          r->sv_h  = 120.0f * ui_s;
+    r->hue_y = r->sv_y + r->sv_h + gap;   r->hue_h = 12.0f * ui_s;
+    r->total_h = r->hue_y + r->hue_h;
+    if (!p->alpha) return;
+    r->alpha_y = r->total_h + gap;        r->alpha_h = 12.0f * ui_s;
+    r->total_h = r->alpha_y + r->alpha_h;
+}
+
+static int color_picker_part_at(const Ca_ColorPicker *p, float local_y, float ui_s)
+{
+    Ca_ColorPickerRects r;
+    ca_color_picker_rects(p, ui_s, &r);
+    if (local_y < r.swatch_h) return CA_COLOR_PICKER_PART_SWATCH;
+    if (!p->expanded) return CA_COLOR_PICKER_PART_NONE;
+    if (local_y >= r.sv_y && local_y < r.sv_y + r.sv_h) return CA_COLOR_PICKER_PART_SV;
+    if (local_y >= r.hue_y && local_y < r.hue_y + r.hue_h) return CA_COLOR_PICKER_PART_HUE;
+    if (p->alpha && local_y >= r.alpha_y && local_y < r.alpha_y + r.alpha_h)
+        return CA_COLOR_PICKER_PART_ALPHA;
+    return CA_COLOR_PICKER_PART_NONE;
+}
+
+/* Applies the pointer position to the dragged part; true when the color changed. */
+static bool color_picker_drag(Ca_ColorPicker *p, float mx, float my, float ui_s)
+{
+    Ca_ColorPickerRects r;
+    ca_color_picker_rects(p, ui_s, &r);
+    Ca_Node *n = p->node;
+    float u = n->w > 0.0f ? clamp01((mx - n->x) / n->w) : 0.0f;
+    float before[4];
+    memcpy(before, p->rgba, sizeof(before));
+    switch (p->drag_part) {
+    case CA_COLOR_PICKER_PART_SV:
+        p->s = u;
+        p->v = 1.0f - clamp01((my - n->y - r.sv_y) / r.sv_h);
+        break;
+    case CA_COLOR_PICKER_PART_HUE:   p->h = fminf(u, 0.9999f); break;
+    case CA_COLOR_PICKER_PART_ALPHA: p->rgba[3] = u;           break;
+    default: return false;
+    }
+    ca_hsv_to_rgb(p->h, p->s, p->v, p->rgba);
+    if (memcmp(before, p->rgba, sizeof(before)) == 0) return false;
+    n->dirty |= CA_DIRTY_CONTENT;
+    return true;
+}
+
+static void color_picker_set_expanded(Ca_ColorPicker *p, bool expanded, float ui_s)
+{
+    Ca_ColorPickerRects r;
+    p->expanded = expanded;
+    ca_color_picker_rects(p, ui_s, &r);
+    p->node->desc.height = r.total_h;
+    p->node->dirty |= CA_DIRTY_CONTENT | CA_DIRTY_LAYOUT;
+    if (p->node->parent) p->node->parent->dirty |= CA_DIRTY_LAYOUT;
+}
+
+static bool is_effectively_disabled(Ca_Node *n);
+static bool point_reaches_node(Ca_Node *n, float px, float py, int16_t top_z);
+
+/* A click on the swatch toggles expansion; a press on a part starts a drag
+   that reports on_change while moving and on_commit once on release. */
+void ca_color_picker_input(Ca_Window *win, float mx, float my, bool down, bool click,
+                           int16_t top_z, float ui_s)
+{
+    if (down && click && !win->drag_node) {
+        for (uint32_t i = 0; i < ca_pool_slot_count(&win->color_picker_pool); ++i) {
+            Ca_ColorPicker *p = CA_POOL_AT(win->color_picker_pool, Ca_ColorPicker, i);
+            if (!p->in_use || !p->node || is_effectively_disabled(p->node)) continue;
+            if (!point_reaches_node(p->node, mx, my, top_z)) continue;
+            int part = color_picker_part_at(p, my - p->node->y, ui_s);
+            if (part == CA_COLOR_PICKER_PART_SWATCH) {
+                color_picker_set_expanded(p, !p->expanded, ui_s);
+            } else if (part != CA_COLOR_PICKER_PART_NONE) {
+                win->drag_node = p->node;
+                p->drag_part = (uint8_t)part;
+                if (color_picker_drag(p, mx, my, ui_s) && p->on_change)
+                    p->on_change(p, p->change_data);
+            }
+            break;
+        }
+    }
+    for (uint32_t i = 0; i < ca_pool_slot_count(&win->color_picker_pool); ++i) {
+        Ca_ColorPicker *p = CA_POOL_AT(win->color_picker_pool, Ca_ColorPicker, i);
+        if (!p->in_use || !p->drag_part) continue;
+        if (down && win->drag_node == p->node) {
+            if (color_picker_drag(p, mx, my, ui_s) && p->on_change)
+                p->on_change(p, p->change_data);
+            continue;
+        }
+        p->drag_part = CA_COLOR_PICKER_PART_NONE;
+        if (win->drag_node == p->node) win->drag_node = NULL;
+        if (p->on_commit) p->on_commit(p, p->change_data);
+    }
+}
+
+Ca_ColorPicker *ca_color_picker(const Ca_ColorPickerDesc *desc)
+{
+    assert(g_ctx.active && desc);
+    const char *next_key = consume_next_key();
+    const char *id = next_key ? next_key : desc->id;
+
+    Ca_NodeDesc nd = {0};
+    nd.width = s(desc->width > 0.0f ? desc->width : 200.0f);
+
+    bool reused = false;
+    Ca_Node *node = claim_child(&nd, CA_WIDGET_COLOR_PICKER, CA_ELEM_COLOR_PICKER, id, &reused);
+    if (!node) return NULL;
+
+    Ca_ColorPicker *p = NULL;
+    if (reused && node->widget_type == CA_WIDGET_COLOR_PICKER && node->widget)
+        p = (Ca_ColorPicker *)node->widget;
+    if (!p) {
+        p = alloc_color_picker(g_ctx.window);
+        if (!p) return NULL;
+        memset(p, 0, sizeof(*p));
+        node->widget_type = CA_WIDGET_COLOR_PICKER;
+        node->widget = p;
+        reused = false;
+    }
+    p->node        = node;
+    p->in_use      = true;
+    p->alpha       = desc->alpha;
+    p->on_change   = desc->on_change;
+    p->on_commit   = desc->on_commit;
+    p->change_data = desc->change_data;
+    if (!p->drag_part && (!reused || memcmp(p->rgba, desc->color, sizeof(p->rgba)) != 0)) {
+        memcpy(p->rgba, desc->color, sizeof(p->rgba));
+        color_picker_sync_hsv(p);
+        if (reused) node->dirty |= CA_DIRTY_CONTENT;
+    }
+
+    Ca_ColorPickerRects r;
+    ca_color_picker_rects(p, g_ctx.window->ui_scale, &r);
+    node->desc.height = r.total_h;
+    if (desc->hidden)   node->desc.hidden   = true;
+    if (desc->disabled) node->desc.disabled = true;
+
+    uint32_t dummy = 0;
+    apply_css(node, &node->desc, CA_ELEM_COLOR_PICKER, desc->style, id, &dummy, NULL);
+    node->desc.height = r.total_h;
+    return p;
+}
+
+void ca_color_picker_set(Ca_ColorPicker *p, const float rgba[4])
+{
+    assert(p && p->in_use && rgba);
+    if (memcmp(p->rgba, rgba, sizeof(p->rgba)) == 0) return;
+    memcpy(p->rgba, rgba, sizeof(p->rgba));
+    color_picker_sync_hsv(p);
+    p->node->dirty |= CA_DIRTY_CONTENT;
+}
+
+void ca_color_picker_get(const Ca_ColorPicker *p, float out_rgba[4])
+{
+    assert(p && p->in_use && out_rgba);
+    memcpy(out_rgba, p->rgba, sizeof(p->rgba));
+}
+
+/* ============================================================
    PUBLIC — Toggle switch
    ============================================================ */
 
@@ -3650,6 +3854,7 @@ static bool node_captures_input(const Ca_Node *node)
     case CA_WIDGET_CHECKBOX:
     case CA_WIDGET_RADIO:
     case CA_WIDGET_SLIDER:
+    case CA_WIDGET_COLOR_PICKER:
     case CA_WIDGET_TOGGLE:
     case CA_WIDGET_SELECT:
     case CA_WIDGET_TABBAR:
@@ -5151,6 +5356,10 @@ void ca_widget_input_pass(Ca_Window *win)
             win->drag_node = NULL;
         }
     }
+
+    if (ca_pool_slot_count(&win->color_picker_pool) > 0)
+        ca_color_picker_input(win, mx, my, win->mouse_buttons[0],
+                              win->mouse_click_this_frame, top_z, ui_s);
 
     /* --- Splitter drag handling --- */
     if (ca_pool_slot_count(&win->splitter_pool) > 0) {
