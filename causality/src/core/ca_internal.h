@@ -859,7 +859,6 @@ struct Ca_TextInput {
     Ca_Node    *node;
     char        text[CA_INPUT_TEXT_MAX];
     uint32_t    text_color;
-    uint32_t    placeholder_color;
     char        placeholder[CA_INPUT_TEXT_MAX];
     int         cursor;       /* byte offset into text */
     int         sel_start;    /* selection anchor (-1 = no selection) */
@@ -1485,6 +1484,7 @@ struct Ca_Instance {
     /* System defaults are instance-owned; author stylesheet is borrowed. */
     struct Ca_Stylesheet *system_stylesheet;
     struct Ca_Stylesheet *stylesheet;
+    Ca_Theme theme;
 
     /* Background fallback for windows without a per-window override. */
     Ca_BgRenderFn default_bg_render_fn;

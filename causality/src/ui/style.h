@@ -71,9 +71,13 @@ typedef enum {
 /** Get element type name string for CSS selector matching. */
 const char *ca_elem_type_name(Ca_ElementType type);
 
-/** Create the Causality-owned lower-priority system chrome stylesheet.
+/** Create the Causality-owned lower-priority system chrome stylesheet,
+    colored from @p theme.
     @return Parsed stylesheet owned by the caller, or NULL on failure. */
-Ca_Stylesheet *ca_style_create_system_stylesheet(void);
+Ca_Stylesheet *ca_style_create_system_stylesheet(const Ca_Theme *theme);
+
+/** Rewrite the system stylesheet's `--ca-*` color variables from @p theme. */
+void ca_style_apply_theme(Ca_Stylesheet *system, const Ca_Theme *theme);
 
 /** Resolve system defaults followed by author CSS.
     Author declarations override matching default declarations regardless of

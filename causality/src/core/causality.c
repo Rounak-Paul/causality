@@ -89,7 +89,8 @@ Ca_Instance *ca_instance_create(const Ca_InstanceDesc *desc)
         return NULL;
     }
 
-    inst->system_stylesheet = ca_style_create_system_stylesheet();
+    inst->theme = ca_theme_default();
+    inst->system_stylesheet = ca_style_create_system_stylesheet(&inst->theme);
     if (!inst->system_stylesheet)
         fprintf(stderr, "[causality] warning: failed to load system styles\n");
 
@@ -278,6 +279,11 @@ void ca_instance_set_stylesheet(Ca_Instance *instance, Ca_Stylesheet *ss)
 {
     if (!instance) return;
     instance->stylesheet = ss;
+}
+
+Ca_Stylesheet *ca_instance_stylesheet(const Ca_Instance *instance)
+{
+    return instance ? instance->stylesheet : NULL;
 }
 
 /* Re-resolve every styled node and schedule layout and paint work. */

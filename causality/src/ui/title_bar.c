@@ -17,7 +17,6 @@
 
 #include "title_bar.h"
 #include "menu_storage.h"
-#include "ca_theme.h"
 #include "node.h"
 #include "style.h"
 #include "widget.h"

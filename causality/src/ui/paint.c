@@ -6,7 +6,6 @@
 #include "node.h"
 #include "font.h"
 #include "inline_layout.h"
-#include "ca_theme.h"
 #include "style.h"
 #include "scrollbar.h"
 #include "../../include/ca_icons.h"
@@ -28,12 +27,31 @@
   #include <psapi.h>
 #endif
 
+static inline const Ca_Theme *win_theme(const Ca_Window *win)
+{
+    return &win->instance->theme;
+}
+
+/* Widgets store 0 for "use the instance theme". */
+static inline uint32_t themed(uint32_t override, uint32_t fallback)
+{
+    return override ? override : fallback;
+}
+
 static void unpack_color(uint32_t packed, float *r, float *g, float *b, float *a)
 {
     *r = (float)((packed >> 24) & 0xFF) / 255.0f;
     *g = (float)((packed >> 16) & 0xFF) / 255.0f;
     *b = (float)((packed >>  8) & 0xFF) / 255.0f;
     *a = (float)((packed)       & 0xFF) / 255.0f;
+}
+
+/* Text color 0 means "no explicit color" and resolves to the theme
+   foreground rather than transparent black. */
+static void unpack_text_color(const Ca_Window *win, uint32_t packed,
+                              float *r, float *g, float *b, float *a)
+{
+    unpack_color(packed ? packed : win_theme(win)->text_bright, r, g, b, a);
 }
 
 typedef struct OverlayCssStyle {
@@ -340,7 +358,7 @@ static void paint_color_picker(Ca_Window *win, Ca_Node *node, const Ca_ColorPick
     const float x = node->x, y = node->y, w = node->w;
     const float radius = 3.0f * ui_s;
     float back[4];
-    unpack_color(CA_THEME_BG_SURFACE, &back[0], &back[1], &back[2], &back[3]);
+    unpack_color(win_theme(win)->bg_surface, &back[0], &back[1], &back[2], &back[3]);
 
     picker_rect(win, x, y, w, r.swatch_h, back, radius);
     Ca_DrawCmd *sw = picker_rect(win, x, y, w, r.swatch_h, p->rgba, radius);
@@ -580,7 +598,7 @@ static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, Cli
                 }
             } else if (inp->placeholder[0] != '\0') {
                 paint_text_left(win, font, node, inp->placeholder,
-                                inp->placeholder_color);
+                                win_theme(win)->text_dim);
             }
             /* Cursor is painted in the decoration pass, not cached */
         }
@@ -599,8 +617,8 @@ static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, Cli
             c->type = CA_DRAW_RECT;
             c->x = bx; c->y = by; c->w = bs; c->h = bs;
             c->corner_radius = 3.0f * ui_s;
-            if (cb->checked) { float _r, _g, _b, _a; unpack_color(CA_THEME_ACCENT,     &_r, &_g, &_b, &_a); c->r = _r; c->g = _g; c->b = _b; c->a = _a; }
-            else             { float _r, _g, _b, _a; unpack_color(CA_THEME_BG_OVERLAY, &_r, &_g, &_b, &_a); c->r = _r; c->g = _g; c->b = _b; c->a = _a; }
+            if (cb->checked) { float _r, _g, _b, _a; unpack_color(win_theme(win)->accent,     &_r, &_g, &_b, &_a); c->r = _r; c->g = _g; c->b = _b; c->a = _a; }
+            else             { float _r, _g, _b, _a; unpack_color(win_theme(win)->bg_overlay, &_r, &_g, &_b, &_a); c->r = _r; c->g = _g; c->b = _b; c->a = _a; }
             c->in_use = true;
         }
         /* Checkmark */
@@ -610,14 +628,14 @@ static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, Cli
             memset(c1, 0, sizeof(*c1));
             c1->type = CA_DRAW_RECT;
             c1->x = cx; c1->y = cy; c1->w = bs * 0.2f; c1->h = bs * 0.35f;
-            c1->r = 1; c1->g = 1; c1->b = 1; c1->a = 1;
+            unpack_color(win_theme(win)->on_accent, &c1->r, &c1->g, &c1->b, &c1->a);
             c1->in_use = true;
             Ca_DrawCmd *c2 = &win->draw_cmds[win->draw_cmd_count++];
             memset(c2, 0, sizeof(*c2));
             c2->type = CA_DRAW_RECT;
             c2->x = cx + bs * 0.15f; c2->y = by + bs * 0.25f;
             c2->w = bs * 0.4f; c2->h = bs * 0.2f;
-            c2->r = 1; c2->g = 1; c2->b = 1; c2->a = 1;
+            unpack_color(win_theme(win)->on_accent, &c2->r, &c2->g, &c2->b, &c2->a);
             c2->in_use = true;
         }
         /* Label text */
@@ -642,7 +660,7 @@ static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, Cli
             c->type = CA_DRAW_RECT;
             c->x = bx; c->y = by; c->w = bs; c->h = bs;
             c->corner_radius = bs * 0.5f;
-            { float _r, _g, _b, _a; unpack_color(CA_THEME_BG_OVERLAY, &_r, &_g, &_b, &_a); c->r = _r; c->g = _g; c->b = _b; c->a = _a; }
+            { float _r, _g, _b, _a; unpack_color(win_theme(win)->bg_overlay, &_r, &_g, &_b, &_a); c->r = _r; c->g = _g; c->b = _b; c->a = _a; }
             c->in_use = true;
         }
         /* Inner dot when selected */
@@ -655,7 +673,7 @@ static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, Cli
             c->y = by + (bs - ds) * 0.5f;
             c->w = ds; c->h = ds;
             c->corner_radius = ds * 0.5f;
-            { float _r, _g, _b, _a; unpack_color(CA_THEME_ACCENT, &_r, &_g, &_b, &_a); c->r = _r; c->g = _g; c->b = _b; c->a = _a; }
+            { float _r, _g, _b, _a; unpack_color(win_theme(win)->accent, &_r, &_g, &_b, &_a); c->r = _r; c->g = _g; c->b = _b; c->a = _a; }
             c->in_use = true;
         }
         /* Label text */
@@ -687,7 +705,7 @@ static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, Cli
             c->type = CA_DRAW_RECT;
             c->x = node->x; c->y = track_y; c->w = node->w; c->h = track_h;
             c->corner_radius = 2.0f * ui_s;
-            { float _r, _g, _b, _a; unpack_color(CA_THEME_BG_SURFACE, &_r, &_g, &_b, &_a); c->r = _r; c->g = _g; c->b = _b; c->a = _a; }
+            { float _r, _g, _b, _a; unpack_color(win_theme(win)->bg_surface, &_r, &_g, &_b, &_a); c->r = _r; c->g = _g; c->b = _b; c->a = _a; }
             c->in_use = true;
         }
         /* Fill */
@@ -698,7 +716,7 @@ static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, Cli
             c->type = CA_DRAW_RECT;
             c->x = node->x; c->y = track_y; c->w = fill_w; c->h = track_h;
             c->corner_radius = 2.0f * ui_s;
-            { float _r, _g, _b, _a; unpack_color(CA_THEME_ACCENT, &_r, &_g, &_b, &_a); c->r = _r; c->g = _g; c->b = _b; c->a = _a; }
+            { float _r, _g, _b, _a; unpack_color(win_theme(win)->accent, &_r, &_g, &_b, &_a); c->r = _r; c->g = _g; c->b = _b; c->a = _a; }
             c->in_use = true;
         }
         /* Thumb */
@@ -726,8 +744,8 @@ static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, Cli
             c->type = CA_DRAW_RECT;
             c->x = node->x; c->y = node->y; c->w = node->w; c->h = node->h;
             c->corner_radius = node->h * 0.5f;
-            if (t->on) { float _r, _g, _b, _a; unpack_color(CA_THEME_SUCCESS,    &_r, &_g, &_b, &_a); c->r = _r; c->g = _g; c->b = _b; c->a = _a; }
-            else       { float _r, _g, _b, _a; unpack_color(CA_THEME_BG_OVERLAY, &_r, &_g, &_b, &_a); c->r = _r; c->g = _g; c->b = _b; c->a = _a; }
+            if (t->on) { float _r, _g, _b, _a; unpack_color(win_theme(win)->success,    &_r, &_g, &_b, &_a); c->r = _r; c->g = _g; c->b = _b; c->a = _a; }
+            else       { float _r, _g, _b, _a; unpack_color(win_theme(win)->bg_overlay, &_r, &_g, &_b, &_a); c->r = _r; c->g = _g; c->b = _b; c->a = _a; }
             c->in_use = true;
         }
         /* Thumb */
@@ -757,14 +775,14 @@ static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, Cli
             c->type = CA_DRAW_RECT;
             c->x = node->x; c->y = node->y; c->w = node->w; c->h = node->h;
             c->corner_radius = rad;
-            { float _r, _g, _b, _a; unpack_color(CA_THEME_BG_SURFACE, &_r, &_g, &_b, &_a); c->r = _r; c->g = _g; c->b = _b; c->a = _a; }
+            { float _r, _g, _b, _a; unpack_color(win_theme(win)->bg_surface, &_r, &_g, &_b, &_a); c->r = _r; c->g = _g; c->b = _b; c->a = _a; }
             c->in_use = true;
         }
         /* Fill */
         float fw = node->w * p->value;
         if (fw > 0 && ca_window_reserve_draw_commands(win, (size_t)win->draw_cmd_count + 1u)) {
             float fr, fg, fb, fa;
-            unpack_color(p->bar_color, &fr, &fg, &fb, &fa);
+            unpack_color(themed(p->bar_color, win_theme(win)->accent), &fr, &fg, &fb, &fa);
             Ca_DrawCmd *c = &win->draw_cmds[win->draw_cmd_count++];
             memset(c, 0, sizeof(*c));
             c->type = CA_DRAW_RECT;
@@ -790,7 +808,7 @@ static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, Cli
             c->x = node->x + node->w - asz - 6.0f;
             c->y = node->y + (node->h - asz * 0.5f) * 0.5f;
             c->w = asz; c->h = asz * 0.5f;
-            c->r = 0.7f; c->g = 0.7f; c->b = 0.7f; c->a = 1.0f;
+            unpack_color(win_theme(win)->text_muted, &c->r, &c->g, &c->b, &c->a);
             c->in_use = true;
         }
         /* Open dropdown overlay is painted in the overlay pass, not cached */
@@ -802,7 +820,9 @@ static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, Cli
         if (!tb || !tb->in_use) break;
         for (int ti = 0; ti < tb->count; ++ti) {
             if (tb->tab_nodes[ti] == node) {
-                uint32_t tc = (ti == tb->active) ? tb->active_text : tb->inactive_text;
+                uint32_t tc = (ti == tb->active)
+                    ? themed(tb->active_text, win_theme(win)->text_bright)
+                    : themed(tb->inactive_text, win_theme(win)->text_dim);
                 paint_text(win, font, node, tb->labels[ti], tc);
                 break;
             }
@@ -1199,7 +1219,7 @@ static void paint_scrollbars(Ca_Window *win, Ca_Node *node, ClipRect clip)
             cmd->w = bar_w; cmd->h = track_h;
             uint32_t track_color = node->desc.scrollbar_track_color_set
                                        ? node->desc.scrollbar_track_color
-                                       : CA_THEME_SCROLLBAR_TRACK;
+                                       : win_theme(win)->bg_void;
             unpack_color(track_color, &cmd->r, &cmd->g, &cmd->b, &cmd->a);
             cmd->corner_radius = node->desc.scrollbar_radius;
             cmd->border_width = 0.0f;
@@ -1220,10 +1240,10 @@ static void paint_scrollbars(Ca_Window *win, Ca_Node *node, ClipRect clip)
             uint32_t thumb_color = dragging_y
                 ? (node->desc.scrollbar_thumb_active_color_set
                        ? node->desc.scrollbar_thumb_active_color
-                       : CA_THEME_SCROLLBAR_THUMB_ACTIVE)
+                       : win_theme(win)->text_muted)
                 : (node->desc.scrollbar_thumb_color_set
                        ? node->desc.scrollbar_thumb_color
-                       : CA_THEME_SCROLLBAR_THUMB);
+                       : win_theme(win)->bg_overlay);
             unpack_color(thumb_color,
                          &cmd->r, &cmd->g, &cmd->b, &cmd->a);
             cmd->corner_radius = node->desc.scrollbar_radius;
@@ -1255,13 +1275,13 @@ static void paint_scrollbars(Ca_Window *win, Ca_Node *node, ClipRect clip)
         uint32_t thumb_col_x = dragging_x
             ? (node->desc.scrollbar_thumb_active_color_set
                    ? node->desc.scrollbar_thumb_active_color
-                   : CA_THEME_SCROLLBAR_THUMB_ACTIVE)
+                   : win_theme(win)->text_muted)
             : (node->desc.scrollbar_thumb_color_set
                    ? node->desc.scrollbar_thumb_color
-                   : CA_THEME_SCROLLBAR_THUMB);
+                   : win_theme(win)->bg_overlay);
         uint32_t track_col_x = node->desc.scrollbar_track_color_set
                                    ? node->desc.scrollbar_track_color
-                                   : CA_THEME_SCROLLBAR_TRACK;
+                                   : win_theme(win)->bg_void;
 
         /* Track */
         if (ca_window_reserve_draw_commands(win, (size_t)win->draw_cmd_count + 1u)) {
@@ -1466,8 +1486,7 @@ static void paint_text_wrapped(Ca_Window *win, Ca_Font *font,
     if (node->desc.hidden)        return;
 
     float r, g, b, a;
-    if (packed_color == 0) r = g = b = a = 1.0f;
-    else unpack_color(packed_color, &r, &g, &b, &a);
+    unpack_text_color(win, packed_color, &r, &g, &b, &a);
 
     float ui_s = win->ui_scale > 0.0f ? win->ui_scale : 1.0f;
     float cs   = font->content_scale / ui_s;
@@ -1671,8 +1690,7 @@ static void paint_inline_run(Ca_Window *win, Ca_Font *font,
     uint32_t packed_color = lbl->color;
 
     float r, g, b, a;
-    if (packed_color == 0) r = g = b = a = 1.0f;
-    else unpack_color(packed_color, &r, &g, &b, &a);
+    unpack_text_color(win, packed_color, &r, &g, &b, &a);
 
     float ui_s = win->ui_scale > 0.0f ? win->ui_scale : 1.0f;
     float cs   = font->content_scale / ui_s;
@@ -1754,16 +1772,8 @@ static void paint_text(Ca_Window *win, Ca_Font *font,
     if (!node || !node->in_use)   return;
     if (node->desc.hidden)        return;
 
-    /* Unlike unpack_color(), 0 here means "no explicit color" and defaults
-       to opaque white rather than transparent black — do not replace this
-       with a plain unpack_color() call, it would silently break that
-       default for every caller that passes a zero (unset) text color. */
     float r, g, b, a;
-    if (packed_color == 0) {
-        r = g = b = a = 1.0f;
-    } else {
-        unpack_color(packed_color, &r, &g, &b, &a);
-    }
+    unpack_text_color(win, packed_color, &r, &g, &b, &a);
 
     float ui_s = win->ui_scale > 0.0f ? win->ui_scale : 1.0f;
     float cs   = font->content_scale / ui_s;
@@ -1923,10 +1933,7 @@ static void paint_text_left(Ca_Window *win, Ca_Font *font,
     if (node->desc.hidden)        return;
 
     float r, g, b, a;
-    if (packed_color == 0)
-        r = g = b = a = 1.0f;
-    else
-        unpack_color(packed_color, &r, &g, &b, &a);
+    unpack_text_color(win, packed_color, &r, &g, &b, &a);
 
     float ui_s = win->ui_scale > 0.0f ? win->ui_scale : 1.0f;
     float cs   = font->content_scale / ui_s;
@@ -2044,7 +2051,7 @@ static void paint_cursor(Ca_Window *win, Ca_Font *font,
     cmd->y      = cursor_y;
     cmd->w      = 1.5f * (win->ui_scale > 0.0f ? win->ui_scale : 1.0f);
     cmd->h      = cursor_h;
-    cmd->r = 1.0f; cmd->g = 1.0f; cmd->b = 1.0f; cmd->a = 0.9f;
+    unpack_color(win_theme(win)->text_bright, &cmd->r, &cmd->g, &cmd->b, &cmd->a);
     cmd->in_use = true;
 
     ClipRect clip = find_clip_for_node(node);
@@ -2080,7 +2087,8 @@ static void paint_focus_ring(Ca_Window *win, Ca_Node *node)
         cmd->y      = sides[i].y;
         cmd->w      = sides[i].w;
         cmd->h      = sides[i].h;
-        cmd->r = 0.4f; cmd->g = 0.6f; cmd->b = 1.0f; cmd->a = 0.85f;
+        unpack_color(win_theme(win)->accent, &cmd->r, &cmd->g, &cmd->b, &cmd->a);
+        cmd->a *= 0.85f;
         cmd->in_use = true;
         set_clip(cmd, clip);
     }
@@ -2398,13 +2406,13 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
             if (!sel->open) continue;
             Ca_Node *n = sel->node;
             const OverlayCssStyle popup_style = overlay_css_style(
-                win, n, "ca-select-popup", CA_THEME_POPUP_BG,
-                CA_THEME_POPUP_TEXT, 4.0f * ui_s);
+                win, n, "ca-select-popup", win_theme(win)->bg_elevated,
+                win_theme(win)->text_bright, 4.0f * ui_s);
             const OverlayCssStyle hover_style = overlay_css_style(
-                win, n, "ca-overlay-hover", CA_THEME_BG_SURFACE,
+                win, n, "ca-overlay-hover", win_theme(win)->bg_surface,
                 popup_style.color, 0.0f);
             const OverlayCssStyle selected_style = overlay_css_style(
-                win, n, "ca-overlay-selected", CA_THEME_BG_OVERLAY,
+                win, n, "ca-overlay-selected", win_theme(win)->bg_overlay,
                 popup_style.color, 0.0f);
 
             float opt_h   = n->h;
@@ -2504,8 +2512,8 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
             }
             if (!match) continue;
             const OverlayCssStyle tooltip_style = overlay_css_style(
-                win, tt->node, "ca-tooltip", CA_THEME_POPUP_BG,
-                CA_THEME_POPUP_TEXT, 3.0f * ui_s);
+                win, tt->node, "ca-tooltip", win_theme(win)->bg_elevated,
+                win_theme(win)->text_bright, 3.0f * ui_s);
 
             /* Font size resolved at widget-build time and cached in the slot */
             float tooltip_fs  = tt->font_size > 0.0f ? tt->font_size : font->default_size;
@@ -2586,10 +2594,10 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
                 continue;
             }
             const OverlayCssStyle menu_style = overlay_css_style(
-                win, cm->node, "ca-context-menu", CA_THEME_POPUP_BG,
-                CA_THEME_POPUP_TEXT, 4.0f * ui_s);
+                win, cm->node, "ca-context-menu", win_theme(win)->bg_elevated,
+                win_theme(win)->text_bright, 4.0f * ui_s);
             const OverlayCssStyle item_hover_style = overlay_css_style(
-                win, cm->node, "ca-overlay-hover", CA_THEME_BG_OVERLAY,
+                win, cm->node, "ca-overlay-hover", win_theme(win)->bg_overlay,
                 menu_style.color, 0.0f);
 
             /* Compute total height (items + separators) */
@@ -2640,7 +2648,7 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
                         c->type = CA_DRAW_RECT;
                         c->x = mx_pos + 8.0f * ui_s; c->y = iy + sep_h * 0.5f - 0.5f * ui_s;
                         c->w = menu_w - 16.0f * ui_s; c->h = 1.0f * ui_s;
-                        { float _r, _g, _b, _a; unpack_color(CA_THEME_POPUP_BORDER, &_r, &_g, &_b, &_a); c->r = _r; c->g = _g; c->b = _b; c->a = _a; }
+                        { float _r, _g, _b, _a; unpack_color(win_theme(win)->separator, &_r, &_g, &_b, &_a); c->r = _r; c->g = _g; c->b = _b; c->a = _a; }
                         c->in_use = true;
                         c->overlay = true;
                     }
@@ -2705,14 +2713,14 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
             Ca_Node *hdr = am->header_node;
             if (!hdr) continue;
             const OverlayCssStyle menu_style = overlay_css_style(
-                win, mb->node, "ca-menubar-popup", mb->dropdown_bg,
-                mb->dropdown_text, 0.0f);
+                win, mb->node, "ca-menubar-popup", themed(mb->dropdown_bg, win_theme(win)->bg_elevated),
+                themed(mb->dropdown_text, win_theme(win)->text_bright), 0.0f);
             const OverlayCssStyle item_hover_style = overlay_css_style(
-                win, mb->node, "ca-overlay-hover", mb->dropdown_hover,
+                win, mb->node, "ca-overlay-hover", themed(mb->dropdown_hover, win_theme(win)->bg_overlay),
                 menu_style.color, 0.0f);
             const OverlayCssStyle active_style = overlay_css_style(
-                win, mb->node, "ca-overlay-selected", mb->header_highlight,
-                mb->text_color, 0.0f);
+                win, mb->node, "ca-overlay-selected", themed(mb->header_highlight, win_theme(win)->bg_overlay),
+                themed(mb->text_color, win_theme(win)->text_muted), 0.0f);
 
             if (ca_window_reserve_draw_commands(win, (size_t)win->draw_cmd_count + 1u)) {
                 Ca_DrawCmd *c = &win->draw_cmds[win->draw_cmd_count++];
@@ -2768,7 +2776,7 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
                 c->overlay = true;
                 if (use_fallback_chrome) {
                     c->border_width = 1.0f * ui_s;
-                    unpack_color(mb->dropdown_border,
+                    unpack_color(themed(mb->dropdown_border, win_theme(win)->separator),
                                  &c->border_r, &c->border_g,
                                  &c->border_b, &c->border_a);
                 }
@@ -2790,7 +2798,7 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
                         c->y    = iy + this_h * 0.5f - 0.5f * ui_s;
                         c->w    = menu_w - 16.0f * ui_s;
                         c->h    = 1.0f * ui_s;
-                        unpack_color(mb->dropdown_border, &c->r, &c->g, &c->b, &c->a);
+                        unpack_color(themed(mb->dropdown_border, win_theme(win)->separator), &c->r, &c->g, &c->b, &c->a);
                         c->in_use  = true;
                         c->overlay = true;
                     }
@@ -2883,7 +2891,7 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
                     c->overlay     = true;
                     if (use_fallback_chrome) {
                         c->border_width = 1.0f * ui_s;
-                        unpack_color(mb->dropdown_border,
+                        unpack_color(themed(mb->dropdown_border, win_theme(win)->separator),
                                      &c->border_r, &c->border_g,
                                      &c->border_b, &c->border_a);
                     }

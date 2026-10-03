@@ -750,6 +750,25 @@ const char *ca_css_str(const Ca_Stylesheet *ss, int offset)
     return ss->str_pool + offset;
 }
 
+bool ca_css_set_color_var(Ca_Stylesheet *ss, const char *name, uint32_t color)
+{
+    if (!ss || !name || strlen(name) >= CA_CSS_VAR_NAME_MAX) return false;
+    Ca_CssValue value = { .type = CA_CSS_VAL_COLOR, .color = color };
+    for (int i = 0; i < ss->var_count; ++i) {
+        if (strcmp(ss->vars[i].name, name) == 0) {
+            ss->vars[i].value = value;
+            return true;
+        }
+    }
+    Ca_CssVar variable = {0};
+    snprintf(variable.name, sizeof(variable.name), "%s", name);
+    variable.value = value;
+    if (!ca_dyn_array_push(&ss->var_storage, &variable)) return false;
+    ss->vars = ss->var_storage.data;
+    ss->var_count = (int)ss->var_storage.count;
+    return true;
+}
+
 /* ============================================================
    PROPERTY NAME LOOKUP
    ============================================================ */

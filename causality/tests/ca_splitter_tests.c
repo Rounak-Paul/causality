@@ -214,7 +214,10 @@ static bool test_scrollbar_paint_order(void)
     node.scrollbar_y_visible = true;
     node.desc.overflow_y = 1;
 
+    Ca_Instance instance = {0};
+    instance.theme = ca_theme_default();
     Ca_Window window = {0};
+    window.instance = &instance;
     window.ui_scale = 1.0f;
     CHECK(ca_dyn_array_init(&window.draw_cmd_storage, sizeof(Ca_DrawCmd)));
     paint_scrollbars(&window, &node, (ClipRect){0});

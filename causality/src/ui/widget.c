@@ -21,7 +21,6 @@
 #include "widget.h"
 #include "node.h"
 #include "style.h"
-#include "ca_theme.h"
 #include "font.h"
 #include "scrollbar.h"
 #include "menu_storage.h"
@@ -425,6 +424,9 @@ static bool node_kind_match(const Ca_Node *node, uint8_t widget_type,
         return false;
     return true;
 }
+
+/* Modal backdrop when the descriptor sets no overlay color. */
+#define CA_MODAL_OVERLAY_DEFAULT 0x00000080u
 
 static Ca_Node *claim_child(const Ca_NodeDesc *nd, uint8_t widget_type,
                             Ca_ElementType elem_type, const char *key,
@@ -1198,10 +1200,7 @@ void ca_hr(const Ca_HrDesc *desc)
         apply_css(node, &node->desc, CA_ELEM_HR,
                   desc ? desc->style : NULL,
                   id, &dummy, NULL);
-        /* Defaults after CSS */
         if (node->desc.height <= 0.0f) node->desc.height = s(1.0f);
-        if (node->desc.background == 0)
-            node->desc.background = CA_THEME_BG_SURFACE;
     }
 }
 
@@ -1269,7 +1268,6 @@ Ca_TextInput *ca_input(const Ca_InputDesc *desc)
     inp->node       = node;
     inp->in_use     = true;
     inp->text_color = desc->text_color;
-    inp->placeholder_color = CA_THEME_TEXT_DIM;
     inp->input_mode = desc->input_mode;
     inp->drag_speed = desc->drag_speed > 0.0f
         ? desc->drag_speed
@@ -2525,8 +2523,7 @@ Ca_Progress *ca_progress(const Ca_ProgressDesc *desc)
     p->node = node;
     p->in_use = true;
     WIDGET_SET(node, reused, p->value, desc->value);
-    WIDGET_SET(node, reused, p->bar_color,
-               desc->bar_color ? desc->bar_color : CA_THEME_ACCENT);
+    WIDGET_SET(node, reused, p->bar_color, desc->bar_color);
 
     if (desc->hidden) node->desc.hidden = true;
 
@@ -2566,7 +2563,6 @@ Ca_Select *ca_select(const Ca_SelectDesc *desc)
     nd.width  = desc->width > 0 ? s(desc->width) : 0.0f;
     nd.height = 0.0f; /* deferred to CSS; defaults to 26px below if unset */
     nd.corner_radius = s(3.0f);
-    nd.background = CA_THEME_BG_BASE;
 
     bool reused = false;
     Ca_Node *node = claim_child(&nd, CA_WIDGET_SELECT, CA_ELEM_SELECT, id, &reused);
@@ -2650,6 +2646,33 @@ int ca_select_get_hover(const Ca_Select *s)
    PUBLIC — Tab bar
    ============================================================ */
 
+/* Tab headers store 0 for "use the instance theme"; inactive tabs are
+   transparent by default. */
+static uint32_t tabbar_background(const Ca_TabBar *tb, bool active)
+{
+    if (!active) return tb->inactive_bg;
+    return tb->active_bg ? tb->active_bg
+                         : tb->node->window->instance->theme.bg_overlay;
+}
+
+void ca_instance_refresh_tab_bars(Ca_Instance *instance)
+{
+    for (size_t wi = 0; wi < ca_pool_slot_count(&instance->windows); ++wi) {
+        Ca_Window *window = CA_POOL_AT(instance->windows, Ca_Window, wi);
+        if (!window->in_use) continue;
+        for (uint32_t ti = 0; ti < ca_pool_slot_count(&window->tabbar_pool); ++ti) {
+            Ca_TabBar *tb = CA_POOL_AT(window->tabbar_pool, Ca_TabBar, ti);
+            if (!tb->in_use || !tb->node) continue;
+            for (int i = 0; i < tb->count; ++i) {
+                Ca_Node *tab = tb->tab_nodes[i];
+                if (!tab) continue;
+                tab->desc.background = tabbar_background(tb, i == tb->active);
+                tab->dirty |= CA_DIRTY_CONTENT;
+            }
+        }
+    }
+}
+
 Ca_TabBar *ca_tabs(const Ca_TabBarDesc *desc)
 {
     assert(g_ctx.active && desc);
@@ -2703,10 +2726,10 @@ Ca_TabBar *ca_tabs(const Ca_TabBarDesc *desc)
     }
     tb->on_change = desc->on_change;
     tb->change_data = desc->change_data;
-    tb->active_bg     = desc->active_bg     ? desc->active_bg     : CA_THEME_BG_OVERLAY;
-    tb->inactive_bg   = desc->inactive_bg   ? desc->inactive_bg   : CA_THEME_TRANSPARENT;
-    tb->active_text   = desc->active_text   ? desc->active_text   : CA_THEME_ACCENT;
-    tb->inactive_text = desc->inactive_text ? desc->inactive_text : CA_THEME_TEXT_DIM;
+    tb->active_bg     = desc->active_bg;
+    tb->inactive_bg   = desc->inactive_bg;
+    tb->active_text   = desc->active_text;
+    tb->inactive_text = desc->inactive_text;
 
     if (desc->hidden)   node->desc.hidden   = true;
     if (desc->disabled) node->desc.disabled = true;
@@ -2739,7 +2762,7 @@ Ca_TabBar *ca_tabs(const Ca_TabBarDesc *desc)
         }
         /* height = 0: layout stretches the node to fill the full bar cross-axis so
            the active background covers the entire tab-bar height (no gap). */
-        tnd.background = (i == tb->active) ? tb->active_bg : tb->inactive_bg;
+        tnd.background = tabbar_background(tb, i == tb->active);
         tnd.font_size  = item_fs;
         tnd.padding_left = tab_pad_x;
         tnd.padding_right = tab_pad_x;
@@ -3252,13 +3275,13 @@ Ca_MenuBar *ca_menu_bar(const Ca_MenuBarDesc *desc)
         return mb;
     mb->menu_count = requested_menus;
 
-    /* Theme colors — use caller-provided or sensible defaults */
-    mb->header_highlight = desc->header_highlight ? desc->header_highlight : CA_THEME_BG_OVERLAY;
-    mb->dropdown_bg      = desc->dropdown_bg      ? desc->dropdown_bg      : CA_THEME_POPUP_BG;
-    mb->dropdown_border  = desc->dropdown_border  ? desc->dropdown_border  : CA_THEME_POPUP_BORDER;
-    mb->dropdown_hover   = desc->dropdown_hover   ? desc->dropdown_hover   : CA_THEME_BG_OVERLAY;
-    mb->dropdown_text    = desc->dropdown_text    ? desc->dropdown_text    : CA_THEME_POPUP_TEXT;
-    mb->text_color       = desc->text_color       ? desc->text_color       : CA_THEME_TEXT_MUTED;
+    /* Caller overrides; 0 resolves to the instance theme at paint time. */
+    mb->header_highlight = desc->header_highlight;
+    mb->dropdown_bg      = desc->dropdown_bg;
+    mb->dropdown_border  = desc->dropdown_border;
+    mb->dropdown_hover   = desc->dropdown_hover;
+    mb->dropdown_text    = desc->dropdown_text;
+    mb->text_color       = desc->text_color;
 
     uint32_t dummy = 0;
     apply_css(bar, &bar->desc, CA_ELEM_DIV, desc->style, id, &dummy, NULL);
@@ -3554,7 +3577,7 @@ Ca_Modal *ca_modal_begin(const Ca_ModalDesc *desc)
     m->visible = desc->visible;
     m->overlay_color = desc->overlay_color
         ? desc->overlay_color
-        : CA_THEME_MODAL_OVERLAY;
+        : CA_MODAL_OVERLAY_DEFAULT;
 
     uint32_t dummy = 0;
     apply_css(node, &node->desc, CA_ELEM_MODAL, desc->style, id, &dummy, NULL);
@@ -5228,11 +5251,11 @@ void ca_widget_input_pass(Ca_Window *win)
                         if (tb->active != ti) {
                             /* Update backgrounds */
                             if (tb->active >= 0 && tb->active < tb->count && tb->tab_nodes[tb->active]) {
-                                tb->tab_nodes[tb->active]->desc.background = tb->inactive_bg;
+                                tb->tab_nodes[tb->active]->desc.background = tabbar_background(tb, false);
                                 tb->tab_nodes[tb->active]->dirty |= CA_DIRTY_CONTENT;
                             }
                             tb->active = ti;
-                            tb->tab_nodes[ti]->desc.background = tb->active_bg;
+                            tb->tab_nodes[ti]->desc.background = tabbar_background(tb, true);
                             tb->tab_nodes[ti]->dirty |= CA_DIRTY_CONTENT;
                             if (tb->on_change) tb->on_change(tb, tb->change_data);
                         }
