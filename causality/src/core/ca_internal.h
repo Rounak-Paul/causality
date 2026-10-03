@@ -1399,6 +1399,7 @@ struct Ca_Window {
        resources are freed.  Use to null out any pointers held by the caller. */
     void         (*on_close)(Ca_Window *window, void *user_data);
     void          *on_close_data;
+    bool         (*on_close_request)(Ca_Window *window, void *user_data);
 };
 
 /* ======================================================

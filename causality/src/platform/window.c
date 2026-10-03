@@ -726,6 +726,13 @@ bool ca_window_system_tick(Ca_Instance *inst)
     for (size_t i = 0; i < ca_pool_slot_count(&inst->windows); ++i) {
         Ca_Window *window = CA_POOL_AT(inst->windows, Ca_Window, i);
         if (window->in_use && glfwWindowShouldClose(window->glfw)) {
+            if (window->on_close_request) {
+                GLFWwindow *glfw = window->glfw;
+                if (!window->on_close_request(window, window->on_close_data)) {
+                    glfwSetWindowShouldClose(glfw, GLFW_FALSE);
+                    continue;
+                }
+            }
             Ca_Event ev;
             ev.type   = CA_EVENT_WINDOW_CLOSE;
             ev.window = window;
@@ -823,6 +830,7 @@ static Ca_Window *window_create_in_pool(Ca_Instance *inst,
     slot->in_use        = true;
     slot->on_close      = desc->on_close;
     slot->on_close_data = desc->on_close_data;
+    slot->on_close_request = desc->on_close_request;
     /* Apply the instance-wide default scale if one has been set,
        otherwise fall back to 1.0 (no scaling). */
     slot->ui_scale = (inst->default_ui_scale > 0.0f)
@@ -930,6 +938,15 @@ void ca_window_destroy(Ca_Window *window)
     ca_ui_window_shutdown(window);
     glfwDestroyWindow(window->glfw);
     ca_pool_release(&instance->windows, window);
+}
+
+void ca_instance_destroy_other_windows(Ca_Instance *instance, Ca_Window *keep)
+{
+    if (!instance) return;
+    for (size_t i = 0; i < ca_pool_slot_count(&instance->windows); ++i) {
+        Ca_Window *window = CA_POOL_AT(instance->windows, Ca_Window, i);
+        if (window != keep && window->in_use) ca_window_destroy(window);
+    }
 }
 
 /*

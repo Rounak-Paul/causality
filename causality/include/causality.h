@@ -235,6 +235,9 @@ typedef struct Ca_WindowDesc {
        Use to null out any widget pointers the caller holds into this window. */
     void      (*on_close)(Ca_Window *window, void *user_data);
     void       *on_close_data;
+    /* Optional veto invoked when the window is asked to close (close button,
+       ca_window_close). Return false to keep the window open. */
+    bool      (*on_close_request)(Ca_Window *window, void *user_data);
 } Ca_WindowDesc;
 
 /*
@@ -256,6 +259,9 @@ CA_API Ca_Instance *ca_window_instance(Ca_Window *window);
    Safe to call from button callbacks or any other context.
    The window is fully destroyed by the event loop on the next frame. */
 CA_API void       ca_window_close(Ca_Window *window);
+/* Immediately destroy every open window of the instance except `keep`.
+   Call from the main window's on_close so secondary windows cannot outlive it. */
+CA_API void       ca_instance_destroy_other_windows(Ca_Instance *instance, Ca_Window *keep);
 /* Maximize the window to fill the screen. */
 CA_API void       ca_window_maximize(Ca_Window *window);
 /* Restore a maximized window to its previous geometry. */
