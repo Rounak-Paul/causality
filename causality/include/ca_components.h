@@ -206,6 +206,7 @@ typedef struct Ca_TabBarDesc {
     float        tab_padding_x;    /* per-tab horizontal padding in logical px (0 = default 8) */
     bool         tabs_fill;        /* true: tabs flex-grow to fill available row space */
     bool         tabs_left_align;  /* true: left-align tab labels (false = centered) */
+    bool         active_indicator; /* true: underline the active tab in the theme accent */
     bool         hidden;
     bool         disabled;
     bool         no_hover;        /* transparent to hover/input-capture detection */

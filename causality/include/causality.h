@@ -363,25 +363,6 @@ CA_API void  ca_instance_set_scale(Ca_Instance *instance, float scale);
 /* Returns the current instance-wide UI scale factor. */
 CA_API float ca_instance_get_scale(const Ca_Instance *instance);
 
-/*
- * Register the application-level menu bar.
- *
- * On macOS, menus are appended to [NSApp mainMenu] (the native system bar
- * at the top of the screen).  On other platforms, a ca_menu_bar widget is
- * emitted automatically at the top of the primary window's content area each
- * time ca_ui_begin is called — no caller action required.
- *
- * Causality deep-copies all descriptor data; the caller may free or modify
- * the arrays immediately after this call returns.
- *
- * instance    Owning Ca_Instance.
- * menus       Array of Ca_MenuDesc describing each top-level menu.
- * menu_count  Number of elements in menus.
- */
-CA_API void ca_instance_set_app_menus(Ca_Instance       *instance,
-                                      const Ca_MenuDesc *menus,
-                                      int                menu_count);
-
 /* Set the window title displayed in the custom title bar. */
 CA_API void ca_window_set_title(Ca_Window *window, const char *title);
 

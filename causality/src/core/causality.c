@@ -9,8 +9,6 @@
 #include "css.h"
 #include "style.h"
 #include "widget.h"
-#include "menu_storage.h"
-#include "../platform/app_menu.h"
 #include "../renderer/shader_cache.h"
 
 /* Forward decls into the reactive subsystem (src/reactive/signal.c). */
@@ -120,8 +118,6 @@ void ca_instance_destroy(Ca_Instance *instance)
     ca_ui_shutdown(instance);
     ca_event_shutdown(instance);
     ca_reactive_release_instance(instance);
-    ca_menu_storage_destroy(&instance->app_menu_storage,
-                            &instance->app_menus);
     ca_css_destroy(instance->system_stylesheet);
     CA_FREE(instance);
     printf("[causality] instance destroyed\n");
@@ -392,81 +388,3 @@ float ca_instance_get_scale(const Ca_Instance *instance)
     return (instance->default_ui_scale > 0.0f) ? instance->default_ui_scale : 1.0f;
 }
 
-/*
- * Register the application-level menu bar.
- *
- * Deep-copies all menu and item data into the instance so the caller may free
- * or modify the descriptors immediately after this call.  Sub-items are copied
- * one level deep (no recursive nesting).
- *
- * On macOS the native [NSApp mainMenu] is rebuilt immediately.
- * On other platforms the stored data is read by ca_ui_begin each frame.
- *
- * instance    Owning Ca_Instance.
- * menus       Array of top-level menu descriptors.
- * menu_count  Number of elements in menus.
- */
-void ca_instance_set_app_menus(Ca_Instance       *instance,
-                               const Ca_MenuDesc *menus,
-                               int                menu_count)
-{
-    if (!instance || !menus || menu_count <= 0) {
-        if (instance) {
-            ca_menu_storage_resize(&instance->app_menu_storage,
-                                   &instance->app_menus, 0);
-            instance->app_menu_count = 0;
-            ca_app_menu_set(instance);
-        }
-        return;
-    }
-
-    int count = menu_count;
-    Ca_DynArray new_storage = { 0 };
-    Ca_MenuBarMenu *new_menus = NULL;
-    if (!ca_menu_storage_resize(&new_storage, &new_menus, (size_t)count))
-        return;
-
-    for (int mi = 0; mi < count; mi++) {
-        const Ca_MenuDesc *src = &menus[mi];
-        Ca_MenuBarMenu    *dst = &new_menus[mi];
-
-        snprintf(dst->label, sizeof(dst->label), "%s", src->label ? src->label : "");
-
-        int ic = src->item_count > 0 && src->items ? src->item_count : 0;
-        if (!ca_menu_item_storage_resize(dst, (size_t)ic)) goto copy_failed;
-
-        for (int ii = 0; ii < ic; ii++) {
-            const Ca_MenuItemDesc *si = &src->items[ii];
-            Ca_MenuBarItem        *di = &dst->items[ii];
-
-            snprintf(di->label, sizeof(di->label), "%s", si->label ? si->label : "");
-            di->action       = si->action;
-            di->action_data  = si->action_data;
-            di->separator    = si->separator;
-
-            int sc = si->sub_item_count > 0 && si->sub_items
-                ? si->sub_item_count : 0;
-            if (!ca_menu_sub_item_storage_resize(di, (size_t)sc))
-                goto copy_failed;
-
-            for (int ki = 0; ki < sc; ki++) {
-                const Ca_MenuItemDesc *ss = &si->sub_items[ki];
-                snprintf(di->sub_items[ki].label, sizeof(di->sub_items[ki].label),
-                         "%s", ss->label ? ss->label : "");
-                di->sub_items[ki].action      = ss->action;
-                di->sub_items[ki].action_data = ss->action_data;
-            }
-        }
-    }
-
-    ca_menu_storage_destroy(&instance->app_menu_storage,
-                            &instance->app_menus);
-    instance->app_menu_storage = new_storage;
-    instance->app_menus = new_menus;
-    instance->app_menu_count = count;
-    ca_app_menu_set(instance);
-    return;
-
-copy_failed:
-    ca_menu_storage_destroy(&new_storage, &new_menus);
-}

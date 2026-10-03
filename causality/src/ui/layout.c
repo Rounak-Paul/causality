@@ -7,6 +7,7 @@
 #include "font.h"
 #include "inline_layout.h"
 #include "scrollbar.h"
+#include "title_bar.h"
 #include "widget.h"
 
 static float node_ui_scale(const Ca_Node *node)
@@ -1060,4 +1061,5 @@ void ca_layout_pass(Ca_Window *win)
         }
         if (!visibility_changed) break;
     }
+    ca_title_bar_center_title(win);
 }

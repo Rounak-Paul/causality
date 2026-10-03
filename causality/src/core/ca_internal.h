@@ -982,6 +982,7 @@ struct Ca_TabBar {
     uint32_t      inactive_bg;
     uint32_t      active_text;
     uint32_t      inactive_text;
+    bool          active_indicator;
 };
 
 struct Ca_TreeNode {
@@ -1347,6 +1348,8 @@ struct Ca_Window {
 
     /* Custom title bar */
     Ca_Node       *title_bar_node;        /* system-managed title bar container  */
+    Ca_Node       *title_drag_node;       /* title bar drag zone holding the title */
+    Ca_Node       *title_text_node;       /* window title label                  */
     Ca_Node       *content_root;          /* user content is built here          */
     Ca_Node       *status_bar_node;       /* system-managed status bar container */
     char           title[256];            /* window title text                   */
@@ -1516,11 +1519,6 @@ struct Ca_Instance {
     /* Stable user-image handles and growable sampled-image descriptor pools. */
     Ca_Pool           images;
     Ca_DynArray       image_desc_pools;
-
-    /* App-level (system) menu bar — set via ca_instance_set_app_menus(). */
-    Ca_DynArray    app_menu_storage;
-    Ca_MenuBarMenu *app_menus;
-    int             app_menu_count;
 
     /* When true, ca_window_system_tick polls continuously. */
     bool continuous;

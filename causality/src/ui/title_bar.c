@@ -8,7 +8,7 @@
  *
  * Architecture:
  *   win->root         (vertical flex, fills window, system-managed)
- *   ├── win->title_bar_node  (horizontal, 26 px fixed height)
+ *   ├── win->title_bar_node  (horizontal, `.ca-titlebar` CSS height, 26 px default)
  *   │   ├── ca_menu_bar(...)     (left-aligned menus, if any)
  *   │   ├── drag div             (flex-grow:1, drag-to-move, title text)
  *   │   └── controls div        (min / max / close buttons)
@@ -28,7 +28,7 @@
 #include <stdio.h>
 #include <assert.h>
 
-#define TITLE_BAR_HEIGHT_PX       26.0f
+#define TITLE_BAR_DEFAULT_HEIGHT_PX 26.0f
 #define TITLE_BAR_SIDE_PADDING_PX 8.0f
 
 /* Apply layered system and author styles to a system-owned node. */
@@ -36,11 +36,11 @@ static void apply_system_style(Ca_Node *node, Ca_ElementType type,
                                const char *classes)
 {
     if (!node || !node->window || !node->window->instance || !classes) return;
-    Ca_Instance *instance = node->window->instance;
-    if (!instance->system_stylesheet && !instance->stylesheet) return;
-
     if (node->has_base_desc)
         node->desc = node->base_desc;
+
+    Ca_Instance *instance = node->window->instance;
+    if (!instance->system_stylesheet && !instance->stylesheet) return;
 
     node->elem_type = (uint8_t)type;
     snprintf(node->classes, sizeof(node->classes), "%s", classes);
@@ -57,6 +57,23 @@ static void apply_system_style(Ca_Node *node, Ca_ElementType type,
     resolved.border_left_w *= scale;
     resolved.border_radius *= scale;
     ca_style_apply_to_node(&resolved, &node->desc, NULL);
+}
+
+/* Restyle the title bar strip. Its logical height comes from the
+   `.ca-titlebar` height declaration, falling back to the default. */
+static void title_bar_apply_style(Ca_Window *win)
+{
+    Ca_Node *tb = win->title_bar_node;
+    const float sc = win->ui_scale > 0.0f ? win->ui_scale : 1.0f;
+    apply_system_style(tb, CA_ELEM_DIV, "ca-titlebar");
+    const float height = (tb->desc.height > 0.0f && !tb->desc.height_pct)
+                             ? tb->desc.height
+                             : TITLE_BAR_DEFAULT_HEIGHT_PX;
+    tb->desc.height        = height * sc;
+    tb->desc.height_pct    = false;
+    tb->desc.padding_left  = TITLE_BAR_SIDE_PADDING_PX * sc;
+    tb->desc.padding_right = TITLE_BAR_SIDE_PADDING_PX * sc;
+    tb->dirty |= CA_DIRTY_LAYOUT;
 }
 
 /* ------------------------------------------------------------------ */
@@ -105,16 +122,11 @@ void ca_title_bar_init(Ca_Window *win)
     root->desc.overflow_y = 1; /* hidden — root itself does not scroll */
     root->dirty |= CA_DIRTY_LAYOUT | CA_DIRTY_CONTENT;
 
-    /* ---- Title bar node: horizontal strip, height scales with ui_scale ---- */
-    float sc_init = win->ui_scale > 0.0f ? win->ui_scale : 1.0f;
+    /* ---- Title bar node: horizontal strip; height and side insets are
+       resolved (and scaled) by title_bar_apply_style ---- */
     Ca_NodeDesc tb = {0};
     tb.direction     = CA_HORIZONTAL;
-    tb.height        = TITLE_BAR_HEIGHT_PX * sc_init;
     tb.align_items   = CA_ALIGN_CENTER;
-    /* Inset the menu bar on the left and the window controls on the
-       right so neither group is flush against the window chrome. */
-     tb.padding_left  = TITLE_BAR_SIDE_PADDING_PX * sc_init;
-     tb.padding_right = TITLE_BAR_SIDE_PADDING_PX * sc_init;
     tb.overflow_x    = 1; /* hidden */
     tb.overflow_y    = 1;
     Ca_Node *tbnode = ca_node_add(root, &tb);
@@ -122,7 +134,7 @@ void ca_title_bar_init(Ca_Window *win)
     win->title_bar_node = tbnode;
     tbnode->base_desc = tb;
     tbnode->has_base_desc = true;
-    apply_system_style(tbnode, CA_ELEM_DIV, "ca-titlebar");
+    title_bar_apply_style(win);
 
     /* ---- Content root: fills remaining space below title bar ---- */
     Ca_NodeDesc cr = {0};
@@ -160,18 +172,7 @@ void ca_title_bar_rebuild(Ca_Window *win)
        the widget context stack so new children become its children.    */
     ca_div_clear((Ca_Div *)win->title_bar_node);
 
-    /* Scale factor — all pixel sizes below are based on 26px @ 1x. */
-    float sc = win->ui_scale > 0.0f ? win->ui_scale : 1.0f;
-
-    apply_system_style(win->title_bar_node, CA_ELEM_DIV, "ca-titlebar");
-
-    /* Keep the container's own height in sync with the current scale */
-    win->title_bar_node->desc.height = TITLE_BAR_HEIGHT_PX * sc;
-    /* Keep horizontal padding in lockstep with scale so a DPI change
-       at runtime doesn't push the menu/controls back against the edge. */
-     win->title_bar_node->desc.padding_left  = TITLE_BAR_SIDE_PADDING_PX * sc;
-     win->title_bar_node->desc.padding_right = TITLE_BAR_SIDE_PADDING_PX * sc;
-    win->title_bar_node->dirty |= CA_DIRTY_LAYOUT;
+    title_bar_apply_style(win);
 
     /* ---- Left: optional menu bar ---- */
     if (win->titlebar_menu_count > 0) {
@@ -252,7 +253,6 @@ titlebar_menu_done:
 
     /* ---- Centre: drag zone (invisible, handles window dragging) ---- */
     Ca_Node *drag = (Ca_Node *)ca_div_begin(&(Ca_DivDesc){
-        .height        = TITLE_BAR_HEIGHT_PX,
         .style         = "ca-titlebar-drag",
     });
     drag->desc.flex_grow       = 1.0f;
@@ -266,12 +266,13 @@ titlebar_menu_done:
         .style = "ca-titlebar-title",
     });
     ttl->node->dirty |= CA_DIRTY_CONTENT | CA_DIRTY_LAYOUT;
+    win->title_drag_node = drag;
+    win->title_text_node = ttl->node;
 
     ca_div_end(); /* drag zone */
 
     /* ---- Right: window control buttons ---- */
     Ca_Node *ctrl = (Ca_Node *)ca_div_begin(&(Ca_DivDesc){
-        .height = TITLE_BAR_HEIGHT_PX,
         .style = "ca-titlebar-controls",
     });
     ctrl->dirty |= CA_DIRTY_LAYOUT;
@@ -322,6 +323,34 @@ titlebar_menu_done:
     ca_div_end(); /* title_bar_node */
 }
 
+/* Shift a laid-out subtree horizontally by `dx`. */
+static void translate_subtree_x(Ca_Node *node, float dx)
+{
+    node->x += dx;
+    for (uint32_t i = 0; i < node->child_count; ++i)
+        translate_subtree_x(node->children[i], dx);
+}
+
+void ca_title_bar_center_title(Ca_Window *win)
+{
+    Ca_Node *bar  = win->title_bar_node;
+    Ca_Node *drag = win->title_drag_node;
+    Ca_Node *text = win->title_text_node;
+    if (!bar || !drag || !text || !drag->in_use || !text->in_use ||
+        text->parent != drag || drag->parent != bar ||
+        drag->desc.hidden || text->desc.hidden)
+        return;
+
+    const float lo = drag->x + drag->desc.padding_left;
+    const float hi = drag->x + drag->w - drag->desc.padding_right - text->w;
+    if (hi < lo) return;
+
+    float x = bar->x + (bar->w - text->w) * 0.5f;
+    if (x < lo) x = lo;
+    if (x > hi) x = hi;
+    if (x != text->x) translate_subtree_x(text, x - text->x);
+}
+
 /* ------------------------------------------------------------------ */
 /* Public API implementations                                          */
 /* ------------------------------------------------------------------ */
@@ -338,52 +367,53 @@ void ca_window_set_title_bar_menus(Ca_Window        *window,
                                    const Ca_MenuDesc *menus, int count)
 {
     if (!window || !window->in_use) return;
-    if (count < 0) count = 0;
-    if (count > 0 && !menus) count = 0;
-    if (!ca_menu_storage_resize(&window->titlebar_menu_storage,
-                                &window->titlebar_menus, (size_t)count))
-        return;
-    window->titlebar_menu_count = count;
+    if (count < 0 || !menus) count = 0;
+
+    Ca_DynArray storage = { 0 };
+    Ca_MenuBarMenu *copy = NULL;
+    if (!ca_menu_storage_resize(&storage, &copy, (size_t)count)) return;
 
     for (int m = 0; m < count; m++) {
-        Ca_MenuBarMenu    *dst = &window->titlebar_menus[m];
+        Ca_MenuBarMenu    *dst = &copy[m];
         const Ca_MenuDesc *src = &menus[m];
 
-        snprintf(dst->label, CA_MENU_LABEL_MAX, "%s",
-                 src->label ? src->label : "");
-        int item_count = src->item_count > 0 && src->items
-            ? src->item_count : 0;
-        if (!ca_menu_item_storage_resize(dst, (size_t)item_count))
-            continue;
+        snprintf(dst->label, sizeof(dst->label), "%s", src->label ? src->label : "");
         dst->active_sub = -1;
+        int item_count = src->item_count > 0 && src->items ? src->item_count : 0;
+        if (!ca_menu_item_storage_resize(dst, (size_t)item_count)) goto failed;
 
-        for (int i = 0; i < dst->item_count; i++) {
+        for (int i = 0; i < item_count; i++) {
             Ca_MenuBarItem        *ditem = &dst->items[i];
             const Ca_MenuItemDesc *sitem = &src->items[i];
 
-            snprintf(ditem->label, CA_MENU_LABEL_MAX, "%s",
-                     sitem->label ? sitem->label : "");
+            snprintf(ditem->label, sizeof(ditem->label), "%s", sitem->label ? sitem->label : "");
             ditem->action      = sitem->action;
             ditem->action_data = sitem->action_data;
             ditem->separator   = sitem->separator;
 
             int nsub = sitem->sub_item_count > 0 && sitem->sub_items
                 ? sitem->sub_item_count : 0;
-            if (!ca_menu_sub_item_storage_resize(ditem, (size_t)nsub))
-                continue;
+            if (!ca_menu_sub_item_storage_resize(ditem, (size_t)nsub)) goto failed;
 
-            for (int s = 0; s < nsub; s++) {
-                Ca_MenuBarSubItem     *dsub = &ditem->sub_items[s];
-                const Ca_MenuItemDesc *ssub = &sitem->sub_items[s];
-                snprintf(dsub->label, CA_MENU_LABEL_MAX, "%s",
-                         ssub->label ? ssub->label : "");
+            for (int k = 0; k < nsub; k++) {
+                Ca_MenuBarSubItem     *dsub = &ditem->sub_items[k];
+                const Ca_MenuItemDesc *ssub = &sitem->sub_items[k];
+                snprintf(dsub->label, sizeof(dsub->label), "%s", ssub->label ? ssub->label : "");
                 dsub->action      = ssub->action;
                 dsub->action_data = ssub->action_data;
             }
         }
     }
 
+    ca_menu_storage_destroy(&window->titlebar_menu_storage, &window->titlebar_menus);
+    window->titlebar_menu_storage = storage;
+    window->titlebar_menus        = copy;
+    window->titlebar_menu_count   = count;
     window->titlebar_needs_rebuild = true;
+    return;
+
+failed:
+    ca_menu_storage_destroy(&storage, &copy);
 }
 
 /* ------------------------------------------------------------------ */

@@ -824,6 +824,19 @@ static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, Cli
                     ? themed(tb->active_text, win_theme(win)->text_bright)
                     : themed(tb->inactive_text, win_theme(win)->text_dim);
                 paint_text(win, font, node, tb->labels[ti], tc);
+                if (ti == tb->active && tb->active_indicator &&
+                    ca_window_reserve_draw_commands(win, (size_t)win->draw_cmd_count + 1u)) {
+                    float bar_h = 2.0f * (win->ui_scale > 0.0f ? win->ui_scale : 1.0f);
+                    Ca_DrawCmd *c = &win->draw_cmds[win->draw_cmd_count++];
+                    memset(c, 0, sizeof(*c));
+                    c->type = CA_DRAW_RECT;
+                    c->x = node->x;
+                    c->y = node->y + node->h - bar_h;
+                    c->w = node->w;
+                    c->h = bar_h;
+                    unpack_color(win_theme(win)->accent, &c->r, &c->g, &c->b, &c->a);
+                    c->in_use = true;
+                }
                 break;
             }
         }

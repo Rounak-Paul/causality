@@ -9,7 +9,6 @@
 #include "event.h"
 #include "renderer.h"
 #include "ui.h"
-#include "app_menu.h"
 
 #include <limits.h>
 #include <stdlib.h>
@@ -866,7 +865,6 @@ static Ca_Window *window_create_in_pool(Ca_Instance *inst,
         ca_pool_release(&inst->windows, slot);
         return NULL;
     }
-    if (inst->app_menu_count > 0) ca_app_menu_set(inst);
 
     /* Explicitly focus the new window.
        On macOS, glfwCreateWindow shows the window but does not guarantee

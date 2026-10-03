@@ -19,8 +19,3 @@ bool ca_menu_sub_item_storage_resize(Ca_MenuBarItem *item, size_t count);
 void ca_menu_storage_destroy(Ca_DynArray *storage,
                              Ca_MenuBarMenu **menus);
 
-/** Deep-copies a complete menu tree into independent destination storage. */
-bool ca_menu_storage_copy(Ca_DynArray *destination_storage,
-                          Ca_MenuBarMenu **destination_menus,
-                          const Ca_MenuBarMenu *source_menus,
-                          size_t count);

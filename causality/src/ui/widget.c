@@ -2647,12 +2647,13 @@ int ca_select_get_hover(const Ca_Select *s)
    ============================================================ */
 
 /* Tab headers store 0 for "use the instance theme"; inactive tabs are
-   transparent by default. */
+   transparent by default, and an underlined active tab needs no fill. */
 static uint32_t tabbar_background(const Ca_TabBar *tb, bool active)
 {
     if (!active) return tb->inactive_bg;
-    return tb->active_bg ? tb->active_bg
-                         : tb->node->window->instance->theme.bg_overlay;
+    if (tb->active_bg) return tb->active_bg;
+    return tb->active_indicator ? tb->inactive_bg
+                                : tb->node->window->instance->theme.bg_overlay;
 }
 
 void ca_instance_refresh_tab_bars(Ca_Instance *instance)
@@ -2730,6 +2731,7 @@ Ca_TabBar *ca_tabs(const Ca_TabBarDesc *desc)
     tb->inactive_bg   = desc->inactive_bg;
     tb->active_text   = desc->active_text;
     tb->inactive_text = desc->inactive_text;
+    tb->active_indicator = desc->active_indicator;
 
     if (desc->hidden)   node->desc.hidden   = true;
     if (desc->disabled) node->desc.disabled = true;
