@@ -973,16 +973,14 @@ struct Ca_TabBar {
     Ca_Node     **tab_nodes;
     Ca_DynArray   label_storage;
     Ca_OptionText *labels;
+    Ca_DynArray   text_color_storage;
+    uint32_t     *text_colors;    /* CSS-resolved label colour per tab; 0 = theme */
     int           count;
     int           active;
     Ca_TabFn      on_change;
     void         *change_data;
     bool          in_use;
-    uint32_t      active_bg;
-    uint32_t      inactive_bg;
-    uint32_t      active_text;
-    uint32_t      inactive_text;
-    bool          active_indicator;
+    char          tab_style[CA_NODE_CLASS_MAX];
 };
 
 struct Ca_TreeNode {

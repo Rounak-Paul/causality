@@ -11,7 +11,10 @@
 static const char CA_SYSTEM_STYLES_CSS[] =
     "hr { background: var(--ca-bg-surface); }"
     "select { background: var(--ca-bg-base); }"
-    ".ca-titlebar { background: var(--ca-bg-elevated); color: var(--ca-text-bright); border-bottom-width: 1px; border-bottom-color: var(--ca-separator); }"
+    "tab { padding: 0px 8px; text-align: center; color: var(--ca-text-dim); }"
+    "tab:hover { color: var(--ca-text-bright); }"
+    "tab.active { background: var(--ca-bg-overlay); color: var(--ca-text-bright); }"
+    ".ca-titlebar { background: var(--ca-bg-elevated); color: var(--ca-text-bright); }"
     ".ca-titlebar-menu { height: 100%; align-items: center; background: transparent; }"
     ".ca-titlebar-menu-item { height: 100%; padding: 0px 10px; align-items: center; color: var(--ca-text-muted); background: transparent; font-size: 13px; }"
     ".ca-titlebar-menu-item:hover { background: var(--ca-bg-surface); color: var(--ca-text-bright); }"
@@ -615,13 +618,18 @@ static Ca_CssValue resolve_value(const Ca_Stylesheet *ss, const Ca_CssValue *in)
    never folded into the per-node style cache the way class-based rules
    are). Extracted verbatim from style_resolve_sheet's own inline switch;
    behavior for the existing cascade path is unchanged. */
-void ca_style_apply_one_declaration(Ca_ResolvedStyle *out, Ca_CssPropId prop,
-                                    const Ca_CssValue *val)
+static inline void style_mark_set(Ca_ResolvedStyle *out, Ca_CssPropId prop)
 {
     if ((int)prop < 64)
         out->set_mask  |= (1ULL << (int)prop);
     else
         out->set_mask2 |= (1ULL << ((int)prop - 64));
+}
+
+void ca_style_apply_one_declaration(Ca_ResolvedStyle *out, Ca_CssPropId prop,
+                                    const Ca_CssValue *val)
+{
+    style_mark_set(out, prop);
 
     switch (prop) {
         case CA_CSS_PROP_WIDTH:
@@ -772,11 +780,31 @@ void ca_style_apply_one_declaration(Ca_ResolvedStyle *out, Ca_CssPropId prop,
         case CA_CSS_PROP_TRANSITION_EASING:
             out->transition_easing = val->keyword;
             break;
-        case CA_CSS_PROP_BORDER_WIDTH:
-            out->border_width = css_val_to_px(val); break;
+        case CA_CSS_PROP_BORDER_WIDTH: {
+            float w = css_val_to_px(val);
+            out->border_width   = w;
+            out->border_top_w   = w;
+            out->border_right_w = w;
+            out->border_bottom_w = w;
+            out->border_left_w  = w;
+            style_mark_set(out, CA_CSS_PROP_BORDER_TOP_WIDTH);
+            style_mark_set(out, CA_CSS_PROP_BORDER_RIGHT_WIDTH);
+            style_mark_set(out, CA_CSS_PROP_BORDER_BOTTOM_WIDTH);
+            style_mark_set(out, CA_CSS_PROP_BORDER_LEFT_WIDTH);
+            break;
+        }
         case CA_CSS_PROP_BORDER_COLOR:
-            if (val->type == CA_CSS_VAL_COLOR)
-                out->border_color = val->color;
+            if (val->type == CA_CSS_VAL_COLOR) {
+                out->border_color   = val->color;
+                out->border_top_c   = val->color;
+                out->border_right_c = val->color;
+                out->border_bottom_c = val->color;
+                out->border_left_c  = val->color;
+                style_mark_set(out, CA_CSS_PROP_BORDER_TOP_COLOR);
+                style_mark_set(out, CA_CSS_PROP_BORDER_RIGHT_COLOR);
+                style_mark_set(out, CA_CSS_PROP_BORDER_BOTTOM_COLOR);
+                style_mark_set(out, CA_CSS_PROP_BORDER_LEFT_COLOR);
+            }
             break;
         case CA_CSS_PROP_BORDER_TOP_WIDTH:
             out->border_top_w = css_val_to_px(val); break;

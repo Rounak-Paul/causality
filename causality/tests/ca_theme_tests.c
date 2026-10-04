@@ -3,6 +3,8 @@
 
 #include "causality.h"
 #include "css.h"
+#include <GLFW/glfw3.h>
+#include "style.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -62,10 +64,35 @@ static bool test_default_theme(void)
     return true;
 }
 
+/** Uniform border shorthands override earlier per-side borders, as in CSS. */
+static bool test_border_shorthand_resets_sides(void)
+{
+    Ca_Stylesheet *ss = ca_css_parse(
+        ".x { border-bottom-width: 1px; border-bottom-color: #ff0000; border-width: 0px; }"
+        ".y { border-left-width: 2px; border-width: 3px; border-color: #00ff00; }");
+    CHECK(ss && ss->rule_count == 2);
+
+    Ca_ResolvedStyle x = {0};
+    for (int i = 0; i < ss->rules[0].decl_count; ++i)
+        ca_style_apply_one_declaration(&x, ss->rules[0].decls[i].prop, &ss->rules[0].decls[i].value);
+    CHECK(x.border_width == 0.0f && x.border_bottom_w == 0.0f);
+    CHECK(x.border_top_w == 0.0f && x.border_left_w == 0.0f && x.border_right_w == 0.0f);
+
+    Ca_ResolvedStyle y = {0};
+    for (int i = 0; i < ss->rules[1].decl_count; ++i)
+        ca_style_apply_one_declaration(&y, ss->rules[1].decls[i].prop, &ss->rules[1].decls[i].value);
+    CHECK(y.border_left_w == 3.0f && y.border_top_w == 3.0f && y.border_bottom_w == 3.0f);
+    CHECK(y.border_left_c == y.border_color && y.border_top_c == y.border_color && y.border_color != 0u);
+
+    ca_css_destroy(ss);
+    return true;
+}
+
 int main(void)
 {
     if (!test_set_color_var()) return 1;
     if (!test_default_theme()) return 1;
+    if (!test_border_shorthand_resets_sides()) return 1;
     printf("causality_theme_tests passed\n");
     return 0;
 }

@@ -164,6 +164,7 @@ void ca_node_system_shutdown(Ca_Window *win)
         Ca_TabBar *tab_bar = CA_POOL_AT(win->tabbar_pool, Ca_TabBar, i);
         ca_dyn_array_destroy(&tab_bar->label_storage);
         ca_dyn_array_destroy(&tab_bar->tab_node_storage);
+        ca_dyn_array_destroy(&tab_bar->text_color_storage);
     }
     for (size_t i = 0; i < ca_pool_slot_count(&win->table_pool); ++i) {
         Ca_Table *table = CA_POOL_AT(win->table_pool, Ca_Table, i);
@@ -307,6 +308,7 @@ static void release_widget(Ca_Node *node)
         Ca_TabBar *tab_bar = node->widget;
         ca_dyn_array_destroy(&tab_bar->label_storage);
         ca_dyn_array_destroy(&tab_bar->tab_node_storage);
+        ca_dyn_array_destroy(&tab_bar->text_color_storage);
         ca_pool_release(&window->tabbar_pool, tab_bar);
         break;
     }

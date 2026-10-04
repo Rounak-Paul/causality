@@ -38,6 +38,5 @@ void ca_instance_set_theme(Ca_Instance *instance, const Ca_Theme *theme)
     instance->theme = *theme;
     if (instance->system_stylesheet)
         ca_style_apply_theme(instance->system_stylesheet, theme);
-    ca_instance_refresh_tab_bars(instance);
     ca_instance_refresh_styles(instance);
 }

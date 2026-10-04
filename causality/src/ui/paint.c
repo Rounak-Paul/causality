@@ -817,30 +817,14 @@ static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, Cli
         break;
     }
     case CA_WIDGET_TABBAR: {
-        /* Called for each tab_node (child of tabbar's main node) */
         Ca_TabBar *tb = (Ca_TabBar *)node->widget;
-        if (!tb || !tb->in_use) break;
+        if (!tb || !tb->in_use || node->elem_type != CA_ELEM_TAB) break;
         for (int ti = 0; ti < tb->count; ++ti) {
-            if (tb->tab_nodes[ti] == node) {
-                uint32_t tc = (ti == tb->active)
-                    ? themed(tb->active_text, win_theme(win)->text_bright)
-                    : themed(tb->inactive_text, win_theme(win)->text_dim);
-                paint_text(win, font, node, tb->labels[ti], tc);
-                if (ti == tb->active && tb->active_indicator &&
-                    ca_window_reserve_draw_commands(win, (size_t)win->draw_cmd_count + 1u)) {
-                    float bar_h = 2.0f * (win->ui_scale > 0.0f ? win->ui_scale : 1.0f);
-                    Ca_DrawCmd *c = &win->draw_cmds[win->draw_cmd_count++];
-                    memset(c, 0, sizeof(*c));
-                    c->type = CA_DRAW_RECT;
-                    c->x = node->x;
-                    c->y = node->y + node->h - bar_h;
-                    c->w = node->w;
-                    c->h = bar_h;
-                    unpack_color(win_theme(win)->accent, &c->r, &c->g, &c->b, &c->a);
-                    c->in_use = true;
-                }
-                break;
-            }
+            if (tb->tab_nodes[ti] != node) continue;
+            uint32_t fallback = ti == tb->active ? win_theme(win)->text_bright
+                                                 : win_theme(win)->text_dim;
+            paint_text(win, font, node, tb->labels[ti], themed(tb->text_colors[ti], fallback));
+            break;
         }
         break;
     }
@@ -1042,8 +1026,9 @@ static void paint_border(Ca_Window *win, Ca_Node *node, ClipRect clip)
         node->desc.border_top_c == node->desc.border_right_c &&
         node->desc.border_top_c == node->desc.border_bottom_c &&
         node->desc.border_top_c == node->desc.border_left_c;
-    if (uniform_sides && node->desc.border_width > 0.0f &&
-        node->desc.border_color != 0 && node->w > 0.0f && node->h > 0.0f) {
+    bool uniform_drawn = uniform_sides && node->desc.border_width > 0.0f &&
+        node->desc.border_color != 0 && node->w > 0.0f && node->h > 0.0f;
+    if (uniform_drawn) {
         float half_extent = 0.5f * (node->w < node->h ? node->w : node->h);
         float width = node->desc.border_width < half_extent
             ? node->desc.border_width : half_extent;
@@ -1130,6 +1115,8 @@ static void paint_border(Ca_Window *win, Ca_Node *node, ClipRect clip)
     for (int ei = 0; ei < 4; ei++) {
         float ew = edges[ei].w;
         if (ew <= 0.0f || edges[ei].c == 0) continue;
+        if (uniform_drawn && ew == node->desc.border_width &&
+            edges[ei].c == node->desc.border_color) continue;
         if (!ca_window_reserve_draw_commands(win, (size_t)win->draw_cmd_count + 1u)) break;
         float er, eg, eb, ea;
         unpack_color(edges[ei].c, &er, &eg, &eb, &ea);

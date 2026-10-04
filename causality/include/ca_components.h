@@ -199,14 +199,8 @@ typedef struct Ca_TabBarDesc {
     Ca_TabFn     on_change;
     void        *change_data;
     const char  *id, *style;
-    uint32_t     active_bg;        /* active tab background   (0 = default) */
-    uint32_t     inactive_bg;      /* inactive tab background (0 = default) */
-    uint32_t     active_text;      /* active tab text color   (0 = default) */
-    uint32_t     inactive_text;    /* inactive tab text color (0 = default) */
-    float        tab_padding_x;    /* per-tab horizontal padding in logical px (0 = default 8) */
+    const char  *tab_style;        /* classes on every `tab` header; the active one also gets `active` */
     bool         tabs_fill;        /* true: tabs flex-grow to fill available row space */
-    bool         tabs_left_align;  /* true: left-align tab labels (false = centered) */
-    bool         active_indicator; /* true: underline the active tab in the theme accent */
     bool         hidden;
     bool         disabled;
     bool         no_hover;        /* transparent to hover/input-capture detection */

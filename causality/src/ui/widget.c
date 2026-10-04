@@ -556,6 +556,16 @@ static void apply_widget_text_color(Ca_Node *node, uint32_t color)
         }
     }
     if (!node->widget) return;
+    if (node->widget_type == CA_WIDGET_TABBAR && node->elem_type == CA_ELEM_TAB) {
+        Ca_TabBar *tb = (Ca_TabBar *)node->widget;
+        for (int i = 0; i < tb->count; ++i)
+            if (tb->tab_nodes[i] == node) {
+                if (tb->text_colors[i] != color) node->dirty |= CA_DIRTY_CONTENT;
+                tb->text_colors[i] = color;
+                break;
+            }
+        return;
+    }
     if (color == 0u) return;
     switch (node->widget_type) {
     case CA_WIDGET_LABEL: ((Ca_Label *)node->widget)->color = color; break;
@@ -663,7 +673,19 @@ void ca_widget_reapply_css(Ca_Node *node)
     nd->background      = bd->background;
     nd->border_color    = bd->border_color;
     nd->border_width    = bd->border_width;
+    nd->border_top_w    = bd->border_top_w;
+    nd->border_right_w  = bd->border_right_w;
+    nd->border_bottom_w = bd->border_bottom_w;
+    nd->border_left_w   = bd->border_left_w;
+    nd->border_top_c    = bd->border_top_c;
+    nd->border_right_c  = bd->border_right_c;
+    nd->border_bottom_c = bd->border_bottom_c;
+    nd->border_left_c   = bd->border_left_c;
     nd->corner_radius   = bd->corner_radius;
+    nd->border_radius_tl = bd->border_radius_tl;
+    nd->border_radius_tr = bd->border_radius_tr;
+    nd->border_radius_br = bd->border_radius_br;
+    nd->border_radius_bl = bd->border_radius_bl;
     nd->glow_color      = bd->glow_color;
     nd->glow_radius     = bd->glow_radius;
     nd->shadow_color    = bd->shadow_color;
@@ -2646,31 +2668,29 @@ int ca_select_get_hover(const Ca_Select *s)
    PUBLIC — Tab bar
    ============================================================ */
 
-/* Tab headers store 0 for "use the instance theme"; inactive tabs are
-   transparent by default, and an underlined active tab needs no fill. */
-static uint32_t tabbar_background(const Ca_TabBar *tb, bool active)
+/* Writes a tab header's class list: the bar's tab_style plus `active` on
+   the selected tab. */
+static void tabbar_tab_classes(const Ca_TabBar *tb, bool active,
+                               char out[CA_NODE_CLASS_MAX])
 {
-    if (!active) return tb->inactive_bg;
-    if (tb->active_bg) return tb->active_bg;
-    return tb->active_indicator ? tb->inactive_bg
-                                : tb->node->window->instance->theme.bg_overlay;
+    if (tb->tab_style[0])
+        snprintf(out, CA_NODE_CLASS_MAX, active ? "%s active" : "%s", tb->tab_style);
+    else
+        snprintf(out, CA_NODE_CLASS_MAX, "%s", active ? "active" : "");
 }
 
-void ca_instance_refresh_tab_bars(Ca_Instance *instance)
+/* Moves the `active` class to tab `index` and restyles both headers in place. */
+static void tabbar_activate(Ca_TabBar *tb, int index)
 {
-    for (size_t wi = 0; wi < ca_pool_slot_count(&instance->windows); ++wi) {
-        Ca_Window *window = CA_POOL_AT(instance->windows, Ca_Window, wi);
-        if (!window->in_use) continue;
-        for (uint32_t ti = 0; ti < ca_pool_slot_count(&window->tabbar_pool); ++ti) {
-            Ca_TabBar *tb = CA_POOL_AT(window->tabbar_pool, Ca_TabBar, ti);
-            if (!tb->in_use || !tb->node) continue;
-            for (int i = 0; i < tb->count; ++i) {
-                Ca_Node *tab = tb->tab_nodes[i];
-                if (!tab) continue;
-                tab->desc.background = tabbar_background(tb, i == tb->active);
-                tab->dirty |= CA_DIRTY_CONTENT;
-            }
-        }
+    int previous = tb->active;
+    tb->active = index;
+    const int touched[2] = { previous, index };
+    for (int i = 0; i < 2; ++i) {
+        int ti = touched[i];
+        if (ti < 0 || ti >= tb->count || !tb->tab_nodes[ti]) continue;
+        tabbar_tab_classes(tb, ti == index, tb->tab_nodes[ti]->classes);
+        ca_widget_reapply_css(tb->tab_nodes[ti]);
+        tb->tab_nodes[ti]->dirty |= CA_DIRTY_CONTENT;
     }
 }
 
@@ -2694,8 +2714,9 @@ Ca_TabBar *ca_tabs(const Ca_TabBarDesc *desc)
         tb = alloc_tabbar(g_ctx.window);
         if (!tb) return NULL;
         if (!ca_dyn_array_init(&tb->tab_node_storage, sizeof(Ca_Node *)) ||
-            !ca_dyn_array_init(&tb->label_storage,
-                               sizeof(Ca_OptionText))) {
+            !ca_dyn_array_init(&tb->label_storage, sizeof(Ca_OptionText)) ||
+            !ca_dyn_array_init(&tb->text_color_storage, sizeof(uint32_t))) {
+            ca_dyn_array_destroy(&tb->text_color_storage);
             ca_dyn_array_destroy(&tb->label_storage);
             ca_dyn_array_destroy(&tb->tab_node_storage);
             ca_pool_release(&g_ctx.window->tabbar_pool, tb);
@@ -2711,27 +2732,26 @@ Ca_TabBar *ca_tabs(const Ca_TabBarDesc *desc)
     WIDGET_SET(node, reused, tb->active, desc->active);
     {
         int new_count = desc->count > 0 && desc->labels ? desc->count : 0;
-        if (!ca_dyn_array_reserve(&tb->tab_node_storage,
-                                  (size_t)new_count) ||
+        if (!ca_dyn_array_reserve(&tb->tab_node_storage, (size_t)new_count) ||
             !ca_dyn_array_reserve(&tb->label_storage, (size_t)new_count) ||
+            !ca_dyn_array_reserve(&tb->text_color_storage, (size_t)new_count) ||
             !ca_dyn_array_resize(&tb->tab_node_storage, (size_t)new_count) ||
-            !ca_dyn_array_resize(&tb->label_storage, (size_t)new_count))
+            !ca_dyn_array_resize(&tb->label_storage, (size_t)new_count) ||
+            !ca_dyn_array_resize(&tb->text_color_storage, (size_t)new_count))
             return tb;
         tb->tab_nodes = tb->tab_node_storage.data;
         tb->labels = tb->label_storage.data;
+        tb->text_colors = tb->text_color_storage.data;
         WIDGET_SET(node, reused, tb->count, new_count);
         for (int i = 0; i < tb->count; ++i) {
             WIDGET_SET_TEXT(node, reused, tb->labels[i], CA_OPTION_TEXT_MAX, desc->labels[i]);
             tb->tab_nodes[i] = NULL;
+            tb->text_colors[i] = 0u;
         }
     }
     tb->on_change = desc->on_change;
     tb->change_data = desc->change_data;
-    tb->active_bg     = desc->active_bg;
-    tb->inactive_bg   = desc->inactive_bg;
-    tb->active_text   = desc->active_text;
-    tb->inactive_text = desc->inactive_text;
-    tb->active_indicator = desc->active_indicator;
+    snprintf(tb->tab_style, sizeof(tb->tab_style), "%s", desc->tab_style ? desc->tab_style : "");
 
     if (desc->hidden)   node->desc.hidden   = true;
     if (desc->disabled) node->desc.disabled = true;
@@ -2740,43 +2760,39 @@ Ca_TabBar *ca_tabs(const Ca_TabBarDesc *desc)
     uint32_t dummy = 0;
     apply_css(node, &node->desc, CA_ELEM_TABBAR, desc->style, id, &dummy, NULL);
 
-    float item_fs = node->desc.font_size; /* inherit font-size from CSS (e.g. panel-tab-bar) */
-    float tab_pad_x = s(desc->tab_padding_x > 0.0f ? desc->tab_padding_x : 8.0f);
-    bool tabs_fill = desc->tabs_fill;
-    bool tabs_left_align = desc->tabs_left_align;
-
     ca_node_trim_children(node, 0);
 
-    /* Create child nodes for each tab header */
     for (int i = 0; i < tb->count; ++i) {
         Ca_NodeDesc tnd = {0};
-        float tw = ca_measure_text_px(g_ctx.window, tb->labels[i], item_fs);
-        /* Add a small safety margin so glyph overhang/subpixel placement
-           never clips the final character even when text measurement is tight. */
-        float min_w = (tw > 0.0f ? tw : s(40.0f)) + tab_pad_x * 2.0f + s(8.0f);
-        if (tabs_fill) {
-            tnd.width = 0.0f;
-            tnd.min_w = min_w;
-            tnd.flex_grow = 1.0f;
-            tnd.flex_shrink = 1.0f;
-        } else {
-            tnd.width = min_w;
-        }
-        /* height = 0: layout stretches the node to fill the full bar cross-axis so
-           the active background covers the entire tab-bar height (no gap). */
-        tnd.background = tabbar_background(tb, i == tb->active);
-        tnd.font_size  = item_fs;
-        tnd.padding_left = tab_pad_x;
-        tnd.padding_right = tab_pad_x;
-        tnd.text_align = tabs_left_align ? 0 : 1;
-        tnd.corner_radius = 0.0f;
+        tnd.font_size = node->desc.font_size;
         Ca_Node *tab_node = ca_node_add(node, &tnd);
-        if (tab_node) {
-            tab_node->elem_type = CA_ELEM_TAB;
-            tab_node->widget_type = CA_WIDGET_TABBAR;
-            tab_node->widget      = tb;
-            tb->tab_nodes[i] = tab_node;
+        if (!tab_node) continue;
+        tab_node->widget_type = CA_WIDGET_TABBAR;
+        tab_node->widget      = tb;
+        tb->tab_nodes[i] = tab_node;
+
+        char classes[CA_NODE_CLASS_MAX];
+        tabbar_tab_classes(tb, i == tb->active, classes);
+        uint32_t text_color = 0;
+        apply_css(tab_node, &tab_node->desc, CA_ELEM_TAB, classes, NULL, &text_color, NULL);
+
+        /* Width follows the CSS-resolved font and padding; the safety margin
+           keeps glyph overhang from clipping the last character. */
+        Ca_NodeDesc *td = &tab_node->desc;
+        float tw = ca_measure_text_px(g_ctx.window, tb->labels[i], td->font_size);
+        float min_w = (tw > 0.0f ? tw : s(40.0f)) + td->padding_left + td->padding_right + s(8.0f);
+        if (desc->tabs_fill) {
+            td->width = 0.0f;
+            td->min_w = min_w;
+            td->flex_grow = 1.0f;
+            td->flex_shrink = 1.0f;
+        } else {
+            td->width = min_w;
         }
+        tab_node->base_desc.width       = td->width;
+        tab_node->base_desc.min_w       = td->min_w;
+        tab_node->base_desc.flex_grow   = td->flex_grow;
+        tab_node->base_desc.flex_shrink = td->flex_shrink;
     }
     return tb;
 }
@@ -5251,14 +5267,7 @@ void ca_widget_input_pass(Ca_Window *win)
                     if (!tb->tab_nodes[ti]) continue;
                     if (point_reaches_node(tb->tab_nodes[ti], mx, my, top_z)) {
                         if (tb->active != ti) {
-                            /* Update backgrounds */
-                            if (tb->active >= 0 && tb->active < tb->count && tb->tab_nodes[tb->active]) {
-                                tb->tab_nodes[tb->active]->desc.background = tabbar_background(tb, false);
-                                tb->tab_nodes[tb->active]->dirty |= CA_DIRTY_CONTENT;
-                            }
-                            tb->active = ti;
-                            tb->tab_nodes[ti]->desc.background = tabbar_background(tb, true);
-                            tb->tab_nodes[ti]->dirty |= CA_DIRTY_CONTENT;
+                            tabbar_activate(tb, ti);
                             if (tb->on_change) tb->on_change(tb, tb->change_data);
                         }
                         break;

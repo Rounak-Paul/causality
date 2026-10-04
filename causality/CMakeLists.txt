@@ -205,6 +205,7 @@ if(BUILD_TESTING)
         causality
         Vulkan::Vulkan
         VulkanMemoryAllocator
+        glfw
     )
     add_test(NAME causality_theme_tests COMMAND causality_theme_tests)
 

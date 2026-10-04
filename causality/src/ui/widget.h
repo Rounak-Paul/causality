@@ -32,9 +32,6 @@ void ca_widget_reapply_css(Ca_Node *node);
 /* Re-resolve every CSS-owned field, including layout, after a stylesheet swap. */
 void ca_widget_refresh_css(Ca_Node *node);
 
-/** Recolor every tab header after the instance theme changed. */
-void ca_instance_refresh_tab_bars(Ca_Instance *instance);
-
 /* Mirrors node->scroll_y into its lazily-created scroll_y_signal (see
    ca_get_scroll_y_signal), if one has ever been requested. No-op for
    nodes nothing has ever asked to observe reactively. Called from every
