@@ -8,20 +8,22 @@
 Ca_Theme ca_theme_default(void)
 {
     return (Ca_Theme){
-        .bg_void     = 0x0d0d0dffu,
+        .bg_void     = 0x242424ffu,
         .bg_base     = 0x0d0d0dffu,
-        .bg_elevated = 0x121212ffu,
-        .bg_surface  = 0x1a1a1affu,
-        .bg_overlay  = 0x333333ffu,
-        .separator   = 0x262626ffu,
+        .bg_elevated = 0x191919ffu,
+        .bg_surface  = 0x272727ffu,
+        .bg_overlay  = 0x444444ffu,
+        .separator   = 0x363636ffu,
         .text_bright = 0xd9d9d9ffu,
-        .text_muted  = 0x737373ffu,
-        .text_dim    = 0x404040ffu,
+        .text_medium = 0xbebebeffu,
+        .text_muted  = 0x989898ffu,
+        .text_dim    = 0x7c7c7cffu,
         .accent      = 0x999999ffu,
         .on_accent   = 0x0d0d0dffu,
         .success     = 0x80b380ffu,
         .warning     = 0xccb366ffu,
         .danger      = 0xcc6666ffu,
+        .on_danger   = 0x0d0d0dffu,
     };
 }
 

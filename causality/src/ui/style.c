@@ -11,19 +11,18 @@
 static const char CA_SYSTEM_STYLES_CSS[] =
     "hr { background: var(--ca-bg-surface); }"
     "select { background: var(--ca-bg-base); }"
-    ".ca-titlebar { background: var(--ca-bg-elevated); border-bottom-width: 1px; border-bottom-color: var(--ca-separator); }"
+    ".ca-titlebar { background: var(--ca-bg-elevated); color: var(--ca-text-bright); border-bottom-width: 1px; border-bottom-color: var(--ca-separator); }"
     ".ca-titlebar-menu { height: 100%; align-items: center; background: transparent; }"
-    ".ca-titlebar-menu-item { height: 100%; padding: 0px 6px; align-items: center; color: var(--ca-text-muted); background: transparent; font-size: 11px; }"
+    ".ca-titlebar-menu-item { height: 100%; padding: 0px 10px; align-items: center; color: var(--ca-text-muted); background: transparent; font-size: 13px; }"
     ".ca-titlebar-menu-item:hover { background: var(--ca-bg-surface); color: var(--ca-text-bright); }"
     ".ca-titlebar-drag { height: 100%; align-items: center; justify-content: center; background: transparent; }"
-    ".ca-titlebar-title { color: var(--ca-text-muted); font-size: 11px; text-align: center; }"
-    ".ca-titlebar-controls { height: 100%; gap: 4px; align-items: center; }"
-    ".ca-titlebar-control { width: 24px; height: 20px; color: var(--ca-text-bright); background: transparent; corner-radius: 3px; font-size: 10px; text-align: center; }"
-    ".ca-titlebar-control:hover { background: var(--ca-bg-surface); }"
-    ".ca-titlebar-close { color: var(--ca-danger); }"
-    ".ca-titlebar-close:hover { background: var(--ca-danger); color: var(--ca-bg-void); }"
-    ".ca-menubar-popup { background: var(--ca-bg-elevated); color: var(--ca-text-bright); corner-radius: 4px; }"
-    ".ca-overlay-hover { background: var(--ca-bg-surface); corner-radius: 3px; }"
+    ".ca-titlebar-title { color: var(--ca-text-medium); font-size: 13px; font-weight: bold; text-align: center; }"
+    ".ca-titlebar-controls { height: 100%; gap: 2px; align-items: center; }"
+    ".ca-titlebar-control { width: 32px; height: 24px; color: var(--ca-text-muted); background: transparent; border-width: 0px; border-radius: 3px; font-size: 12px; text-align: center; }"
+    ".ca-titlebar-control:hover { background: var(--ca-bg-surface); color: var(--ca-text-bright); }"
+    ".ca-titlebar-close:hover { background: var(--ca-danger); color: var(--ca-on-danger); }"
+    ".ca-menubar-popup { background: var(--ca-bg-elevated); color: var(--ca-text-bright); border-radius: 4px; }"
+    ".ca-overlay-hover { background: var(--ca-bg-surface); border-radius: 3px; }"
     ".ca-overlay-selected { background: var(--ca-bg-overlay); color: var(--ca-text-bright); }";
 
 void ca_style_apply_theme(Ca_Stylesheet *system, const Ca_Theme *theme)
@@ -36,12 +35,14 @@ void ca_style_apply_theme(Ca_Stylesheet *system, const Ca_Theme *theme)
         { "--ca-bg-overlay",  theme->bg_overlay },
         { "--ca-separator",   theme->separator },
         { "--ca-text-bright", theme->text_bright },
+        { "--ca-text-medium", theme->text_medium },
         { "--ca-text-muted",  theme->text_muted },
         { "--ca-text-dim",    theme->text_dim },
         { "--ca-accent",      theme->accent },
         { "--ca-success",     theme->success },
         { "--ca-warning",     theme->warning },
         { "--ca-danger",      theme->danger },
+        { "--ca-on-danger",   theme->on_danger },
     };
     for (size_t i = 0; i < sizeof(vars) / sizeof(vars[0]); ++i)
         ca_css_set_color_var(system, vars[i].name, vars[i].color);

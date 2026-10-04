@@ -34,6 +34,7 @@ typedef struct Ca_Theme {
     uint32_t bg_overlay;
     uint32_t separator;
     uint32_t text_bright;
+    uint32_t text_medium;
     uint32_t text_muted;
     uint32_t text_dim;
     uint32_t accent;
@@ -41,4 +42,5 @@ typedef struct Ca_Theme {
     uint32_t success;
     uint32_t warning;
     uint32_t danger;
+    uint32_t on_danger;   /* text drawn on a danger fill */
 } Ca_Theme;

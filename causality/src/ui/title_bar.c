@@ -8,7 +8,7 @@
  *
  * Architecture:
  *   win->root         (vertical flex, fills window, system-managed)
- *   ├── win->title_bar_node  (horizontal, `.ca-titlebar` CSS height, 26 px default)
+ *   ├── win->title_bar_node  (horizontal, `.ca-titlebar` CSS height, 30 px default)
  *   │   ├── ca_menu_bar(...)     (left-aligned menus, if any)
  *   │   ├── drag div             (flex-grow:1, drag-to-move, title text)
  *   │   └── controls div        (min / max / close buttons)
@@ -28,7 +28,7 @@
 #include <stdio.h>
 #include <assert.h>
 
-#define TITLE_BAR_DEFAULT_HEIGHT_PX 26.0f
+#define TITLE_BAR_DEFAULT_HEIGHT_PX 30.0f
 #define TITLE_BAR_SIDE_PADDING_PX 8.0f
 
 /* Apply layered system and author styles to a system-owned node. */

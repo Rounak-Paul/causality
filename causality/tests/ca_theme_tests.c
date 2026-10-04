@@ -55,10 +55,10 @@ static bool test_default_theme(void)
 {
     const Ca_Theme t = ca_theme_default();
     CHECK(t.bg_base && t.bg_elevated && t.bg_surface && t.bg_overlay);
-    CHECK(t.text_bright && t.text_muted && t.text_dim);
-    CHECK(t.accent && t.on_accent && t.success && t.warning && t.danger);
+    CHECK(t.text_bright && t.text_medium && t.text_muted && t.text_dim);
+    CHECK(t.accent && t.on_accent && t.success && t.warning && t.danger && t.on_danger);
     CHECK(t.bg_base != t.bg_surface && t.bg_surface != t.bg_overlay);
-    CHECK(t.text_bright != t.text_muted && t.text_muted != t.text_dim);
+    CHECK(t.text_bright != t.text_medium && t.text_medium != t.text_muted && t.text_muted != t.text_dim);
     return true;
 }
 
