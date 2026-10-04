@@ -573,7 +573,7 @@ static uint32_t parse_color_mix_func(Parser *p)
     /* Skip "in <colorspace>," */
     int depth = 0;
     bool past_comma1 = false;
-    uint32_t c1 = 0xFF000000, c2 = 0xFFFFFFFF;
+    uint32_t c1 = 0x000000FFu, c2 = 0xFFFFFFFFu;
     float p1 = 50.0f, p2 = 50.0f;
     int color_idx = 0;
 
@@ -616,7 +616,7 @@ static uint32_t parse_color_mix_func(Parser *p)
             }
         } else if (t.type == TOK_IDENT) {
             parser_next(p);
-            if (!lookup_named_color(t.text, &color)) color = 0xFF000000;
+            if (!lookup_named_color(t.text, &color)) color = 0x000000FFu;
             got_color = true;
         } else {
             parser_next(p);

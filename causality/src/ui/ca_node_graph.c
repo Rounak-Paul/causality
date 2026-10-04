@@ -10,11 +10,11 @@
  *  Canvas div (overflow:hidden, dark bg, drag=pan, scroll=zoom)
  *    Grid lines   (absolute, emitted first; density adapts to zoom)
  *    Node outer   (absolute, ALL dimensions × zoom)
- *      Header     (row, ng-hdr CSS → align-items:center)
+ *      Header     (row, centred; class ng-hdr is a styling hook)
  *      Body       (column)
- *        Input rows   ●dot  label      (ng-hdr)
+ *        Input rows   ●dot  label
  *        Separator    1px hr
- *        Output rows  label  ●dot      (ng-hdr + ng-pin-row-out)
+ *        Output rows  label  ●dot      (right-aligned)
  *    Wire segments (absolute, rounded orthogonal routing)
  *
  * Zoom behaviour
@@ -577,6 +577,7 @@ void ca_ng_node_begin(Ca_NodeGraph *ng, const Ca_NgNodeDesc *desc)
         .height     = hdrh,
         .direction  = CA_HORIZONTAL,
         .style      = "ng-hdr",
+        .inline_style = "align-items: center;",
         .z_index    = node_z,
     });
     ca_div_begin(&(Ca_DivDesc){
@@ -606,6 +607,7 @@ void ca_ng_node_begin(Ca_NodeGraph *ng, const Ca_NgNodeDesc *desc)
             .height    = hdrh,
             .direction = CA_HORIZONTAL,
             .style     = "ng-hdr",
+            .inline_style = "align-items: center;",
             .padding   = {0.0f, border_w + NG_PIN_PAD_R * zs,
                           0.0f, border_w + NG_PIN_PAD_L * zs},
             .z_index   = node_z,
@@ -673,6 +675,7 @@ void ca_ng_input_pin(Ca_NodeGraph *ng, const Ca_NgPinDesc *desc)
             .height    = rowh,
             .width     = nw,
             .style     = "ng-hdr",
+            .inline_style = "align-items: center;",
             .padding   = {0.0f, padr, 0.0f, padl},
             .gap       = gap,
             .z_index   = node_z,
@@ -700,6 +703,7 @@ void ca_ng_input_pin(Ca_NodeGraph *ng, const Ca_NgPinDesc *desc)
             .height    = rowh,
             .width     = nw,
             .style     = "ng-hdr",
+            .inline_style = "align-items: center;",
             .padding   = {0.0f, 0.0f, 0.0f, padl},
             .z_index   = node_z,
         });
@@ -752,12 +756,14 @@ void ca_ng_output_pin(Ca_NodeGraph *ng, const Ca_NgPinDesc *desc)
             .height    = rowh,
             .width     = nw,
             .style     = "ng-hdr ng-pin-row-out",
+            .inline_style = "align-items: center; justify-content: flex-end;",
             .padding   = {0.0f, padr, 0.0f, padl},
             .gap       = gap,
             .z_index   = node_z,
         });
         Ca_Label *label = ca_text(&(Ca_TextDesc){
             .text = lbl, .color = dot_col, .style = "ng-pin-label ng-out-label",
+            .inline_style = "flex-grow: 1; text-align: right;",
         });
         ng_set_label_z(label, node_z);
         ca_div_begin(&(Ca_DivDesc){
@@ -778,6 +784,7 @@ void ca_ng_output_pin(Ca_NodeGraph *ng, const Ca_NgPinDesc *desc)
             .height    = rowh,
             .width     = nw,
             .style     = "ng-hdr ng-pin-row-out",
+            .inline_style = "align-items: center; justify-content: flex-end;",
             .padding   = {0.0f, padr, 0.0f, 0.0f},
             .z_index   = node_z,
         });
