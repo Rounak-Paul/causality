@@ -237,6 +237,7 @@ static Ca_Label *add_label(Ca_Window *win, Ca_Node *parent, const Ca_TextDesc *d
     slot->node   = node;
     slot->in_use = true;
     slot->color  = desc->color;
+    slot->inline_color = desc->color;
     node->widget_type = CA_WIDGET_LABEL;
     node->widget      = slot;
     if (desc->text)
@@ -556,6 +557,11 @@ static void apply_widget_text_color(Ca_Node *node, uint32_t color)
         }
     }
     if (!node->widget) return;
+    if (node->widget_type == CA_WIDGET_LABEL) {
+        Ca_Label *lbl = (Ca_Label *)node->widget;
+        lbl->color = lbl->inline_color ? lbl->inline_color : color;
+        return;
+    }
     if (node->widget_type == CA_WIDGET_TABBAR && node->elem_type == CA_ELEM_TAB) {
         Ca_TabBar *tb = (Ca_TabBar *)node->widget;
         for (int i = 0; i < tb->count; ++i)
@@ -568,7 +574,6 @@ static void apply_widget_text_color(Ca_Node *node, uint32_t color)
     }
     if (color == 0u) return;
     switch (node->widget_type) {
-    case CA_WIDGET_LABEL: ((Ca_Label *)node->widget)->color = color; break;
     case CA_WIDGET_BUTTON: ((Ca_Button *)node->widget)->text_color = color; break;
     case CA_WIDGET_TEXT_INPUT: ((Ca_TextInput *)node->widget)->text_color = color; break;
     case CA_WIDGET_CHECKBOX: ((Ca_Checkbox *)node->widget)->text_color = color; break;
@@ -1070,10 +1075,9 @@ Ca_Label *ca_text(const Ca_TextDesc *desc)
             ? s_pre_css_desc.text_decoration_color
             : lbl->node->desc.text_decoration_color;
         lbl->color = 0;
+        lbl->inline_color = desc->color;
         apply_css(lbl->node, &lbl->node->desc, CA_ELEM_TEXT,
                   desc->style, id, &lbl->color, desc->inline_style);
-        /* Inline color overrides CSS — lets callers set per-instance colors. */
-        if (desc->color) lbl->color = desc->color;
         if (desc->decoration_color)
             lbl->node->desc.text_decoration_color = desc->decoration_color;
         if (reused && (lbl->color != old_color ||
@@ -2038,6 +2042,36 @@ Ca_Signal *ca_get_scroll_y_signal(Ca_Window *window, const char *id)
     if (!n->scroll_y_signal)
         n->scroll_y_signal = ca_signal_float(window->instance, n->scroll_y);
     return n->scroll_y_signal;
+}
+
+/** Laid-out size of n in logical px. */
+static Ca_DivSize node_logical_size(const Ca_Node *n)
+{
+    float ui_s = n->window && n->window->ui_scale > 0.0f ? n->window->ui_scale : 1.0f;
+    return (Ca_DivSize){ n->w / ui_s, n->h / ui_s };
+}
+
+Ca_Signal *ca_div_size_signal(Ca_Div *div)
+{
+    Ca_Node *n = (Ca_Node *)div;
+    if (!n || !n->in_use || !n->window) return NULL;
+    if (!n->size_signal) {
+        Ca_DivSize size = node_logical_size(n);
+        n->size_signal = ca_signal_create(n->window->instance, sizeof(size), &size);
+    }
+    return n->size_signal;
+}
+
+void ca_window_sync_size_signals(Ca_Window *win)
+{
+    for (uint32_t i = 0; i < ca_pool_slot_count(&win->node_pool); ++i) {
+        Ca_Node *n = CA_POOL_AT(win->node_pool, Ca_Node, i);
+        if (!n->in_use || !n->size_signal) continue;
+        Ca_DivSize size = node_logical_size(n);
+        const Ca_DivSize *prev = ca_signal_peek(n->size_signal);
+        if (prev && prev->width == size.width && prev->height == size.height) continue;
+        ca_signal_set(n->size_signal, &size);
+    }
 }
 
 /*
@@ -3118,6 +3152,7 @@ void ca_table_cell(const Ca_TextDesc *desc)
     lbl->node = node;
     lbl->in_use = true;
     lbl->color = desc->color;
+    lbl->inline_color = desc->color;
     WIDGET_SET_TEXT(node, reused, lbl->text, CA_LABEL_TEXT_MAX, desc->text);
 
     apply_css(node, &node->desc, CA_ELEM_TABLE_CELL, desc->style, id, &lbl->color, NULL);

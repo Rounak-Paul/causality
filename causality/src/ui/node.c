@@ -355,6 +355,10 @@ static void free_subtree(Ca_Node *node)
         ca_signal_destroy(node->scroll_y_signal);
         node->scroll_y_signal = NULL;
     }
+    if (node->size_signal) {
+        ca_signal_destroy(node->size_signal);
+        node->size_signal = NULL;
+    }
     if (node->inline_layout) {
         ca_inline_layout_destroy(node->inline_layout);
         free(node->inline_layout);

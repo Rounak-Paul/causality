@@ -32,7 +32,22 @@ static const char CA_SYSTEM_STYLES_CSS[] =
     ".ca-titlebar-close:hover { background: var(--ca-danger); color: var(--ca-on-danger); }"
     ".ca-menubar-popup { background: var(--ca-bg-elevated); color: var(--ca-text-bright); border-radius: 4px; }"
     ".ca-overlay-hover { background: var(--ca-bg-surface); border-radius: 3px; }"
-    ".ca-overlay-selected { background: var(--ca-bg-overlay); color: var(--ca-text-bright); }";
+    ".ca-overlay-selected { background: var(--ca-bg-overlay); color: var(--ca-text-bright); }"
+    ".ca-ng-canvas { background: var(--ca-bg-void); }"
+    ".ca-ng-grid { background: var(--ca-bg-surface); }"
+    ".ca-ng-grid.major { background: var(--ca-separator); }"
+    ".ca-ng-node { background: var(--ca-bg-elevated); border-color: var(--ca-separator); shadow-color: rgba(0, 0, 0, 0.45); }"
+    ".ca-ng-node:hover { border-color: var(--ca-text-dim); }"
+    ".ca-ng-node.selected { border-color: var(--ca-accent); }"
+    ".ca-ng-header-fill { background: var(--ca-bg-surface); }"
+    ".ca-ng-title { color: var(--ca-text-bright); }"
+    ".ca-ng-title-stub { background: var(--ca-text-muted); }"
+    ".ca-ng-pin { background: var(--ca-text-medium); }"
+    ".ca-ng-pin-label { color: var(--ca-text-medium); }"
+    ".ca-ng-pin-stub { background: var(--ca-text-dim); }"
+    ".ca-ng-separator { background: var(--ca-separator); }"
+    ".ca-ng-wire { background: var(--ca-text-muted); }"
+    ".ca-ng-wire.dimmed { opacity: 0.3; }";
 
 Ca_Stylesheet *ca_style_create_system_stylesheet(void)
 {

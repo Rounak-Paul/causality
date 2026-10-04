@@ -1181,6 +1181,21 @@ CA_API void  ca_scroll_wheel(Ca_Window *window, const char *id, double dy);
  */
 CA_API Ca_Signal *ca_get_scroll_y_signal(Ca_Window *window, const char *id);
 
+/* A div's laid-out size in logical px (the units of Ca_DivDesc sizes). */
+typedef struct Ca_DivSize {
+    float width, height;
+} Ca_DivSize;
+
+/*
+ * Signal holding div's Ca_DivSize, synced after every layout pass, so a
+ * builder that reads it rebuilds when the div is resized. Created on first
+ * call and destroyed with the div. Zero until the div's first layout.
+ *
+ * div      Div to observe.
+ * Returns  The div's size signal, or NULL on allocation failure.
+ */
+CA_API Ca_Signal *ca_div_size_signal(Ca_Div *div);
+
 /* ---- Window callbacks ---- */
 
 /*

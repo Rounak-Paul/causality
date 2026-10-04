@@ -378,6 +378,7 @@ void ca_ui_update(Ca_Instance *inst)
                 any_content = true;
             ca_profile_end(inst, "Platform UI Layout");
         }
+        ca_window_sync_size_signals(win);
 
         /* 5. Resize pass — handle edge/corner drag for undecorated windows.
               Must run before input pass so that a resize drag suppresses

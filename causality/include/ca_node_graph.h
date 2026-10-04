@@ -40,6 +40,19 @@
  * The host_div passed to ca_node_graph_begin is the stable div whose builder
  * is invalidated whenever node positions or pan change (drag interactions).
  * Pass NULL if your frame callback already runs every tick (non-reactive mode).
+ *
+ * STYLING: every part carries a CSS class whose system-sheet defaults read the
+ * --ca-* palette, so themes apply without code. Non-zero descriptor colours win.
+ *   .ca-ng-canvas  .ca-ng-grid(.major)  .ca-ng-node(.selected, :hover)
+ *   .ca-ng-header  .ca-ng-header-fill  .ca-ng-title  .ca-ng-title-stub
+ *   .ca-ng-body  .ca-ng-pin-row(.ca-ng-pin-row-out)  .ca-ng-pin
+ *   .ca-ng-pin-label  .ca-ng-out-label  .ca-ng-pin-stub  .ca-ng-separator
+ *   .ca-ng-wire(.active = touches the selected node, .dimmed = others)
+ * Labels keep the CSS font size at every zoom; when a zoomed row is too short
+ * for that font's line height, its text is drawn as a stub line instead.
+ *
+ * INTERACTION: drag the canvas to pan, scroll to zoom about the cursor, drag
+ * a node to move and select it, click empty canvas to clear the selection.
  */
 
 #pragma once
@@ -89,16 +102,24 @@ struct Ca_NodeGraph {
     int   selected_node;                 /* index into nodes[], -1 = none */
 
     Ca_Div *_host_div;                   /* stable div to invalidate on state change */
+    Ca_Div *_canvas;                     /* canvas div from the latest build */
+    float   _canvas_w, _canvas_h;        /* canvas logical size (0 until first layout) */
+    bool    _fit_pending;                /* frame all nodes once the canvas is sized */
 
     /* Selection callback (copied from Ca_NodeGraphDesc on each begin call) */
     void (*_on_node_select)(Ca_NodeGraph *ng, int node_idx, void *user_data);
     void  *_select_data;
 
-   /* Build-time transients (reset per begin/end cycle) */
-   int _cur_node_idx;
-   int _cur_in_idx;
-   int _cur_out_idx;
-   int _cur_node_z;
+    /* Build-time transients (reset per begin/end cycle) */
+    Ca_Window *_window;
+    float _title_font_px;                /* CSS font size of titles (0 = font default) */
+    float _pin_font_px;                  /* CSS font size of pin labels (0 = font default) */
+    bool  _show_title;                   /* zoomed header fits the title line height */
+    bool  _show_pin_text;                /* zoomed pin row fits the label line height */
+    int   _cur_node_idx;
+    int   _cur_in_idx;
+    int   _cur_out_idx;
+    int   _cur_node_z;
 };
 
 /* ============================================================
@@ -108,12 +129,11 @@ struct Ca_NodeGraph {
 typedef struct Ca_NodeGraphDesc {
     float       width, height;   /* canvas size — 0 = fill parent */
     const char *id;              /* CSS id for the canvas container */
-    const char *style;           /* CSS class(es) for the canvas container */
-    uint32_t    bg_color;        /* canvas background (0 = default dark) */
-    uint32_t    grid_color;      /* grid line colour (0 = default subtle) */
+    const char *style;           /* extra CSS class(es) for the canvas, after ca-ng-canvas */
 
-    /* Called when the user selects a node by clicking its header.
-       node_idx can be resolved with ca_node_graph_state. Pass NULL to ignore. */
+    /* Called when a node is selected (mouse-down on it) or the selection is
+       cleared by clicking empty canvas (node_idx = -1). node_idx can be
+       resolved with ca_node_graph_state. Pass NULL to ignore. */
     void (*on_node_select)(Ca_NodeGraph *ng, int node_idx, void *user_data);
     void  *select_data;
 } Ca_NodeGraphDesc;
@@ -122,13 +142,13 @@ typedef struct Ca_NgNodeDesc {
     const char *key;             /* stable unique id — must not change across frames */
     const char *title;           /* displayed in the header bar */
     float       x, y;           /* initial canvas position (used only on first appearance) */
-    uint32_t    header_color;   /* 0 = default grey-blue */
+    uint32_t    header_color;   /* 0 = .ca-ng-header-fill */
     bool        selected;        /* force-select visual highlight */
 } Ca_NgNodeDesc;
 
 typedef struct Ca_NgPinDesc {
     const char *label;           /* displayed beside the pin dot */
-    uint32_t    color;           /* pin dot colour (0 = default white-grey) */
+    uint32_t    color;           /* dot, label and stub colour (0 = CSS) */
 } Ca_NgPinDesc;
 
 typedef struct Ca_NgWireDesc {
@@ -136,7 +156,7 @@ typedef struct Ca_NgWireDesc {
     int         src_pin;         /* output pin index on source node */
     const char *dst_node;        /* key of the destination node */
     int         dst_pin;         /* input pin index on destination node */
-    uint32_t    color;           /* wire colour (0 = default) */
+    uint32_t    color;           /* wire colour (0 = .ca-ng-wire) */
 } Ca_NgWireDesc;
 
 /* ============================================================
@@ -158,6 +178,10 @@ CA_API Ca_NgNodeState *ca_node_graph_add_state(Ca_NodeGraph *ng,
                                                 const char *key,
                                                 float initial_x,
                                                 float initial_y);
+
+/* Frames every node in the canvas (zoom capped at 100%) on the next build
+   once the canvas has a laid-out size, and invalidates the host div. */
+CA_API void ca_node_graph_request_fit(Ca_NodeGraph *ng);
 
 /* Begin building the node graph canvas.
    host_div: the stable Ca_Div whose builder will be invalidated when node

@@ -40,3 +40,6 @@ void ca_widget_refresh_css(Ca_Node *node);
    source must be visible to ca_div_set_builder consumers subscribed via
    ca_get_scroll_y_signal, not just user-drag/wheel mutations. */
 void ca_node_sync_scroll_y_signal(Ca_Node *node);
+
+/** Publishes changed laid-out sizes to every size signal in win; may run builders. */
+void ca_window_sync_size_signals(Ca_Window *win);
