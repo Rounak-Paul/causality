@@ -869,8 +869,11 @@ static void layout_node(Ca_Node *node, float x, float y, float avail_w, float av
             const float authored_h = child->desc.height;
             const bool  authored_w_pct = child->desc.width_pct;
             const bool  authored_h_pct = child->desc.height_pct;
-            if (authored_w_pct) { child->desc.width  = cw; child->desc.width_pct  = false; }
-            if (authored_h_pct) { child->desc.height = ch; child->desc.height_pct = false; }
+            /* A main size changed by flex-grow/shrink is authoritative even
+               when the child authored an explicit size. */
+            const bool flexed = cm != child_hypo_main[i];
+            if (authored_w_pct || (is_row && flexed))  { child->desc.width  = cw; child->desc.width_pct  = false; }
+            if (authored_h_pct || (!is_row && flexed)) { child->desc.height = ch; child->desc.height_pct = false; }
             layout_node(child, cx, cy, cw, ch);
             child->desc.width      = authored_w;
             child->desc.height     = authored_h;

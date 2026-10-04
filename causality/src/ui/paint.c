@@ -796,21 +796,23 @@ static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, Cli
     case CA_WIDGET_SELECT: {
         Ca_Select *sel = (Ca_Select *)node->widget;
         if (!sel || !sel->in_use) break;
-        /* Current selection text */
-        if (sel->selected >= 0 && sel->selected < sel->option_count)
-            paint_text(win, font, node, sel->options[sel->selected], 0);
-        /* Down arrow indicator */
-        if (ca_window_reserve_draw_commands(win, (size_t)win->draw_cmd_count + 1u)) {
-            float asz = 6.0f;
-            Ca_DrawCmd *c = &win->draw_cmds[win->draw_cmd_count++];
-            memset(c, 0, sizeof(*c));
-            c->type = CA_DRAW_RECT;
-            c->x = node->x + node->w - asz - 6.0f;
-            c->y = node->y + (node->h - asz * 0.5f) * 0.5f;
-            c->w = asz; c->h = asz * 0.5f;
-            unpack_color(win_theme(win)->text_muted, &c->r, &c->g, &c->b, &c->a);
-            c->in_use = true;
+        /* The caret owns a square at the right edge; the selection text is
+           clipped to the space left of it so long values never spill out. */
+        const float caret_w = fminf(node->h, node->w);
+        if (sel->selected >= 0 && sel->selected < sel->option_count) {
+            Ca_Node text_n = *node;
+            text_n.w = node->w - caret_w;
+            text_n.desc.padding_right = 0.0f;
+            text_n.desc.overflow_x = 1;
+            paint_text(win, font, &text_n, sel->options[sel->selected], 0);
         }
+        Ca_Node caret_n = *node;
+        caret_n.x = node->x + node->w - caret_w;
+        caret_n.w = caret_w;
+        caret_n.desc.padding_left  = 0.0f;
+        caret_n.desc.padding_right = 0.0f;
+        caret_n.desc.text_align    = 1;
+        paint_text(win, font, &caret_n, CA_ICON_FA_CARET_DOWN, win_theme(win)->text_muted);
         /* Open dropdown overlay is painted in the overlay pass, not cached */
         break;
     }
