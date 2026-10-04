@@ -215,7 +215,9 @@ static bool test_scrollbar_paint_order(void)
     node.desc.overflow_y = 1;
 
     Ca_Instance instance = {0};
-    instance.theme = ca_theme_default();
+    instance.system_stylesheet = ca_style_create_system_stylesheet();
+    CHECK(instance.system_stylesheet);
+    ca_instance_resolve_palette(&instance);
     Ca_Window window = {0};
     window.instance = &instance;
     window.ui_scale = 1.0f;
@@ -229,6 +231,7 @@ static bool test_scrollbar_paint_order(void)
         CHECK(window.draw_cmds[i].z_index == 0);
     }
     ca_dyn_array_destroy(&window.draw_cmd_storage);
+    ca_css_destroy(instance.system_stylesheet);
     return true;
 }
 

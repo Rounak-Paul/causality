@@ -3293,7 +3293,7 @@ Ca_MenuBar *ca_menu_bar(const Ca_MenuBarDesc *desc)
         return mb;
     mb->menu_count = requested_menus;
 
-    /* Caller overrides; 0 resolves to the instance theme at paint time. */
+    /* Caller overrides; 0 resolves to the `--ca-*` palette at paint time. */
     mb->header_highlight = desc->header_highlight;
     mb->dropdown_bg      = desc->dropdown_bg;
     mb->dropdown_border  = desc->dropdown_border;

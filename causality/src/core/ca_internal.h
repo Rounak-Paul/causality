@@ -974,7 +974,7 @@ struct Ca_TabBar {
     Ca_DynArray   label_storage;
     Ca_OptionText *labels;
     Ca_DynArray   text_color_storage;
-    uint32_t     *text_colors;    /* CSS-resolved label colour per tab; 0 = theme */
+    uint32_t     *text_colors;    /* CSS-resolved label colour per tab; 0 = palette */
     int           count;
     int           active;
     Ca_TabFn      on_change;
@@ -1417,6 +1417,15 @@ typedef struct Ca_PopupEntry {
     void            *result_data;
 } Ca_PopupEntry;
 
+/* Resolved `--ca-*` palette for parts Causality paints itself; rebuilt from
+   CSS whenever styles refresh, so paint never resolves variables per draw.
+   Colors are packed RRGGBBAA. */
+typedef struct Ca_Palette {
+    uint32_t bg_void, bg_base, bg_elevated, bg_surface, bg_overlay, separator;
+    uint32_t text_bright, text_medium, text_muted, text_dim;
+    uint32_t accent, on_accent, success, warning, danger, on_danger;
+} Ca_Palette;
+
 struct Ca_Instance {
     struct Ca_Reactive *reactive;
     Ca_Pool windows;
@@ -1486,7 +1495,7 @@ struct Ca_Instance {
     /* System defaults are instance-owned; author stylesheet is borrowed. */
     struct Ca_Stylesheet *system_stylesheet;
     struct Ca_Stylesheet *stylesheet;
-    Ca_Theme theme;
+    Ca_Palette palette;
 
     /* Background fallback for windows without a per-window override. */
     Ca_BgRenderFn default_bg_render_fn;

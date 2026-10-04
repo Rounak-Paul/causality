@@ -52,15 +52,45 @@ static bool test_set_color_var(void)
     return true;
 }
 
-/** The built-in palette is fully populated with distinct depth levels. */
-static bool test_default_theme(void)
+/** The built-in `--ca-*` palette is fully populated with distinct depth levels. */
+static bool test_default_palette(void)
 {
-    const Ca_Theme t = ca_theme_default();
-    CHECK(t.bg_base && t.bg_elevated && t.bg_surface && t.bg_overlay);
-    CHECK(t.text_bright && t.text_medium && t.text_muted && t.text_dim);
-    CHECK(t.accent && t.on_accent && t.success && t.warning && t.danger && t.on_danger);
-    CHECK(t.bg_base != t.bg_surface && t.bg_surface != t.bg_overlay);
-    CHECK(t.text_bright != t.text_medium && t.text_medium != t.text_muted && t.text_muted != t.text_dim);
+    Ca_Instance instance = {0};
+    instance.system_stylesheet = ca_style_create_system_stylesheet();
+    CHECK(instance.system_stylesheet);
+    ca_instance_resolve_palette(&instance);
+    const Ca_Palette *p = &instance.palette;
+    CHECK(p->bg_void && p->bg_base && p->bg_elevated && p->bg_surface && p->bg_overlay && p->separator);
+    CHECK(p->text_bright && p->text_medium && p->text_muted && p->text_dim);
+    CHECK(p->accent && p->on_accent && p->success && p->warning && p->danger && p->on_danger);
+    CHECK(p->bg_base != p->bg_surface && p->bg_surface != p->bg_overlay);
+    CHECK(p->text_bright != p->text_medium && p->text_medium != p->text_muted && p->text_muted != p->text_dim);
+    ca_css_destroy(instance.system_stylesheet);
+    return true;
+}
+
+/** App `:root` variables override library defaults everywhere, including through var() chains. */
+static bool test_author_vars_override_defaults(void)
+{
+    Ca_Instance instance = {0};
+    instance.system_stylesheet = ca_style_create_system_stylesheet();
+    instance.stylesheet = ca_css_parse(":root { --brand: #123456; --ca-accent: var(--brand); }");
+    CHECK(instance.system_stylesheet && instance.stylesheet);
+    ca_instance_resolve_palette(&instance);
+    CHECK(instance.palette.accent == 0x123456ffu);
+    CHECK(instance.palette.bg_base == 0x0d0d0dffu);
+
+    const Ca_VarScope scope = { { instance.stylesheet, instance.system_stylesheet }, 2 };
+    CHECK(ca_style_lookup_var(&scope, "--ca-accent").color == 0x123456ffu);
+    CHECK(ca_style_lookup_var(&scope, "--missing").type == CA_CSS_VAL_NONE);
+
+    Ca_Stylesheet *loop = ca_css_parse(":root { --a: var(--b); --b: var(--a); }");
+    const Ca_VarScope loop_scope = { { loop }, 1 };
+    CHECK(ca_style_lookup_var(&loop_scope, "--a").type == CA_CSS_VAL_NONE);
+
+    ca_css_destroy(loop);
+    ca_css_destroy(instance.stylesheet);
+    ca_css_destroy(instance.system_stylesheet);
     return true;
 }
 
@@ -91,8 +121,9 @@ static bool test_border_shorthand_resets_sides(void)
 int main(void)
 {
     if (!test_set_color_var()) return 1;
-    if (!test_default_theme()) return 1;
+    if (!test_default_palette()) return 1;
+    if (!test_author_vars_override_defaults()) return 1;
     if (!test_border_shorthand_resets_sides()) return 1;
-    printf("causality_theme_tests passed\n");
+    printf("causality_style_tests passed\n");
     return 0;
 }

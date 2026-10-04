@@ -85,10 +85,10 @@ Ca_Instance *ca_instance_create(const Ca_InstanceDesc *desc)
         return NULL;
     }
 
-    inst->theme = ca_theme_default();
-    inst->system_stylesheet = ca_style_create_system_stylesheet(&inst->theme);
+    inst->system_stylesheet = ca_style_create_system_stylesheet();
     if (!inst->system_stylesheet)
         fprintf(stderr, "[causality] warning: failed to load system styles\n");
+    ca_instance_resolve_palette(inst);
 
     printf("[causality] instance created (%s)\n",
            desc && desc->app_name ? desc->app_name : "unnamed");
@@ -273,6 +273,7 @@ void ca_instance_set_stylesheet(Ca_Instance *instance, Ca_Stylesheet *ss)
 {
     if (!instance) return;
     instance->stylesheet = ss;
+    ca_instance_resolve_palette(instance);
 }
 
 Ca_Stylesheet *ca_instance_stylesheet(const Ca_Instance *instance)
@@ -284,6 +285,7 @@ Ca_Stylesheet *ca_instance_stylesheet(const Ca_Instance *instance)
 void ca_instance_refresh_styles(Ca_Instance *instance)
 {
     if (!instance || (!instance->system_stylesheet && !instance->stylesheet)) return;
+    ca_instance_resolve_palette(instance);
     for (size_t wi = 0; wi < ca_pool_slot_count(&instance->windows); ++wi) {
         Ca_Window *window = CA_POOL_AT(instance->windows, Ca_Window, wi);
         if (!window->in_use || ca_pool_slot_count(&window->node_pool) == 0)

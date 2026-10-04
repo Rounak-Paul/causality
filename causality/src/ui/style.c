@@ -9,6 +9,13 @@
 #include <ctype.h>
 
 static const char CA_SYSTEM_STYLES_CSS[] =
+    ":root {"
+    "  --ca-bg-void: #242424; --ca-bg-base: #0d0d0d; --ca-bg-elevated: #191919;"
+    "  --ca-bg-surface: #272727; --ca-bg-overlay: #444444; --ca-separator: #363636;"
+    "  --ca-text-bright: #d9d9d9; --ca-text-medium: #bebebe; --ca-text-muted: #989898; --ca-text-dim: #7c7c7c;"
+    "  --ca-accent: #999999; --ca-on-accent: #0d0d0d;"
+    "  --ca-success: #80b380; --ca-warning: #ccb366; --ca-danger: #cc6666; --ca-on-danger: #0d0d0d;"
+    "}"
     "hr { background: var(--ca-bg-surface); }"
     "select { background: var(--ca-bg-base); }"
     "tab { padding: 0px 8px; text-align: center; color: var(--ca-text-dim); }"
@@ -27,34 +34,9 @@ static const char CA_SYSTEM_STYLES_CSS[] =
     ".ca-overlay-hover { background: var(--ca-bg-surface); border-radius: 3px; }"
     ".ca-overlay-selected { background: var(--ca-bg-overlay); color: var(--ca-text-bright); }";
 
-void ca_style_apply_theme(Ca_Stylesheet *system, const Ca_Theme *theme)
+Ca_Stylesheet *ca_style_create_system_stylesheet(void)
 {
-    const struct { const char *name; uint32_t color; } vars[] = {
-        { "--ca-bg-void",     theme->bg_void },
-        { "--ca-bg-base",     theme->bg_base },
-        { "--ca-bg-elevated", theme->bg_elevated },
-        { "--ca-bg-surface",  theme->bg_surface },
-        { "--ca-bg-overlay",  theme->bg_overlay },
-        { "--ca-separator",   theme->separator },
-        { "--ca-text-bright", theme->text_bright },
-        { "--ca-text-medium", theme->text_medium },
-        { "--ca-text-muted",  theme->text_muted },
-        { "--ca-text-dim",    theme->text_dim },
-        { "--ca-accent",      theme->accent },
-        { "--ca-success",     theme->success },
-        { "--ca-warning",     theme->warning },
-        { "--ca-danger",      theme->danger },
-        { "--ca-on-danger",   theme->on_danger },
-    };
-    for (size_t i = 0; i < sizeof(vars) / sizeof(vars[0]); ++i)
-        ca_css_set_color_var(system, vars[i].name, vars[i].color);
-}
-
-Ca_Stylesheet *ca_style_create_system_stylesheet(const Ca_Theme *theme)
-{
-    Ca_Stylesheet *system = ca_css_parse(CA_SYSTEM_STYLES_CSS);
-    if (system) ca_style_apply_theme(system, theme);
-    return system;
+    return ca_css_parse(CA_SYSTEM_STYLES_CSS);
 }
 
 /* ============================================================
@@ -580,33 +562,40 @@ static float css_val_to_px(const Ca_CssValue *v)
     return 0.0f;
 }
 
-/* Resolve a CSS value, substituting var() against the stylesheet's vars. */
-static Ca_CssValue resolve_value(const Ca_Stylesheet *ss, const Ca_CssValue *in)
+static const Ca_CssValue *find_root_var(const Ca_Stylesheet *ss, const char *name)
+{
+    for (int i = 0; i < ss->var_count; ++i)
+        if (strcmp(ss->vars[i].name, name) == 0) return &ss->vars[i].value;
+    return NULL;
+}
+
+/* Bounds var() chains so a self-referencing variable cannot loop. */
+#define CA_VAR_MAX_DEPTH 8
+
+Ca_CssValue ca_style_lookup_var(const Ca_VarScope *scope, const char *name)
+{
+    Ca_CssValue none = {0};
+    for (int depth = 0; name && depth < CA_VAR_MAX_DEPTH; ++depth) {
+        const Ca_Stylesheet *owner = NULL;
+        const Ca_CssValue *value = NULL;
+        for (int i = 0; i < scope->count && !value; ++i) {
+            if (!scope->sheets[i]) continue;
+            value = find_root_var(scope->sheets[i], name);
+            owner = scope->sheets[i];
+        }
+        if (!value) return none;
+        if (value->type != CA_CSS_VAL_VAR) return *value;
+        name = ca_css_str(owner, value->keyword);
+    }
+    return none;
+}
+
+/* Resolve a declaration value, substituting var() through the whole scope. */
+static Ca_CssValue resolve_value(const Ca_VarScope *scope, const Ca_Stylesheet *ss,
+                                 const Ca_CssValue *in)
 {
     if (in->type != CA_CSS_VAL_VAR) return *in;
-    if (!ss) { Ca_CssValue z = {0}; return z; }
-    const char *name = ca_css_str(ss, in->keyword);
-    if (!name) { Ca_CssValue z = {0}; return z; }
-    for (int i = 0; i < ss->var_count; ++i) {
-        if (strcmp(ss->vars[i].name, name) == 0) {
-            /* The variable's value itself could be a var() — follow one
-               level of indirection to keep things bounded. */
-            const Ca_CssValue *v = &ss->vars[i].value;
-            if (v->type == CA_CSS_VAL_VAR) {
-                const char *n2 = ca_css_str(ss, v->keyword);
-                if (n2) {
-                    for (int j = 0; j < ss->var_count; ++j) {
-                        if (strcmp(ss->vars[j].name, n2) == 0)
-                            return ss->vars[j].value;
-                    }
-                }
-                Ca_CssValue z = {0}; return z;
-            }
-            return *v;
-        }
-    }
-    Ca_CssValue z = {0};
-    return z;
+    return ca_style_lookup_var(scope, ca_css_str(ss, in->keyword));
 }
 
 /* Applies one already-resolved (var()-expanded) CSS declaration to a
@@ -979,6 +968,7 @@ void ca_style_apply_one_declaration(Ca_ResolvedStyle *out, Ca_CssPropId prop,
 
 /* Resolve one cascade origin, optionally preserving an earlier origin. */
 static void style_resolve_sheet(Ca_Stylesheet *ss,
+                                const Ca_VarScope *scope,
                                 Ca_Node *node,
                                 Ca_ElementType elem_type,
                                 const char *classes,
@@ -1033,7 +1023,7 @@ static void style_resolve_sheet(Ca_Stylesheet *ss,
                 (pass == 1 && !decl->important))
                 continue;
             Ca_CssPropId prop = decl->prop;
-            Ca_CssValue resolved = resolve_value(ss, &decl->value);
+            Ca_CssValue resolved = resolve_value(scope, ss, &decl->value);
             const Ca_CssValue *val = &resolved;
 
             if (val->type == CA_CSS_VAL_NONE) continue;
@@ -1055,6 +1045,7 @@ void ca_style_resolve_layers(Ca_Stylesheet *defaults,
     Ca_Stylesheet *scoped = NULL;
     for (Ca_Node *ancestor = node; ancestor && !scoped; ancestor = ancestor->parent)
         scoped = ancestor->scoped_stylesheet;
+    const Ca_VarScope scope = { { scoped, author, defaults }, 3 };
     /* Per-node resolved-style cache: if this node's classes and
        hover/active/focus/focus_within/disabled state are identical to the
        previous call, and neither stylesheet has a position-dependent
@@ -1092,9 +1083,9 @@ void ca_style_resolve_layers(Ca_Stylesheet *defaults,
             return;
         }
 
-        style_resolve_sheet(defaults, node, elem_type, classes, out, true);
-        style_resolve_sheet(author, node, elem_type, classes, out, false);
-        style_resolve_sheet(scoped, node, elem_type, classes, out, false);
+        style_resolve_sheet(defaults, &scope, node, elem_type, classes, out, true);
+        style_resolve_sheet(author, &scope, node, elem_type, classes, out, false);
+        style_resolve_sheet(scoped, &scope, node, elem_type, classes, out, false);
 
         if (cacheable) {
             node->style_cache               = *out;
@@ -1113,9 +1104,9 @@ void ca_style_resolve_layers(Ca_Stylesheet *defaults,
         return;
     }
 
-    style_resolve_sheet(defaults, node, elem_type, classes, out, true);
-    style_resolve_sheet(author, node, elem_type, classes, out, false);
-    style_resolve_sheet(scoped, node, elem_type, classes, out, false);
+    style_resolve_sheet(defaults, &scope, node, elem_type, classes, out, true);
+    style_resolve_sheet(author, &scope, node, elem_type, classes, out, false);
+    style_resolve_sheet(scoped, &scope, node, elem_type, classes, out, false);
 }
 
 /* ============================================================

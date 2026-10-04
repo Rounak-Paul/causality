@@ -10,7 +10,6 @@
 #include "ca_array.h"
 #include "ca_icons.h"
 #include "ca_reactive.h"
-#include "ca_theme.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -931,7 +930,7 @@ typedef struct Ca_BtnDesc {
 /* <hr> — horizontal rule / separator. */
 typedef struct Ca_HrDesc {
     float    thickness;            /* default 1                             */
-    uint32_t color;                /* 0 = theme surface (via CSS)           */
+    uint32_t color;                /* 0 = --ca-bg-surface (via CSS)         */
     const char *id;                /* CSS id  (without #)                   */
     const char *style;             /* space-separated CSS class names       */
 } Ca_HrDesc;
@@ -1383,18 +1382,6 @@ CA_API void ca_instance_refresh_styles(Ca_Instance *instance);
  * live nodes.
  */
 CA_API bool ca_css_set_color_var(Ca_Stylesheet *ss, const char *name, uint32_t color);
-
-/* Built-in dark palette every new instance starts with. */
-CA_API Ca_Theme ca_theme_default(void);
-
-/* Current palette of the instance. */
-CA_API const Ca_Theme *ca_instance_theme(const Ca_Instance *instance);
-
-/*
- * Replace the instance palette and restyle every live node: Causality's
- * system stylesheet, widget defaults and popups all follow the new colors.
- */
-CA_API void ca_instance_set_theme(Ca_Instance *instance, const Ca_Theme *theme);
 
 /* The GPU resource accessors (ca_gpu_*) and ca_shader_compile expose Vulkan
    types and therefore live in <ca_gpu.h> — the native graphics integration

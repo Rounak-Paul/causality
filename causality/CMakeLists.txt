@@ -194,20 +194,20 @@ if(BUILD_TESTING)
     target_link_libraries(causality_storage_tests PRIVATE causality)
     add_test(NAME causality_storage_tests COMMAND causality_storage_tests)
 
-    add_executable(causality_theme_tests tests/ca_theme_tests.c)
-    target_include_directories(causality_theme_tests PRIVATE
+    add_executable(causality_style_tests tests/ca_style_tests.c)
+    target_include_directories(causality_style_tests PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${CMAKE_CURRENT_SOURCE_DIR}/src/core
         ${CMAKE_CURRENT_SOURCE_DIR}/src/ui
     )
-    target_compile_definitions(causality_theme_tests PRIVATE causality_EXPORTS)
-    target_link_libraries(causality_theme_tests PRIVATE
+    target_compile_definitions(causality_style_tests PRIVATE causality_EXPORTS)
+    target_link_libraries(causality_style_tests PRIVATE
         causality
         Vulkan::Vulkan
         VulkanMemoryAllocator
         glfw
     )
-    add_test(NAME causality_theme_tests COMMAND causality_theme_tests)
+    add_test(NAME causality_style_tests COMMAND causality_style_tests)
 
     add_executable(causality_input_capture_tests tests/ca_input_capture_tests.c)
     target_include_directories(causality_input_capture_tests PRIVATE

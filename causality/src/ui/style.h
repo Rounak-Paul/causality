@@ -71,13 +71,25 @@ typedef enum {
 /** Get element type name string for CSS selector matching. */
 const char *ca_elem_type_name(Ca_ElementType type);
 
-/** Create the Causality-owned lower-priority system chrome stylesheet,
-    colored from @p theme.
+/** Create the Causality-owned lower-priority system stylesheet, including
+    the `:root` `--ca-*` default palette.
     @return Parsed stylesheet owned by the caller, or NULL on failure. */
-Ca_Stylesheet *ca_style_create_system_stylesheet(const Ca_Theme *theme);
+Ca_Stylesheet *ca_style_create_system_stylesheet(void);
 
-/** Rewrite the system stylesheet's `--ca-*` color variables from @p theme. */
-void ca_style_apply_theme(Ca_Stylesheet *system, const Ca_Theme *theme);
+/** Stylesheets whose `:root` custom properties are visible to var(), in
+    priority order (first match wins). NULL entries are skipped. */
+typedef struct Ca_VarScope {
+    const Ca_Stylesheet *sheets[3];
+    int                  count;
+} Ca_VarScope;
+
+/** Resolve custom property @p name (with leading dashes) through @p scope,
+    following var() chains. Returns a CA_CSS_VAL_NONE value when undefined. */
+Ca_CssValue ca_style_lookup_var(const Ca_VarScope *scope, const char *name);
+
+/** Rebuild @p instance's palette from the `--ca-*` variables visible through
+    its author and system stylesheets. */
+void ca_instance_resolve_palette(Ca_Instance *instance);
 
 /** Resolve system defaults followed by author CSS.
     Author declarations override matching default declarations regardless of
