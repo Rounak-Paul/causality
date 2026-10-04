@@ -35,8 +35,10 @@ bounded text value.
 - Windows own retained dynamic draw, sort, paint-cache, layout, geometry,
   keyboard, character, and focus-navigation buffers. Per-node child and
   transition storage also grows on demand.
-- The reactive runtime owns dynamic dependency/subscriber lists, pending and
-  frame-effect queues, tracking stacks, and stable signal/effect pools.
+- Each instance lazily owns its reactive runtime, including dependency/subscriber
+  lists, preallocated notification queues, frame registrations, tracking stacks,
+  and stable signal/effect pools. Callback lifetime and public contracts are
+  documented in `.context/reactive-lifecycle.md` and `docs/reactivity.md`.
 - Events use double-buffered dynamic queues, so producers may post during
   dispatch without a fixed event-loss ceiling.
 - Menus, popups, tabs, selects, tables, node-graph state, and application menu

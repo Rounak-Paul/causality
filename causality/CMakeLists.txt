@@ -152,6 +152,26 @@ if(BUILD_TESTING)
     # so they need causality_EXPORTS too — the same "export" resolution as
     # causality's own build, not the dllimport a real external DLL consumer
     # would see (there's no DLL boundary here to import across).
+    add_executable(causality_reactive_tests
+        tests/ca_reactive_tests.c
+        src/reactive/signal.c
+        src/core/ca_alloc.c
+        src/core/ca_array.c
+        src/core/ca_pool.c
+    )
+    target_precompile_headers(causality_reactive_tests PRIVATE src/pch.h)
+    target_include_directories(causality_reactive_tests PRIVATE
+        include src/core
+    )
+    target_compile_definitions(causality_reactive_tests PRIVATE
+        causality_EXPORTS
+        $<$<CONFIG:Debug>:CAUSALITY_VULKAN_VALIDATION>
+    )
+    target_link_libraries(causality_reactive_tests PRIVATE
+        Vulkan::Vulkan VulkanMemoryAllocator glfw
+    )
+    add_test(NAME causality_reactive_tests COMMAND causality_reactive_tests)
+
     add_executable(causality_array_tests
         tests/ca_array_tests.c
         src/core/ca_alloc.c

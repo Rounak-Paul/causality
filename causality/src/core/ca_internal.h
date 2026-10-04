@@ -1420,6 +1420,7 @@ typedef struct Ca_PopupEntry {
 } Ca_PopupEntry;
 
 struct Ca_Instance {
+    struct Ca_Reactive *reactive;
     Ca_Pool windows;
 
     /* Popup manager (reserved-window control) */

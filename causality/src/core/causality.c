@@ -11,10 +11,8 @@
 #include "widget.h"
 #include "../renderer/shader_cache.h"
 
-/* Forward decls into the reactive subsystem (src/reactive/signal.c). */
-void ca_reactive_flush(Ca_Instance *inst);
-void ca_reactive_run_frame_effects(Ca_Instance *inst);
-void ca_reactive_release_instance(Ca_Instance *inst);
+#include "../reactive/reactive.h"
+
 bool ca_popup_system_init(Ca_Instance *inst);
 void ca_popup_system_tick(Ca_Instance *inst);
 void ca_popup_system_shutdown(Ca_Instance *inst);
@@ -117,7 +115,7 @@ void ca_instance_destroy(Ca_Instance *instance)
     ca_pool_destroy(&instance->windows, NULL, NULL);
     ca_ui_shutdown(instance);
     ca_event_shutdown(instance);
-    ca_reactive_release_instance(instance);
+    ca_reactive_shutdown(instance);
     ca_css_destroy(instance->system_stylesheet);
     CA_FREE(instance);
     printf("[causality] instance destroyed\n");
