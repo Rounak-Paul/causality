@@ -1794,8 +1794,11 @@ static void paint_text(Ca_Window *win, Ca_Font *font,
         }
     }
 
+    /* Center text in the padded content box. Unequal vertical padding can
+       then position a glyph within a fixed-height control without moving
+       the control's background or hit area. */
     float baseline_logical =
-        node->y + node->h * 0.5f
+        node->y + (node->h + node->desc.padding_top - node->desc.padding_bottom) * 0.5f
         + (tier->ascent * metric_scale + tier->descent * metric_scale) * 0.5f;
     float left_logical;
     if (text_w > node->w) {
