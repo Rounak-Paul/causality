@@ -38,7 +38,7 @@ endif()
 # meaning every profiled number included full validation overhead baked into
 # every CPU-side render-graph timing, with no way to isolate real cost from
 # validation cost. Compiled out entirely in Release, as before.
-target_compile_definitions(causality PRIVATE
+target_compile_definitions(causality PUBLIC
     $<$<CONFIG:Debug>:CAUSALITY_VULKAN_VALIDATION>
 )
 
@@ -56,10 +56,6 @@ find_library(SHADERC_LIB
     HINTS
         "${_VULKAN_SDK_HINT}/lib"
         "${_VULKAN_SDK_HINT}/Lib"
-    PATHS
-        /usr/local/lib
-        /usr/lib/x86_64-linux-gnu
-        /usr/lib/aarch64-linux-gnu
     REQUIRED)
 message(STATUS "shaderc_combined: ${SHADERC_LIB}")
 
@@ -68,9 +64,6 @@ find_path(SHADERC_INCLUDE
     HINTS
         "${_VULKAN_SDK_HINT}/include"
         "${_VULKAN_SDK_HINT}/Include"
-    PATHS
-        /usr/local/include
-        /usr/include
     REQUIRED)
 
 target_include_directories(causality
@@ -110,20 +103,20 @@ elseif(WIN32)
 else()
     # Linux: VMA needs C++ stdlib; dl/m for dlopen/math
     find_package(X11 REQUIRED)
-    target_link_libraries(causality PUBLIC stdc++ dl m)
-    target_link_libraries(causality PRIVATE X11::X11)
+    target_link_libraries(causality PUBLIC dl m)
+    target_include_directories(causality PRIVATE ${X11_INCLUDE_DIR})
 
     # The system shaderc_combined.a does not bundle glslang/spirv-tools;
     # causality links it PRIVATE, so every consumer of the static causality
     # archive (including its own test executables below) needs these
     # symbols supplied again at final link time.
-    find_library(GLSLANG_LIB           NAMES glslang            PATHS /usr/lib/x86_64-linux-gnu /usr/lib/aarch64-linux-gnu REQUIRED)
-    find_library(GLSLANG_MACHIND_LIB   NAMES MachineIndependent PATHS /usr/lib/x86_64-linux-gnu /usr/lib/aarch64-linux-gnu REQUIRED)
-    find_library(GLSLANG_OSDEP_LIB     NAMES OSDependent        PATHS /usr/lib/x86_64-linux-gnu /usr/lib/aarch64-linux-gnu REQUIRED)
-    find_library(GLSLANG_GENCG_LIB     NAMES GenericCodeGen     PATHS /usr/lib/x86_64-linux-gnu /usr/lib/aarch64-linux-gnu REQUIRED)
-    find_library(SPIRV_LIB             NAMES SPIRV              PATHS /usr/lib/x86_64-linux-gnu /usr/lib/aarch64-linux-gnu REQUIRED)
-    find_library(SPIRVTOOLS_OPT_LIB    NAMES SPIRV-Tools-opt    PATHS /usr/lib/x86_64-linux-gnu /usr/lib/aarch64-linux-gnu REQUIRED)
-    find_library(SPIRVTOOLS_BASE_LIB   NAMES SPIRV-Tools        PATHS /usr/lib/x86_64-linux-gnu /usr/lib/aarch64-linux-gnu REQUIRED)
+    find_library(GLSLANG_LIB NAMES glslang REQUIRED)
+    find_library(GLSLANG_MACHIND_LIB NAMES MachineIndependent REQUIRED)
+    find_library(GLSLANG_OSDEP_LIB NAMES OSDependent REQUIRED)
+    find_library(GLSLANG_GENCG_LIB NAMES GenericCodeGen REQUIRED)
+    find_library(SPIRV_LIB NAMES SPIRV REQUIRED)
+    find_library(SPIRVTOOLS_OPT_LIB NAMES SPIRV-Tools-opt REQUIRED)
+    find_library(SPIRVTOOLS_BASE_LIB NAMES SPIRV-Tools REQUIRED)
     target_link_libraries(causality PUBLIC
         ${GLSLANG_LIB} ${GLSLANG_MACHIND_LIB} ${GLSLANG_OSDEP_LIB}
         ${GLSLANG_GENCG_LIB} ${SPIRV_LIB} ${SPIRVTOOLS_OPT_LIB} ${SPIRVTOOLS_BASE_LIB}

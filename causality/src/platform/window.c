@@ -17,6 +17,55 @@
 #if defined(__linux__)
 #include <GLFW/glfw3native.h>
 #include <X11/Xatom.h>
+#include <dlfcn.h>
+
+/* libX11 is loaded on demand, like GLFW does, so the binary has no load-time
+   X11 dependency and still starts on Wayland-only systems. */
+#define CA_X11_FUNCS(X) \
+    X(XAllocNamedColor) X(XCreateWindow) X(XDestroyWindow) X(XFlush) X(XFree) \
+    X(XGetWindowProperty) X(XInternAtom) X(XMapRaised) X(XMoveResizeWindow) \
+    X(XQueryPointer) X(XUnmapWindow)
+
+static struct {
+#define X(fn) __typeof__(fn) *fn;
+    CA_X11_FUNCS(X)
+#undef X
+} s_x11;
+
+static bool ca_x11_ready(void)
+{
+    static int state;
+    if (state) return state > 0;
+    state = -1;
+    void *lib = dlopen("libX11.so.6", RTLD_NOW | RTLD_LOCAL);
+    if (!lib) return false;
+#define X(fn) *(void **)&s_x11.fn = dlsym(lib, #fn);
+    CA_X11_FUNCS(X)
+#undef X
+#define X(fn) if (!s_x11.fn) { dlclose(lib); return false; }
+    CA_X11_FUNCS(X)
+#undef X
+    state = 1;
+    return true;
+}
+
+#define XAllocNamedColor s_x11.XAllocNamedColor
+#define XCreateWindow s_x11.XCreateWindow
+#define XDestroyWindow s_x11.XDestroyWindow
+#define XFlush s_x11.XFlush
+#define XFree s_x11.XFree
+#define XGetWindowProperty s_x11.XGetWindowProperty
+#define XInternAtom s_x11.XInternAtom
+#define XMapRaised s_x11.XMapRaised
+#define XMoveResizeWindow s_x11.XMoveResizeWindow
+#define XQueryPointer s_x11.XQueryPointer
+#define XUnmapWindow s_x11.XUnmapWindow
+
+static Display *ca_x11_display(void)
+{
+    if (glfwGetPlatform() != GLFW_PLATFORM_X11 || !ca_x11_ready()) return NULL;
+    return glfwGetX11Display();
+}
 #endif
 
 #if defined(_WIN32)
@@ -121,15 +170,9 @@ static void resize_preview_destroy(void)
 static Window s_resize_preview_edges[4] = {0};
 static unsigned long s_resize_preview_pixel = 0;
 
-static Display *resize_preview_x11_display(void)
-{
-    if (glfwGetPlatform() != GLFW_PLATFORM_X11) return NULL;
-    return glfwGetX11Display();
-}
-
 static bool resize_preview_ensure(void)
 {
-    Display *display = resize_preview_x11_display();
+    Display *display = ca_x11_display();
     if (!display) return false;
 
     int screen = DefaultScreen(display);
@@ -164,7 +207,7 @@ static bool resize_preview_ensure(void)
 
 static void resize_preview_show(int x, int y, int w, int h)
 {
-    Display *display = resize_preview_x11_display();
+    Display *display = ca_x11_display();
     if (!display || !resize_preview_ensure()) return;
     if (w < 1) w = 1;
     if (h < 1) h = 1;
@@ -189,7 +232,7 @@ static void resize_preview_show(int x, int y, int w, int h)
 
 static void resize_preview_hide(void)
 {
-    Display *display = resize_preview_x11_display();
+    Display *display = ca_x11_display();
     if (!display) return;
     for (int i = 0; i < 4; ++i) {
         if (s_resize_preview_edges[i])
@@ -200,7 +243,7 @@ static void resize_preview_hide(void)
 
 static void resize_preview_destroy(void)
 {
-    Display *display = resize_preview_x11_display();
+    Display *display = ca_x11_display();
     if (!display) return;
     for (int i = 0; i < 4; ++i) {
         if (!s_resize_preview_edges[i]) continue;
@@ -550,8 +593,8 @@ static bool window_workarea_for_rect(int win_x, int win_y, int win_w, int win_h,
     }
 
 #if defined(__linux__)
-    if (glfwGetPlatform() == GLFW_PLATFORM_X11) {
-        Display *display = glfwGetX11Display();
+    {
+        Display *display = ca_x11_display();
         if (display) {
             Window root = DefaultRootWindow(display);
             Atom workarea_atom = XInternAtom(display, "_NET_WORKAREA", True);
@@ -1124,14 +1167,13 @@ bool ca_window_left_button_held(Ca_Window *win)
 #elif defined(_WIN32)
     return (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
 #elif defined(__linux__)
-    if (glfwGetPlatform() == GLFW_PLATFORM_X11) {
-        Display *display = glfwGetX11Display();
+    Display *display = ca_x11_display();
+    if (display) {
         Window root = DefaultRootWindow(display);
         Window root_return, child_return;
         int root_x, root_y, win_x, win_y;
         unsigned int mask = 0;
-        if (display &&
-            XQueryPointer(display, root, &root_return, &child_return,
+        if (XQueryPointer(display, root, &root_return, &child_return,
                           &root_x, &root_y, &win_x, &win_y, &mask)) {
             return (mask & Button1Mask) != 0;
         }
@@ -1167,25 +1209,15 @@ void ca_window_cursor_screen_pos(Ca_Window *win, double *out_x, double *out_y)
         sy = (double)wy + cy;
     }
 #elif defined(__linux__)
-    if (glfwGetPlatform() == GLFW_PLATFORM_X11) {
-        Display *display = glfwGetX11Display();
-        Window root = DefaultRootWindow(display);
-        Window root_return, child_return;
-        int root_x, root_y, win_x, win_y;
-        unsigned int mask = 0;
-        if (display &&
-            XQueryPointer(display, root, &root_return, &child_return,
-                          &root_x, &root_y, &win_x, &win_y, &mask)) {
-            sx = (double)root_x;
-            sy = (double)root_y;
-        } else {
-            int wx = 0, wy = 0;
-            double cx = 0.0, cy = 0.0;
-            glfwGetWindowPos(win->glfw, &wx, &wy);
-            glfwGetCursorPos(win->glfw, &cx, &cy);
-            sx = (double)wx + cx;
-            sy = (double)wy + cy;
-        }
+    Display *display = ca_x11_display();
+    Window root_return, child_return;
+    int root_x, root_y, win_x, win_y;
+    unsigned int mask = 0;
+    if (display &&
+        XQueryPointer(display, DefaultRootWindow(display), &root_return, &child_return,
+                      &root_x, &root_y, &win_x, &win_y, &mask)) {
+        sx = (double)root_x;
+        sy = (double)root_y;
     } else {
         int wx = 0, wy = 0;
         double cx = 0.0, cy = 0.0;
