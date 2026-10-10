@@ -29,7 +29,6 @@
 #include <assert.h>
 
 #define TITLE_BAR_DEFAULT_HEIGHT_PX 30.0f
-#define TITLE_BAR_SIDE_PADDING_PX 8.0f
 
 /* Apply layered system and author styles to a system-owned node. */
 static void apply_system_style(Ca_Node *node, Ca_ElementType type,
@@ -59,8 +58,8 @@ static void apply_system_style(Ca_Node *node, Ca_ElementType type,
     ca_style_apply_to_node(&resolved, &node->desc, NULL);
 }
 
-/* Restyle the title bar strip. Its logical height comes from the
-   `.ca-titlebar` height declaration, falling back to the default. */
+/* Restyle the title bar strip. Its logical height and side insets come
+   from the `.ca-titlebar` declarations; height falls back to the default. */
 static void title_bar_apply_style(Ca_Window *win)
 {
     Ca_Node *tb = win->title_bar_node;
@@ -71,8 +70,8 @@ static void title_bar_apply_style(Ca_Window *win)
                              : TITLE_BAR_DEFAULT_HEIGHT_PX;
     tb->desc.height        = height * sc;
     tb->desc.height_pct    = false;
-    tb->desc.padding_left  = TITLE_BAR_SIDE_PADDING_PX * sc;
-    tb->desc.padding_right = TITLE_BAR_SIDE_PADDING_PX * sc;
+    tb->desc.padding_left  *= sc;
+    tb->desc.padding_right *= sc;
     tb->dirty |= CA_DIRTY_LAYOUT;
 }
 
