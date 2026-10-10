@@ -238,6 +238,15 @@ typedef struct Ca_WindowDesc {
     /* Optional veto invoked when the window is asked to close (close button,
        ca_window_close). Return false to keep the window open. */
     bool      (*on_close_request)(Ca_Window *window, void *user_data);
+    /* Use the operating system's window frame (title bar, border, resize
+       handles) instead of the borderless window whose chrome the caller
+       draws. Default false. */
+    bool        native_frame;
+    /* With native_frame: let the user resize the window. */
+    bool        resizable;
+    /* Cover the primary monitor at its current video mode. Implies
+       native_frame; width and height are ignored. */
+    bool        fullscreen;
 } Ca_WindowDesc;
 
 /*

@@ -466,6 +466,9 @@ static bool create_logical_device(Ca_Instance *inst)
             .samplerAnisotropy = VK_TRUE,
             .fillModeNonSolid  = VK_TRUE,
             .multiDrawIndirect = VK_TRUE,
+            /* Block-compressed (BC4/5/7) sampled textures; consumers query
+               format support per format, so this stays optional. */
+            .textureCompressionBC = available.features.textureCompressionBC,
             /* Required for imageAtomicOr on a storage image bound in the
                fragment stage — the standard fragment-shader voxelization
                technique (rasterize triangles, atomic-write occupancy). */

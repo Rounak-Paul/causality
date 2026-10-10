@@ -844,8 +844,10 @@ static Ca_Window *window_create_in_pool(Ca_Instance *inst,
        borderless window causes the OS to intercept edge drags and run its own
        resize loop, swallowing the mouseUp and leaving mouse state permanently
        stuck. */
-    glfwWindowHint(GLFW_DECORATED,  GLFW_FALSE);
-    glfwWindowHint(GLFW_RESIZABLE,  GLFW_FALSE);
+    const bool native_frame = desc->native_frame || desc->fullscreen;
+    glfwWindowHint(GLFW_DECORATED,  native_frame && !desc->fullscreen ? GLFW_TRUE : GLFW_FALSE);
+    glfwWindowHint(GLFW_RESIZABLE,  native_frame && desc->resizable && !desc->fullscreen
+                                    ? GLFW_TRUE : GLFW_FALSE);
     glfwWindowHint(GLFW_FLOATING,   GLFW_FALSE);
     glfwWindowHint(GLFW_FOCUS_ON_SHOW, GLFW_TRUE);
     glfwWindowHint(GLFW_VISIBLE,    GLFW_TRUE);
@@ -854,12 +856,26 @@ static Ca_Window *window_create_in_pool(Ca_Instance *inst,
     glfwWindowHint(GLFW_MOUSE_PASSTHROUGH, GLFW_FALSE);
 #endif
 
-    GLFWwindow *glfw = glfwCreateWindow(
-        desc->width  > 0 ? desc->width  : 1280,
-        desc->height > 0 ? desc->height : 720,
-        desc->title  ? desc->title : "causality",
-        NULL, NULL
-    );
+    int width  = desc->width  > 0 ? desc->width  : 1280;
+    int height = desc->height > 0 ? desc->height : 720;
+    GLFWmonitor *monitor = NULL;
+    if (desc->fullscreen) {
+        monitor = glfwGetPrimaryMonitor();
+        const GLFWvidmode *mode = monitor ? glfwGetVideoMode(monitor) : NULL;
+        if (mode) {
+            glfwWindowHint(GLFW_RED_BITS,     mode->redBits);
+            glfwWindowHint(GLFW_GREEN_BITS,   mode->greenBits);
+            glfwWindowHint(GLFW_BLUE_BITS,    mode->blueBits);
+            glfwWindowHint(GLFW_REFRESH_RATE, mode->refreshRate);
+            width  = mode->width;
+            height = mode->height;
+        } else {
+            monitor = NULL;
+        }
+    }
+
+    GLFWwindow *glfw = glfwCreateWindow(width, height,
+        desc->title ? desc->title : "causality", monitor, NULL);
 
     if (!glfw) {
         fprintf(stderr, "[causality] glfwCreateWindow failed\n");
@@ -870,6 +886,7 @@ static Ca_Window *window_create_in_pool(Ca_Instance *inst,
     slot->glfw          = glfw;
     slot->instance      = inst;
     slot->in_use        = true;
+    slot->native_frame  = native_frame;
     slot->on_close      = desc->on_close;
     slot->on_close_data = desc->on_close_data;
     slot->on_close_request = desc->on_close_request;
@@ -1241,7 +1258,7 @@ void ca_window_cursor_screen_pos(Ca_Window *win, double *out_x, double *out_y)
 
 bool ca_window_titlebar_drag_pass(Ca_Window *win)
 {
-    if (!win || !win->in_use || !win->glfw || !win->title_bar_node)
+    if (!win || !win->in_use || !win->glfw || !win->title_bar_node || win->native_frame)
         return false;
     if (win->titlebar_maximized) {
         win->titlebar_drag_active = false;
@@ -1342,7 +1359,7 @@ bool ca_window_titlebar_drag_pass(Ca_Window *win)
  */
 void ca_window_resize_pass(Ca_Window *win)
 {
-    if (!win || !win->in_use || win->titlebar_maximized) return;
+    if (!win || !win->in_use || win->titlebar_maximized || win->native_frame) return;
 
     ensure_cursors();
 

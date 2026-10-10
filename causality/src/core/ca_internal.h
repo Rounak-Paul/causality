@@ -1193,6 +1193,7 @@ struct Ca_Window {
     VkSurfaceKHR  surface;
     Ca_Swapchain  sc;
     bool          in_use;
+    bool          native_frame;   /* OS-drawn frame: no software resize/drag chrome */
 
     /* UI node tree */
     Ca_Pool       node_pool;

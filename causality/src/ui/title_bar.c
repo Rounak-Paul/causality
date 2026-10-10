@@ -128,12 +128,15 @@ void ca_title_bar_init(Ca_Window *win)
     tb.align_items   = CA_ALIGN_CENTER;
     tb.overflow_x    = 1; /* hidden */
     tb.overflow_y    = 1;
+    /* A native frame supplies its own title bar and window controls; the
+       caller-drawn strip would only duplicate them. */
+    tb.hidden        = win->native_frame;
     Ca_Node *tbnode = ca_node_add(root, &tb);
     assert(tbnode && "ca_title_bar_init: failed to allocate title_bar_node");
     win->title_bar_node = tbnode;
     tbnode->base_desc = tb;
     tbnode->has_base_desc = true;
-    title_bar_apply_style(win);
+    if (!win->native_frame) title_bar_apply_style(win);
 
     /* ---- Content root: fills remaining space below title bar ---- */
     Ca_NodeDesc cr = {0};
@@ -156,7 +159,7 @@ void ca_title_bar_init(Ca_Window *win)
     assert(sbnode && "ca_title_bar_init: failed to allocate status_bar_node");
     win->status_bar_node = sbnode;
 
-    win->titlebar_needs_rebuild = true;
+    win->titlebar_needs_rebuild = !win->native_frame;
 }
 
 /* ------------------------------------------------------------------ */
@@ -166,6 +169,7 @@ void ca_title_bar_init(Ca_Window *win)
 void ca_title_bar_rebuild(Ca_Window *win)
 {
     assert(win && win->title_bar_node);
+    if (win->native_frame) return;
 
     /* ca_div_clear removes all children and pushes title_bar_node onto
        the widget context stack so new children become its children.    */
