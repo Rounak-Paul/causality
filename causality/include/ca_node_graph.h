@@ -318,6 +318,14 @@ CA_API void ca_node_graph_clear_selection(Ca_NodeGraph *ng);
 /* Canvas-space point at the centre of the visible canvas. */
 CA_API bool ca_node_graph_view_center(const Ca_NodeGraph *ng, float *out_x, float *out_y);
 
+/* Canvas-space point under a window-space point (e.g. a context menu's
+   screen position); false before the first layout. */
+CA_API bool ca_node_graph_screen_to_canvas(const Ca_NodeGraph *ng, float screen_x, float screen_y,
+                                           float *out_x, float *out_y);
+
+/* Selects every node the latest build emitted. */
+CA_API void ca_node_graph_select_all(Ca_NodeGraph *ng);
+
 /* Whether the cursor is over the canvas. */
 CA_API bool ca_node_graph_hovered(const Ca_NodeGraph *ng);
 

@@ -776,6 +776,30 @@ bool ca_node_graph_view_center(const Ca_NodeGraph *ng, float *out_x, float *out_
     return true;
 }
 
+bool ca_node_graph_screen_to_canvas(const Ca_NodeGraph *ng, float screen_x, float screen_y,
+                                    float *out_x, float *out_y)
+{
+    const Ca_Node *canvas = ng ? (const Ca_Node *)ng->_canvas : NULL;
+    if (!canvas || !canvas->window) return false;
+    float ui_s = canvas->window->ui_scale > 0.0f ? canvas->window->ui_scale : 1.0f;
+    float zoom = fmaxf(ng->zoom, NG_ZOOM_MIN);
+    if (out_x) *out_x = ((screen_x - canvas->x) / ui_s - ng->pan_x) / zoom;
+    if (out_y) *out_y = ((screen_y - canvas->y) / ui_s - ng->pan_y) / zoom;
+    return true;
+}
+
+void ca_node_graph_select_all(Ca_NodeGraph *ng)
+{
+    if (!ng) return;
+    for (int i = 0; i < ng->node_count; ++i) {
+        Ca_NgNodeState *state = ca_node_graph_state(ng, i);
+        if (!state || !state->valid) continue;
+        state->selected = true;
+        ng->selected_node = i;
+    }
+    ng_invalidate(ng);
+}
+
 bool ca_node_graph_hovered(const Ca_NodeGraph *ng)
 {
     const Ca_Node *canvas = ng ? (const Ca_Node *)ng->_canvas : NULL;
