@@ -1294,6 +1294,7 @@ struct Ca_Window {
 
     /* Input state (updated by GLFW callbacks each tick) */
     double        mouse_x, mouse_y;
+    int           mouse_mods;   /* CA_MOD_* held at the latest mouse button event */
     bool          mouse_buttons[3];       /* [0]=left [1]=right [2]=middle */
     bool          prev_mouse_right;       /* right-button edge detection for context menus (per-window, not shared) */
     bool          mouse_click_this_frame; /* cleared at top of each tick   */

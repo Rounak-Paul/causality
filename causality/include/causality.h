@@ -301,6 +301,20 @@ CA_API void        ca_clipboard_set_text(Ca_Window *window, const char *text);
  */
 CA_API const char *ca_clipboard_get_text(Ca_Window *window);
 
+/* Modifier keys held when a mouse button event arrived (ca_window_mouse_mods). */
+enum {
+    CA_MOD_SHIFT   = 0x0001,
+    CA_MOD_CONTROL = 0x0002,
+    CA_MOD_ALT     = 0x0004,
+    CA_MOD_SUPER   = 0x0008,
+};
+
+/*
+ * Returns the CA_MOD_* modifiers held at the window's latest mouse button
+ * event, so press and drag callbacks can branch on shift/ctrl.
+ */
+CA_API int ca_window_mouse_mods(const Ca_Window *window);
+
 /*
  * Reports whether the UI owns pointer input or exclusive keyboard input for
  * the current frame. Button focus alone is not exclusive; text editing and a

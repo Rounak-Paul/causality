@@ -25,6 +25,12 @@
  *    font's line height draws a stub line sized to the label instead.
  *  - Scroll zooms about the cursor; drags convert screen deltas to canvas space.
  *  - Wires touching the selected node are thicker; the rest take .dimmed.
+ *
+ * Geometry
+ * ========
+ *  Node width, height and pin centres are recorded by the latest build (rows
+ *  can be custom), so wires and link drops use real positions. Canvas space
+ *  is layout px divided by zoom; the canvas origin is its top-left corner.
  */
 
 #include "ca_node_graph.h"
@@ -77,6 +83,10 @@
 #define NG_PIN_STUB_T         2.0f   /* pin label stub thickness            */
 #define NG_TITLE_STUB_T       3.0f   /* title stub thickness                */
 #define NG_NODE_SELECTED_Z      10   /* selected node stack level           */
+#define NG_ROW_MIN_ZOOM       0.9f   /* host widgets keep their size above this zoom */
+#define NG_PIN_HIT_D         16.0f   /* draggable pin area                  */
+#define NG_LINK_Z             20     /* wire being dragged, above nodes     */
+#define NG_DROP_REACH          6.0f  /* drop tolerance beyond a node's edge */
 
 /* ============================================================
    INTERNAL HELPERS
@@ -123,24 +133,37 @@ static void ng_set_label_z(Ca_Label *label, int z)
     ng_set_node_z(label->node, z);
 }
 
-/* Centre-Y of an input pin relative to node top-left, in screen px. */
-static float ng_input_pin_y(int pin_idx, float zoom)
+typedef struct NgWireRecord {
+    int src, src_pin;
+    int dst, dst_pin;
+} NgWireRecord;
+
+/* Logical height of a node: recorded by its latest build, estimated for pins
+   alone before the first one. */
+static float ng_node_h(const Ca_NgNodeState *state)
 {
-    return (NG_HEADER_H + NG_BODY_PAD_V
-            + (float)pin_idx * NG_PIN_ROW_H
-            + NG_PIN_ROW_H * 0.5f) * zoom;
+    if (state->height > 0.0f) return state->height;
+    float sep = (state->input_count > 0 && state->output_count > 0) ? NG_GRID_THICK : 0.0f;
+    return NG_HEADER_H + 2.0f * NG_BODY_PAD_V + sep
+         + (float)(state->input_count + state->output_count) * NG_PIN_ROW_H;
 }
 
-/* Centre-Y of an output pin relative to node top-left, in screen px.
- * sep_h = NG_GRID_THICK (1px) when there are inputs, otherwise 0. */
-static float ng_output_pin_y(const Ca_NgNodeState *state, int pin_idx, float zoom)
+static float ng_node_w(const Ca_NgNodeState *state)
 {
-    int   inp   = state->input_count;
-    float sep_h = (inp > 0) ? NG_GRID_THICK : 0.0f;
-    return (NG_HEADER_H + NG_BODY_PAD_V
-            + (float)inp * NG_PIN_ROW_H + sep_h
-            + (float)pin_idx * NG_PIN_ROW_H
-            + NG_PIN_ROW_H * 0.5f) * zoom;
+    return state->width > 0.0f ? state->width : NG_NODE_W;
+}
+
+/* Centre-Y of a pin below the node top, in logical px. */
+static float ng_pin_y(const Ca_NgNodeState *state, int pin_idx, bool output)
+{
+    if (pin_idx >= 0 && pin_idx < CA_NG_MAX_PINS) {
+        float y = output ? state->out_y[pin_idx] : state->in_y[pin_idx];
+        if (y > 0.0f) return y;
+    }
+    float base = NG_HEADER_H + NG_BODY_PAD_V + NG_PIN_ROW_H * 0.5f;
+    if (!output) return base + (float)pin_idx * NG_PIN_ROW_H;
+    float sep = state->input_count > 0 ? NG_GRID_THICK : 0.0f;
+    return base + (float)state->input_count * NG_PIN_ROW_H + sep + (float)pin_idx * NG_PIN_ROW_H;
 }
 
 /* Line height in layout px of labels with `classes`, or INFINITY without a font.
@@ -195,7 +218,7 @@ typedef struct NgPoint {
  * Causality matches children by sequential index, and a shifting count would
  * move node divs onto wrong slots and break their drag callbacks. */
 static void emit_wire_piece(const Ca_NodeGraph *ng, NgPoint a, NgPoint b,
-                            float thickness, uint32_t color, const char *style)
+                            float thickness, uint32_t color, const char *style, int z)
 {
     float dx = b.x - a.x, dy = b.y - a.y;
     float len = sqrtf(dx * dx + dy * dy);
@@ -217,16 +240,9 @@ static void emit_wire_piece(const Ca_NodeGraph *ng, NgPoint a, NgPoint b,
         .rotation   = visible ? atan2f(dy, dx) * (180.0f / 3.14159265f) : 0.0f,
         .no_hover   = true,
         .style      = style,
+        .z_index    = z,
     });
     ca_div_end();
-}
-
-/* Logical height of a node, matching the layout emitted by node_begin/pins. */
-static float ng_node_h(const Ca_NgNodeState *state)
-{
-    float sep = (state->input_count > 0 && state->output_count > 0) ? NG_GRID_THICK : 0.0f;
-    return NG_HEADER_H + 2.0f * NG_BODY_PAD_V + sep
-         + (float)(state->input_count + state->output_count) * NG_PIN_ROW_H;
 }
 
 static float ng_dist(NgPoint a, NgPoint b)
@@ -248,7 +264,7 @@ static NgPoint ng_dir(NgPoint a, NgPoint b)
    pieces overlap and translucent wires never double-blend. */
 static void emit_orthogonal_wire(const Ca_NodeGraph *ng, const NgPoint *route, int route_count,
                                  float radius, float thickness, uint32_t color,
-                                 const char *style)
+                                 const char *style, int z)
 {
     NgPoint pts[NG_WIRE_MAX_LEGS + 1];
     int n = 0;
@@ -282,7 +298,7 @@ static void emit_orthogonal_wire(const Ca_NodeGraph *ng, const NgPoint *route, i
             b = (NgPoint){ b.x + d.x * trim, b.y + d.y * trim };
         }
         if ((b.x - a.x) * d.x + (b.y - a.y) * d.y <= 0.0f) b = a;
-        emit_wire_piece(ng, a, b, thickness, color, style);
+        emit_wire_piece(ng, a, b, thickness, color, style, z);
         ++emitted;
     }
     for (int i = 1; i + 1 < n; ++i) {
@@ -295,13 +311,13 @@ static void emit_orthogonal_wire(const Ca_NodeGraph *ng, const NgPoint *route, i
             float t = (float)k / (float)NG_WIRE_ARC_PIECES * 1.57079632679f;
             NgPoint next = { c.x + (-v.x * cosf(t) + u.x * sinf(t)) * r,
                              c.y + (-v.y * cosf(t) + u.y * sinf(t)) * r };
-            emit_wire_piece(ng, prev, r > 0.0f ? next : prev, thickness, color, style);
+            emit_wire_piece(ng, prev, r > 0.0f ? next : prev, thickness, color, style, z);
             prev = next;
             ++emitted;
         }
     }
     for (; emitted < NG_WIRE_PIECES; ++emitted)
-        emit_wire_piece(ng, (NgPoint){0}, (NgPoint){0}, thickness, color, style);
+        emit_wire_piece(ng, (NgPoint){0}, (NgPoint){0}, thickness, color, style, z);
 }
 
 /* Frames every node inside the canvas; false while the canvas is unsized or empty. */
@@ -314,7 +330,7 @@ static bool ng_fit(Ca_NodeGraph *ng)
         if (!state || !state->valid) continue;
         min_x = fminf(min_x, state->canvas_x);
         min_y = fminf(min_y, state->canvas_y);
-        max_x = fmaxf(max_x, state->canvas_x + NG_NODE_W);
+        max_x = fmaxf(max_x, state->canvas_x + ng_node_w(state));
         max_y = fmaxf(max_y, state->canvas_y + ng_node_h(state));
     }
     if (!(min_x <= max_x)) return false;
@@ -334,78 +350,343 @@ static float ng_event_scale(const Ca_DragEvent *ev)
     return ev->window && ev->window->ui_scale > 0.0f ? ev->window->ui_scale : 1.0f;
 }
 
+
+/* Canvas-space cursor position of a drag event. */
+static bool ng_cursor_canvas(const Ca_NodeGraph *ng, const Ca_DragEvent *ev, float *cx, float *cy)
+{
+    const Ca_Node *canvas = (const Ca_Node *)ng->_canvas;
+    if (!canvas) return false;
+    float ui_s = ng_event_scale(ev);
+    float zoom = fmaxf(ng->zoom, NG_ZOOM_MIN);
+    *cx = ((ev->x - canvas->x) / ui_s - ng->pan_x) / zoom;
+    *cy = ((ev->y - canvas->y) / ui_s - ng->pan_y) / zoom;
+    return true;
+}
+
+static void ng_invalidate(Ca_NodeGraph *ng)
+{
+    if (ng->_host_div) ca_div_invalidate(ng->_host_div);
+}
+
 /* ============================================================
-   DRAG CALLBACKS - canvas panning
+   SELECTION
+   ============================================================ */
+
+static bool ng_node_selected(const Ca_NodeGraph *ng, const Ca_NgNodeState *state)
+{
+    return state->valid && (state->selected || state->_index == ng->selected_node);
+}
+
+static void ng_notify_select(Ca_NodeGraph *ng)
+{
+    if (ng->_on_node_select) ng->_on_node_select(ng, ng->selected_node, ng->_select_data);
+}
+
+static void ng_clear_flags(Ca_NodeGraph *ng)
+{
+    for (int i = 0; i < ng->node_count; ++i) {
+        Ca_NgNodeState *state = ca_node_graph_state(ng, i);
+        if (state) state->selected = false;
+    }
+    ng->selected_node = -1;
+}
+
+bool ca_node_graph_is_selected(const Ca_NodeGraph *ng, int node_idx)
+{
+    if (!ng || node_idx < 0 || node_idx >= ng->node_count) return false;
+    return ng_node_selected(ng, ca_node_graph_state((Ca_NodeGraph *)ng, node_idx));
+}
+
+int ca_node_graph_selection_count(const Ca_NodeGraph *ng)
+{
+    int count = 0;
+    for (int i = 0; ng && i < ng->node_count; ++i)
+        if (ca_node_graph_is_selected(ng, i)) ++count;
+    return count;
+}
+
+void ca_node_graph_select(Ca_NodeGraph *ng, int node_idx, bool additive)
+{
+    if (!ng) return;
+    if (!additive) ng_clear_flags(ng);
+    Ca_NgNodeState *state = ca_node_graph_state(ng, node_idx);
+    if (state) {
+        state->selected = true;
+        ng->selected_node = node_idx;
+    }
+    ng_invalidate(ng);
+}
+
+void ca_node_graph_clear_selection(Ca_NodeGraph *ng)
+{
+    if (!ng) return;
+    ng_clear_flags(ng);
+    ng_invalidate(ng);
+}
+
+/* Removes one node from the selection; the primary falls to another member. */
+static void ng_deselect(Ca_NodeGraph *ng, int node_idx)
+{
+    Ca_NgNodeState *state = ca_node_graph_state(ng, node_idx);
+    if (!state) return;
+    state->selected = false;
+    if (ng->selected_node != node_idx) return;
+    ng->selected_node = -1;
+    for (int i = 0; i < ng->node_count; ++i) {
+        const Ca_NgNodeState *other = ca_node_graph_state(ng, i);
+        if (other && other->selected) { ng->selected_node = i; break; }
+    }
+}
+
+/* ============================================================
+   DRAG CALLBACKS - canvas panning and box selection
    ============================================================ */
 
 static void canvas_drag_start(const Ca_DragEvent *ev, void *ud)
 {
-    (void)ev;
     Ca_NodeGraph *ng = (Ca_NodeGraph *)ud;
     ng->_pan_drag_start_x = ng->pan_x;
     ng->_pan_drag_start_y = ng->pan_y;
+    ng->_box_active = false;
+    if ((ca_window_mouse_mods(ev->window) & (CA_MOD_SHIFT | CA_MOD_CONTROL)) == 0) return;
+    float cx, cy;
+    if (!ng_cursor_canvas(ng, ev, &cx, &cy)) return;
+    ng->_box_active = true;
+    ng->_box_x0 = ng->_box_x1 = cx;
+    ng->_box_y0 = ng->_box_y1 = cy;
 }
 
 static void canvas_drag(const Ca_DragEvent *ev, void *ud)
 {
     Ca_NodeGraph *ng = (Ca_NodeGraph *)ud;
+    if (ng->_box_active) {
+        float cx, cy;
+        if (ng_cursor_canvas(ng, ev, &cx, &cy)) { ng->_box_x1 = cx; ng->_box_y1 = cy; }
+        ng_invalidate(ng);
+        return;
+    }
     float inv = 1.0f / ng_event_scale(ev);
     ng->pan_x = ng->_pan_drag_start_x + ev->dx * inv;
     ng->pan_y = ng->_pan_drag_start_y + ev->dy * inv;
-    if (ng->_host_div) ca_div_invalidate(ng->_host_div);
+    ng_invalidate(ng);
 }
 
-/* A click (not a pan) on empty canvas clears the selection. */
+/* A click (not a pan) on empty canvas clears the selection; a box adds the
+   nodes it touches. */
 static void canvas_drag_end(const Ca_DragEvent *ev, void *ud)
 {
     Ca_NodeGraph *ng = (Ca_NodeGraph *)ud;
+    if (ng->_box_active) {
+        ng->_box_active = false;
+        float x0 = fminf(ng->_box_x0, ng->_box_x1), x1 = fmaxf(ng->_box_x0, ng->_box_x1);
+        float y0 = fminf(ng->_box_y0, ng->_box_y1), y1 = fmaxf(ng->_box_y0, ng->_box_y1);
+        for (int i = 0; i < ng->node_count; ++i) {
+            Ca_NgNodeState *state = ca_node_graph_state(ng, i);
+            if (!state || !state->valid) continue;
+            bool hit = state->canvas_x <= x1 && state->canvas_x + ng_node_w(state) >= x0 &&
+                       state->canvas_y <= y1 && state->canvas_y + ng_node_h(state) >= y0;
+            if (!hit) continue;
+            state->selected = true;
+            ng->selected_node = i;
+        }
+        ng_notify_select(ng);
+        ng_invalidate(ng);
+        return;
+    }
     float slop = NG_CLICK_SLOP * ng_event_scale(ev);
-    if (fabsf(ev->dx) > slop || fabsf(ev->dy) > slop || ng->selected_node < 0) return;
-    ng->selected_node = -1;
-    if (ng->_on_node_select)
-        ng->_on_node_select(ng, -1, ng->_select_data);
-    if (ng->_host_div) ca_div_invalidate(ng->_host_div);
+    if (fabsf(ev->dx) > slop || fabsf(ev->dy) > slop || ca_node_graph_selection_count(ng) == 0)
+        return;
+    ng_clear_flags(ng);
+    ng_notify_select(ng);
+    ng_invalidate(ng);
 }
 
 /* ============================================================
    DRAG CALLBACKS — node movement + selection
    ============================================================
    Causality picks the SMALLEST draggable div under the cursor, so
-   node divs (smaller area) always win over the canvas background div.
+   pin areas win over their node, and node divs (smaller area) always
+   win over the canvas background div.
    drag_fn_start fires on mouse-down, making it suitable for selection.
    ============================================================ */
 
 static void node_drag_start(const Ca_DragEvent *ev, void *ud)
 {
-    (void)ev;
     Ca_NgNodeState *state = (Ca_NgNodeState *)ud;
     Ca_NodeGraph   *ng    = state->_ng;
     if (!ng) return;
 
-    state->_drag_start_x = state->canvas_x;
-    state->_drag_start_y = state->canvas_y;
+    int  idx = state->_index;
+    bool additive = (ca_window_mouse_mods(ev->window) & (CA_MOD_SHIFT | CA_MOD_CONTROL)) != 0;
+    bool was_selected = ng_node_selected(ng, state);
+    ng->_drag_additive = additive;
+    ng->_moved_distance = 0.0f;
 
-    /* Selection — fires immediately on mouse-down */
-    int idx = state->_index;
-    ng->selected_node = idx;
-    if (ng->_on_node_select)
-        ng->_on_node_select(ng, idx, ng->_select_data);
-    if (ng->_host_div) ca_div_invalidate(ng->_host_div);
+    if (additive && was_selected) {
+        ng_deselect(ng, idx);
+    } else if (additive || !was_selected) {
+        ca_node_graph_select(ng, idx, additive);
+    } else {
+        ng->selected_node = idx;   /* keeps the group; this one leads it */
+    }
+
+    for (int i = 0; i < ng->node_count; ++i) {
+        Ca_NgNodeState *node = ca_node_graph_state(ng, i);
+        if (!node || !ng_node_selected(ng, node)) continue;
+        node->_drag_start_x = node->canvas_x;
+        node->_drag_start_y = node->canvas_y;
+    }
+    ng_notify_select(ng);
+    ng_invalidate(ng);
 }
 
 static void node_drag(const Ca_DragEvent *ev, void *ud)
 {
     Ca_NgNodeState *state = (Ca_NgNodeState *)ud;
     Ca_NodeGraph   *ng    = state->_ng;
-    if (!ng) return;
+    if (!ng || !ng_node_selected(ng, state)) return;
 
     /* Convert screen-pixel delta to canvas-space delta by dividing by zoom.
      * This ensures the node moves exactly as far as the cursor, regardless
      * of current zoom level. */
     float inv = 1.0f / (fmaxf(ng->zoom, NG_ZOOM_MIN) * ng_event_scale(ev));
-    state->canvas_x = state->_drag_start_x + ev->dx * inv;
-    state->canvas_y = state->_drag_start_y + ev->dy * inv;
-    if (ng->_host_div) ca_div_invalidate(ng->_host_div);
+    float dx = ev->dx * inv, dy = ev->dy * inv;
+    ng->_moved_distance = fmaxf(ng->_moved_distance, fmaxf(fabsf(ev->dx), fabsf(ev->dy)));
+    for (int i = 0; i < ng->node_count; ++i) {
+        Ca_NgNodeState *node = ca_node_graph_state(ng, i);
+        if (!node || !ng_node_selected(ng, node)) continue;
+        node->canvas_x = node->_drag_start_x + dx;
+        node->canvas_y = node->_drag_start_y + dy;
+    }
+    ng_invalidate(ng);
+}
+
+static void node_drag_end(const Ca_DragEvent *ev, void *ud)
+{
+    Ca_NgNodeState *state = (Ca_NgNodeState *)ud;
+    Ca_NodeGraph   *ng    = state->_ng;
+    if (!ng) return;
+    if (ng->_moved_distance > NG_CLICK_SLOP * ng_event_scale(ev)) {
+        if (ng->_on_nodes_moved) ng->_on_nodes_moved(ng, ng->_moved_data);
+        return;
+    }
+    /* A plain click inside a multi-selection narrows it to that node. */
+    if (!ng->_drag_additive && ng_node_selected(ng, state) && ca_node_graph_selection_count(ng) > 1) {
+        ca_node_graph_select(ng, state->_index, false);
+        ng_notify_select(ng);
+    }
+}
+
+/* ============================================================
+   DRAG CALLBACKS — links
+   ============================================================ */
+
+/* Pin of the wanted kind under a canvas point, topmost node first. */
+static bool ng_pin_at(const Ca_NodeGraph *ng, float cx, float cy, bool want_output,
+                      int exclude_node, int *out_node, int *out_pin)
+{
+    for (int i = ng->node_count - 1; i >= 0; --i) {
+        if (i == exclude_node) continue;
+        const Ca_NgNodeState *state = ca_node_graph_state((Ca_NodeGraph *)ng, i);
+        if (!state || !state->valid) continue;
+        float w = ng_node_w(state);
+        if (cx < state->canvas_x - NG_DROP_REACH || cx > state->canvas_x + w + NG_DROP_REACH) continue;
+        int count = want_output ? state->output_count : state->input_count;
+        for (int pin = 0; pin < count && pin < CA_NG_MAX_PINS; ++pin) {
+            float y = state->canvas_y + ng_pin_y(state, pin, want_output);
+            if (fabsf(cy - y) > NG_PIN_ROW_H * 0.5f) continue;
+            *out_node = i;
+            *out_pin = pin;
+            return true;
+        }
+    }
+    return false;
+}
+
+static Ca_NgPinRef ng_pin_ref(const Ca_NodeGraph *ng, int node, int pin)
+{
+    const Ca_NgNodeState *state = ca_node_graph_state((Ca_NodeGraph *)ng, node);
+    return (Ca_NgPinRef){ state ? state->key : NULL, pin };
+}
+
+/* Whether `output` may feed `input`, as the host judges. */
+static bool ng_can_link(Ca_NodeGraph *ng, int out_node, int out_pin, int in_node, int in_pin)
+{
+    if (out_node == in_node) return false;
+    if (!ng->_can_link) return true;
+    Ca_NgPinRef from = ng_pin_ref(ng, out_node, out_pin);
+    Ca_NgPinRef to   = ng_pin_ref(ng, in_node, in_pin);
+    return ng->_can_link(ng, &from, &to, ng->_link_data);
+}
+
+static void pin_drag_start(const Ca_DragEvent *ev, void *ud)
+{
+    const Ca_NgPinHandle *pin = (const Ca_NgPinHandle *)ud;
+    Ca_NodeGraph *ng = pin->ng;
+    if (!ng) return;
+    ng->_link_active = true;
+    ng->_link_node = pin->node;
+    ng->_link_pin = pin->pin;
+    ng->_link_output = pin->output;
+    ng->_link_detached_node = -1;
+    ng->_link_detached_pin = -1;
+    if (!pin->output) {
+        /* A connected input hands its wire over: the drag continues from the source. */
+        for (size_t i = 0; i < ng->_wires.count; ++i) {
+            const NgWireRecord *wire = ca_dyn_array_at(&ng->_wires, i);
+            if (wire->dst != pin->node || wire->dst_pin != pin->pin) continue;
+            ng->_link_detached_node = pin->node;
+            ng->_link_detached_pin = pin->pin;
+            ng->_link_node = wire->src;
+            ng->_link_pin = wire->src_pin;
+            ng->_link_output = true;
+            break;
+        }
+    }
+    ng_cursor_canvas(ng, ev, &ng->_cursor_x, &ng->_cursor_y);
+    ng_invalidate(ng);
+}
+
+static void pin_drag(const Ca_DragEvent *ev, void *ud)
+{
+    Ca_NodeGraph *ng = ((const Ca_NgPinHandle *)ud)->ng;
+    if (!ng || !ng->_link_active) return;
+    ng_cursor_canvas(ng, ev, &ng->_cursor_x, &ng->_cursor_y);
+    ng_invalidate(ng);
+}
+
+static void pin_drag_end(const Ca_DragEvent *ev, void *ud)
+{
+    Ca_NodeGraph *ng = ((const Ca_NgPinHandle *)ud)->ng;
+    if (!ng || !ng->_link_active) return;
+    ng->_link_active = false;
+    ng_invalidate(ng);
+
+    float cx, cy;
+    if (!ng_cursor_canvas(ng, ev, &cx, &cy)) return;
+    float slop = NG_CLICK_SLOP * ng_event_scale(ev);
+    bool moved = fabsf(ev->dx) > slop || fabsf(ev->dy) > slop;
+    if (!moved || !ng->_on_link) return;
+
+    Ca_NgLinkEvent event = { .canvas_x = cx, .canvas_y = cy };
+    int node, pin;
+    if (ng->_link_output) {
+        event.from = ng_pin_ref(ng, ng->_link_node, ng->_link_pin);
+        if (ng_pin_at(ng, cx, cy, false, ng->_link_node, &node, &pin) &&
+            ng_can_link(ng, ng->_link_node, ng->_link_pin, node, pin))
+            event.to = ng_pin_ref(ng, node, pin);
+    } else {
+        event.to = ng_pin_ref(ng, ng->_link_node, ng->_link_pin);
+        if (ng_pin_at(ng, cx, cy, true, ng->_link_node, &node, &pin) &&
+            ng_can_link(ng, node, pin, ng->_link_node, ng->_link_pin))
+            event.from = ng_pin_ref(ng, node, pin);
+    }
+    if (ng->_link_detached_node >= 0)
+        event.detached = ng_pin_ref(ng, ng->_link_detached_node, ng->_link_detached_pin);
+    if (event.to.node && event.detached.node &&
+        strcmp(event.to.node, event.detached.node) == 0 && event.to.pin == event.detached.pin)
+        return;   /* dropped back where it was picked up */
+    ng->_on_link(ng, &event, ng->_link_data);
 }
 
 /* ============================================================
@@ -429,14 +710,14 @@ static void canvas_scroll(double dx, double dy, void *ud)
         ng->pan_y = cy - (cy - ng->pan_y) * (zoom / old_zoom);
     }
     ng->zoom = zoom;
-    if (ng->_host_div) ca_div_invalidate(ng->_host_div);
+    ng_invalidate(ng);
 }
 
 void ca_node_graph_request_fit(Ca_NodeGraph *ng)
 {
     if (!ng) return;
     ng->_fit_pending = true;
-    if (ng->_host_div) ca_div_invalidate(ng->_host_div);
+    ng_invalidate(ng);
 }
 
 bool ca_node_graph_init(Ca_NodeGraph *ng)
@@ -445,9 +726,14 @@ bool ca_node_graph_init(Ca_NodeGraph *ng)
     memset(ng, 0, sizeof(*ng));
     if (!ca_dyn_array_init(&ng->_nodes, sizeof(Ca_NgNodeState *)))
         return false;
+    if (!ca_dyn_array_init(&ng->_wires, sizeof(NgWireRecord))) {
+        ca_dyn_array_destroy(&ng->_nodes);
+        return false;
+    }
     ng->selected_node  = -1;
     ng->_cur_node_idx  = -1;
     ng->_cur_node_z    = 0;
+    ng->_link_detached_node = -1;
     ng->zoom           = 1.0f;
     return true;
 }
@@ -460,9 +746,11 @@ void ca_node_graph_destroy(Ca_NodeGraph *ng)
             CA_FREE(*(Ca_NgNodeState **)ca_dyn_array_at(&ng->_nodes, i));
     }
     ca_dyn_array_destroy(&ng->_nodes);
+    ca_dyn_array_destroy(&ng->_wires);
     memset(ng, 0, sizeof(*ng));
     ng->selected_node = -1;
     ng->_cur_node_idx = -1;
+    ng->_link_detached_node = -1;
 }
 
 Ca_NgNodeState *ca_node_graph_state(Ca_NodeGraph *ng, int node_idx)
@@ -479,6 +767,24 @@ Ca_NgNodeState *ca_node_graph_add_state(Ca_NodeGraph *ng, const char *key,
     return ng_find_or_create(ng, key, initial_x, initial_y);
 }
 
+bool ca_node_graph_view_center(const Ca_NodeGraph *ng, float *out_x, float *out_y)
+{
+    if (!ng || ng->_canvas_w <= 0.0f || ng->_canvas_h <= 0.0f) return false;
+    float zoom = fmaxf(ng->zoom, NG_ZOOM_MIN);
+    if (out_x) *out_x = (ng->_canvas_w * 0.5f - ng->pan_x) / zoom;
+    if (out_y) *out_y = (ng->_canvas_h * 0.5f - ng->pan_y) / zoom;
+    return true;
+}
+
+bool ca_node_graph_hovered(const Ca_NodeGraph *ng)
+{
+    const Ca_Node *canvas = ng ? (const Ca_Node *)ng->_canvas : NULL;
+    if (!canvas || !canvas->window) return false;
+    const Ca_Window *win = canvas->window;
+    return win->mouse_x >= canvas->x && win->mouse_x < canvas->x + canvas->w &&
+           win->mouse_y >= canvas->y && win->mouse_y < canvas->y + canvas->h;
+}
+
 void ca_node_graph_begin(Ca_NodeGraph *ng, Ca_Div *host_div,
                           const Ca_NodeGraphDesc *desc)
 {
@@ -488,10 +794,17 @@ void ca_node_graph_begin(Ca_NodeGraph *ng, Ca_Div *host_div,
     ng->_cur_in_idx   = 0;
     ng->_cur_out_idx  = 0;
     ng->_cur_node_z   = 0;
+    ng->_build_epoch++;
+    ca_dyn_array_clear(&ng->_wires);
 
     if (desc) {
         ng->_on_node_select = desc->on_node_select;
         ng->_select_data    = desc->select_data;
+        ng->_on_link        = desc->on_link;
+        ng->_can_link       = desc->can_link;
+        ng->_link_data      = desc->link_data;
+        ng->_on_nodes_moved = desc->on_nodes_moved;
+        ng->_moved_data     = desc->moved_data;
     }
 
     char classes[CA_NODE_CLASS_MAX];
@@ -583,9 +896,72 @@ void ca_node_graph_begin(Ca_NodeGraph *ng, Ca_Div *host_div,
     }
 }
 
+/* Screen-space (canvas div local) position of a pin's dot centre. */
+static NgPoint ng_pin_point(const Ca_NodeGraph *ng, const Ca_NgNodeState *state, int pin, bool output)
+{
+    float zs = ng->zoom;
+    float x = output ? state->canvas_x + ng_node_w(state) - NG_PIN_PAD_R - NG_PIN_DOT_D * 0.5f
+                     : state->canvas_x + NG_PIN_PAD_L + NG_PIN_DOT_D * 0.5f;
+    return (NgPoint){ x * zs + ng->pan_x,
+                      (state->canvas_y + ng_pin_y(state, pin, output)) * zs + ng->pan_y };
+}
+
+/* The wire carried by the cursor while a link drag is active, and the
+   selection box. Both always emit the same divs, hidden when idle, so the
+   canvas keeps a stable child count. */
+static void ng_emit_interaction(Ca_NodeGraph *ng)
+{
+    float zs = ng->zoom;
+    const Ca_NgNodeState *origin = ng->_link_active ? ca_node_graph_state(ng, ng->_link_node) : NULL;
+    NgPoint cursor = { ng->_cursor_x * zs + ng->pan_x, ng->_cursor_y * zs + ng->pan_y };
+    if (origin) {
+        NgPoint pin = ng_pin_point(ng, origin, ng->_link_pin, ng->_link_output);
+        NgPoint p0 = ng->_link_output ? pin : cursor;
+        NgPoint p3 = ng->_link_output ? cursor : pin;
+        float stub = NG_WIRE_STUB * zs;
+        NgPoint route[4] = { p0, { p0.x + stub, p0.y }, { p0.x + stub, p3.y }, p3 };
+        if (p3.x - p0.x >= 2.0f * stub) {
+            float mid = 0.5f * (p0.x + p3.x);
+            route[1] = (NgPoint){ mid, p0.y };
+            route[2] = (NgPoint){ mid, p3.y };
+        }
+        emit_orthogonal_wire(ng, route, 4, NG_WIRE_RADIUS * zs, fmaxf(1.0f, zs) * NG_WIRE_ACTIVE_T,
+                             0u, "ca-ng-link", NG_LINK_Z);
+    } else {
+        emit_orthogonal_wire(ng, NULL, 0, 0.0f, NG_WIRE_T, 0u, "ca-ng-link", NG_LINK_Z);
+    }
+
+    float x0 = fminf(ng->_box_x0, ng->_box_x1), x1 = fmaxf(ng->_box_x0, ng->_box_x1);
+    float y0 = fminf(ng->_box_y0, ng->_box_y1), y1 = fmaxf(ng->_box_y0, ng->_box_y1);
+    ca_div_begin(&(Ca_DivDesc){
+        .hidden       = !ng->_box_active,
+        .position     = CA_POSITION_ABSOLUTE,
+        .pos_x        = x0 * zs + ng->pan_x,
+        .pos_y        = y0 * zs + ng->pan_y,
+        .width        = (x1 - x0) * zs,
+        .height       = (y1 - y0) * zs,
+        .border_width = 1.0f,
+        .no_hover     = true,
+        .style        = "ca-ng-box",
+        .z_index      = NG_LINK_Z,
+    });
+    ca_div_end();
+}
+
 void ca_node_graph_end(Ca_NodeGraph *ng)
 {
     assert(ng);
+    /* Nodes the host stopped emitting leave the graph's geometry and selection. */
+    for (int i = 0; i < ng->node_count; ++i) {
+        Ca_NgNodeState *state = ca_node_graph_state(ng, i);
+        if (!state || state->_epoch == ng->_build_epoch) continue;
+        state->valid = false;
+        state->selected = false;
+        if (ng->selected_node == i) ng->selected_node = -1;
+        if (ng->_link_active && (ng->_link_node == i || ng->_link_detached_node == i))
+            ng->_link_active = false;
+    }
+    ng_emit_interaction(ng);
     ca_div_end(); /* canvas container */
     ng->_window = NULL;
 }
@@ -596,18 +972,25 @@ void ca_ng_node_begin(Ca_NodeGraph *ng, const Ca_NgNodeDesc *desc)
 
     Ca_NgNodeState *state = ng_find_or_create(ng, desc->key, desc->x, desc->y);
     if (!state) return;
+    state->valid  = true;
+    state->_epoch = ng->_build_epoch;
 
     int idx  = state->_index;
     ng->_cur_node_idx = idx;
     ng->_cur_in_idx   = 0;
     ng->_cur_out_idx  = 0;
 
-    bool selected = (idx == ng->selected_node) || desc->selected;
+    bool selected = ng_node_selected(ng, state) || desc->selected;
     int  node_z   = selected ? NG_NODE_SELECTED_Z : 0;
     ng->_cur_node_z = node_z;
 
+    float width = desc->width > 0.0f ? desc->width : NG_NODE_W;
+    state->width = width;
+    ng->_cur_width = width;
+    ng->_cur_y = NG_HEADER_H + NG_BODY_PAD_V;
+
     float zs   = ng->zoom;
-    float nw   = NG_NODE_W   * zs;
+    float nw   = width * zs;
     float hdrh = NG_HEADER_H * zs;
     float nx   = state->canvas_x * zs + ng->pan_x;
     float ny   = state->canvas_y * zs + ng->pan_y;
@@ -624,6 +1007,7 @@ void ca_ng_node_begin(Ca_NodeGraph *ng, const Ca_NgNodeDesc *desc)
         .direction       = CA_VERTICAL,
         .corner_radius   = radius,
         .border_width    = border_w,
+        .border_color    = desc->border_color,
         .shadow_offset_x = 2.0f,
         .shadow_offset_y = 3.0f,
         .shadow_blur     = 8.0f * zs,
@@ -632,6 +1016,7 @@ void ca_ng_node_begin(Ca_NodeGraph *ng, const Ca_NgNodeDesc *desc)
         .id              = desc->key,
         .on_drag_start   = node_drag_start,
         .on_drag         = node_drag,
+        .on_drag_end     = node_drag_end,
         .drag_data       = state,
     });
 
@@ -688,9 +1073,19 @@ void ca_ng_node_begin(Ca_NodeGraph *ng, const Ca_NgNodeDesc *desc)
         .z_index      = node_z,
     });
     const char *title = desc->title ? desc->title : "";
+    bool has_badge = desc->badge && desc->badge[0];
     if (ng->_show_title) {
-        Ca_Label *label = ca_text(&(Ca_TextDesc){ .text = title, .style = "ca-ng-title" });
+        Ca_Label *label = ca_text(&(Ca_TextDesc){
+            .text = title, .style = "ca-ng-title",
+            .inline_style = has_badge ? "flex-grow: 1;" : NULL,
+        });
         ng_set_label_z(label, node_z);
+        if (has_badge) {
+            Ca_Label *badge = ca_text(&(Ca_TextDesc){
+                .text = desc->badge, .color = desc->badge_color, .style = "ca-ng-badge",
+            });
+            ng_set_label_z(badge, node_z);
+        }
     } else {
         emit_text_stub(ng, title, ng->_title_font_px, nw - pad_l - pad_r,
                        NG_TITLE_STUB_T, 0u, "ca-ng-title-stub", node_z);
@@ -714,12 +1109,13 @@ void ca_ng_node_end(Ca_NodeGraph *ng)
     assert(ng);
     if (ng->_cur_node_idx < 0) return;
 
-    /* Record final pin counts for wire routing on subsequent frames */
+    /* Record final pin counts and size for wire routing and link drops */
     Ca_NgNodeState *state =
         ca_node_graph_state(ng, ng->_cur_node_idx);
     if (!state) return;
     state->input_count  = ng->_cur_in_idx;
     state->output_count = ng->_cur_out_idx;
+    state->height       = ng->_cur_y + NG_BODY_PAD_V;
 
     ca_div_end(); /* body */
     ca_div_end(); /* node outer container */
@@ -732,7 +1128,7 @@ void ca_ng_node_end(Ca_NodeGraph *ng)
 static void ng_pin_row(Ca_NodeGraph *ng, const Ca_NgPinDesc *desc, bool output)
 {
     float       zs    = ng->zoom;
-    float       nw    = NG_NODE_W    * zs;
+    float       nw    = ng->_cur_width * zs;
     float       dotd  = NG_PIN_DOT_D * zs;
     float       pad_l = NG_PIN_PAD_L * zs;
     float       pad_r = NG_PIN_PAD_R * zs;
@@ -740,6 +1136,29 @@ static void ng_pin_row(Ca_NodeGraph *ng, const Ca_NgPinDesc *desc, bool output)
     uint32_t    color = desc ? desc->color : 0u;
     const char *label = (desc && desc->label) ? desc->label : "";
     int         z     = ng->_cur_node_z;
+    int         idx   = output ? ng->_cur_out_idx : ng->_cur_in_idx;
+    bool        open  = desc && desc->open;
+    bool        links = ng->_on_link != NULL;
+
+    Ca_NgNodeState *state = ca_node_graph_state(ng, ng->_cur_node_idx);
+    float row_top = ng->_cur_y;
+    if (state && idx < CA_NG_MAX_PINS) {
+        (output ? state->out_y : state->in_y)[idx] = row_top + NG_PIN_ROW_H * 0.5f;
+        Ca_NgPinHandle *handle = &state->_pins[output ? 1 : 0][idx];
+        *handle = (Ca_NgPinHandle){ ng, ng->_cur_node_idx, idx, output };
+    }
+    ng->_cur_y += NG_PIN_ROW_H;
+
+    /* A pin the wire being dragged would land on and the host accepts. */
+    bool target = false;
+    if (ng->_link_active && state && ng->_link_output != output && ng->_link_node != ng->_cur_node_idx) {
+        float y = state->canvas_y + row_top + NG_PIN_ROW_H * 0.5f;
+        bool near = fabsf(ng->_cursor_y - y) <= NG_PIN_ROW_H * 0.5f &&
+                    ng->_cursor_x >= state->canvas_x - NG_DROP_REACH &&
+                    ng->_cursor_x <= state->canvas_x + ng->_cur_width + NG_DROP_REACH;
+        target = near && (output ? ng_can_link(ng, ng->_cur_node_idx, idx, ng->_link_node, ng->_link_pin)
+                                 : ng_can_link(ng, ng->_link_node, ng->_link_pin, ng->_cur_node_idx, idx));
+    }
 
     ca_div_begin(&(Ca_DivDesc){
         .direction    = CA_HORIZONTAL,
@@ -756,9 +1175,11 @@ static void ng_pin_row(Ca_NodeGraph *ng, const Ca_NgPinDesc *desc, bool output)
     Ca_DivDesc dot = {
         .width         = dotd,
         .height        = dotd,
-        .background    = color,
+        .background    = open ? 0u : color,
         .corner_radius = dotd * 0.5f,
-        .style         = "ca-ng-pin",
+        .border_width  = open ? 1.5f : 0.0f,
+        .border_color  = open ? color : 0u,
+        .style         = target ? "ca-ng-pin target" : (open ? "ca-ng-pin open" : "ca-ng-pin"),
         .z_index       = z,
     };
     if (!output) { ca_div_begin(&dot); ca_div_end(); }
@@ -775,6 +1196,25 @@ static void ng_pin_row(Ca_NodeGraph *ng, const Ca_NgPinDesc *desc, bool output)
                        NG_PIN_STUB_T, color, "ca-ng-pin-stub", z);
     }
     if (output) { ca_div_begin(&dot); ca_div_end(); }
+    if (links && state && idx < CA_NG_MAX_PINS) {
+        /* Draggable area around the dot; smaller than the node, so it wins the drag. */
+        float hit = NG_PIN_HIT_D * zs;
+        float cx = output ? nw - pad_r - dotd * 0.5f : pad_l + dotd * 0.5f;
+        ca_div_begin(&(Ca_DivDesc){
+            .position      = CA_POSITION_ABSOLUTE,
+            .pos_x         = cx - hit * 0.5f,
+            .pos_y         = (NG_PIN_ROW_H * zs - hit) * 0.5f,
+            .width         = hit,
+            .height        = hit,
+            .style         = "ca-ng-pin-hit",
+            .z_index       = z,
+            .on_drag_start = pin_drag_start,
+            .on_drag       = pin_drag,
+            .on_drag_end   = pin_drag_end,
+            .drag_data     = &state->_pins[output ? 1 : 0][idx],
+        });
+        ca_div_end();
+    }
     ca_div_end();
 }
 
@@ -795,15 +1235,43 @@ void ca_ng_output_pin(Ca_NodeGraph *ng, const Ca_NgPinDesc *desc)
     if (ng->_cur_out_idx == 0 && ng->_cur_in_idx > 0) {
         ca_div_begin(&(Ca_DivDesc){
             .height  = NG_GRID_THICK,
-            .width   = NG_NODE_W * ng->zoom,
+            .width   = ng->_cur_width * ng->zoom,
             .style   = "ca-ng-separator",
             .z_index = ng->_cur_node_z,
         });
         ca_div_end();
+        ng->_cur_y += NG_GRID_THICK;
     }
 
     ng_pin_row(ng, desc, true);
     ++ng->_cur_out_idx;
+}
+
+bool ca_ng_row_begin(Ca_NodeGraph *ng, float height)
+{
+    assert(ng);
+    if (ng->_cur_node_idx < 0) return false;
+    float zs = ng->zoom;
+    ca_div_begin(&(Ca_DivDesc){
+        .direction    = CA_HORIZONTAL,
+        .width        = ng->_cur_width * zs,
+        .height       = height * zs,
+        .padding      = {0.0f, NG_PIN_PAD_R * zs, 0.0f, NG_PIN_PAD_L * zs},
+        .gap          = NG_PIN_GAP * zs,
+        .clip_content = true,
+        .style        = "ca-ng-row",
+        .inline_style = "align-items: center;",
+        .z_index      = ng->_cur_node_z,
+    });
+    ng->_cur_y += height;
+    return zs >= NG_ROW_MIN_ZOOM;
+}
+
+void ca_ng_row_end(Ca_NodeGraph *ng)
+{
+    assert(ng);
+    if (ng->_cur_node_idx < 0) return;
+    ca_div_end();
 }
 
 void ca_ng_wire(Ca_NodeGraph *ng, const Ca_NgWireDesc *desc)
@@ -820,17 +1288,21 @@ void ca_ng_wire(Ca_NodeGraph *ng, const Ca_NgWireDesc *desc)
         if (!dst && strncmp(state->key, desc->dst_node, CA_NG_KEY_LEN) == 0)
             dst = state;
     }
-    if (!src || !dst) return;
+    if (!src || !dst || !src->valid || !dst->valid) return;
+
+    NgWireRecord record = { src->_index, desc->src_pin, dst->_index, desc->dst_pin };
+    ca_dyn_array_push(&ng->_wires, &record);
+
+    /* The wire a link drag has picked up is carried by the cursor instead. */
+    if (ng->_link_active && ng->_link_detached_node == dst->_index &&
+        ng->_link_detached_pin == desc->dst_pin) {
+        emit_orthogonal_wire(ng, NULL, 0, 0.0f, NG_WIRE_T, 0u, "ca-ng-wire", 0);
+        return;
+    }
 
     float zs = ng->zoom;
-    NgPoint p0 = {
-        (src->canvas_x + NG_NODE_W - NG_PIN_PAD_R - NG_PIN_DOT_D * 0.5f) * zs + ng->pan_x,
-        src->canvas_y * zs + ng->pan_y + ng_output_pin_y(src, desc->src_pin, zs),
-    };
-    NgPoint p3 = {
-        (dst->canvas_x + NG_PIN_PAD_L + NG_PIN_DOT_D * 0.5f) * zs + ng->pan_x,
-        dst->canvas_y * zs + ng->pan_y + ng_input_pin_y(desc->dst_pin, zs),
-    };
+    NgPoint p0 = ng_pin_point(ng, src, desc->src_pin, true);
+    NgPoint p3 = ng_pin_point(ng, dst, desc->dst_pin, false);
     float stub = NG_WIRE_STUB * zs;
     NgPoint route[NG_WIRE_MAX_LEGS + 1];
     int route_count;
@@ -860,13 +1332,13 @@ void ca_ng_wire(Ca_NodeGraph *ng, const Ca_NgWireDesc *desc)
         route_count = 6;
     }
 
-    bool active = ng->selected_node >= 0 &&
-                  (src->_index == ng->selected_node || dst->_index == ng->selected_node);
-    bool dimmed = ng->selected_node >= 0 && !active;
+    bool active = ng_node_selected(ng, src) || ng_node_selected(ng, dst);
+    bool any_selected = ng->selected_node >= 0 || ca_node_graph_selection_count(ng) > 0;
+    bool dimmed = any_selected && !active;
     float thickness = fmaxf(1.0f, zs) * (active ? NG_WIRE_ACTIVE_T : NG_WIRE_T);
     const char *style = active ? "ca-ng-wire active"
                       : dimmed ? "ca-ng-wire dimmed" : "ca-ng-wire";
 
     emit_orthogonal_wire(ng, route, route_count, NG_WIRE_RADIUS * zs, thickness,
-                         desc->color, style);
+                         desc->color, style, 0);
 }

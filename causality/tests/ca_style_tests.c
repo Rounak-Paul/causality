@@ -438,6 +438,190 @@ static bool test_node_graph_orthogonal_routes(void)
     return true;
 }
 
+/** Records the latest link event. */
+typedef struct LinkRecord {
+    int  calls;
+    char from[CA_NG_KEY_LEN], to[CA_NG_KEY_LEN], detached[CA_NG_KEY_LEN];
+    int  from_pin, to_pin;
+} LinkRecord;
+
+static void record_link(Ca_NodeGraph *ng, const Ca_NgLinkEvent *event, void *user_data)
+{
+    (void)ng;
+    LinkRecord *rec = user_data;
+    rec->calls++;
+    snprintf(rec->from, sizeof(rec->from), "%s", event->from.node ? event->from.node : "");
+    snprintf(rec->to, sizeof(rec->to), "%s", event->to.node ? event->to.node : "");
+    snprintf(rec->detached, sizeof(rec->detached), "%s", event->detached.node ? event->detached.node : "");
+    rec->from_pin = event->from.pin;
+    rec->to_pin = event->to.pin;
+}
+
+static bool refuse_self_pin(Ca_NodeGraph *ng, const Ca_NgPinRef *from, const Ca_NgPinRef *to,
+                            void *user_data)
+{
+    (void)ng; (void)user_data;
+    return !(strcmp(from->node, "a") == 0 && to->pin == 1);
+}
+
+/** Builds a(out) -> b(in0, in1) with link dragging enabled. */
+static void build_link_graph(Ca_NodeGraph *graph, Ca_Window *window, Ca_Node *root,
+                             LinkRecord *rec, bool wired)
+{
+    ca_widget_ctx_enter(window);
+    ca_reconcile_begin((Ca_Div *)root);
+    ca_node_graph_begin(graph, NULL, &(Ca_NodeGraphDesc){
+        .on_link = record_link, .can_link = refuse_self_pin, .link_data = rec });
+    if (wired)
+        ca_ng_wire(graph, &(Ca_NgWireDesc){ .src_node = "a", .src_pin = 0, .dst_node = "b", .dst_pin = 0 });
+    ca_ng_node_begin(graph, &(Ca_NgNodeDesc){ .key = "a", .title = "A", .x = 0.0f, .y = 0.0f });
+    ca_ng_output_pin(graph, &(Ca_NgPinDesc){ .label = "out" });
+    ca_ng_node_end(graph);
+    ca_ng_node_begin(graph, &(Ca_NgNodeDesc){ .key = "b", .title = "B", .x = 400.0f, .y = 0.0f });
+    ca_ng_input_pin(graph, &(Ca_NgPinDesc){ .label = "in0", .open = !wired });
+    ca_ng_input_pin(graph, &(Ca_NgPinDesc){ .label = "in1", .open = true });
+    ca_ng_node_end(graph);
+    ca_node_graph_end(graph);
+    ca_div_end();
+    ca_widget_ctx_leave();
+}
+
+static const Ca_Node *find_drag_data(const Ca_Node *node, const void *data)
+{
+    if (node->drag_data == data && node->drag_fn_start) return node;
+    for (uint32_t i = 0; i < node->child_count; ++i) {
+        const Ca_Node *found = find_drag_data(node->children[i], data);
+        if (found) return found;
+    }
+    return NULL;
+}
+
+/** Runs one press-drag-release gesture on a draggable div from `from` to a canvas point. */
+static void drag_gesture(Ca_Window *window, const Ca_Node *div, const Ca_Node *canvas,
+                         float to_x, float to_y)
+{
+    Ca_DragEvent ev = { .window = window, .x = canvas->x, .y = canvas->y };
+    ((Ca_DragFn)div->drag_fn_start)(&ev, div->drag_data);
+    ev.x = canvas->x + to_x;
+    ev.y = canvas->y + to_y;
+    ev.dx = to_x;
+    ev.dy = to_y;
+    ((Ca_DragFn)div->drag_fn_move)(&ev, div->drag_data);
+    ((Ca_DragFn)div->drag_fn_end)(&ev, div->drag_data);
+}
+
+/** Link drags report outputs dropped on inputs, honour can_link, and pick wires up from inputs. */
+static bool test_node_graph_links(void)
+{
+    Ca_Instance instance = {0};
+    Ca_Window window = {0};
+    Ca_Node root = {0};
+    CHECK(widget_env_init(&instance, &window, &root, ""));
+    Ca_NodeGraph graph;
+    CHECK(ca_node_graph_init(&graph));
+    LinkRecord rec = {0};
+
+    for (int pass = 0; pass < 2; ++pass) build_link_graph(&graph, &window, &root, &rec, false);
+    Ca_Node *canvas = root.children[0];
+    canvas->x = 0.0f; canvas->y = 0.0f; canvas->w = 800.0f; canvas->h = 600.0f;
+    ca_window_sync_size_signals(&window);
+    build_link_graph(&graph, &window, &root, &rec, false);
+
+    Ca_NgNodeState *a = ca_node_graph_state(&graph, 0);
+    Ca_NgNodeState *b = ca_node_graph_state(&graph, 1);
+    CHECK(a && b && b->input_count == 2 && a->output_count == 1);
+    CHECK(b->in_y[1] > b->in_y[0] && b->height > 0.0f);
+
+    const Ca_Node *out_pin = find_drag_data(&root, &a->_pins[1][0]);
+    CHECK(out_pin);
+    /* Dropped on b's first input. */
+    drag_gesture(&window, out_pin, canvas, b->canvas_x + 20.0f, b->canvas_y + b->in_y[0]);
+    CHECK(rec.calls == 1 && strcmp(rec.from, "a") == 0 && strcmp(rec.to, "b") == 0 && rec.to_pin == 0);
+    /* The second input is refused by can_link: reported as a drop on empty canvas. */
+    drag_gesture(&window, out_pin, canvas, b->canvas_x + 20.0f, b->canvas_y + b->in_y[1]);
+    CHECK(rec.calls == 2 && strcmp(rec.from, "a") == 0 && rec.to[0] == '\0');
+    /* A click without movement reports nothing. */
+    {
+        Ca_DragEvent ev = { .window = &window, .x = 5.0f, .y = 5.0f };
+        ((Ca_DragFn)out_pin->drag_fn_start)(&ev, out_pin->drag_data);
+        ((Ca_DragFn)out_pin->drag_fn_end)(&ev, out_pin->drag_data);
+        CHECK(rec.calls == 2);
+    }
+
+    /* A wired input hands its wire over: dragging it away detaches it. */
+    for (int pass = 0; pass < 2; ++pass) build_link_graph(&graph, &window, &root, &rec, true);
+    const Ca_Node *in_pin = find_drag_data(&root, &b->_pins[0][0]);
+    CHECK(in_pin);
+    drag_gesture(&window, in_pin, canvas, 600.0f, 400.0f);
+    CHECK(rec.calls == 3 && strcmp(rec.from, "a") == 0 && strcmp(rec.detached, "b") == 0 &&
+          rec.to[0] == '\0');
+
+    ca_node_graph_destroy(&graph);
+    widget_env_destroy(&instance, &window, &root);
+    return true;
+}
+
+/** Shift toggles nodes in the selection, a drag moves the group, and a plain click narrows it. */
+static bool test_node_graph_multi_select(void)
+{
+    Ca_Instance instance = {0};
+    Ca_Window window = {0};
+    Ca_Node root = {0};
+    CHECK(widget_env_init(&instance, &window, &root, ""));
+    Ca_NodeGraph graph;
+    CHECK(ca_node_graph_init(&graph));
+    LinkRecord rec = {0};
+    for (int pass = 0; pass < 2; ++pass) build_link_graph(&graph, &window, &root, &rec, false);
+    Ca_NgNodeState *a = ca_node_graph_state(&graph, 0);
+    Ca_NgNodeState *b = ca_node_graph_state(&graph, 1);
+    const Ca_Node *node_a = find_drag_data(&root, a);
+    const Ca_Node *node_b = find_drag_data(&root, b);
+    CHECK(node_a && node_b);
+
+    Ca_DragEvent ev = { .window = &window };
+    window.mouse_mods = 0;
+    ((Ca_DragFn)node_a->drag_fn_start)(&ev, node_a->drag_data);
+    ((Ca_DragFn)node_a->drag_fn_end)(&ev, node_a->drag_data);
+    CHECK(ca_node_graph_selection_count(&graph) == 1 && ca_node_graph_is_selected(&graph, 0));
+
+    window.mouse_mods = CA_MOD_SHIFT;
+    ((Ca_DragFn)node_b->drag_fn_start)(&ev, node_b->drag_data);
+    ((Ca_DragFn)node_b->drag_fn_end)(&ev, node_b->drag_data);
+    CHECK(ca_node_graph_selection_count(&graph) == 2);
+
+    /* Dragging one selected node moves both. */
+    window.mouse_mods = 0;
+    float ax = a->canvas_x, bx = b->canvas_x;
+    ((Ca_DragFn)node_b->drag_fn_start)(&ev, node_b->drag_data);
+    ev.dx = 50.0f; ev.dy = 0.0f;
+    ((Ca_DragFn)node_b->drag_fn_move)(&ev, node_b->drag_data);
+    ((Ca_DragFn)node_b->drag_fn_end)(&ev, node_b->drag_data);
+    CHECK(fabsf(a->canvas_x - (ax + 50.0f)) < 1e-3f && fabsf(b->canvas_x - (bx + 50.0f)) < 1e-3f);
+    CHECK(ca_node_graph_selection_count(&graph) == 2);
+
+    /* A click without movement narrows the selection to that node. */
+    ev.dx = 0.0f;
+    ((Ca_DragFn)node_a->drag_fn_start)(&ev, node_a->drag_data);
+    ((Ca_DragFn)node_a->drag_fn_end)(&ev, node_a->drag_data);
+    CHECK(ca_node_graph_selection_count(&graph) == 1 && ca_node_graph_is_selected(&graph, 0));
+
+    /* Nodes the host stops emitting leave the selection. */
+    ca_node_graph_select(&graph, 1, true);
+    ca_widget_ctx_enter(&window);
+    ca_reconcile_begin((Ca_Div *)&root);
+    ca_node_graph_begin(&graph, NULL, &(Ca_NodeGraphDesc){0});
+    ca_ng_node_begin(&graph, &(Ca_NgNodeDesc){ .key = "a", .title = "A" });
+    ca_ng_node_end(&graph);
+    ca_node_graph_end(&graph);
+    ca_div_end();
+    ca_widget_ctx_leave();
+    CHECK(ca_node_graph_selection_count(&graph) == 1 && !ca_node_graph_is_selected(&graph, 1));
+
+    ca_node_graph_destroy(&graph);
+    widget_env_destroy(&instance, &window, &root);
+    return true;
+}
+
 int main(void)
 {
     if (!test_set_color_var()) return 1;
@@ -448,6 +632,8 @@ int main(void)
     if (!test_node_graph_stubs_unfit_text()) return 1;
     if (!test_node_graph_view()) return 1;
     if (!test_node_graph_orthogonal_routes()) return 1;
+    if (!test_node_graph_links()) return 1;
+    if (!test_node_graph_multi_select()) return 1;
     printf("causality_style_tests passed\n");
     return 0;
 }

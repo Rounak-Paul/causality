@@ -2837,6 +2837,14 @@ int ca_tabs_active(const Ca_TabBar *t)
     return t->active;
 }
 
+void ca_tabs_set_active(Ca_TabBar *t, int index)
+{
+    assert(t && t->in_use);
+    if (index < 0 || index >= t->count || index == t->active) return;
+    tabbar_activate(t, index);
+    if (t->on_change) t->on_change(t, t->change_data);
+}
+
 /* ============================================================
    PUBLIC — Tree view
    ============================================================ */

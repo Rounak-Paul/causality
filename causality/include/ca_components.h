@@ -392,6 +392,9 @@ CA_API Ca_TabBar   *ca_tabs(const Ca_TabBarDesc *desc);
 /* Returns the zero-based index of the currently active tab. */
 CA_API int          ca_tabs_active(const Ca_TabBar *t);
 
+/* Activates a tab as a click would, including the on_change callback. */
+CA_API void         ca_tabs_set_active(Ca_TabBar *t, int index);
+
 /* ---- Tree view ---- */
 
 /* Open a tree view container; must be paired with ca_tree_end(). */

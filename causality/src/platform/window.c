@@ -346,6 +346,7 @@ static void glfw_mouse_button_cb(GLFWwindow *glfw, int button, int action, int m
         win->mouse_buttons[button] = (action == GLFW_PRESS);
     if (button == 0 && action == GLFW_PRESS)
         win->mouse_click_this_frame = true;
+    win->mouse_mods = mods;
     Ca_Event ev;
     ev.type                = CA_EVENT_MOUSE_BUTTON;
     ev.window              = win;
@@ -353,6 +354,11 @@ static void glfw_mouse_button_cb(GLFWwindow *glfw, int button, int action, int m
     ev.mouse_button.action = action;
     ev.mouse_button.mods   = mods;
     ca_event_post(win->instance, &ev);
+}
+
+int ca_window_mouse_mods(const Ca_Window *window)
+{
+    return window ? window->mouse_mods : 0;
 }
 
 /*
