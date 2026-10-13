@@ -4,6 +4,7 @@
 /* paint.c — CPU-side draw command generation */
 #include "paint.h"
 #include "node.h"
+#include "widget.h"
 #include "font.h"
 #include "inline_layout.h"
 #include "style.h"
@@ -824,6 +825,20 @@ static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, Cli
             uint32_t fallback = ti == tb->active ? win_palette(win)->text_bright
                                                  : win_palette(win)->text_dim;
             paint_text(win, font, node, tb->labels[ti], or_palette(tb->text_colors[ti], fallback));
+            if (tb->closable) {
+                const float zone = ca_tab_close_zone(node);
+                const bool over = win->mouse_x >= node->x + node->w - zone &&
+                                  win->mouse_x < node->x + node->w &&
+                                  win->mouse_y >= node->y && win->mouse_y < node->y + node->h;
+                Ca_Node glyph = *node;
+                glyph.x = node->x + node->w - zone;
+                glyph.w = zone;
+                glyph.desc.padding_left  = 0.0f;
+                glyph.desc.padding_right = 0.0f;
+                glyph.desc.text_align    = 1;
+                paint_text(win, font, &glyph, CA_ICON_FA_TIMES,
+                           over ? win_palette(win)->text_bright : win_palette(win)->text_dim);
+            }
             break;
         }
         break;

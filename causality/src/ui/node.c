@@ -3,6 +3,7 @@
 
 /* node.c — node pool, tree building, and subscription wiring */
 #include "node.h"
+#include "style.h"
 #include "inline_layout.h"
 #include "menu_storage.h"
 #include "viewport.h"
@@ -305,6 +306,8 @@ static void release_widget(Ca_Node *node)
         break;
     }
     case CA_WIDGET_TABBAR: {
+        /* Tab header nodes borrow the bar's widget; only the bar node owns it. */
+        if (node->elem_type == CA_ELEM_TAB) break;
         Ca_TabBar *tab_bar = node->widget;
         ca_dyn_array_destroy(&tab_bar->label_storage);
         ca_dyn_array_destroy(&tab_bar->tab_node_storage);

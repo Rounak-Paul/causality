@@ -855,7 +855,8 @@ static Ca_Window *window_create_in_pool(Ca_Instance *inst,
     glfwWindowHint(GLFW_RESIZABLE,  native_frame && desc->resizable && !desc->fullscreen
                                     ? GLFW_TRUE : GLFW_FALSE);
     glfwWindowHint(GLFW_FLOATING,   GLFW_FALSE);
-    glfwWindowHint(GLFW_FOCUS_ON_SHOW, GLFW_TRUE);
+    glfwWindowHint(GLFW_FOCUS_ON_SHOW, desc->no_focus ? GLFW_FALSE : GLFW_TRUE);
+    glfwWindowHint(GLFW_FOCUSED, desc->no_focus ? GLFW_FALSE : GLFW_TRUE);
     glfwWindowHint(GLFW_VISIBLE,    GLFW_TRUE);
     glfwWindowHint(GLFW_TRANSPARENT_FRAMEBUFFER, GLFW_FALSE);
 #ifdef GLFW_MOUSE_PASSTHROUGH
@@ -896,6 +897,8 @@ static Ca_Window *window_create_in_pool(Ca_Instance *inst,
     slot->on_close      = desc->on_close;
     slot->on_close_data = desc->on_close_data;
     slot->on_close_request = desc->on_close_request;
+    slot->on_title_drag = desc->on_title_drag;
+    slot->on_title_drag_data = desc->on_title_drag_data;
     /* Apply the instance-wide default scale if one has been set,
        otherwise fall back to 1.0 (no scaling). */
     slot->ui_scale = (inst->default_ui_scale > 0.0f)
@@ -1037,6 +1040,83 @@ void ca_window_close(Ca_Window *window)
 {
     if (!window || !window->in_use || !window->glfw) return;
     glfwSetWindowShouldClose(window->glfw, GLFW_TRUE);
+}
+
+/*
+ * Report the window's client-area rectangle in screen coordinates.
+ *
+ * window  Window to query.
+ * x, y    Receive the top-left corner; optional.
+ * width, height  Receive the client size; optional.
+ */
+void ca_window_get_rect(const Ca_Window *window,
+                        int *x, int *y, int *width, int *height)
+{
+    int px = 0, py = 0, pw = 0, ph = 0;
+    if (window && window->in_use && window->glfw) {
+        glfwGetWindowPos(window->glfw, &px, &py);
+        glfwGetWindowSize(window->glfw, &pw, &ph);
+    }
+    if (x) *x = px;
+    if (y) *y = py;
+    if (width) *width = pw;
+    if (height) *height = ph;
+}
+
+/*
+ * Read the cursor live from the platform in screen coordinates.
+ *
+ * window  Window whose coordinate space the platform cursor is queried in.
+ * x, y    Receive the screen position.
+ * Returns false when the window is invalid.
+ */
+bool ca_window_cursor_screen_position(const Ca_Window *window, float *x, float *y)
+{
+    if (!window || !window->in_use || !window->glfw) return false;
+    double sx = 0.0, sy = 0.0;
+    ca_window_cursor_screen_pos((Ca_Window *)window, &sx, &sy);
+    if (x) *x = (float)sx;
+    if (y) *y = (float)sy;
+    return true;
+}
+
+/*
+ * Report whether a mouse button is currently held.
+ *
+ * window  Window tracking the button state.
+ * button  0 = left, 1 = right, 2 = middle.
+ */
+bool ca_window_mouse_button_down(const Ca_Window *window, int button)
+{
+    if (!window || !window->in_use || !window->glfw || button < 0 || button > 2) return false;
+    if (button == 0) return ca_window_left_button_held((Ca_Window *)window);
+    return glfwGetMouseButton(window->glfw, button) == GLFW_PRESS;
+}
+
+/*
+ * Set whole-window opacity.
+ *
+ * window   Window to change; no-op when invalid.
+ * opacity  Value in [0, 1], clamped.
+ */
+void ca_window_set_opacity(Ca_Window *window, float opacity)
+{
+    if (!window || !window->in_use || !window->glfw) return;
+    if (!(opacity > 0.0f)) opacity = 0.0f;
+    if (opacity > 1.0f) opacity = 1.0f;
+    glfwSetWindowOpacity(window->glfw, opacity);
+}
+
+/*
+ * Move the window's client area to a screen position.
+ *
+ * window  Window to move; no-op when invalid.
+ * x, y    Target top-left corner in screen coordinates.
+ */
+void ca_window_set_position(Ca_Window *window, int x, int y)
+{
+    if (!window || !window->in_use || !window->glfw) return;
+    glfwSetWindowPos(window->glfw, x, y);
 }
 
 /*
@@ -1289,6 +1369,7 @@ bool ca_window_titlebar_drag_pass(Ca_Window *win)
         }
         win->titlebar_drag_active = false;
         win->titlebar_mouse_down = false;
+        if (win->on_title_drag) win->on_title_drag(win, false, win->on_title_drag_data);
         return false;
     }
 
@@ -1348,6 +1429,7 @@ bool ca_window_titlebar_drag_pass(Ca_Window *win)
     win->titlebar_drag_win_y = wy;
     win->titlebar_drag_screen_x = screen_x;
     win->titlebar_drag_screen_y = screen_y;
+    if (win->on_title_drag) win->on_title_drag(win, true, win->on_title_drag_data);
     ca_instance_wake();
     return true;
 }

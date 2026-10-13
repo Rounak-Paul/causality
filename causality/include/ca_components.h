@@ -71,6 +71,13 @@ typedef void (*Ca_SelectFn)(Ca_Select *sel, void *user_data);
  */
 typedef void (*Ca_TabFn)(Ca_TabBar *tabs, void *user_data);
 
+/* Tab-indexed callback: close button pressed on tab `index`. */
+typedef void (*Ca_TabIndexFn)(Ca_TabBar *tabs, int index, void *user_data);
+
+/* Tab-indexed drag callback: `index` is the tab the drag began on. */
+typedef void (*Ca_TabDragFn)(Ca_TabBar *tabs, int index,
+                             const Ca_DragEvent *event, void *user_data);
+
 /*
  * Callback fired when a tree node is expanded or collapsed.
  *
@@ -201,6 +208,13 @@ typedef struct Ca_TabBarDesc {
     const char  *id, *style;
     const char  *tab_style;        /* classes on every `tab` header; the active one also gets `active` */
     bool         tabs_fill;        /* true: tabs flex-grow to fill available row space */
+    bool         closable;         /* every tab shows a close button that fires on_close */
+    Ca_TabIndexFn on_close;
+    void        *close_data;
+    Ca_TabDragFn on_drag_start;    /* a drag that began on a tab header */
+    Ca_TabDragFn on_drag;
+    Ca_TabDragFn on_drag_end;
+    void        *drag_data;
     bool         hidden;
     bool         disabled;
     bool         no_hover;        /* transparent to hover/input-capture detection */
@@ -391,6 +405,11 @@ CA_API Ca_TabBar   *ca_tabs(const Ca_TabBarDesc *desc);
 
 /* Returns the zero-based index of the currently active tab. */
 CA_API int          ca_tabs_active(const Ca_TabBar *t);
+
+/* Returns tab `index`'s resolved border box in window coordinates; false when the
+   index is out of range or the tab has not been laid out. Pointers are optional. */
+CA_API bool         ca_tabs_tab_rect(const Ca_TabBar *t, int index,
+                                     float *x, float *y, float *w, float *h);
 
 /* Activates a tab as a click would, including the on_change callback. */
 CA_API void         ca_tabs_set_active(Ca_TabBar *t, int index);

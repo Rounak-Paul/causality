@@ -247,6 +247,13 @@ typedef struct Ca_WindowDesc {
     /* Cover the primary monitor at its current video mode. Implies
        native_frame; width and height are ignored. */
     bool        fullscreen;
+    /* Show the window without taking input focus, e.g. a drag ghost that
+       must not steal an in-progress mouse drag from its source window. */
+    bool        no_focus;
+    /* Optional notification that the user started (`active`) or stopped
+       moving the window by its title bar. */
+    void      (*on_title_drag)(Ca_Window *window, bool active, void *user_data);
+    void       *on_title_drag_data;
 } Ca_WindowDesc;
 
 /*
@@ -275,6 +282,26 @@ CA_API void       ca_instance_destroy_other_windows(Ca_Instance *instance, Ca_Wi
 CA_API void       ca_window_maximize(Ca_Window *window);
 /* Restore a maximized window to its previous geometry. */
 CA_API void       ca_window_restore(Ca_Window *window);
+
+/* Returns the window's client-area rectangle in screen coordinates (the same
+   logical units as cursor positions). All pointers are optional; outputs are
+   zero for an invalid window. */
+CA_API void       ca_window_get_rect(const Ca_Window *window,
+                                     int *x, int *y, int *width, int *height);
+/* Moves the window's client area so its top-left sits at screen (x, y). */
+CA_API void       ca_window_set_position(Ca_Window *window, int x, int y);
+
+/* Reads the cursor from the OS right now, in screen coordinates. Unlike
+   event-driven input it needs no window focus, stays consistent while windows
+   move, and keeps tracking outside every client area. Returns false for an
+   invalid window. */
+CA_API bool       ca_window_cursor_screen_position(const Ca_Window *window, float *x, float *y);
+/* Reports whether mouse `button` (0 = left, 1 = right, 2 = middle) is held.
+   The left button is read from the OS, so it is not cleared when the window
+   loses focus mid-drag. */
+CA_API bool       ca_window_mouse_button_down(const Ca_Window *window, int button);
+/* Sets whole-window opacity in [0, 1]; platforms without support ignore it. */
+CA_API void       ca_window_set_opacity(Ca_Window *window, float opacity);
 
 /* Returns true if the window handle is valid and still open. */
 CA_API bool       ca_window_is_open(const Ca_Window *window);
@@ -1014,6 +1041,16 @@ CA_API void ca_ui_begin(Ca_Window *window, const Ca_DivDesc *root_desc);
 
 /* Close the UI tree opened by ca_ui_begin. */
 CA_API void ca_ui_end(void);
+
+/*
+ * Returns the window's content root, the div between the title bar and the
+ * status bar. Attach a builder with ca_div_set_builder to drive a window's UI
+ * reactively without ca_ui_begin, which makes it safe to populate from any
+ * context, including a per-frame callback.
+ *
+ * window  Target window; NULL or closed windows return NULL.
+ */
+CA_API Ca_Div *ca_window_content_div(Ca_Window *window);
 
 /*
  * Remove all children from a div and enter it as the current parent.

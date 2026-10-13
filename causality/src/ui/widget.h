@@ -43,3 +43,6 @@ void ca_node_sync_scroll_y_signal(Ca_Node *node);
 
 /** Publishes changed laid-out sizes to every size signal in win; may run builders. */
 void ca_window_sync_size_signals(Ca_Window *win);
+
+/** Width reserved at a closable tab header's trailing edge for its close glyph. */
+float ca_tab_close_zone(const Ca_Node *tab_node);

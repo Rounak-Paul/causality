@@ -900,6 +900,11 @@ void ca_ui_begin(Ca_Window *window, const Ca_DivDesc *root_desc)
 
 }
 
+Ca_Div *ca_window_content_div(Ca_Window *window)
+{
+    return window && window->in_use ? (Ca_Div *)window->content_root : NULL;
+}
+
 void ca_ui_end(void)
 {
     assert(g_ctx.active && "ca_ui_end called without ca_ui_begin");
@@ -2728,6 +2733,47 @@ static void tabbar_activate(Ca_TabBar *tb, int index)
     }
 }
 
+/* Width reserved at a closable tab's trailing edge for its close glyph. */
+float ca_tab_close_zone(const Ca_Node *tab_node)
+{
+    float fs = tab_node->desc.font_size > 0.0f ? tab_node->desc.font_size : 12.0f;
+    return (fs + 8.0f) * tab_node->window->ui_scale;
+}
+
+/* Returns the bar owning `tab_node` and its tab index through `out_index`. */
+static Ca_TabBar *tabbar_of_tab(Ca_Node *tab_node, int *out_index)
+{
+    Ca_TabBar *tb = (Ca_TabBar *)tab_node->widget;
+    if (!tb || !tb->in_use) return NULL;
+    for (int i = 0; i < tb->count; ++i) {
+        if (tb->tab_nodes[i] != tab_node) continue;
+        *out_index = i;
+        return tb;
+    }
+    return NULL;
+}
+
+static void tabbar_drag_start(const Ca_DragEvent *event, void *tab_node)
+{
+    int index = -1;
+    Ca_TabBar *tb = tabbar_of_tab((Ca_Node *)tab_node, &index);
+    if (tb && tb->on_drag_start) tb->on_drag_start(tb, index, event, tb->drag_data);
+}
+
+static void tabbar_drag_move(const Ca_DragEvent *event, void *tab_node)
+{
+    int index = -1;
+    Ca_TabBar *tb = tabbar_of_tab((Ca_Node *)tab_node, &index);
+    if (tb && tb->on_drag) tb->on_drag(tb, index, event, tb->drag_data);
+}
+
+static void tabbar_drag_end(const Ca_DragEvent *event, void *tab_node)
+{
+    int index = -1;
+    Ca_TabBar *tb = tabbar_of_tab((Ca_Node *)tab_node, &index);
+    if (tb && tb->on_drag_end) tb->on_drag_end(tb, index, event, tb->drag_data);
+}
+
 Ca_TabBar *ca_tabs(const Ca_TabBarDesc *desc)
 {
     assert(g_ctx.active && desc);
@@ -2785,6 +2831,13 @@ Ca_TabBar *ca_tabs(const Ca_TabBarDesc *desc)
     }
     tb->on_change = desc->on_change;
     tb->change_data = desc->change_data;
+    tb->closable = desc->closable;
+    tb->on_close = desc->on_close;
+    tb->close_data = desc->close_data;
+    tb->on_drag_start = desc->on_drag_start;
+    tb->on_drag = desc->on_drag;
+    tb->on_drag_end = desc->on_drag_end;
+    tb->drag_data = desc->drag_data;
     snprintf(tb->tab_style, sizeof(tb->tab_style), "%s", desc->tab_style ? desc->tab_style : "");
 
     if (desc->hidden)   node->desc.hidden   = true;
@@ -2815,6 +2868,7 @@ Ca_TabBar *ca_tabs(const Ca_TabBarDesc *desc)
         Ca_NodeDesc *td = &tab_node->desc;
         float tw = ca_measure_text_px(g_ctx.window, tb->labels[i], td->font_size);
         float min_w = (tw > 0.0f ? tw : s(40.0f)) + td->padding_left + td->padding_right + s(8.0f);
+        if (tb->closable) min_w += ca_tab_close_zone(tab_node);
         if (desc->tabs_fill) {
             td->width = 0.0f;
             td->min_w = min_w;
@@ -2822,6 +2876,12 @@ Ca_TabBar *ca_tabs(const Ca_TabBarDesc *desc)
             td->flex_shrink = 1.0f;
         } else {
             td->width = min_w;
+        }
+        if (tb->on_drag_start || tb->on_drag || tb->on_drag_end) {
+            tab_node->drag_fn_start = tb->on_drag_start ? (void *)tabbar_drag_start : NULL;
+            tab_node->drag_fn_move  = tb->on_drag ? (void *)tabbar_drag_move : NULL;
+            tab_node->drag_fn_end   = tb->on_drag_end ? (void *)tabbar_drag_end : NULL;
+            tab_node->drag_data     = tab_node;
         }
         tab_node->base_desc.width       = td->width;
         tab_node->base_desc.min_w       = td->min_w;
@@ -2835,6 +2895,18 @@ int ca_tabs_active(const Ca_TabBar *t)
 {
     assert(t && t->in_use);
     return t->active;
+}
+
+bool ca_tabs_tab_rect(const Ca_TabBar *t, int index,
+                      float *x, float *y, float *w, float *h)
+{
+    if (!t || !t->in_use || index < 0 || index >= t->count || !t->tab_nodes[index]) return false;
+    const Ca_Node *tab = t->tab_nodes[index];
+    if (x) *x = tab->x;
+    if (y) *y = tab->y;
+    if (w) *w = tab->w;
+    if (h) *h = tab->h;
+    return true;
 }
 
 void ca_tabs_set_active(Ca_TabBar *t, int index)
@@ -3791,13 +3863,9 @@ Ca_Viewport *ca_viewport(const Ca_ViewportDesc *desc)
     assert(g_ctx.active);
     if (!desc) return NULL;
 
-    Ca_Node *parent = ctx_top();
-    if (!parent) return NULL;
-
     Ca_Window *win = g_ctx.window;
-    Ca_Viewport *vp = alloc_viewport(win);
-    if (!vp) return NULL;
-    memset(vp, 0, sizeof(*vp));
+    const char *next_key = consume_next_key();
+    const char *id = next_key ? next_key : desc->id;
 
     float w = desc->width  > 0 ? s(desc->width)  : 0;
     float h = desc->height > 0 ? s(desc->height) : 0;
@@ -3809,11 +3877,22 @@ Ca_Viewport *ca_viewport(const Ca_ViewportDesc *desc)
     if (w == 0) nd.flex_grow = 1.0f;
     if (h == 0) nd.flex_grow = 1.0f;
 
-    Ca_Node *node = ca_node_add(parent, &nd);
-    if (!node) {
-        ca_pool_release(&win->viewport_pool, vp);
+    bool reused = false;
+    Ca_Node *node = claim_child(&nd, CA_WIDGET_VIEWPORT, CA_ELEM_DIV, id, &reused);
+    if (!node) return NULL;
+    if (reused && node->widget_type == CA_WIDGET_VIEWPORT && node->widget) {
+        node->desc.hidden = false;
+        if (id) snprintf(node->id, CA_NODE_ID_MAX, "%s", id);
+        if (desc->style) snprintf(node->classes, CA_NODE_CLASS_MAX, "%s", desc->style);
+        return (Ca_Viewport *)node->widget;
+    }
+
+    Ca_Viewport *vp = alloc_viewport(win);
+    if (!vp) {
+        ca_node_remove(node);
         return NULL;
     }
+    memset(vp, 0, sizeof(*vp));
 
     VkFormat fmt = desc->format ? (VkFormat)desc->format : VK_FORMAT_B8G8R8A8_SRGB;
 
@@ -3845,7 +3924,7 @@ Ca_Viewport *ca_viewport(const Ca_ViewportDesc *desc)
     node->widget_type = CA_WIDGET_VIEWPORT;
     node->widget      = (void *)vp;
 
-    if (desc->id)    snprintf(node->id, CA_NODE_ID_MAX, "%s", desc->id);
+    if (id)          snprintf(node->id, CA_NODE_ID_MAX, "%s", id);
     if (desc->style) snprintf(node->classes, CA_NODE_CLASS_MAX, "%s", desc->style);
 
     return vp;
@@ -5309,6 +5388,12 @@ void ca_widget_input_pass(Ca_Window *win)
                 for (int ti = 0; ti < tb->count; ++ti) {
                     if (!tb->tab_nodes[ti]) continue;
                     if (point_reaches_node(tb->tab_nodes[ti], mx, my, top_z)) {
+                        const Ca_Node *tab = tb->tab_nodes[ti];
+                        if (tb->closable && tb->on_close &&
+                            mx >= tab->x + tab->w - ca_tab_close_zone(tab)) {
+                            tb->on_close(tb, ti, tb->close_data);
+                            break;
+                        }
                         if (tb->active != ti) {
                             tabbar_activate(tb, ti);
                             if (tb->on_change) tb->on_change(tb, tb->change_data);

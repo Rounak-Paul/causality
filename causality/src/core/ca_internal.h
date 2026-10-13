@@ -981,6 +981,13 @@ struct Ca_TabBar {
     int           active;
     Ca_TabFn      on_change;
     void         *change_data;
+    bool          closable;
+    Ca_TabIndexFn on_close;
+    void         *close_data;
+    Ca_TabDragFn  on_drag_start;
+    Ca_TabDragFn  on_drag;
+    Ca_TabDragFn  on_drag_end;
+    void         *drag_data;
     bool          in_use;
     char          tab_style[CA_NODE_CLASS_MAX];
 };
@@ -1404,6 +1411,8 @@ struct Ca_Window {
     void         (*on_close)(Ca_Window *window, void *user_data);
     void          *on_close_data;
     bool         (*on_close_request)(Ca_Window *window, void *user_data);
+    void         (*on_title_drag)(Ca_Window *window, bool active, void *user_data);
+    void          *on_title_drag_data;
 };
 
 /* ======================================================
