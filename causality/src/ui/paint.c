@@ -1820,7 +1820,10 @@ static void paint_text(Ca_Window *win, Ca_Font *font,
         left_logical = node->x + node->desc.padding_left;
     } else {
         switch (node->desc.text_align) {
-        case 1:  left_logical = node->x + (node->w - text_w) * 0.5f; break;
+        case 1:
+            left_logical = node->x + node->desc.padding_left +
+                (node->w - node->desc.padding_left - node->desc.padding_right - text_w) * 0.5f;
+            break;
         case 2:  left_logical = node->x + node->w - text_w - node->desc.padding_right; break;
         default: left_logical = node->x + node->desc.padding_left; break;
         }

@@ -2866,9 +2866,12 @@ Ca_TabBar *ca_tabs(const Ca_TabBarDesc *desc)
         /* Width follows the CSS-resolved font and padding; the safety margin
            keeps glyph overhang from clipping the last character. */
         Ca_NodeDesc *td = &tab_node->desc;
+        if (tb->closable) {
+            td->padding_right += ca_tab_close_zone(tab_node);
+            tab_node->base_desc.padding_right = td->padding_right;
+        }
         float tw = ca_measure_text_px(g_ctx.window, tb->labels[i], td->font_size);
         float min_w = (tw > 0.0f ? tw : s(40.0f)) + td->padding_left + td->padding_right + s(8.0f);
-        if (tb->closable) min_w += ca_tab_close_zone(tab_node);
         if (desc->tabs_fill) {
             td->width = 0.0f;
             td->min_w = min_w;
