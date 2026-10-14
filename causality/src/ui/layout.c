@@ -1064,5 +1064,5 @@ void ca_layout_pass(Ca_Window *win)
         }
         if (!visibility_changed) break;
     }
-    ca_title_bar_center_title(win);
+    ca_title_bar_position_title(win);
 }

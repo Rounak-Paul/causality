@@ -250,6 +250,8 @@ typedef struct Ca_WindowDesc {
     /* Show the window without taking input focus, e.g. a drag ghost that
        must not steal an in-progress mouse drag from its source window. */
     bool        no_focus;
+    /* Align the custom title to the left edge of its drag area. Default centered. */
+    bool        title_left_aligned;
     /* Optional notification that the user started (`active`) or stopped
        moving the window by its title bar. */
     void      (*on_title_drag)(Ca_Window *window, bool active, void *user_data);
@@ -278,6 +280,8 @@ CA_API void       ca_window_close(Ca_Window *window);
 /* Immediately destroy every open window of the instance except `keep`.
    Call from the main window's on_close so secondary windows cannot outlive it. */
 CA_API void       ca_instance_destroy_other_windows(Ca_Instance *instance, Ca_Window *keep);
+/* Restores an iconified window and requests OS input focus. */
+CA_API void       ca_window_focus(Ca_Window *window);
 /* Maximize the window to fill the screen. */
 CA_API void       ca_window_maximize(Ca_Window *window);
 /* Restore a maximized window to its previous geometry. */
@@ -288,6 +292,8 @@ CA_API void       ca_window_restore(Ca_Window *window);
    zero for an invalid window. */
 CA_API void       ca_window_get_rect(const Ca_Window *window,
                                      int *x, int *y, int *width, int *height);
+/* Cancels an in-progress custom title-bar move until the mouse is released. */
+CA_API void       ca_window_cancel_move(Ca_Window *window);
 /* Moves the window's client area so its top-left sits at screen (x, y). */
 CA_API void       ca_window_set_position(Ca_Window *window, int x, int y);
 
@@ -300,6 +306,12 @@ CA_API bool       ca_window_cursor_screen_position(const Ca_Window *window, floa
    The left button is read from the OS, so it is not cleared when the window
    loses focus mid-drag. */
 CA_API bool       ca_window_mouse_button_down(const Ca_Window *window, int button);
+/* Reads button's release event this tick in screen coordinates; false without a release. */
+CA_API bool       ca_window_mouse_release_position(const Ca_Window *window, int button, float *x, float *y);
+/* Reports whether key (a CA_KEY_* value) is currently held in this window. */
+CA_API bool       ca_window_key_down(const Ca_Window *window, int key);
+/* Reports whether the OS gives this window input focus. */
+CA_API bool       ca_window_focused(const Ca_Window *window);
 /* Sets whole-window opacity in [0, 1]; platforms without support ignore it. */
 CA_API void       ca_window_set_opacity(Ca_Window *window, float opacity);
 
@@ -395,6 +407,9 @@ CA_API float      ca_window_get_pixel_ratio(Ca_Window *window);
 
 /* Return the resolved logical height reserved for the system title bar. */
 CA_API float      ca_window_get_title_bar_height(Ca_Window *window);
+
+/** Shows or hides the custom title bar; native OS frames are unaffected. */
+CA_API void       ca_window_set_title_bar_visible(Ca_Window *window, bool visible);
 
 /* Instance-wide UI scale — like browser zoom.
    1.0 = 100% (default), 1.5 = 150%, 2.0 = 200%, etc.

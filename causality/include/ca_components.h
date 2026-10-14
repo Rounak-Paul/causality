@@ -211,7 +211,7 @@ typedef struct Ca_TabBarDesc {
     bool         closable;         /* every tab shows a close button that fires on_close */
     Ca_TabIndexFn on_close;
     void        *close_data;
-    Ca_TabDragFn on_drag_start;    /* a drag that began on a tab header */
+    Ca_TabDragFn on_drag_start;    /* tab index, or -1 for the empty strip */
     Ca_TabDragFn on_drag;
     Ca_TabDragFn on_drag_end;
     void        *drag_data;

@@ -18,9 +18,8 @@ void ca_title_bar_init(Ca_Window *win);
    Must be called within a ca_widget_ctx_enter / ca_widget_ctx_leave pair. */
 void ca_title_bar_rebuild(Ca_Window *win);
 
-/* Re-centre the window title on the whole title bar after layout, clamped
-   inside the drag zone so it never overlaps the menus or window controls. */
-void ca_title_bar_center_title(Ca_Window *win);
+/* Position the title after layout using the window alignment, within its drag area. */
+void ca_title_bar_position_title(Ca_Window *win);
 
 /* Called from ca_ui_update when win->statusbar_needs_rebuild is true.
    Must be called within a ca_widget_ctx_enter / ca_widget_ctx_leave pair. */

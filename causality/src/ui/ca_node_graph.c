@@ -738,6 +738,18 @@ bool ca_node_graph_init(Ca_NodeGraph *ng)
     return true;
 }
 
+void ca_node_graph_unmount(Ca_NodeGraph *ng)
+{
+    if (!ng) return;
+    ng->_host_div = NULL;
+    ng->_canvas = NULL;
+    ng->_window = NULL;
+    ng->_canvas_w = ng->_canvas_h = 0.0f;
+    ng->_link_active = false;
+    ng->_box_active = false;
+    ng->_moved_distance = 0.0f;
+}
+
 void ca_node_graph_destroy(Ca_NodeGraph *ng)
 {
     if (!ng) return;

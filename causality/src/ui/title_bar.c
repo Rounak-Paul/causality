@@ -68,6 +68,7 @@ static void title_bar_apply_style(Ca_Window *win)
     const float height = (tb->desc.height > 0.0f && !tb->desc.height_pct)
                              ? tb->desc.height
                              : TITLE_BAR_DEFAULT_HEIGHT_PX;
+    tb->desc.hidden        = win->native_frame || win->titlebar_hidden;
     tb->desc.height        = height * sc;
     tb->desc.height_pct    = false;
     tb->desc.padding_left  *= sc;
@@ -130,7 +131,7 @@ void ca_title_bar_init(Ca_Window *win)
     tb.overflow_y    = 1;
     /* A native frame supplies its own title bar and window controls; the
        caller-drawn strip would only duplicate them. */
-    tb.hidden        = win->native_frame;
+    tb.hidden        = win->native_frame || win->titlebar_hidden;
     Ca_Node *tbnode = ca_node_add(root, &tb);
     assert(tbnode && "ca_title_bar_init: failed to allocate title_bar_node");
     win->title_bar_node = tbnode;
@@ -334,7 +335,7 @@ static void translate_subtree_x(Ca_Node *node, float dx)
         translate_subtree_x(node->children[i], dx);
 }
 
-void ca_title_bar_center_title(Ca_Window *win)
+void ca_title_bar_position_title(Ca_Window *win)
 {
     Ca_Node *bar  = win->title_bar_node;
     Ca_Node *drag = win->title_drag_node;
@@ -346,17 +347,34 @@ void ca_title_bar_center_title(Ca_Window *win)
 
     const float lo = drag->x + drag->desc.padding_left;
     const float hi = drag->x + drag->w - drag->desc.padding_right - text->w;
-    if (hi < lo) return;
-
-    float x = bar->x + (bar->w - text->w) * 0.5f;
-    if (x < lo) x = lo;
-    if (x > hi) x = hi;
+    const float scale = win->ui_scale > 0.0f ? win->ui_scale : 1.0f;
+    float x = lo + (win->title_left_aligned ? 8.0f * scale : 0.0f);
+    if (!win->title_left_aligned && hi >= lo) {
+        x = bar->x + (bar->w - text->w) * 0.5f;
+        if (x < lo) x = lo;
+        if (x > hi) x = hi;
+    }
     if (x != text->x) translate_subtree_x(text, x - text->x);
 }
 
 /* ------------------------------------------------------------------ */
 /* Public API implementations                                          */
 /* ------------------------------------------------------------------ */
+
+void ca_window_set_title_bar_visible(Ca_Window *window, bool visible)
+{
+    if (!window || !window->in_use || window->native_frame || window->titlebar_hidden == !visible) return;
+    window->titlebar_hidden = !visible;
+    if (window->title_bar_node) {
+        window->title_bar_node->desc.hidden = !visible;
+        window->title_bar_node->base_desc.hidden = !visible;
+        window->title_bar_node->dirty |= CA_DIRTY_LAYOUT | CA_DIRTY_CONTENT;
+    }
+    if (window->root) window->root->dirty |= CA_DIRTY_LAYOUT;
+    if (!visible) window->titlebar_drag_active = false;
+    window->needs_render = true;
+    if (window->glfw) ca_instance_wake();
+}
 
 void ca_window_set_title(Ca_Window *window, const char *title)
 {

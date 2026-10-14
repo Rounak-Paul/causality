@@ -253,6 +253,9 @@ typedef struct Ca_NgWireDesc {
    Call once before the first ca_node_graph_begin. */
 CA_API bool ca_node_graph_init(Ca_NodeGraph *ng);
 
+/** Drops widget bindings and gestures before unmounting; keeps graph data and navigation. */
+CA_API void ca_node_graph_unmount(Ca_NodeGraph *ng);
+
 /** Releases all node state owned by a graph and resets it for reuse. */
 CA_API void ca_node_graph_destroy(Ca_NodeGraph *ng);
 

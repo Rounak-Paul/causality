@@ -1950,6 +1950,8 @@ Ca_Effect *ca_div_set_builder(Ca_Div *div,
     if (!fn) return NULL;
     node->builder_effect =
         ca_effect(node->window->instance, div_builder_effect_fn, node);
+    if (g_ctx.active && g_ctx.depth >= 0 && g_ctx.frames[g_ctx.depth].node == node)
+        g_ctx.frames[g_ctx.depth].child_cursor = node->child_count;
     return node->builder_effect;
 }
 
@@ -2740,11 +2742,12 @@ float ca_tab_close_zone(const Ca_Node *tab_node)
     return (fs + 8.0f) * tab_node->window->ui_scale;
 }
 
-/* Returns the bar owning `tab_node` and its tab index through `out_index`. */
-static Ca_TabBar *tabbar_of_tab(Ca_Node *tab_node, int *out_index)
+/* Returns the drag owner and tab index, or -1 for the strip background. */
+static Ca_TabBar *tabbar_drag_owner(Ca_Node *tab_node, int *out_index)
 {
     Ca_TabBar *tb = (Ca_TabBar *)tab_node->widget;
     if (!tb || !tb->in_use) return NULL;
+    if (tab_node == tb->node) { *out_index = -1; return tb; }
     for (int i = 0; i < tb->count; ++i) {
         if (tb->tab_nodes[i] != tab_node) continue;
         *out_index = i;
@@ -2756,22 +2759,63 @@ static Ca_TabBar *tabbar_of_tab(Ca_Node *tab_node, int *out_index)
 static void tabbar_drag_start(const Ca_DragEvent *event, void *tab_node)
 {
     int index = -1;
-    Ca_TabBar *tb = tabbar_of_tab((Ca_Node *)tab_node, &index);
+    Ca_TabBar *tb = tabbar_drag_owner((Ca_Node *)tab_node, &index);
+    Ca_Node *node = (Ca_Node *)tab_node;
+    if (tb && index >= 0 && tb->closable && event->start_x >= node->x + node->w - ca_tab_close_zone(node)) return;
     if (tb && tb->on_drag_start) tb->on_drag_start(tb, index, event, tb->drag_data);
 }
 
 static void tabbar_drag_move(const Ca_DragEvent *event, void *tab_node)
 {
     int index = -1;
-    Ca_TabBar *tb = tabbar_of_tab((Ca_Node *)tab_node, &index);
+    Ca_TabBar *tb = tabbar_drag_owner((Ca_Node *)tab_node, &index);
     if (tb && tb->on_drag) tb->on_drag(tb, index, event, tb->drag_data);
 }
 
 static void tabbar_drag_end(const Ca_DragEvent *event, void *tab_node)
 {
     int index = -1;
-    Ca_TabBar *tb = tabbar_of_tab((Ca_Node *)tab_node, &index);
+    Ca_TabBar *tb = tabbar_drag_owner((Ca_Node *)tab_node, &index);
     if (tb && tb->on_drag_end) tb->on_drag_end(tb, index, event, tb->drag_data);
+}
+
+/** Scrolls overflowing tabs with either a wheel or a horizontal trackpad gesture. */
+static void tabbar_scroll(double dx, double dy, void *user_data)
+{
+    Ca_TabBar *tabs = user_data;
+    Ca_Node *node = tabs->node;
+    if (node->desc.overflow_x == 0) return;
+    float delta = (float)(fabs(dx) > fabs(dy) ? dx : dy);
+    float scale = node->window->ui_scale > 0.0f ? node->window->ui_scale : 1.0f;
+    float offset = node->scroll_x - delta * CA_WHEEL_SCROLL_PX * scale;
+    offset = fminf(fmaxf(offset, 0.0f), ca_scrollbar_max_x(node));
+    if (offset == node->scroll_x) return;
+    node->scroll_x = offset;
+    node->dirty |= CA_DIRTY_LAYOUT | CA_DIRTY_CONTENT;
+}
+
+/** Keeps the selected tab inside the visible strip after selection or rebuilding. */
+static void tabbar_reveal_active(Ca_TabBar *tabs)
+{
+    Ca_Node *node = tabs->node;
+    if (!node || node->desc.overflow_x == 0 || node->w <= 0.0f || tabs->active < 0 || tabs->active >= tabs->count) return;
+    float left = 0.0f;
+    for (int i = 0; i < tabs->active; ++i) {
+        if (!tabs->tab_nodes[i] || tabs->tab_nodes[i]->desc.width <= 0.0f) return;
+        left += tabs->tab_nodes[i]->desc.width + node->desc.gap;
+    }
+    Ca_Node *tab = tabs->tab_nodes[tabs->active];
+    if (!tab || tab->desc.width <= 0.0f) return;
+    float width = node->w - node->desc.padding_left - node->desc.padding_right;
+    if (width <= 0.0f) return;
+    float right = left + tab->desc.width;
+    float offset = node->scroll_x;
+    if (right > offset + width) offset = right - width;
+    if (left < offset) offset = left;
+    offset = fmaxf(offset, 0.0f);
+    if (offset == node->scroll_x) return;
+    node->scroll_x = offset;
+    node->dirty |= CA_DIRTY_LAYOUT | CA_DIRTY_CONTENT;
 }
 
 Ca_TabBar *ca_tabs(const Ca_TabBarDesc *desc)
@@ -2838,6 +2882,10 @@ Ca_TabBar *ca_tabs(const Ca_TabBarDesc *desc)
     tb->on_drag = desc->on_drag;
     tb->on_drag_end = desc->on_drag_end;
     tb->drag_data = desc->drag_data;
+    node->drag_fn_start = tb->on_drag_start ? (void *)tabbar_drag_start : NULL;
+    node->drag_fn_move = tb->on_drag ? (void *)tabbar_drag_move : NULL;
+    node->drag_fn_end = tb->on_drag_end ? (void *)tabbar_drag_end : NULL;
+    node->drag_data = node;
     snprintf(tb->tab_style, sizeof(tb->tab_style), "%s", desc->tab_style ? desc->tab_style : "");
 
     if (desc->hidden)   node->desc.hidden   = true;
@@ -2847,6 +2895,8 @@ Ca_TabBar *ca_tabs(const Ca_TabBarDesc *desc)
     uint32_t dummy = 0;
     apply_css(node, &node->desc, CA_ELEM_TABBAR, desc->style, id, &dummy, NULL);
 
+    node->scroll_fn = node->desc.overflow_x ? (void *)tabbar_scroll : NULL;
+    node->scroll_data = tb;
     ca_node_trim_children(node, 0);
 
     for (int i = 0; i < tb->count; ++i) {
@@ -2891,6 +2941,7 @@ Ca_TabBar *ca_tabs(const Ca_TabBarDesc *desc)
         tab_node->base_desc.flex_grow   = td->flex_grow;
         tab_node->base_desc.flex_shrink = td->flex_shrink;
     }
+    tabbar_reveal_active(tb);
     return tb;
 }
 
@@ -2915,8 +2966,10 @@ bool ca_tabs_tab_rect(const Ca_TabBar *t, int index,
 void ca_tabs_set_active(Ca_TabBar *t, int index)
 {
     assert(t && t->in_use);
-    if (index < 0 || index >= t->count || index == t->active) return;
+    if (index < 0 || index >= t->count) return;
+    if (index == t->active) { tabbar_reveal_active(t); return; }
     tabbar_activate(t, index);
+    tabbar_reveal_active(t);
     if (t->on_change) t->on_change(t, t->change_data);
 }
 
@@ -4377,38 +4430,46 @@ static void numeric_input_set_drag_value(Ca_TextInput *input, double value)
         input->on_change(input, input->change_data);
 }
 
+/** Removes the selected byte range and collapses the cursor to its beginning. */
+static bool input_delete_selection(Ca_TextInput *input)
+{
+    if (input->sel_start < 0 || input->sel_start == input->cursor) return false;
+    int begin = input->sel_start < input->cursor ? input->sel_start : input->cursor;
+    int end = input->sel_start > input->cursor ? input->sel_start : input->cursor;
+    memmove(input->text + begin, input->text + end, strlen(input->text + end) + 1);
+    input->cursor = begin;
+    input->sel_start = -1;
+    return true;
+}
+
 /* Handle keyboard input for a focused text input */
 static void input_handle_keys(Ca_Window *win, Ca_TextInput *inp)
 {
     int len = (int)strlen(inp->text);
     bool changed = false;
 
-    /* Process typed characters */
-    for (uint32_t i = 0; i < win->char_count; ++i) {
-        uint32_t cp = win->char_buf[i];
-        if (cp < 32) continue; /* skip control chars */
-        if (!numeric_input_accepts(inp, cp)) continue;
-
-        char encoded[4];
-        int enc_len = utf8_encode(cp, encoded);
-        if (len + enc_len < CA_INPUT_TEXT_MAX - 1) {
-            /* Insert at cursor */
-            memmove(inp->text + inp->cursor + enc_len,
-                    inp->text + inp->cursor,
-                    (size_t)(len - inp->cursor + 1));
-            memcpy(inp->text + inp->cursor, encoded, enc_len);
-            inp->cursor += enc_len;
-            len += enc_len;
-            changed = true;
-        }
-    }
-
     /* Process key events */
     for (uint32_t i = 0; i < win->key_count; ++i) {
         int key  = win->key_buf[i];
         int mods = win->key_mods_buf[i];
-        (void)mods;
+        bool primary = (mods & (CA_MOD_CONTROL | CA_MOD_SUPER)) != 0;
+        bool shift = (mods & CA_MOD_SHIFT) != 0;
         len = (int)strlen(inp->text);
+        if (primary && key == CA_KEY_A) {
+            inp->sel_start = 0;
+            inp->cursor = len;
+            inp->node->dirty |= CA_DIRTY_CONTENT;
+            continue;
+        }
+        if (key == CA_KEY_BACKSPACE || key == CA_KEY_DELETE) {
+            if (input_delete_selection(inp)) { changed = true; continue; }
+            inp->sel_start = -1;
+        }
+        if (key == CA_KEY_LEFT || key == CA_KEY_RIGHT || key == CA_KEY_HOME || key == CA_KEY_END) {
+            if (shift && inp->sel_start < 0) inp->sel_start = inp->cursor;
+            if (!shift) inp->sel_start = -1;
+            inp->node->dirty |= CA_DIRTY_CONTENT;
+        }
 
         if (key == 259 /* GLFW_KEY_BACKSPACE */) {
             if (inp->cursor > 0) {
@@ -4455,6 +4516,28 @@ static void input_handle_keys(Ca_Window *win, Ca_TextInput *inp)
             inp->cursor = 0;
         } else if (key == 269 /* GLFW_KEY_END */) {
             inp->cursor = len;
+        }
+    }
+
+    /* Process typed characters */
+    for (uint32_t i = 0; i < win->char_count; ++i) {
+        uint32_t cp = win->char_buf[i];
+        if (cp < 32) continue; /* skip control chars */
+        if (!numeric_input_accepts(inp, cp)) continue;
+
+        if (input_delete_selection(inp)) { changed = true; len = (int)strlen(inp->text); }
+        inp->sel_start = -1;
+        char encoded[4];
+        int enc_len = utf8_encode(cp, encoded);
+        if (len + enc_len < CA_INPUT_TEXT_MAX - 1) {
+            /* Insert at cursor */
+            memmove(inp->text + inp->cursor + enc_len,
+                    inp->text + inp->cursor,
+                    (size_t)(len - inp->cursor + 1));
+            memcpy(inp->text + inp->cursor, encoded, enc_len);
+            inp->cursor += enc_len;
+            len += enc_len;
+            changed = true;
         }
     }
 
@@ -4988,6 +5071,9 @@ void ca_widget_input_pass(Ca_Window *win)
 
     /* --- Click handling: focus + button activation --- */
     if (win->mouse_click_this_frame) {
+        const float mx = (float)win->mouse_press_x;
+        const float my = (float)win->mouse_press_y;
+        const int16_t top_z = pointer_top_z(win, mx, my);
         /* Overlay priority: an open menu dropdown captures clicks that land
            on it (an item, a separator, or another menu header to switch
            to), same as the context-menu block below. A click anywhere else
@@ -5399,6 +5485,7 @@ void ca_widget_input_pass(Ca_Window *win)
                         }
                         if (tb->active != ti) {
                             tabbar_activate(tb, ti);
+                            tabbar_reveal_active(tb);
                             if (tb->on_change) tb->on_change(tb, tb->change_data);
                         }
                         break;
@@ -5593,7 +5680,10 @@ void ca_widget_input_pass(Ca_Window *win)
     /* --- Generic drag interaction (user-defined drag callbacks on divs) --- */
     {
         /* Start a new user drag */
-        if (left_down && win->mouse_click_this_frame && !win->user_drag_node) {
+        if (win->mouse_click_this_frame && !win->user_drag_node) {
+            const float px = (float)win->mouse_press_x;
+            const float py = (float)win->mouse_press_y;
+            const int16_t press_z = pointer_top_z(win, px, py);
             /* Find the topmost draggable node under the cursor. */
             Ca_Node *best = NULL;
             int best_z = -32768;
@@ -5603,8 +5693,8 @@ void ca_widget_input_pass(Ca_Window *win)
                     if (!n->in_use || node_is_ancestor_hidden(n)) continue;
                     if (is_effectively_disabled(n)) continue;
                     if (!n->drag_fn_start && !n->drag_fn_move && !n->drag_fn_end) continue;
-                    if (!point_within_clip_ancestors(n, mx, my)) continue;
-                    if (!point_reaches_node(n, mx, my, top_z)) continue;
+                    if (!point_within_clip_ancestors(n, px, py)) continue;
+                    if (!point_reaches_node(n, px, py, press_z)) continue;
 
                     int z = node_effective_z(n);
                     if (!best || z > best_z ||
@@ -5616,15 +5706,15 @@ void ca_widget_input_pass(Ca_Window *win)
             }
             if (best) {
                 win->user_drag_node    = best;
-                win->user_drag_start_x = mx;
-                win->user_drag_start_y = my;
+                win->user_drag_start_x = px;
+                win->user_drag_start_y = py;
                 win->user_drag_active  = true;
                 if (best->drag_fn_start) {
                     Ca_DragEvent ev = {
                         .window  = win,
                         .x = mx, .y = my,
-                        .start_x = mx, .start_y = my,
-                        .dx = 0, .dy = 0,
+                        .start_x = px, .start_y = py,
+                        .dx = mx - px, .dy = my - py,
                         .local_x = mx - best->x,
                         .local_y = my - best->y,
                         .node_w  = best->w,

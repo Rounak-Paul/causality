@@ -344,8 +344,22 @@ static void glfw_mouse_button_cb(GLFWwindow *glfw, int button, int action, int m
     Ca_Window *win = (Ca_Window *)glfwGetWindowUserPointer(glfw);
     if (button >= 0 && button < 3)
         win->mouse_buttons[button] = (action == GLFW_PRESS);
-    if (button == 0 && action == GLFW_PRESS)
+    if (button == 0 && action == GLFW_PRESS) {
         win->mouse_click_this_frame = true;
+        win->mouse_press_x = win->mouse_x;
+        win->mouse_press_y = win->mouse_y;
+        if (win->mouse_press_x < 0.0 || win->mouse_press_y < 0.0)
+            glfwGetCursorPos(glfw, &win->mouse_press_x, &win->mouse_press_y);
+    }
+    if (button >= 0 && button < 3 && action == GLFW_RELEASE) {
+        int wx, wy;
+        double cx = win->mouse_x, cy = win->mouse_y;
+        glfwGetWindowPos(glfw, &wx, &wy);
+        if (cx < 0.0 || cy < 0.0) glfwGetCursorPos(glfw, &cx, &cy);
+        win->mouse_release_x[button] = wx + cx;
+        win->mouse_release_y[button] = wy + cy;
+        win->mouse_released[button] = true;
+    }
     win->mouse_mods = mods;
     Ca_Event ev;
     ev.type                = CA_EVENT_MOUSE_BUTTON;
@@ -735,6 +749,7 @@ bool ca_window_system_tick(Ca_Instance *inst)
         Ca_Window *window = CA_POOL_AT(inst->windows, Ca_Window, i);
         if (window->in_use) {
             window->mouse_click_this_frame = false;
+            memset(window->mouse_released, 0, sizeof(window->mouse_released));
             window->scroll_dx = 0;
             window->scroll_dy = 0;
             window->scroll_this_frame = false;
@@ -894,6 +909,7 @@ static Ca_Window *window_create_in_pool(Ca_Instance *inst,
     slot->instance      = inst;
     slot->in_use        = true;
     slot->native_frame  = native_frame;
+    slot->title_left_aligned = desc->title_left_aligned;
     slot->on_close      = desc->on_close;
     slot->on_close_data = desc->on_close_data;
     slot->on_close_request = desc->on_close_request;
@@ -1028,6 +1044,14 @@ GLFWwindow *ca_window_glfw(const Ca_Window *window)
     return window->glfw;
 }
 
+/** Restores an iconified window and requests OS input focus. */
+void ca_window_focus(Ca_Window *window)
+{
+    if (!window || !window->in_use || !window->glfw) return;
+    if (glfwGetWindowAttrib(window->glfw, GLFW_ICONIFIED)) glfwRestoreWindow(window->glfw);
+    glfwFocusWindow(window->glfw);
+}
+
 /*
  * Request a window to close by setting its GLFW close flag.
  *
@@ -1091,6 +1115,34 @@ bool ca_window_mouse_button_down(const Ca_Window *window, int button)
     if (!window || !window->in_use || !window->glfw || button < 0 || button > 2) return false;
     if (button == 0) return ca_window_left_button_held((Ca_Window *)window);
     return glfwGetMouseButton(window->glfw, button) == GLFW_PRESS;
+}
+
+bool ca_window_mouse_release_position(const Ca_Window *window, int button, float *x, float *y)
+{
+    if (!window || !window->in_use || button < 0 || button > 2 || !window->mouse_released[button])
+        return false;
+    if (x) *x = (float)window->mouse_release_x[button];
+    if (y) *y = (float)window->mouse_release_y[button];
+    return true;
+}
+
+void ca_window_cancel_move(Ca_Window *window)
+{
+    if (!window || !window->in_use) return;
+    window->titlebar_drag_active = false;
+    window->titlebar_mouse_down = true;
+}
+
+bool ca_window_key_down(const Ca_Window *window, int key)
+{
+    return window && window->in_use && window->glfw && key >= GLFW_KEY_SPACE &&
+           key <= GLFW_KEY_LAST && glfwGetKey(window->glfw, key) == GLFW_PRESS;
+}
+
+bool ca_window_focused(const Ca_Window *window)
+{
+    return window && window->in_use && window->glfw &&
+           glfwGetWindowAttrib(window->glfw, GLFW_FOCUSED) == GLFW_TRUE;
 }
 
 /*
@@ -1344,7 +1396,7 @@ void ca_window_cursor_screen_pos(Ca_Window *win, double *out_x, double *out_y)
 
 bool ca_window_titlebar_drag_pass(Ca_Window *win)
 {
-    if (!win || !win->in_use || !win->glfw || !win->title_bar_node || win->native_frame)
+    if (!win || !win->in_use || !win->glfw || !win->title_bar_node || win->native_frame || win->titlebar_hidden)
         return false;
     if (win->titlebar_maximized) {
         win->titlebar_drag_active = false;
@@ -1584,7 +1636,7 @@ float ca_window_get_pixel_ratio(Ca_Window *window)
  */
 float ca_window_get_title_bar_height(Ca_Window *window)
 {
-    if (!window || !window->title_bar_node) return 0.0f;
+    if (!window || !window->title_bar_node || window->native_frame || window->titlebar_hidden) return 0.0f;
     return window->title_bar_node->desc.height;
 }
 

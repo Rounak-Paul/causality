@@ -6,6 +6,8 @@ typedef struct GLFWwindow GLFWwindow;
 #include "ca_internal.h"
 #include "widget.h"
 #include "node.h"
+#include "ca_reactive.h"
+#include "../src/reactive/reactive.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -310,8 +312,8 @@ static bool test_stacking_layer_occludes_pointer(void)
     scroll_node->desc.overflow_y = 2;
     scroll_node->content_h = 1000.0f;
 
-    window.mouse_x = 50.0;
-    window.mouse_y = 50.0;
+    window.mouse_x = window.mouse_press_x = 50.0;
+    window.mouse_y = window.mouse_press_y = 50.0;
     window.mouse_click_this_frame = true;
     ca_widget_input_pass(&window);
     CHECK(under_clicks == 0);
@@ -324,16 +326,16 @@ static bool test_stacking_layer_occludes_pointer(void)
     CHECK(scroll_node->scroll_y == 0.0f);
 
     window.scroll_this_frame = false;
-    window.mouse_x = 160.0;
-    window.mouse_y = 160.0;
+    window.mouse_x = window.mouse_press_x = 160.0;
+    window.mouse_y = window.mouse_press_y = 160.0;
     window.mouse_click_this_frame = true;
     ca_widget_input_pass(&window);
     CHECK(top_clicks == 1);
     CHECK(under_clicks == 0);
 
     overlay_node->desc.hidden = true;
-    window.mouse_x = 50.0;
-    window.mouse_y = 50.0;
+    window.mouse_x = window.mouse_press_x = 50.0;
+    window.mouse_y = window.mouse_press_y = 50.0;
     ca_widget_input_pass(&window);
     CHECK(under_clicks == 1);
     CHECK(top_clicks == 1);
@@ -418,9 +420,189 @@ static bool test_transparent_overlay_wheel_routing(void)
     return true;
 }
 
+/** Records the initial event of a gesture that was released before the input pass. */
+static void record_drag_start(const Ca_DragEvent *event, void *user_data)
+{
+    *(Ca_DragEvent *)user_data = *event;
+}
+
+/** Batched motion and release must retain the press location used to choose a drag source. */
+static bool test_batched_drag_press_location(void)
+{
+    Ca_Instance instance = {0};
+    Ca_Window window = {0};
+    window.instance = &instance;
+    window.ui_scale = 1.0f;
+    CHECK(ca_node_system_init(&window));
+    CHECK(ca_node_root(&window));
+    Ca_DragEvent recorded = {0};
+    ca_widget_ctx_enter(&window);
+    ca_reconcile_begin((Ca_Div *)window.root);
+    Ca_Div *drag = ca_div_begin(&(Ca_DivDesc){
+        .on_drag_start = record_drag_start, .drag_data = &recorded,
+    });
+    ca_div_end();
+    ca_div_end();
+    ca_widget_ctx_leave();
+    place_node(window.root, 0, 0, 200, 200);
+    place_node((Ca_Node *)drag, 10, 10, 30, 30);
+    window.mouse_press_x = window.mouse_press_y = 20;
+    window.mouse_x = window.mouse_y = 140;
+    window.mouse_click_this_frame = true;
+    ca_widget_input_pass(&window);
+    CHECK(recorded.window == &window);
+    CHECK(recorded.start_x == 20 && recorded.start_y == 20);
+    CHECK(recorded.x == 140 && recorded.y == 140);
+    CHECK(!window.user_drag_active);
+    ca_node_system_shutdown(&window);
+    ca_widget_ctx_release_instance(&instance);
+    return true;
+}
+
+/** Selection shortcuts and replacement apply to the complete selected UTF-8 range. */
+static bool test_input_selection_replacement(void)
+{
+    Ca_Instance instance = {0};
+    Ca_Window window = {0};
+    window.instance = &instance;
+    window.ui_scale = 1.0f;
+    CHECK(ca_node_system_init(&window));
+    CHECK(ca_node_root(&window));
+    ca_widget_ctx_enter(&window);
+    ca_reconcile_begin((Ca_Div *)window.root);
+    Ca_TextInput *input = ca_input(&(Ca_InputDesc){ .text = "previous path" });
+    ca_div_end();
+    ca_widget_ctx_leave();
+    ca_input_focus(input);
+    uint32_t ch = 'x';
+    window.char_buf = &ch;
+    window.char_count = 1;
+    ca_widget_input_pass(&window);
+    CHECK(strcmp(input->text, "x") == 0);
+    int key = CA_KEY_A, mods = CA_MOD_SUPER;
+    window.char_count = 0;
+    window.key_buf = &key;
+    window.key_mods_buf = &mods;
+    window.key_count = 1;
+    ca_widget_input_pass(&window);
+    CHECK(input->sel_start == 0 && input->cursor == 1);
+    key = CA_KEY_BACKSPACE;
+    mods = 0;
+    ca_widget_input_pass(&window);
+    CHECK(input->text[0] == 0);
+    window.char_buf = NULL;
+    window.key_buf = window.key_mods_buf = NULL;
+    ca_node_system_shutdown(&window);
+    ca_widget_ctx_release_instance(&instance);
+    return true;
+}
+
+/** Emits one retained child from an independently owned builder. */
+static void nested_content_builder(Ca_Div *div, void *user_data)
+{
+    (void)div; (void)user_data;
+    ca_div_begin(&(Ca_DivDesc){ .id = "nested-content" });
+    ca_div_end();
+}
+
+/** Closing the outer reconcile frame must retain children emitted by its own builder. */
+static bool test_builder_inside_reconciled_container(void)
+{
+    Ca_Instance instance = {0};
+    Ca_Window window = {0};
+    window.instance = &instance;
+    window.ui_scale = 1.0f;
+    CHECK(ca_node_system_init(&window));
+    Ca_Node *root = ca_node_root(&window);
+    CHECK(root);
+    for (int round = 0; round < 3; ++round) {
+        ca_widget_ctx_enter(&window);
+        ca_reconcile_begin((Ca_Div *)root);
+        Ca_Div *host = ca_div_begin(&(Ca_DivDesc){ .id = "nested-host" });
+        CHECK(ca_div_set_builder(host, nested_content_builder, NULL));
+        ca_div_end();
+        ca_div_end();
+        ca_widget_ctx_leave();
+        CHECK(root->child_count == 1);
+        CHECK(((Ca_Node *)host)->child_count == 1);
+        CHECK(strcmp(((Ca_Node *)host)->children[0]->id, "nested-content") == 0);
+        ca_div_invalidate(host);
+        CHECK(((Ca_Node *)host)->child_count == 1);
+    }
+    ca_node_system_shutdown(&window);
+    ca_reactive_shutdown(&instance);
+    ca_widget_ctx_release_instance(&instance);
+    return true;
+}
+
+/** Records whether a gesture started on a tab or on the unused strip. */
+static void record_tab_drag(Ca_TabBar *tabs, int index, const Ca_DragEvent *event, void *user_data)
+{
+    (void)tabs; (void)event;
+    *(int *)user_data = index;
+}
+
+/** Overflowing tab strips reveal focused tabs and consume horizontal wheel gestures. */
+static bool test_tab_overflow_navigation(void)
+{
+    Ca_Instance instance = {0};
+    Ca_Window window = {0};
+    window.instance = &instance;
+    window.ui_scale = 1.0f;
+    CHECK(ca_node_system_init(&window));
+    Ca_Node *root = ca_node_root(&window);
+    CHECK(root);
+    int drag_index = -99;
+    const char *labels[] = { "First", "Second", "Third" };
+    instance.stylesheet = ca_css_parse("tabbar { overflow: hidden; }");
+    CHECK(instance.stylesheet);
+    ca_widget_ctx_enter(&window);
+    ca_reconcile_begin((Ca_Div *)root);
+    Ca_TabBar *tabs = ca_tabs(&(Ca_TabBarDesc){ .labels = labels, .count = 3,
+        .on_drag_start = record_tab_drag, .drag_data = &drag_index });
+    ca_div_end();
+    ca_widget_ctx_leave();
+    CHECK(tabs);
+    place_node(root, 0, 0, 200, 100);
+    place_node(tabs->node, 0, 0, 80, 25);
+    tabs->node->desc.overflow_x = 1;
+    tabs->node->content_w = 200;
+    ca_tabs_set_active(tabs, 2);
+    CHECK(tabs->node->scroll_x > 0);
+    float offset = tabs->node->scroll_x;
+    window.mouse_x = window.mouse_y = 10;
+    window.scroll_this_frame = true;
+    window.scroll_dx = 1;
+    ca_widget_input_pass(&window);
+    CHECK(tabs->node->scroll_x < offset);
+    ca_tabs_set_active(tabs, 0);
+    CHECK(tabs->node->scroll_x == 0);
+    tabs->node->scroll_x = 20;
+    ca_tabs_set_active(tabs, 0);
+    CHECK(tabs->node->scroll_x == 0);
+    place_node(tabs->tab_nodes[0], 0, 0, 25, 25);
+    window.scroll_this_frame = false;
+    window.mouse_click_this_frame = true;
+    window.mouse_press_x = 70;
+    window.mouse_press_y = 10;
+    ca_widget_input_pass(&window);
+    CHECK(drag_index == -1);
+    window.mouse_press_x = 10;
+    ca_widget_input_pass(&window);
+    CHECK(drag_index == 0);
+    ca_node_system_shutdown(&window);
+    ca_css_destroy(instance.stylesheet);
+    ca_widget_ctx_release_instance(&instance);
+    return true;
+}
+
 /** Runs focused input ownership regression tests. */
 int main(void)
 {
+    if (!test_tab_overflow_navigation()) return 1;
+    if (!test_builder_inside_reconciled_container()) return 1;
+    if (!test_batched_drag_press_location()) return 1;
+    if (!test_input_selection_replacement()) return 1;
     if (!test_reconciled_input_text()) return 1;
     if (!test_focused_button_capture()) return 1;
     if (!test_splitter_pointer_capture()) return 1;

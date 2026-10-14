@@ -1301,6 +1301,9 @@ struct Ca_Window {
 
     /* Input state (updated by GLFW callbacks each tick) */
     double        mouse_x, mouse_y;
+    double        mouse_press_x, mouse_press_y;
+    double        mouse_release_x[3], mouse_release_y[3];
+    bool          mouse_released[3];
     int           mouse_mods;   /* CA_MOD_* held at the latest mouse button event */
     bool          mouse_buttons[3];       /* [0]=left [1]=right [2]=middle */
     bool          prev_mouse_right;       /* right-button edge detection for context menus (per-window, not shared) */
@@ -1363,6 +1366,8 @@ struct Ca_Window {
     Ca_Node       *status_bar_node;       /* system-managed status bar container */
     char           title[256];            /* window title text                   */
     bool           titlebar_needs_rebuild;
+    bool           titlebar_hidden;
+    bool           title_left_aligned;
     bool           statusbar_needs_rebuild;
     /* Status bar user builder + config (NULL fn → bar hidden). */
     void         (*status_bar_fn)(Ca_Window *window, void *user_data);
