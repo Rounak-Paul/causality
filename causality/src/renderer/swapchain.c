@@ -13,6 +13,8 @@
 
 /* ---- Helpers ---- */
 
+static void capture_deliver(Ca_Instance *inst, Ca_Window *win);
+
 /* Compare draw commands by z_index for stable sort (preserves original order
    for commands with equal z_index by using index offset). */
 static Ca_DrawCmd *s_sort_base; /* set before qsort */
@@ -375,6 +377,8 @@ void ca_swapchain_destroy(Ca_Instance *inst, Ca_Window *win)
 
     vkDeviceWaitIdle(inst->vk_device);
     ca_viewport_collect_retired(inst, win, true);
+    if (win->capture.state == CA_CAPTURE_RECORDED)
+        capture_deliver(inst, win);
 
     for (uint32_t i = 0; i < CA_FRAMES_IN_FLIGHT; ++i) {
         Ca_Frame *f = &sc->frames[i];
@@ -442,6 +446,175 @@ static void transition_image(VkCommandBuffer cmd, VkImage image,
         .pImageMemoryBarriers    = &barrier,
     };
     vkCmdPipelineBarrier2(cmd, &dep);
+}
+
+/* ---- Window capture ---- */
+
+/* True for 8-bit four-channel surface formats a capture can convert to RGBA8. */
+static bool capture_format_supported(VkFormat format)
+{
+    return format == VK_FORMAT_B8G8R8A8_UNORM || format == VK_FORMAT_B8G8R8A8_SRGB ||
+           format == VK_FORMAT_R8G8B8A8_UNORM || format == VK_FORMAT_R8G8B8A8_SRGB;
+}
+
+/* Releases the readback buffer of a capture. */
+static void capture_release(Ca_Instance *inst, Ca_WindowCapture *cap)
+{
+    if (cap->buffer != VK_NULL_HANDLE)
+        vkDestroyBuffer(inst->vk_device, cap->buffer, NULL);
+    if (cap->memory != VK_NULL_HANDLE)
+        vkFreeMemory(inst->vk_device, cap->memory, NULL);
+    cap->buffer = VK_NULL_HANDLE;
+    cap->memory = VK_NULL_HANDLE;
+}
+
+/* Returns the capture to idle and reports @p rgba (NULL on failure) to its requester. */
+static void capture_finish(Ca_Instance *inst, Ca_Window *win, const uint8_t *rgba)
+{
+    Ca_WindowCapture *cap = &win->capture;
+    Ca_WindowCaptureFn on_done = cap->on_done;
+    void *user_data = cap->user_data;
+    uint32_t width = rgba ? cap->width : 0u;
+    uint32_t height = rgba ? cap->height : 0u;
+    capture_release(inst, cap);
+    cap->state = CA_CAPTURE_IDLE;
+    cap->on_done = NULL;
+    cap->user_data = NULL;
+    if (on_done) on_done(rgba, width, height, user_data);
+}
+
+/* Converts a completed readback to RGBA8 and delivers it; the GPU copy must have finished. */
+static void capture_deliver(Ca_Instance *inst, Ca_Window *win)
+{
+    Ca_WindowCapture *cap = &win->capture;
+    size_t pixel_count = (size_t)cap->width * cap->height;
+    void *mapped = NULL;
+    if (vkMapMemory(inst->vk_device, cap->memory, 0, VK_WHOLE_SIZE, 0, &mapped) != VK_SUCCESS || !mapped) {
+        fprintf(stderr, "[vk] window capture readback could not be mapped\n");
+        capture_finish(inst, win, NULL);
+        return;
+    }
+    uint8_t *rgba = (uint8_t *)CA_MALLOC(pixel_count * 4u);
+    if (rgba) {
+        const uint8_t *src = (const uint8_t *)mapped;
+        bool bgra = cap->format == VK_FORMAT_B8G8R8A8_UNORM || cap->format == VK_FORMAT_B8G8R8A8_SRGB;
+        for (size_t i = 0; i < pixel_count; ++i) {
+            const uint8_t *in = src + i * 4u;
+            uint8_t *out = rgba + i * 4u;
+            out[0] = bgra ? in[2] : in[0];
+            out[1] = in[1];
+            out[2] = bgra ? in[0] : in[2];
+            out[3] = 255u;
+        }
+    } else {
+        fprintf(stderr, "[vk] window capture conversion allocation failed\n");
+    }
+    vkUnmapMemory(inst->vk_device, cap->memory);
+    capture_finish(inst, win, rgba);
+    CA_FREE(rgba);
+}
+
+/*
+ * Records a copy of the composed swapchain image into a host buffer and leaves
+ * the image in PRESENT_SRC. Returns false (image untouched, still a colour
+ * attachment) when the capture cannot be recorded; the capture then fails.
+ */
+static bool capture_record(Ca_Instance *inst, Ca_Window *win, VkCommandBuffer cmd,
+                           VkImage image, uint32_t frame_slot)
+{
+    Ca_Swapchain *sc = &win->sc;
+    Ca_WindowCapture *cap = &win->capture;
+    if (!(sc->image_usage & VK_IMAGE_USAGE_TRANSFER_SRC_BIT) || !capture_format_supported(sc->format)) {
+        fprintf(stderr, "[vk] window capture unsupported for surface format %d\n", (int)sc->format);
+        capture_finish(inst, win, NULL);
+        return false;
+    }
+    VkBufferCreateInfo buffer_ci = {
+        .sType       = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+        .size        = (VkDeviceSize)sc->extent.width * sc->extent.height * 4u,
+        .usage       = VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+    };
+    if (vkCreateBuffer(inst->vk_device, &buffer_ci, NULL, &cap->buffer) != VK_SUCCESS) {
+        cap->buffer = VK_NULL_HANDLE;
+        fprintf(stderr, "[vk] window capture buffer creation failed\n");
+        capture_finish(inst, win, NULL);
+        return false;
+    }
+    VkMemoryRequirements req;
+    vkGetBufferMemoryRequirements(inst->vk_device, cap->buffer, &req);
+    VkMemoryAllocateInfo alloc = {
+        .sType           = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+        .allocationSize  = req.size,
+        .memoryTypeIndex = ca_gpu_find_memory_type(inst, req.memoryTypeBits,
+                               VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT),
+    };
+    if (alloc.memoryTypeIndex == UINT32_MAX ||
+        vkAllocateMemory(inst->vk_device, &alloc, NULL, &cap->memory) != VK_SUCCESS ||
+        vkBindBufferMemory(inst->vk_device, cap->buffer, cap->memory, 0) != VK_SUCCESS) {
+        fprintf(stderr, "[vk] window capture memory allocation failed\n");
+        capture_finish(inst, win, NULL);
+        return false;
+    }
+
+    transition_image(cmd, image,
+        VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+        VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+        VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_READ_BIT);
+    VkBufferImageCopy region = {
+        .imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 },
+        .imageExtent      = { sc->extent.width, sc->extent.height, 1 },
+    };
+    vkCmdCopyImageToBuffer(cmd, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, cap->buffer, 1, &region);
+    transition_image(cmd, image,
+        VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+        VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_NONE,
+        VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, VK_ACCESS_2_NONE);
+    VkBufferMemoryBarrier2 host_barrier = {
+        .sType               = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2,
+        .srcStageMask        = VK_PIPELINE_STAGE_2_COPY_BIT,
+        .srcAccessMask       = VK_ACCESS_2_TRANSFER_WRITE_BIT,
+        .dstStageMask        = VK_PIPELINE_STAGE_2_HOST_BIT,
+        .dstAccessMask       = VK_ACCESS_2_HOST_READ_BIT,
+        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .buffer              = cap->buffer,
+        .size                = VK_WHOLE_SIZE,
+    };
+    VkDependencyInfo dep = {
+        .sType                    = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+        .bufferMemoryBarrierCount = 1,
+        .pBufferMemoryBarriers    = &host_barrier,
+    };
+    vkCmdPipelineBarrier2(cmd, &dep);
+
+    cap->format     = sc->format;
+    cap->width      = sc->extent.width;
+    cap->height     = sc->extent.height;
+    cap->frame_slot = frame_slot;
+    cap->state      = CA_CAPTURE_RECORDED;
+    return true;
+}
+
+bool ca_window_capture(Ca_Window *window, Ca_WindowCaptureFn on_done, void *user_data)
+{
+    if (!window || !window->in_use || !on_done || window->capture.state != CA_CAPTURE_IDLE)
+        return false;
+    const Ca_Swapchain *sc = &window->sc;
+    if (sc->swapchain != VK_NULL_HANDLE &&
+        (!(sc->image_usage & VK_IMAGE_USAGE_TRANSFER_SRC_BIT) || !capture_format_supported(sc->format)))
+        return false;
+    window->capture.on_done   = on_done;
+    window->capture.user_data = user_data;
+    window->capture.state     = CA_CAPTURE_QUEUED;
+    window->needs_render      = true;
+    return true;
+}
+
+void ca_swapchain_capture_cancel(Ca_Instance *inst, Ca_Window *win)
+{
+    if (win->capture.state != CA_CAPTURE_IDLE)
+        capture_finish(inst, win, NULL);
 }
 
 /* ---- Frame ---- */
@@ -1034,6 +1207,11 @@ static void swapchain_abandon_frame(Ca_Instance *inst, Ca_Window *win,
     Ca_Swapchain *sc = &win->sc;
     const VkPipelineStageFlags stage = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
 
+    if (win->capture.state == CA_CAPTURE_RECORDED && win->capture.frame_slot == sc->current_frame) {
+        capture_release(inst, &win->capture);
+        win->capture.state = CA_CAPTURE_QUEUED;
+    }
+
     for (uint32_t i = 0; i <= viewport_count; ++i) {
         bool last = i == viewport_count;
         VkSubmitInfo drain = {
@@ -1067,6 +1245,9 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
     vkWaitForFences(inst->vk_device, 1, &f->in_flight, VK_TRUE, UINT64_MAX);
     inst->frame_timing.swapchain_fence_ms += (glfwGetTime() - timing_start) * 1000.0;
     ca_profile_end(inst, "Platform Swapchain Fence");
+
+    if (win->capture.state == CA_CAPTURE_RECORDED && win->capture.frame_slot == sc->current_frame)
+        capture_deliver(inst, win);
 
     ca_profile_begin(inst, "Platform UI Buffer Ensure");
     if (!ca_instance_buf_ensure(inst, f,
@@ -1321,12 +1502,14 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
 
     vkCmdEndRendering(f->cmd);
 
-    /* Transition to PRESENT_SRC */
-    transition_image(f->cmd, sc->images[image_index],
-        VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
-        VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
-        VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
-        VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT,  VK_ACCESS_2_NONE);
+    bool captured = win->capture.state == CA_CAPTURE_QUEUED &&
+        capture_record(inst, win, f->cmd, sc->images[image_index], sc->current_frame);
+    if (!captured)
+        transition_image(f->cmd, sc->images[image_index],
+            VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+            VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+            VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+            VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT,  VK_ACCESS_2_NONE);
 
     result = vkEndCommandBuffer(f->cmd);
     inst->frame_timing.swapchain_record_ms += (glfwGetTime() - timing_start) * 1000.0;

@@ -10,3 +10,5 @@ bool ca_swapchain_create(Ca_Instance *inst, Ca_Window *win,
                          uint32_t width, uint32_t height);
 void ca_swapchain_destroy(Ca_Instance *inst, Ca_Window *win);
 void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win);
+/* Fails a capture that can no longer complete because the window is shutting down. */
+void ca_swapchain_capture_cancel(Ca_Instance *inst, Ca_Window *win);

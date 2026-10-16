@@ -739,6 +739,7 @@ void ca_renderer_window_shutdown(Ca_Instance *inst, Ca_Window *win)
     }
 
     ca_swapchain_destroy(inst, win);
+    ca_swapchain_capture_cancel(inst, win);
     if (win->surface != VK_NULL_HANDLE) {
         vkDestroySurfaceKHR(inst->vk_instance, win->surface, NULL);
         win->surface = VK_NULL_HANDLE;
@@ -815,7 +816,7 @@ void ca_renderer_frame(Ca_Instance *inst)
            that merely wakes the loop (pointer motion, a keypress, a scroll)
            from also re-running the background shader / backdrop blur at
            that event's rate instead of the intended animation cadence. */
-        if (!win->needs_render) continue;
+        if (!win->needs_render && win->capture.state == CA_CAPTURE_IDLE) continue;
         win->needs_render = false;
         ca_profile_begin(inst, "Platform Swapchain");
         ca_swapchain_frame(inst, win);

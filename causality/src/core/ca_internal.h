@@ -1194,6 +1194,25 @@ void ca_menubar_submenu_geometry(Ca_Window *win,
    WINDOW
    ====================================================== */
 
+typedef enum {
+    CA_CAPTURE_IDLE,
+    CA_CAPTURE_QUEUED,
+    CA_CAPTURE_RECORDED,
+} Ca_CaptureState;
+
+/* Pending ca_window_capture readback; survives swapchain recreation. */
+typedef struct {
+    Ca_CaptureState    state;
+    Ca_WindowCaptureFn on_done;
+    void              *user_data;
+    VkBuffer           buffer;
+    VkDeviceMemory     memory;
+    VkFormat           format;
+    uint32_t           width;
+    uint32_t           height;
+    uint32_t           frame_slot;
+} Ca_WindowCapture;
+
 struct Ca_Window {
     GLFWwindow   *glfw;
     Ca_Instance  *instance;
@@ -1328,6 +1347,7 @@ struct Ca_Window {
 
     /* Render gating: set by ui.c when draw list changes, cleared after submit */
     bool          needs_render;
+    Ca_WindowCapture capture;
 
     /* Debug overlay (toggled by F9) */
     bool          debug_overlay;

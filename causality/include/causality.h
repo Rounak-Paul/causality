@@ -318,6 +318,16 @@ CA_API void       ca_window_set_opacity(Ca_Window *window, float opacity);
 /* Returns true if the window handle is valid and still open. */
 CA_API bool       ca_window_is_open(const Ca_Window *window);
 
+/* Receives a captured window frame as tightly packed RGBA8 rows with a top-left
+   origin, or NULL with a zero size when the capture failed. Runs inside the
+   render loop and must not destroy the window. */
+typedef void (*Ca_WindowCaptureFn)(const uint8_t *rgba, uint32_t width, uint32_t height,
+                                   void *user_data);
+/* Queues a readback of the window's next composed frame (UI and viewports).
+   Returns false for invalid arguments, while a capture is pending, or when the
+   surface cannot be read back; otherwise on_done fires exactly once. */
+CA_API bool ca_window_capture(Ca_Window *window, Ca_WindowCaptureFn on_done, void *user_data);
+
 /* Background rendering hooks (Ca_BgRenderFn, ca_window_set_bg_render,
    ca_instance_set_bg_render) expose Vulkan types and therefore live in
    <ca_gpu.h> — the native graphics integration header. */
