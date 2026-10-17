@@ -537,6 +537,28 @@ static void glfw_window_maximize_cb(GLFWwindow *glfw, int maximized)
  * glfw     The GLFW window.
  * focused  GLFW_TRUE when the window gained focus, GLFW_FALSE when it lost it.
  */
+/*
+ * GLFW drop callback — forwards OS file drops to the instance's handler with
+ * the cursor read from the OS, since pointer events pause during OS drags.
+ */
+static void glfw_drop_cb(GLFWwindow *glfw, int count, const char **paths)
+{
+    Ca_Window *win = (Ca_Window *)glfwGetWindowUserPointer(glfw);
+    if (!win || !win->in_use || count <= 0 || !paths || !win->instance->file_drop_fn) return;
+    double x = 0.0, y = 0.0;
+    ca_window_cursor_screen_pos(win, &x, &y);
+    win->instance->file_drop_fn(win, (const char *const *)paths, count, (float)x, (float)y,
+                                win->instance->file_drop_data);
+    glfwPostEmptyEvent();
+}
+
+void ca_instance_set_file_drop_handler(Ca_Instance *instance, Ca_FileDropFn fn, void *user_data)
+{
+    if (!instance) return;
+    instance->file_drop_fn   = fn;
+    instance->file_drop_data = fn ? user_data : NULL;
+}
+
 static void glfw_window_focus_cb(GLFWwindow *glfw, int focused)
 {
     Ca_Window *win = (Ca_Window *)glfwGetWindowUserPointer(glfw);
@@ -931,6 +953,7 @@ static Ca_Window *window_create_in_pool(Ca_Instance *inst,
     glfwSetFramebufferSizeCallback(glfw, glfw_framebuffer_size_cb);
     glfwSetWindowMaximizeCallback(glfw, glfw_window_maximize_cb);
     glfwSetWindowFocusCallback(glfw, glfw_window_focus_cb);
+    glfwSetDropCallback(glfw, glfw_drop_cb);
 
     /* Boot surface + swapchain (renderer must already be initialised) */
     if (inst->vk_device != VK_NULL_HANDLE) {

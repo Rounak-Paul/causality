@@ -297,6 +297,22 @@ CA_API void       ca_window_cancel_move(Ca_Window *window);
 /* Moves the window's client area so its top-left sits at screen (x, y). */
 CA_API void       ca_window_set_position(Ca_Window *window, int x, int y);
 
+/*
+ * Callback fired when the OS drops files onto any window of an instance.
+ *
+ * window     Window that received the drop.
+ * paths      UTF-8 paths, borrowed only for the duration of the call.
+ * count      Number of paths, always > 0.
+ * x, y       Drop position in screen coordinates (as ca_window_cursor_screen_position).
+ * user_data  Pointer supplied to ca_instance_set_file_drop_handler.
+ *
+ * Runs on the main thread while events are polled; it must not destroy windows.
+ */
+typedef void (*Ca_FileDropFn)(Ca_Window *window, const char *const *paths, int count,
+                              float x, float y, void *user_data);
+/* Install the instance-wide file-drop handler; NULL fn removes it. */
+CA_API void       ca_instance_set_file_drop_handler(Ca_Instance *instance, Ca_FileDropFn fn, void *user_data);
+
 /* Reads the cursor from the OS right now, in screen coordinates. Unlike
    event-driven input it needs no window focus, stays consistent while windows
    move, and keeps tracking outside every client area. Returns false for an

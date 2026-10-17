@@ -1276,6 +1276,15 @@ static Ca_CssValue parse_value(Parser *p, Ca_CssPropId prop)
     }
 
     if (t.type == TOK_IDENT) {
+        /* Property keywords win over generic values: overflow/cursor/
+           pointer-events/user-select/scroll-behavior list "auto" as a
+           keyword of their own, which CA_CSS_VAL_AUTO would discard. */
+        int kw;
+        if (lookup_keyword(t.text, prop, &kw)) {
+            val.type    = CA_CSS_VAL_KEYWORD;
+            val.keyword = kw;
+            return val;
+        }
         if (strcasecmp(t.text, "auto") == 0) {
             val.type = CA_CSS_VAL_AUTO;
             return val;
@@ -1299,13 +1308,6 @@ static Ca_CssValue parse_value(Parser *p, Ca_CssPropId prop)
         if (lookup_named_color(t.text, &color)) {
             val.type  = CA_CSS_VAL_COLOR;
             val.color = color;
-            return val;
-        }
-        /* Try keyword for this property */
-        int kw;
-        if (lookup_keyword(t.text, prop, &kw)) {
-            val.type    = CA_CSS_VAL_KEYWORD;
-            val.keyword = kw;
             return val;
         }
     }

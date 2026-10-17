@@ -1511,6 +1511,10 @@ struct Ca_Instance {
     void (*gpu_predestroy_fn)(void *user_data);
     void  *gpu_predestroy_data;
 
+    /* OS file-drop observer — see ca_instance_set_file_drop_handler. */
+    Ca_FileDropFn file_drop_fn;
+    void         *file_drop_data;
+
     /* Double-buffered event queues: posting may continue during dispatch. */
     Ca_DynArray      event_queue;
     Ca_DynArray      event_dispatch_queue;

@@ -125,6 +125,33 @@ static bool test_border_shorthand_resets_sides(void)
     return true;
 }
 
+/** Property keywords spelled "auto" resolve as keywords; sizing "auto" stays a generic value. */
+static bool test_auto_keywords(void)
+{
+    Ca_Stylesheet *ss = ca_css_parse(
+        ".x { overflow-y: auto; overflow-x: scroll; width: auto; }"
+        ".y { overflow: auto; }");
+    CHECK(ss && ss->rule_count == 2 && ss->rules[0].decl_count == 3);
+    CHECK(ss->rules[0].decls[2].value.type == CA_CSS_VAL_AUTO);
+
+    Ca_ResolvedStyle x = {0};
+    for (int i = 0; i < ss->rules[0].decl_count; ++i)
+        ca_style_apply_one_declaration(&x, ss->rules[0].decls[i].prop, &ss->rules[0].decls[i].value);
+    Ca_NodeDesc nx = {0};
+    ca_style_apply_to_node(&x, &nx, NULL);
+    CHECK(nx.overflow_y == 3 && nx.overflow_x == 2);
+
+    Ca_ResolvedStyle y = {0};
+    for (int i = 0; i < ss->rules[1].decl_count; ++i)
+        ca_style_apply_one_declaration(&y, ss->rules[1].decls[i].prop, &ss->rules[1].decls[i].value);
+    Ca_NodeDesc ny = {0};
+    ca_style_apply_to_node(&y, &ny, NULL);
+    CHECK(ny.overflow_y == 3 && ny.overflow_x == 3);
+
+    ca_css_destroy(ss);
+    return true;
+}
+
 /** Headless window with node and label pools, styled by `css`. */
 static bool widget_env_init(Ca_Instance *instance, Ca_Window *window, Ca_Node *root,
                             const char *css)
@@ -628,6 +655,7 @@ int main(void)
     if (!test_default_palette()) return 1;
     if (!test_author_vars_override_defaults()) return 1;
     if (!test_border_shorthand_resets_sides()) return 1;
+    if (!test_auto_keywords()) return 1;
     if (!test_label_inline_color_survives_restyle()) return 1;
     if (!test_node_graph_stubs_unfit_text()) return 1;
     if (!test_node_graph_view()) return 1;
