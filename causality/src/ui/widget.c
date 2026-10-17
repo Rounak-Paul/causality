@@ -357,6 +357,18 @@ static uint32_t *ctx_top_cursor(void)
     return &g_ctx.frames[g_ctx.depth].child_cursor;
 }
 
+/* Resolve the last emitted child; retained siblings beyond the build cursor are not current. */
+static Ca_Node *ctx_attachment_target(bool parent_fallback)
+{
+    Ca_Node *parent = ctx_top();
+    if (parent->widget_type == CA_WIDGET_TREENODE && parent->child_count)
+        return parent->children[0];
+    uint32_t emitted = *ctx_top_cursor();
+    if (emitted && emitted <= parent->child_count)
+        return parent->children[emitted - 1];
+    return parent_fallback ? parent : NULL;
+}
+
 static void ctx_push(Ca_Node *node)
 {
     Ca_BuildFrame frame = { .node = node };
@@ -3349,16 +3361,8 @@ Ca_Tooltip *ca_tooltip(const Ca_TooltipDesc *desc)
 {
     assert(g_ctx.active && desc);
 
-    Ca_Node *parent = ctx_top();
-    if (parent->child_count == 0) return NULL;
-
-    /* When called inside a ca_tree_node_begin/end block, attach to the header
-       row (children[0]) — same convention as ca_context_menu. */
-    Ca_Node *target;
-    if (parent->widget_type == CA_WIDGET_TREENODE)
-        target = parent->children[0];
-    else
-        target = parent->children[parent->child_count - 1];
+    Ca_Node *target = ctx_attachment_target(false);
+    if (!target) return NULL;
 
     return tooltip_for_node(target, desc);
 }
@@ -3605,25 +3609,7 @@ void ca_context_menu(const Ca_CtxMenuDesc *desc)
 {
     assert(g_ctx.active && desc);
 
-    Ca_Node *parent = ctx_top();
-
-    /* When called inside a ca_tree_node_begin/end block the context stack
-       top is the tree node container.  Its children[0] is always the header
-       row (the actual visible/clickable row), regardless of how many child
-       entity nodes were added in previous frames.  Using children[child_count-1]
-       would target the last expanded child — wrong.  For every other container
-       the last child is correct (it was just created).  If the container has
-       no children at all (e.g. a button whose label is its own .text field,
-       with no nested content nodes), attach to the container itself — the
-       hit-test below (point_in_node) works on any node, leaf or not, so this
-       is not a special case at read time, just at attach time. */
-    Ca_Node *target;
-    if (parent->child_count == 0)
-        target = parent;
-    else if (parent->widget_type == CA_WIDGET_TREENODE)
-        target = parent->children[0];  /* always the header row */
-    else
-        target = parent->children[parent->child_count - 1];
+    Ca_Node *target = ctx_attachment_target(true);
 
     /* Reuse an existing ctxmenu already bound to this node (reactive
        reconcile rebuilds invoke ca_context_menu every frame on the

@@ -596,9 +596,76 @@ static bool test_tab_overflow_navigation(void)
     return true;
 }
 
+/** Record which retained row supplied a dispatched context action. */
+static void record_context_row(int item, void *user_data)
+{
+    int *row = user_data;
+    *row += item + 1;
+}
+
+/** Reconciliation must refresh each emitted row's attachments before input dispatch. */
+static bool test_reconciled_context_targets(void)
+{
+    Ca_Instance instance = {0};
+    Ca_Window window = {0};
+    window.instance = &instance;
+    window.ui_scale = 1.0f;
+    CHECK(ca_node_system_init(&window));
+    Ca_Node *root = ca_node_root(&window);
+    const char *keys[] = {"rectangle", "child-group", "another-rectangle"};
+    int old_rows[3] = {0}, rows[3] = {0};
+    const int orders[3][3] = {{0,1,2}, {0,1,2}, {2,0,1}};
+    for (size_t round = 0; round < 3; ++round) {
+        Ca_Tooltip *tooltips[3] = {0};
+        ca_widget_ctx_enter(&window);
+        ca_reconcile_begin((Ca_Div *)root);
+        for (size_t i = 0; i < 3; ++i) {
+            int index = orders[round][i];
+            ca_btn_begin(&(Ca_BtnDesc){.id = keys[index], .text = keys[index]});
+            ca_btn_end();
+            const char *items[] = {"Toggle visibility"};
+            ca_context_menu(&(Ca_CtxMenuDesc){.items = items, .item_count = 1,
+                .on_select = record_context_row, .select_data = round ? &rows[index] : &old_rows[index]});
+            tooltips[i] = ca_tooltip(&(Ca_TooltipDesc){.text = keys[index]});
+        }
+        ca_div_end();
+        ca_widget_ctx_leave();
+        place_node(root, 0, 0, 400, 500);
+        for (size_t i = 0; i < 3; ++i) place_node(root->children[i], 0, (float)i * 40, 200, 30);
+        for (size_t i = 0; i < 3; ++i) {
+            int index = orders[round][i];
+            Ca_Node *node = root->children[i];
+            place_node(node, 0, (float)i * 40, 200, 30);
+            Ca_CtxMenu *menu = NULL;
+            for (size_t j = 0; j < ca_pool_slot_count(&window.ctxmenu_pool); ++j) {
+                Ca_CtxMenu *candidate = CA_POOL_AT(window.ctxmenu_pool, Ca_CtxMenu, j);
+                if (candidate->in_use && candidate->node == node) menu = candidate;
+            }
+            CHECK(menu && menu->select_data == (round ? &rows[index] : &old_rows[index]));
+            CHECK(tooltips[i] && tooltips[i]->node == node);
+            window.mouse_x = 10; window.mouse_y = node->y + 10;
+            window.mouse_buttons[1] = true;
+            ca_widget_input_pass(&window);
+            CHECK(menu->open);
+            window.mouse_buttons[1] = false;
+            ca_widget_input_pass(&window);
+            window.mouse_click_this_frame = true;
+            window.mouse_press_x = 20; window.mouse_press_y = (int)(menu->open_y + 15);
+            ca_widget_input_pass(&window);
+            window.mouse_click_this_frame = false;
+            CHECK(!menu->open);
+        }
+    }
+    for (size_t i = 0; i < 3; ++i) CHECK(old_rows[i] == 1 && rows[i] == 2);
+    ca_node_system_shutdown(&window);
+    ca_widget_ctx_release_instance(&instance);
+    return true;
+}
+
 /** Runs focused input ownership regression tests. */
 int main(void)
 {
+    if (!test_reconciled_context_targets()) return 1;
     if (!test_tab_overflow_navigation()) return 1;
     if (!test_builder_inside_reconciled_container()) return 1;
     if (!test_batched_drag_press_location()) return 1;
