@@ -53,7 +53,23 @@ static const char CA_SYSTEM_STYLES_CSS[] =
     ".ca-ng-pin-stub { background: var(--ca-text-dim); }"
     ".ca-ng-separator { background: var(--ca-separator); }"
     ".ca-ng-wire { background: var(--ca-text-muted); }"
-    ".ca-ng-wire.dimmed { opacity: 0.3; }";
+    ".ca-ng-wire.dimmed { opacity: 0.3; }"
+    ".ca-dock-root { flex-grow: 1; width: 100%; height: 100%; overflow: hidden; }"
+    ".ca-dock-host { flex-grow: 1; width: 100%; height: 100%; background: var(--ca-bg-base); overflow: hidden; }"
+    ".ca-dock-group { flex-grow: 1; min-width: 0px; min-height: 0px; background: var(--ca-bg-base); overflow: hidden; }"
+    ".ca-dock-tabs { width: 100%; height: 28px; flex-shrink: 0; gap: 2px; padding: 2px 2px 0px 2px; align-items: stretch; background: var(--ca-bg-elevated); overflow: hidden; }"
+    ".ca-dock-tab { padding: 0px 10px; color: var(--ca-text-dim); border-top-left-radius: 4px; border-top-right-radius: 4px; }"
+    ".ca-dock-tab:hover { color: var(--ca-text-bright); background: var(--ca-bg-surface); }"
+    ".ca-dock-tab.active, .ca-dock-tab.active:hover { color: var(--ca-text-bright); background: var(--ca-bg-base); }"
+    ".ca-dock-content { flex-grow: 1; width: 100%; overflow: hidden; }"
+    ".ca-dock-group.ca-dock-empty { background: var(--ca-bg-void); }"
+    ".ca-dock-panel { flex-grow: 1; width: 100%; height: 100%; overflow: hidden; }"
+    ".ca-dock-overlay { background: transparent; }"
+    ".ca-dock-target { background: var(--ca-bg-elevated); border: 1px solid var(--ca-separator); border-radius: 6px; opacity: 0.96; }"
+    ".ca-dock-target.hot { background: var(--ca-bg-surface); border: 1px solid var(--ca-accent); }"
+    ".ca-dock-target-glyph { background: var(--ca-text-dim); border-radius: 2px; }"
+    ".ca-dock-target-glyph.hot { background: var(--ca-accent); }"
+    ".ca-dock-preview { background: var(--ca-accent); opacity: 0.28; border: 1px solid var(--ca-accent); border-radius: 6px; }";
 
 Ca_Stylesheet *ca_style_create_system_stylesheet(void)
 {

@@ -1060,6 +1060,10 @@ struct Ca_Splitter {
        recreated when its containing div re-runs its builder). */
     void        (*on_resize)(float ratio, void *user_data);
     void         *user_data;
+    int           fixed_pane; /* CA_SPLIT_FIXED_* */
+    float         fixed_px;   /* fixed pane size in layout px; <= 0 = derive from ratio */
+    float         pane_px[2]; /* pane sizes from the last layout pass, layout px */
+    float         ui_scale;   /* layout px per logical px at the last build */
 };
 
 /* Per-frame-in-flight GPU resources for one Ca_Viewport slot. Duplicated

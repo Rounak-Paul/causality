@@ -3829,6 +3829,13 @@ Ca_Splitter *ca_split_begin(const Ca_SplitDesc *desc)
     sp->bar_size  = (desc->bar_size > 0.0f)  ? s(desc->bar_size)  : s(4.0f);
     sp->on_resize = desc->on_resize;
     sp->user_data = desc->user_data;
+    sp->ui_scale  = s(1.0f);
+    if (!reused) {
+        const int fixed = desc->fixed_pane;
+        sp->fixed_pane = (fixed == CA_SPLIT_FIXED_FIRST || fixed == CA_SPLIT_FIXED_SECOND)
+                       ? fixed : CA_SPLIT_FIXED_NONE;
+        sp->fixed_px = desc->fixed_size > 0.0f ? s(desc->fixed_size) : 0.0f;
+    }
     /* Do NOT reset sp->dragging here — ca_widget_input_pass owns the
        dragging lifecycle.  ca_split_begin runs every frame (builders
        re-run on blink ticks etc.), so unconditionally clearing dragging
@@ -3856,7 +3863,31 @@ void ca_split_set_ratio(Ca_Splitter *s, float ratio)
     if (ratio < s->min_ratio) ratio = s->min_ratio;
     if (ratio > s->max_ratio) ratio = s->max_ratio;
     s->ratio = ratio;
+    /* A fixed pane re-derives its size from the new ratio at next layout. */
+    s->fixed_px = 0.0f;
     s->node->dirty |= CA_DIRTY_LAYOUT | CA_DIRTY_CONTENT;
+}
+
+void ca_split_set_fixed(Ca_Splitter *s, int fixed_pane, float size)
+{
+    assert(s && s->in_use);
+    if (fixed_pane != CA_SPLIT_FIXED_FIRST && fixed_pane != CA_SPLIT_FIXED_SECOND)
+        fixed_pane = CA_SPLIT_FIXED_NONE;
+    s->fixed_px = size > 0.0f ? size * (s->ui_scale > 0.0f ? s->ui_scale : 1.0f) : 0.0f;
+    s->fixed_pane = fixed_pane;
+    s->node->dirty |= CA_DIRTY_LAYOUT | CA_DIRTY_CONTENT;
+}
+
+float ca_split_get_pane_size(const Ca_Splitter *s, int pane)
+{
+    if (!s || !s->in_use || pane < 0 || pane > 1) return 0.0f;
+    const float scale = s->ui_scale > 0.0f ? s->ui_scale : 1.0f;
+    return s->pane_px[pane] / scale;
+}
+
+bool ca_split_is_dragging(const Ca_Splitter *s)
+{
+    return s && s->in_use && s->dragging;
 }
 
 /* ============================================================
@@ -5670,6 +5701,10 @@ void ca_widget_input_pass(Ca_Window *win)
             if (new_ratio > sp->max_ratio) new_ratio = sp->max_ratio;
             if (new_ratio != sp->ratio) {
                 sp->ratio = new_ratio;
+                if (sp->fixed_pane != CA_SPLIT_FIXED_NONE) {
+                    const float space = total - sp->bar_size;
+                    sp->fixed_px = space * (sp->fixed_pane == CA_SPLIT_FIXED_FIRST ? new_ratio : 1.0f - new_ratio);
+                }
                 n->dirty |= CA_DIRTY_LAYOUT | CA_DIRTY_CONTENT;
                 if (sp->on_resize)
                     sp->on_resize(new_ratio, sp->user_data);

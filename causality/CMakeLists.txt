@@ -178,6 +178,15 @@ if(BUILD_TESTING)
     target_compile_definitions(causality_array_tests PRIVATE causality_EXPORTS)
     add_test(NAME causality_array_tests COMMAND causality_array_tests)
 
+    add_executable(causality_dock_layout_tests tests/ca_dock_layout_tests.c)
+    target_include_directories(causality_dock_layout_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/ui
+    )
+    target_compile_definitions(causality_dock_layout_tests PRIVATE causality_EXPORTS)
+    target_link_libraries(causality_dock_layout_tests PRIVATE causality)
+    add_test(NAME causality_dock_layout_tests COMMAND causality_dock_layout_tests)
+
     add_executable(causality_storage_tests tests/ca_storage_tests.c)
     target_include_directories(causality_storage_tests PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/include

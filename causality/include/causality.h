@@ -1316,6 +1316,11 @@ CA_API void ca_window_set_on_frame(Ca_Window *window, void (*fn)(void *), void *
 
    ============================================================ */
 
+/* Which pane keeps its pixel size when the splitter itself is resized. */
+#define CA_SPLIT_FIXED_NONE   0   /* both panes scale with the ratio (default)  */
+#define CA_SPLIT_FIXED_FIRST  1   /* first pane keeps its size; second absorbs  */
+#define CA_SPLIT_FIXED_SECOND 2   /* second pane keeps its size; first absorbs  */
+
 typedef struct Ca_SplitDesc {
     int      direction;        /* CA_HORIZONTAL or CA_VERTICAL          */
     float    ratio;            /* 0.0–1.0: fraction for first pane (default 0.5) */
@@ -1327,6 +1332,14 @@ typedef struct Ca_SplitDesc {
        data model so subsequent rebuilds pass it back via .ratio. */
     void   (*on_resize)(float ratio, void *user_data);
     void    *user_data;
+    /* Optional fixed pane (CA_SPLIT_FIXED_*): that pane keeps fixed_size
+       logical pixels as the container grows or shrinks, within the
+       min/max ratio bounds; dragging the divider updates the size.
+       fixed_size <= 0 derives it from `ratio` at first layout. Like
+       `ratio`, these seed a new splitter only; use ca_split_set_fixed
+       to change a live one. */
+    int      fixed_pane;
+    float    fixed_size;
     const char *id, *style;
 } Ca_SplitDesc;
 
@@ -1351,6 +1364,28 @@ CA_API float        ca_split_get_ratio(const Ca_Splitter *s);
  * ratio  New fraction [0, 1] clamped to [min_ratio, max_ratio].
  */
 CA_API void         ca_split_set_ratio(Ca_Splitter *s, float ratio);
+
+/*
+ * Switch a live splitter's fixed pane.
+ *
+ * s           Target splitter.
+ * fixed_pane  CA_SPLIT_FIXED_NONE, _FIRST or _SECOND.
+ * size        Logical pixel size for the fixed pane; <= 0 derives it from
+ *             the current ratio at the next layout. Pass
+ *             ca_split_get_pane_size() to pin a pane at its current size.
+ */
+CA_API void         ca_split_set_fixed(Ca_Splitter *s, int fixed_pane, float size);
+
+/*
+ * Logical pixel size of a pane from the last layout pass.
+ *
+ * pane     0 for the first pane, 1 for the second.
+ * Returns  The size, or 0 before the first layout or for an invalid pane.
+ */
+CA_API float        ca_split_get_pane_size(const Ca_Splitter *s, int pane);
+
+/* Returns true while the user is dragging the divider. */
+CA_API bool         ca_split_is_dragging(const Ca_Splitter *s);
 
 /* ============================================================
    UI — ABSOLUTE / FIXED POSITIONING

@@ -470,7 +470,21 @@ static void layout_node(Ca_Node *node, float x, float y, float avail_w, float av
         float pane_space = total - sp->bar_size;
         if (pane_space < 0.0f) pane_space = 0.0f;
         float pane1 = pane_space * sp->ratio;
+        if (sp->fixed_pane != CA_SPLIT_FIXED_NONE && pane_space > 0.0f) {
+            /* The fixed pane keeps its size; the other absorbs the change.
+               Clamping to the ratio bounds leaves fixed_px intact, so the
+               pane recovers its size when the container grows back. */
+            if (sp->fixed_px <= 0.0f)
+                sp->fixed_px = pane_space * (sp->fixed_pane == CA_SPLIT_FIXED_FIRST ? sp->ratio : 1.0f - sp->ratio);
+            pane1 = sp->fixed_pane == CA_SPLIT_FIXED_FIRST ? sp->fixed_px : pane_space - sp->fixed_px;
+            const float lo = pane_space * sp->min_ratio, hi = pane_space * sp->max_ratio;
+            if (pane1 < lo) pane1 = lo;
+            if (pane1 > hi) pane1 = hi;
+            sp->ratio = pane1 / pane_space;
+        }
         float pane2 = pane_space - pane1;
+        sp->pane_px[0] = pane1;
+        sp->pane_px[1] = pane2;
 
         /* Lay out visible children: first two non-hidden become pane1 and pane2 */
         uint32_t pane_idx = 0;
