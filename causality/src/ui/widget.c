@@ -20,6 +20,7 @@
  */
 #include "widget.h"
 #include "node.h"
+#include "motion.h"
 #include "style.h"
 #include "font.h"
 #include "scrollbar.h"
@@ -648,9 +649,7 @@ static void apply_css(Ca_Node *node, Ca_NodeDesc *nd,
     apply_widget_text_color(node, out_color ? *out_color : 0u);
 
     /* Store transition config on the node */
-    node->transition_duration = rs.transition_duration;
-    node->transition_props    = rs.transition_props;
-    node->transition_easing   = (Ca_Easing)rs.transition_easing;
+    ca_motion_store(node, &rs);
 
     /* Post-CSS dirty detection: compare the fully-resolved *nd against the
        snapshot saved before claim_child/ca_ui_begin wrote the sparse desc.
@@ -671,6 +670,12 @@ void ca_widget_reapply_css(Ca_Node *node)
     if (!instance || (!instance->system_stylesheet && !instance->stylesheet)) return;
 
     Ca_NodeDesc old = node->desc;
+    const uint32_t old_text = ca_widget_text_color(node);
+    /* The style this node resolved to last (cached per pseudo-state), to see
+       which layout properties a pseudo-state change really moved. */
+    const bool have_prev = node->style_cache_valid;
+    Ca_ResolvedStyle prev = {0};
+    if (have_prev) prev = node->style_cache;
 
     /* Conservative reset: only zero out the *visual* fields that pseudo-state
        CSS rules (:hover / :focus / :active) commonly drive.  Layout fields
@@ -709,6 +714,7 @@ void ca_widget_reapply_css(Ca_Node *node)
     nd->shadow_blur     = bd->shadow_blur;
     nd->shadow_offset_x = bd->shadow_offset_x;
     nd->shadow_offset_y = bd->shadow_offset_y;
+    nd->shadow_inset    = bd->shadow_inset;
     nd->opacity         = bd->opacity;
 
     Ca_ResolvedStyle rs;
@@ -719,6 +725,7 @@ void ca_widget_reapply_css(Ca_Node *node)
     /* Scale CSS-resolved pixel values (matches apply_css). Use the node's
        own window scale directly since g_ctx may not be active here. */
     scale_resolved_style(&rs, node->window->ui_scale);
+    ca_motion_store(node, &rs);
 
     /* ca_style_apply_to_node uses zero-fill semantics — it writes layout
        fields (width/height/padding/margin/gap) whenever the current value
@@ -752,6 +759,18 @@ void ca_widget_reapply_css(Ca_Node *node)
     nd->margin_bottom = saved_mb;  nd->margin_left    = saved_ml;
     nd->gap = saved_gap; nd->row_gap = saved_rg; nd->column_gap = saved_cg;
 
+    /* Layout properties are not re-resolved wholesale (widgets override some
+       after CSS), but one a pseudo-state rule moved is followed, so :hover
+       { padding / width / ... } takes effect and can transition. */
+    if (have_prev) {
+        Ca_NodeDesc prev_css = {0}, now_css = {0};
+        uint32_t unused_text = 0u;
+        scale_resolved_style(&prev, node->window->ui_scale);
+        ca_style_apply_to_node(&prev, &prev_css, &unused_text);
+        ca_style_apply_to_node(&rs, &now_css, &unused_text);
+        ca_motion_follow_layout(node, &prev_css, &now_css, &rs);
+    }
+
     /* Propagate text color for widget types that store it separately. */
     apply_widget_text_color(node, out_color);
 
@@ -759,8 +778,11 @@ void ca_widget_reapply_css(Ca_Node *node)
        actually changed a visual field, so a hover-cross between siblings
        doesn't dirty unrelated ancestors. */
     if (content_desc_changed(&old, nd)) node->dirty |= CA_DIRTY_CONTENT;
-    /* Note: we intentionally do NOT check layout_desc_changed here because
-       this code path doesn't touch layout fields. */
+    if (layout_desc_changed(&old, nd)) node->dirty |= CA_DIRTY_LAYOUT;
+
+    /* Pseudo-state fades: a transition started mid-fade continues from the
+       interpolated value `old` still holds. */
+    ca_motion_begin_transitions(node, &old, old_text, ca_widget_text_color(node));
 }
 
 void ca_widget_refresh_css(Ca_Node *node)
@@ -789,9 +811,7 @@ void ca_widget_refresh_css(Ca_Node *node)
     uint32_t text_color = 0u;
     ca_style_apply_to_node(&resolved, &node->desc, &text_color);
     apply_widget_text_color(node, text_color);
-    node->transition_duration = resolved.transition_duration;
-    node->transition_props = resolved.transition_props;
-    node->transition_easing = (Ca_Easing)resolved.transition_easing;
+    ca_motion_store(node, &resolved);
 
     node->desc.hidden = old.hidden;
     node->desc.disabled = old.disabled;
@@ -1384,34 +1404,6 @@ Ca_Label *ca_h6(const Ca_TextDesc *desc) { return heading(desc, 16.0f, 12.0f, CA
    PUBLIC — runtime setters
    ============================================================ */
 
-/* Helper: start a transition on a node if it has transition config for the prop */
-static void maybe_transition(Ca_Node *node, Ca_CssPropId prop,
-                             float old_f, float new_f,
-                             uint32_t old_color, uint32_t new_color)
-{
-    if (node->transition_duration <= 0.0f) return;
-    if (prop < 64 && !(node->transition_props & (1ULL << prop))) return;
-
-    Ca_Transition *slot =
-        ca_node_transition_acquire(node, (uint8_t)prop);
-    if (!slot) return;
-
-    slot->prop       = (uint8_t)prop;
-    slot->active     = true;
-    slot->from_f     = old_f;
-    slot->to_f       = new_f;
-    slot->from_color = old_color;
-    slot->to_color   = new_color;
-    slot->start_time = glfwGetTime();
-    slot->duration   = node->transition_duration;
-    slot->easing     = node->transition_easing;
-
-    /* A transition can begin during the input pass, after ca_ui_update has
-       already scanned active transitions for this frame. Wake an idle event
-       loop now so the next tick observes and advances the new transition. */
-    glfwPostEmptyEvent();
-}
-
 /* Old per-widget setters removed — see unified ca__set_text / ca__set_color /
    ca__set_background / ca__get_text below. */
 
@@ -1462,9 +1454,7 @@ static void node_set_style(Ca_Node *node, const char *style,
         ca_style_apply_to_node(&rs, &node->desc,
                                out_text_color ? out_text_color : &dummy_color);
 
-        node->transition_duration = rs.transition_duration;
-        node->transition_props    = rs.transition_props;
-        node->transition_easing   = (Ca_Easing)rs.transition_easing;
+        ca_motion_store(node, &rs);
 
         if ((rs.set_mask & (1ULL << CA_CSS_PROP_DISPLAY)) &&
             rs.display == CA_CSS_DISPLAY_NONE)
@@ -1481,22 +1471,8 @@ static void node_set_style(Ca_Node *node, const char *style,
     if (out_text_color && *out_text_color != old_text_color)
         node->dirty |= CA_DIRTY_CONTENT;
 
-    /* Fire transitions for animated properties */
-    if (old_desc.background != node->desc.background)
-        maybe_transition(node, CA_CSS_PROP_BACKGROUND_COLOR,
-                         0, 0, old_desc.background, node->desc.background);
-    if (old_desc.opacity != node->desc.opacity)
-        maybe_transition(node, CA_CSS_PROP_OPACITY,
-                         old_desc.opacity, node->desc.opacity, 0, 0);
-    if (old_desc.width != node->desc.width)
-        maybe_transition(node, CA_CSS_PROP_WIDTH,
-                         old_desc.width, node->desc.width, 0, 0);
-    if (old_desc.height != node->desc.height)
-        maybe_transition(node, CA_CSS_PROP_HEIGHT,
-                         old_desc.height, node->desc.height, 0, 0);
-    if (old_desc.corner_radius != node->desc.corner_radius)
-        maybe_transition(node, CA_CSS_PROP_BORDER_RADIUS,
-                         old_desc.corner_radius, node->desc.corner_radius, 0, 0);
+    ca_motion_begin_transitions(node, &old_desc, old_text_color,
+                                out_text_color ? *out_text_color : 0u);
 }
 
 static void node_set_hidden(Ca_Node *node, bool hidden)
@@ -1532,6 +1508,58 @@ static uint32_t *resolve_text_color(Ca_Node *node)
     case CA_WIDGET_MENUBAR:    return &((Ca_MenuBar *)node->widget)->text_color;
     default:                   return NULL;
     }
+}
+
+/** Index of `node` among its tab bar's headers, or -1 when it is not a tab header. */
+static int tab_header_index(const Ca_Node *node)
+{
+    if (node->widget_type != CA_WIDGET_TABBAR || node->elem_type != CA_ELEM_TAB || !node->widget) return -1;
+    const Ca_TabBar *tb = node->widget;
+    for (int i = 0; i < tb->count; ++i)
+        if (tb->tab_nodes[i] == node) return i;
+    return -1;
+}
+
+uint32_t ca_widget_text_color(const Ca_Node *node)
+{
+    const int tab = tab_header_index(node);
+    if (tab >= 0) return ((const Ca_TabBar *)node->widget)->text_colors[tab];
+    const uint32_t *color = resolve_text_color((Ca_Node *)node);
+    return color ? *color : 0u;
+}
+
+uint32_t ca_widget_default_text_color(const Ca_Node *node)
+{
+    const Ca_Palette *palette = &node->window->instance->palette;
+    const int tab = tab_header_index(node);
+    if (tab >= 0) return tab == ((const Ca_TabBar *)node->widget)->active ? palette->text_bright
+                                                                          : palette->text_dim;
+    return palette->text_bright;
+}
+
+void ca_widget_set_text_color(Ca_Node *node, uint32_t color)
+{
+    apply_widget_text_color(node, color);
+    node->dirty |= CA_DIRTY_CONTENT;
+}
+
+void ca_widget_resolve_keyframe(const Ca_Node *node, const Ca_Stylesheet *owner,
+                                const Ca_CssDecl *decls, int count,
+                                Ca_ResolvedStyle *rs, Ca_NodeDesc *desc, uint32_t *text)
+{
+    memset(rs, 0, sizeof(*rs));
+    memset(desc, 0, sizeof(*desc));
+    *text = 0u;
+    const Ca_Instance *instance = node->window ? node->window->instance : NULL;
+    const Ca_VarScope scope = { { instance ? instance->stylesheet : NULL,
+                                  instance ? instance->system_stylesheet : NULL, NULL }, 2 };
+    for (int i = 0; i < count; ++i) {
+        const Ca_CssValue value = ca_style_resolve_value(&scope, owner, &decls[i].value);
+        if (value.type == CA_CSS_VAL_NONE) continue;
+        ca_style_apply_one_declaration(rs, decls[i].prop, &value);
+    }
+    scale_resolved_style(rs, node->window ? node->window->ui_scale : 1.0f);
+    ca_style_apply_to_node(rs, desc, text);
 }
 
 /* ---- Unified public API (backing functions for _Generic macros) ---- */
@@ -1733,12 +1761,11 @@ void ca__set_color(void *widget, uint32_t color)
 
 static void node_set_background(Ca_Node *n, uint32_t color)
 {
-    uint32_t old_color = n->desc.background;
-    if (old_color != color) {
-        maybe_transition(n, CA_CSS_PROP_BACKGROUND_COLOR,
-                         0, 0, old_color, color);
+    if (n->desc.background != color) {
+        const Ca_NodeDesc old = n->desc;
         n->desc.background = color;
         n->dirty |= CA_DIRTY_CONTENT;
+        ca_motion_begin_transitions(n, &old, 0u, 0u);
     }
 }
 
@@ -2877,14 +2904,17 @@ static void tabbar_indicator_place(Ca_TabBar *tb)
 }
 
 /**
- * Sets the indicator's current rect at progress t of a slide, as stretchy glass.
+ * Sets the indicator's current rect at progress t of a slide.
  *
- * The edge facing the direction of travel launches first and overshoots its
- * target, the trailing edge lags and then snaps up, so the pill stretches
- * mid-flight and relaxes on arrival; its height squashes a little while
+ * With stretch 0 the pill moves rigidly along its CSS easing curve. With
+ * stretch s > 0 the edge facing the direction of travel launches early and
+ * the trailing edge lags and then catches up, so the pill stretches
+ * mid-flight and relaxes on arrival (an easing that overshoots, such as
+ * ease-out-back, makes it overshoot too); its height squashes while
  * stretched.
  *
- * @param tb Tab bar owning the indicator; ind_from / ind_to define the slide.
+ * @param tb Tab bar owning the indicator; ind_from / ind_to and the frozen
+ *           ind_easing / ind_bezier / ind_stretch define the slide.
  * @param t  Linear progress in [0, 1]; 1 lands exactly on ind_to.
  */
 static void tabbar_indicator_stretch(Ca_TabBar *tb, float t)
@@ -2893,14 +2923,12 @@ static void tabbar_indicator_stretch(Ca_TabBar *tb, float t)
         memcpy(tb->ind_cur, tb->ind_to, sizeof(tb->ind_cur));
         return;
     }
-    const float overshoot = 1.5f;
-    const float lag_delay = 0.14f;
-    const float lead_p = fminf(t / 0.62f, 1.0f);
-    const float lag_p  = fmaxf(0.0f, (t - lag_delay) / (1.0f - lag_delay));
-    const float lead_q = lead_p - 1.0f;
-    const float lag_q  = lag_p - 1.0f;
-    const float lead = 1.0f + (overshoot + 1.0f) * lead_q * lead_q * lead_q + overshoot * lead_q * lead_q;
-    const float lag  = 1.0f + lag_q * lag_q * lag_q;
+    const float s = tb->ind_stretch;
+    const float lead_p = fminf(t / (1.0f - 0.38f * fminf(s, 1.0f)), 1.0f);
+    const float lag_delay = 0.14f * fminf(s, 1.0f);
+    const float lag_p = fmaxf(0.0f, (t - lag_delay) / (1.0f - lag_delay));
+    const float lead = ca_easing_eval(&tb->ind_easing, lead_p);
+    const float lag  = ca_easing_eval(&tb->ind_easing, lag_p);
 
     const float from_l = tb->ind_from[0], from_r = tb->ind_from[0] + tb->ind_from[2];
     const float to_l   = tb->ind_to[0],   to_r   = tb->ind_to[0] + tb->ind_to[2];
@@ -2911,9 +2939,10 @@ static void tabbar_indicator_stretch(Ca_TabBar *tb, float t)
 
     const float rest_w = tb->ind_from[2] + (tb->ind_to[2] - tb->ind_from[2]) * lag;
     const float stretch = fmaxf(0.0f, ((r - l) - rest_w) / fmaxf(rest_w, 1.0f));
-    const float squash = 1.0f / (1.0f + 0.35f * fminf(stretch, 1.0f));
-    const float cy = tb->ind_from[1] + tb->ind_from[3] * 0.5f +
-        ((tb->ind_to[1] + tb->ind_to[3] * 0.5f) - (tb->ind_from[1] + tb->ind_from[3] * 0.5f)) * lag;
+    const float squash = 1.0f / (1.0f + 0.35f * s * fminf(stretch, 1.0f));
+    const float from_cy = tb->ind_from[1] + tb->ind_from[3] * 0.5f;
+    const float to_cy   = tb->ind_to[1] + tb->ind_to[3] * 0.5f;
+    const float cy = from_cy + (to_cy - from_cy) * lag;
     const float h = (tb->ind_from[3] + (tb->ind_to[3] - tb->ind_from[3]) * lag) * squash;
 
     tb->ind_cur[0] = l;
@@ -2960,10 +2989,20 @@ bool ca_tabbar_tick(Ca_Window *win, double now)
             memcpy(tb->ind_to, target, sizeof(target));
             tb->ind_start = now;
             tb->ind_anim  = true;
+            /* The slide's feel comes from the indicator's `transition` on `left`. */
+            const Ca_Node *ind = tb->indicator;
+            const Ca_TransitionSpec *spec = ca_motion_find_spec(ind, CA_CSS_PROP_LEFT);
+            const bool styled = spec && spec->duration > 0.0f;
+            tb->ind_duration = styled ? spec->duration : (float)CA_TABBAR_SLIDE_SECONDS;
+            tb->ind_delay    = styled ? spec->delay : 0.0f;
+            tb->ind_easing   = styled ? spec->easing
+                                      : (Ca_EasingDef){ CA_EASING_BEZIER, { 0.0f, 0.0f, 0.58f, 1.0f } };
+            tb->ind_stretch  = ind->transition_stretch;
         }
         if (tb->ind_anim) {
-            float t = (float)((now - tb->ind_start) / CA_TABBAR_SLIDE_SECONDS);
+            float t = (float)((now - tb->ind_start - tb->ind_delay) / tb->ind_duration);
             if (t >= 1.0f) { t = 1.0f; tb->ind_anim = false; }
+            if (t < 0.0f) t = 0.0f;
             tabbar_indicator_stretch(tb, t);
             changed = true;
             if (tb->ind_anim) busy = true;

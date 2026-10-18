@@ -87,6 +87,14 @@ typedef struct Ca_VarScope {
     following var() chains. Returns a CA_CSS_VAL_NONE value when undefined. */
 Ca_CssValue ca_style_lookup_var(const Ca_VarScope *scope, const char *name);
 
+/** Resolve a declaration value, expanding var() through @p scope.
+    @param scope Stylesheets whose `:root` variables are visible.
+    @param owner Stylesheet that holds the declaration (its string pool names the variable).
+    @param in    The declaration's value.
+    @return The value with var() substituted; CA_CSS_VAL_NONE when undefined. */
+Ca_CssValue ca_style_resolve_value(const Ca_VarScope *scope, const Ca_Stylesheet *owner,
+                                   const Ca_CssValue *in);
+
 /** Rebuild @p instance's palette from the `--ca-*` variables visible through
     its author and system stylesheets. */
 void ca_instance_resolve_palette(Ca_Instance *instance);
@@ -143,6 +151,9 @@ bool ca_style_node_is_cacheable(const Ca_Stylesheet *ss, const char *classes);
  */
 void ca_style_apply_one_declaration(Ca_ResolvedStyle *out, Ca_CssPropId prop,
                                     const Ca_CssValue *val);
+
+/** True when a declaration for `prop` was applied to this resolved style. */
+bool ca_style_prop_is_set(const Ca_ResolvedStyle *style, Ca_CssPropId prop);
 
 /**
  * Parses a bare CSS declaration list (no selector/braces — the contents

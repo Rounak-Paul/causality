@@ -34,5 +34,3 @@ bool ca_window_reserve_sorted_indices(Ca_Window *win, size_t minimum);
 /** Ensures retained paint-cache storage and refreshes its direct-access alias. */
 bool ca_window_reserve_paint_cache(Ca_Window *win, size_t minimum);
 
-/** Returns an existing property transition or appends a new stable slot. */
-Ca_Transition *ca_node_transition_acquire(Ca_Node *node, uint8_t property);

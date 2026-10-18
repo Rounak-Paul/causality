@@ -4,6 +4,7 @@
 /* ui.c — wires reactive flush, node, layout, and paint passes together */
 #include "ui.h"
 #include "node.h"
+#include "motion.h"
 #include "layout.h"
 #include "paint.h"
 #include "widget.h"
@@ -73,129 +74,6 @@ static void rescale_nodes(Ca_Node *node, float ratio)
     node->dirty |= CA_DIRTY_LAYOUT | CA_DIRTY_CONTENT;
     for (uint32_t ci = 0; ci < node->child_count; ci++)
         rescale_nodes(node->children[ci], ratio);
-}
-
-/* Linear interpolation */
-static float lerpf(float a, float b, float t)
-{
-    return a + (b - a) * t;
-}
-
-/* Ease-in-out cubic */
-static float ease_in_out(float t)
-{
-    if (t < 0.5f) return 4.0f * t * t * t;
-    float f = 2.0f * t - 2.0f;
-    return 0.5f * f * f * f + 1.0f;
-}
-
-/* Ease-in cubic */
-static float ease_in(float t)
-{
-    return t * t * t;
-}
-
-/* Ease-out cubic */
-static float ease_out(float t)
-{
-    float f = t - 1.0f;
-    return f * f * f + 1.0f;
-}
-
-/* Applies the transition's authored curve to a linear [0,1] progress. */
-static float apply_easing(Ca_Easing easing, float t)
-{
-    switch (easing) {
-    case CA_EASING_LINEAR:     return t;
-    case CA_EASING_EASE_IN:    return ease_in(t);
-    case CA_EASING_EASE_OUT:   return ease_out(t);
-    case CA_EASING_EASE_IN_OUT: default: return ease_in_out(t);
-    }
-}
-
-/* Interpolate packed RGBA colors */
-static uint32_t lerp_color(uint32_t a, uint32_t b, float t)
-{
-    float ra = (float)((a >> 24) & 0xFF);
-    float ga = (float)((a >> 16) & 0xFF);
-    float ba = (float)((a >>  8) & 0xFF);
-    float aa = (float)((a)       & 0xFF);
-    float rb = (float)((b >> 24) & 0xFF);
-    float gb = (float)((b >> 16) & 0xFF);
-    float bb = (float)((b >>  8) & 0xFF);
-    float ab = (float)((b)       & 0xFF);
-    uint32_t r = (uint32_t)lerpf(ra, rb, t);
-    uint32_t g = (uint32_t)lerpf(ga, gb, t);
-    uint32_t bi = (uint32_t)lerpf(ba, bb, t);
-    uint32_t ai = (uint32_t)lerpf(aa, ab, t);
-    return (r << 24) | (g << 16) | (bi << 8) | ai;
-}
-
-Ca_Transition *ca_node_transition_acquire(Ca_Node *node, uint8_t property)
-{
-    if (!node) return NULL;
-    if (node->transition_storage.element_size == 0 &&
-        !ca_dyn_array_init(&node->transition_storage,
-                           sizeof(Ca_Transition)))
-        return NULL;
-    for (size_t i = 0; i < node->transition_storage.count; ++i) {
-        Ca_Transition *transition =
-            ca_dyn_array_at(&node->transition_storage, i);
-        if (transition->active && transition->prop == property)
-            return transition;
-    }
-    for (size_t i = 0; i < node->transition_storage.count; ++i) {
-        Ca_Transition *transition =
-            ca_dyn_array_at(&node->transition_storage, i);
-        if (!transition->active) return transition;
-    }
-    size_t index = node->transition_storage.count;
-    if (!ca_dyn_array_resize(&node->transition_storage, index + 1u))
-        return NULL;
-    node->transitions = node->transition_storage.data;
-    return ca_dyn_array_at(&node->transition_storage, index);
-}
-
-/* Tick all active transitions on a node. Returns true if any are still active. */
-static bool transition_tick(Ca_Node *node, double now)
-{
-    bool any_active = false;
-    for (size_t i = 0; i < node->transition_storage.count; ++i) {
-        Ca_Transition *tr = &node->transitions[i];
-        if (!tr->active) continue;
-
-        float elapsed = (float)(now - tr->start_time);
-        float t = (tr->duration > 0.0f) ? elapsed / tr->duration : 1.0f;
-        if (t >= 1.0f) {
-            t = 1.0f;
-            tr->active = false;
-        } else {
-            any_active = true;
-        }
-
-        float eased = apply_easing(tr->easing, t);
-
-        /* Apply interpolated value to the node */
-        switch ((Ca_CssPropId)tr->prop) {
-            case CA_CSS_PROP_BACKGROUND_COLOR:
-                node->desc.background = lerp_color(tr->from_color, tr->to_color, eased);
-                break;
-            case CA_CSS_PROP_WIDTH:
-                node->desc.width = lerpf(tr->from_f, tr->to_f, eased);
-                break;
-            case CA_CSS_PROP_HEIGHT:
-                node->desc.height = lerpf(tr->from_f, tr->to_f, eased);
-                break;
-            case CA_CSS_PROP_BORDER_RADIUS:
-                node->desc.corner_radius = lerpf(tr->from_f, tr->to_f, eased);
-                break;
-            case CA_CSS_PROP_OPACITY:
-                node->desc.opacity = lerpf(tr->from_f, tr->to_f, eased);
-                break;
-            default: break;
-        }
-    }
-    return any_active;
 }
 
 void ca_ui_init(Ca_Instance *inst)
@@ -350,12 +228,15 @@ void ca_ui_update(Ca_Instance *inst)
         for (uint32_t j = 0; j < ca_pool_slot_count(&win->node_pool); ++j) {
             Ca_Node *n = CA_POOL_AT(win->node_pool, Ca_Node, j);
             if (!n->in_use) continue;
-            if (transition_tick(n, now)) {
+            bool layout_affected = false;
+            if (ca_motion_tick(n, now, &layout_affected)) {
                 any_transitions = true;
                 n->dirty |= CA_DIRTY_CONTENT;
+                if (layout_affected) n->dirty |= CA_DIRTY_LAYOUT;
                 trans_count++;
             }
         }
+        ca_motion_window_tick(win, now);
         if (ca_tabbar_tick(win, now)) any_transitions = true;
         win->dbg_transition_count = trans_count;
         ca_profile_end(inst, "Platform UI Transitions");

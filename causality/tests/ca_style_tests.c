@@ -10,6 +10,8 @@
 #include "ca_node_graph.h"
 #include "node.h"
 #include "widget.h"
+#include "motion.h"
+#include "motion_lists.h"
 #include "../src/reactive/reactive.h"
 
 #include <stdio.h>
@@ -162,6 +164,238 @@ static bool test_inset_box_shadow(void)
     CHECK(!out.shadow_inset && out.shadow_blur == 9.0f && out.shadow_offset_y == 1.0f);
 
     ca_css_destroy(ss);
+    return true;
+}
+
+/** Applies every declaration of one parsed rule to a fresh resolved style. */
+static Ca_ResolvedStyle resolve_rule(const Ca_Stylesheet *ss, int rule)
+{
+    Ca_ResolvedStyle out = {0};
+    for (int i = 0; i < ss->rules[rule].decl_count; ++i)
+        ca_style_apply_one_declaration(&out, ss->rules[rule].decls[i].prop, &ss->rules[rule].decls[i].value);
+    return out;
+}
+
+/** Items of one pooled list, with its length. */
+static const void *list_of(uint32_t handle, uint32_t *count)
+{
+    return ca_motion_list_items(handle, count);
+}
+
+/** `transition` takes comma lists with per-item time, delay and timing function. */
+static bool test_transition_lists(void)
+{
+    Ca_Stylesheet *ss = ca_css_parse(
+        ".a { transition: left 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) 0.1s, opacity 200ms ease-out-back; transition-stretch: 1.5; }"
+        ".b { transition: all 1s linear; }"
+        ".c { transition: none; }"
+        ".d { transition: width 1s; transition-duration: 2s, 3s; transition-delay: 500ms; }"
+        ".e { color: #fff; }");
+    CHECK(ss && ss->rule_count == 5);
+    uint32_t n;
+
+    const Ca_MotionLists a = resolve_rule(ss, 0).motion;
+    const int *props = list_of(a.transition_property, &n);
+    CHECK(n == 2 && props[0] == CA_CSS_PROP_LEFT && props[1] == CA_CSS_PROP_OPACITY);
+    const float *dur = list_of(a.transition_duration, &n);
+    CHECK(n == 2 && dur[0] == 0.4f && dur[1] == 0.2f);
+    const float *delay = list_of(a.transition_delay, &n);
+    CHECK(n == 2 && delay[0] == 0.1f && delay[1] == 0.0f);
+    const Ca_EasingDef *timing = list_of(a.transition_timing, &n);
+    CHECK(n == 2 && timing[0].kind == CA_EASING_BEZIER && timing[0].bezier[1] == 1.56f && timing[0].bezier[3] == 1.0f);
+    CHECK(timing[1].kind == CA_EASING_BEZIER && timing[1].bezier[1] > 1.0f);
+    CHECK(a.stretch == 1.5f);
+
+    const Ca_MotionLists b = resolve_rule(ss, 1).motion;
+    props = list_of(b.transition_property, &n);
+    CHECK(n == 1 && props[0] == CA_MOTION_ALL);
+    timing = list_of(b.transition_timing, &n);
+    CHECK(n == 1 && timing[0].kind == CA_EASING_LINEAR);
+
+    props = list_of(resolve_rule(ss, 2).motion.transition_property, &n);
+    CHECK(n == 1 && props[0] == 0);
+
+    /* A longhand rewrites only its own list: `transition-duration` / `-delay` leave the property list alone. */
+    const Ca_MotionLists d = resolve_rule(ss, 3).motion;
+    props = list_of(d.transition_property, &n);
+    CHECK(n == 1 && props[0] == CA_CSS_PROP_WIDTH);
+    dur = list_of(d.transition_duration, &n);
+    CHECK(n == 2 && dur[0] == 2.0f && dur[1] == 3.0f);
+    delay = list_of(d.transition_delay, &n);
+    CHECK(n == 1 && delay[0] == 0.5f);
+    /* Easing defaults to CSS `ease` when an item names none. */
+    timing = list_of(d.transition_timing, &n);
+    CHECK(n == 1 && timing[0].kind == CA_EASING_BEZIER && timing[0].bezier[0] == 0.25f);
+
+    ca_css_destroy(ss);
+    return true;
+}
+
+/** Lists have no length limit, and equal lists share one pooled entry. */
+static bool test_motion_lists_are_unbounded(void)
+{
+    char css[4096] = ".many { transition:";
+    char more[4096] = ".more { animation:";
+    for (int i = 0; i < 40; ++i) {
+        char item[96];
+        snprintf(item, sizeof(item), "%s p%d %ds", i ? "," : "", i, i + 1);
+        strncat(css, item, sizeof(css) - strlen(css) - 1);
+        snprintf(item, sizeof(item), "%s k%d %ds", i ? "," : "", i, i + 1);
+        strncat(more, item, sizeof(more) - strlen(more) - 1);
+    }
+    strncat(css, "; }", sizeof(css) - strlen(css) - 1);
+    strncat(more, "; }", sizeof(more) - strlen(more) - 1);
+    Ca_Stylesheet *ss = ca_css_parse(css);
+    Ca_Stylesheet *ss2 = ca_css_parse(more);
+    CHECK(ss && ss2);
+    uint32_t n;
+    const Ca_MotionLists t = resolve_rule(ss, 0).motion;
+    const float *dur = list_of(t.transition_duration, &n);
+    CHECK(n == 40 && dur[0] == 1.0f && dur[39] == 40.0f);
+    CHECK(list_of(t.transition_property, &n) && n == 40);
+    const Ca_MotionLists an = resolve_rule(ss2, 0).motion;
+    const uint32_t *names = list_of(an.anim_name, &n);
+    CHECK(n == 40 && names[39] == ca_css_name_hash("k39"));
+
+    Ca_Stylesheet *again = ca_css_parse(css);
+    CHECK(again);
+    CHECK(resolve_rule(again, 0).motion.transition_duration == t.transition_duration);   /* interned once */
+    ca_css_destroy(ss);
+    ca_css_destroy(ss2);
+    ca_css_destroy(again);
+    return true;
+}
+
+/** A later rule's `transition` replaces an earlier rule's list rather than appending to it. */
+static bool test_transition_list_replaced_by_later_rule(void)
+{
+    Ca_Stylesheet *ss = ca_css_parse(".x { transition: left 1s, top 1s, opacity 1s; } .y { transition: width 2s; }");
+    CHECK(ss && ss->rule_count == 2);
+    Ca_ResolvedStyle merged = {0};
+    for (int r = 0; r < 2; ++r)
+        for (int i = 0; i < ss->rules[r].decl_count; ++i)
+            ca_style_apply_one_declaration(&merged, ss->rules[r].decls[i].prop, &ss->rules[r].decls[i].value);
+    uint32_t n;
+    const int *props = list_of(merged.motion.transition_property, &n);
+    CHECK(n == 1 && props[0] == CA_CSS_PROP_WIDTH);
+    const float *dur = list_of(merged.motion.transition_duration, &n);
+    CHECK(n == 1 && dur[0] == 2.0f);
+    ca_css_destroy(ss);
+    return true;
+}
+
+/** `animation` parses every shorthand part, in any order, and comma lists. */
+static bool test_animation_shorthand(void)
+{
+    Ca_Stylesheet *ss = ca_css_parse(
+        ".a { animation: pulse 1.5s ease-in-out 200ms infinite alternate both, spin 2s linear 3 reverse forwards paused; }"
+        ".b { animation-name: wiggle; animation-duration: 500ms; animation-iteration-count: 2; animation-fill-mode: backwards; animation-play-state: paused; }"
+        ".c { animation: none; }");
+    CHECK(ss && ss->rule_count == 3);
+    uint32_t n;
+
+    const Ca_MotionLists a = resolve_rule(ss, 0).motion;
+    const uint32_t *names = list_of(a.anim_name, &n);
+    CHECK(n == 2 && names[0] == ca_css_name_hash("pulse") && names[1] == ca_css_name_hash("spin"));
+    const float *dur = list_of(a.anim_duration, &n);
+    CHECK(n == 2 && dur[0] == 1.5f && dur[1] == 2.0f);
+    const float *delay = list_of(a.anim_delay, &n);
+    CHECK(n == 2 && delay[0] == 0.2f);
+    const float *iters = list_of(a.anim_iterations, &n);
+    CHECK(n == 2 && isinf(iters[0]) && iters[1] == 3.0f);
+    const uint8_t *dir = list_of(a.anim_direction, &n);
+    CHECK(n == 2 && dir[0] == CA_ANIM_ALTERNATE && dir[1] == CA_ANIM_REVERSE);
+    const uint8_t *fill = list_of(a.anim_fill, &n);
+    CHECK(n == 2 && fill[0] == CA_ANIM_FILL_BOTH && fill[1] == CA_ANIM_FILL_FORWARDS);
+    const uint8_t *play = list_of(a.anim_play_state, &n);
+    CHECK(n == 2 && play[0] == 0 && play[1] == 1);
+    const Ca_EasingDef *timing = list_of(a.anim_timing, &n);
+    CHECK(n == 2 && timing[1].kind == CA_EASING_LINEAR);
+
+    const Ca_MotionLists b = resolve_rule(ss, 1).motion;
+    names = list_of(b.anim_name, &n);
+    CHECK(n == 1 && names[0] == ca_css_name_hash("wiggle"));
+    dur = list_of(b.anim_duration, &n);
+    CHECK(n == 1 && dur[0] == 0.5f);
+    iters = list_of(b.anim_iterations, &n);
+    CHECK(n == 1 && iters[0] == 2.0f);
+    fill = list_of(b.anim_fill, &n);
+    CHECK(n == 1 && fill[0] == CA_ANIM_FILL_BACKWARDS);
+    play = list_of(b.anim_play_state, &n);
+    CHECK(n == 1 && play[0] == 1);
+
+    names = list_of(resolve_rule(ss, 2).motion.anim_name, &n);
+    CHECK(n == 1 && names[0] == 0u);
+
+    ca_css_destroy(ss);
+    return true;
+}
+
+/** `@keyframes` blocks are stored by name with sorted stops; the rules around them still parse. */
+static bool test_keyframes_parse(void)
+{
+    Ca_Stylesheet *ss = ca_css_parse(
+        ".before { color: #fff; }"
+        "@keyframes pulse { 50% { opacity: 0.5; } from { opacity: 1; width: 10px; } to, 80% { opacity: 1; animation-timing-function: ease-out; } }"
+        "@media (min-width: 100px) { .skipped { color: red; } }"
+        "@keyframes pulse { from { width: 1px; } to { width: 2px; } }"
+        ".after { color: #000; }");
+    CHECK(ss && ss->rule_count == 2);
+    CHECK(ss->keyframes_count == 1);   /* the second `pulse` replaced the first */
+
+    const Ca_CssKeyframes *pulse = ca_css_find_keyframes(ss, ca_css_name_hash("pulse"));
+    CHECK(pulse && pulse->frame_count == 2);
+    CHECK(pulse->frames[0].offset == 0.0f && pulse->frames[1].offset == 1.0f);
+    CHECK(ca_css_find_keyframes(ss, ca_css_name_hash("missing")) == NULL);
+    ca_css_destroy(ss);
+
+    ss = ca_css_parse("@keyframes k { 50% { opacity: 0.5; } from { opacity: 1; } to, 80% { opacity: 0; animation-timing-function: ease-out; } }");
+    CHECK(ss);
+    const Ca_CssKeyframes *k = ca_css_find_keyframes(ss, ca_css_name_hash("k"));
+    CHECK(k && k->frame_count == 4);
+    CHECK(k->frames[0].offset == 0.0f && k->frames[1].offset == 0.5f);
+    CHECK(k->frames[2].offset == 0.8f && k->frames[3].offset == 1.0f);
+    CHECK(!k->frames[0].has_timing && k->frames[2].has_timing && k->frames[3].has_timing);
+    CHECK(k->frames[2].timing_kind == CA_EASING_BEZIER);
+    ca_css_destroy(ss);
+
+    /* Any number of stops, and any number of selectors on one stop. */
+    char big[8192] = "@keyframes many {";
+    for (int i = 0; i <= 50; ++i) {
+        char stop[64];
+        snprintf(stop, sizeof(stop), " %d%% { opacity: 0.%02d; }", i * 2, i);
+        strncat(big, stop, sizeof(big) - strlen(big) - 1);
+    }
+    strncat(big, " 1%, 3%, 5%, 7%, 9%, 11%, 13%, 15%, 17%, 19% { width: 5px; } }", sizeof(big) - strlen(big) - 1);
+    ss = ca_css_parse(big);
+    CHECK(ss);
+    const Ca_CssKeyframes *many = ca_css_find_keyframes(ss, ca_css_name_hash("many"));
+    CHECK(many && many->frame_count == 61);
+    for (int i = 1; i < many->frame_count; ++i) CHECK(many->frames[i - 1].offset <= many->frames[i].offset);
+    ca_css_destroy(ss);
+    return true;
+}
+
+/** Bezier easing hits both ends exactly, overshoots with y > 1 and is the identity for a diagonal. */
+static bool test_bezier_easing_curve(void)
+{
+    const Ca_EasingDef back = { CA_EASING_BEZIER, { 0.34f, 1.56f, 0.64f, 1.0f } };
+    const Ca_EasingDef diagonal = { CA_EASING_BEZIER, { 0.25f, 0.25f, 0.75f, 0.75f } };
+    const Ca_EasingDef linear = { CA_EASING_LINEAR, { 0 } };
+    CHECK(ca_easing_eval(&back, 0.0f) == 0.0f);
+    CHECK(ca_easing_eval(&back, 1.0f) == 1.0f);
+    CHECK(ca_easing_eval(&linear, 0.3f) == 0.3f);
+    CHECK(ca_easing_eval(NULL, 0.7f) == 0.7f);
+    float peak = 0.0f;
+    for (int i = 1; i < 100; ++i) {
+        const float v = ca_easing_eval(&back, (float)i / 100.0f);
+        if (v > peak) peak = v;
+    }
+    CHECK(peak > 1.05f && peak < 1.3f);
+    for (int i = 1; i < 10; ++i) {
+        const float t = (float)i / 10.0f;
+        CHECK(fabsf(ca_easing_eval(&diagonal, t) - t) < 0.01f);
+    }
     return true;
 }
 
@@ -697,6 +931,12 @@ int main(void)
     if (!test_border_shorthand_resets_sides()) return 1;
     if (!test_gradient_rgba_stops_keep_following_rules()) return 1;
     if (!test_inset_box_shadow()) return 1;
+    if (!test_transition_lists()) return 1;
+    if (!test_motion_lists_are_unbounded()) return 1;
+    if (!test_transition_list_replaced_by_later_rule()) return 1;
+    if (!test_animation_shorthand()) return 1;
+    if (!test_keyframes_parse()) return 1;
+    if (!test_bezier_easing_curve()) return 1;
     if (!test_auto_keywords()) return 1;
     if (!test_label_inline_color_survives_restyle()) return 1;
     if (!test_node_graph_stubs_unfit_text()) return 1;

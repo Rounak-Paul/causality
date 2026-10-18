@@ -3,6 +3,7 @@
 
 /* node.c — node pool, tree building, and subscription wiring */
 #include "node.h"
+#include "motion.h"
 #include "style.h"
 #include "inline_layout.h"
 #include "menu_storage.h"
@@ -155,8 +156,10 @@ void ca_node_system_shutdown(Ca_Window *win)
         if (node->builder_effect) ca_effect_destroy(node->builder_effect);
         ca_css_destroy(node->scoped_stylesheet);
         ca_dyn_array_destroy(&node->transition_storage);
+        ca_motion_node_destroy(node);
         CA_FREE(node->children);
     }
+    ca_dyn_array_destroy(&win->motion_memory);
     for (size_t i = 0; i < ca_pool_slot_count(&win->select_pool); ++i) {
         Ca_Select *select = CA_POOL_AT(win->select_pool, Ca_Select, i);
         ca_dyn_array_destroy(&select->option_storage);
@@ -372,6 +375,7 @@ static void free_subtree(Ca_Node *node)
         node->inline_layout = NULL;
     }
     ca_dyn_array_destroy(&node->transition_storage);
+    ca_motion_node_destroy(node);
     ca_css_destroy(node->scoped_stylesheet);
     node->scoped_stylesheet = NULL;
     /* Clear any window-level pointers that reference this node, otherwise

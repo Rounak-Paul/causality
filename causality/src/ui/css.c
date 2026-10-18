@@ -4,6 +4,7 @@
 /* css.c — CSS tokenizer + recursive descent parser */
 #include "css.h"
 #include "style.h"
+#include "motion_lists.h"
 #include "causality_config.h"
 
 #include <ctype.h>
@@ -840,6 +841,7 @@ static Ca_CssPropId lookup_property(const char *name)
         { "overflow",                  CA_CSS_PROP_OVERFLOW },
         { "overflow-x",                CA_CSS_PROP_OVERFLOW_X },
         { "overflow-y",                CA_CSS_PROP_OVERFLOW_Y },
+        { "transition-stretch",        CA_CSS_PROP_TRANSITION_STRETCH },
         { "border-width",              CA_CSS_PROP_BORDER_WIDTH },
         { "border-color",              CA_CSS_PROP_BORDER_COLOR },
         { "border-style",              CA_CSS_PROP_BORDER_STYLE },
@@ -1538,6 +1540,438 @@ static void parse_gradient_func(Parser *p, Ca_CssRule *rule, int is_radial)
     add_decl(rule, CA_CSS_PROP_GRADIENT_CY, gcy);
 }
 
+/* ============================================================
+   MOTION: transition / animation declarations and @keyframes
+   ============================================================ */
+
+uint32_t ca_css_name_hash(const char *name)
+{
+    uint32_t hash = 2166136261u;
+    for (const unsigned char *c = (const unsigned char *)name; c && *c; ++c) {
+        hash ^= *c;
+        hash *= 16777619u;
+    }
+    return hash ? hash : 1u;
+}
+
+typedef struct {
+    int   kind;        /* Ca_Easing: 0 linear, 4 bezier */
+    float bezier[4];
+} EasingParse;
+
+static const struct { const char *name; float p[4]; } k_easing_presets[] = {
+    { "ease",             { 0.25f,  0.10f, 0.25f, 1.00f } },
+    { "ease-in",          { 0.42f,  0.00f, 1.00f, 1.00f } },
+    { "ease-out",         { 0.00f,  0.00f, 0.58f, 1.00f } },
+    { "ease-in-out",      { 0.42f,  0.00f, 0.58f, 1.00f } },
+    { "ease-in-back",     { 0.36f,  0.00f, 0.66f, -0.56f } },
+    { "ease-out-back",    { 0.34f,  1.56f, 0.64f, 1.00f } },
+    { "ease-in-out-back", { 0.68f, -0.60f, 0.32f, 1.60f } },
+};
+
+/** CSS `ease`, the default timing function. */
+static EasingParse default_easing(void)
+{
+    EasingParse e = { 4, { 0.25f, 0.10f, 0.25f, 1.00f } };
+    return e;
+}
+
+static Ca_EasingDef easing_def(const EasingParse *e)
+{
+    Ca_EasingDef d = { e->kind, { e->bezier[0], e->bezier[1], e->bezier[2], e->bezier[3] } };
+    return d;
+}
+
+/** Whether `name` spells a timing-function keyword. */
+static bool is_easing_keyword(const char *name)
+{
+    if (strcasecmp(name, "linear") == 0) return true;
+    for (size_t i = 0; i < sizeof(k_easing_presets) / sizeof(k_easing_presets[0]); ++i)
+        if (strcasecmp(name, k_easing_presets[i].name) == 0) return true;
+    return false;
+}
+
+/**
+ * Consumes one timing function (keyword or cubic-bezier()) at the cursor.
+ *
+ * @param p   Parser positioned on the candidate token.
+ * @param out Receives the parsed function.
+ * @return true when a timing function was consumed; nothing is consumed otherwise.
+ */
+static bool parse_easing(Parser *p, EasingParse *out)
+{
+    skip_ws(p);
+    Token t = parser_peek(p);
+    if (t.type == TOK_IDENT && is_easing_keyword(t.text)) {
+        parser_next(p);
+        if (strcasecmp(t.text, "linear") == 0) {
+            *out = (EasingParse){0};
+            return true;
+        }
+        for (size_t i = 0; i < sizeof(k_easing_presets) / sizeof(k_easing_presets[0]); ++i) {
+            if (strcasecmp(t.text, k_easing_presets[i].name) != 0) continue;
+            out->kind = 4;
+            memcpy(out->bezier, k_easing_presets[i].p, sizeof(out->bezier));
+        }
+        return true;
+    }
+    if (t.type != TOK_FUNCTION || strcasecmp(t.text, "cubic-bezier") != 0) return false;
+    parser_next(p);
+    float v[4] = {0};
+    bool closed = false;
+    for (int i = 0; i < 4 && !closed; ++i) {
+        skip_ws(p);
+        Token n = parser_next(p);
+        if (n.type == TOK_NUMBER || n.type == TOK_DIMENSION) v[i] = n.number;
+        skip_ws(p);
+        if (parser_next(p).type == TOK_RPAREN) closed = true;
+    }
+    while (!closed) {
+        Token rest = parser_next(p);
+        if (rest.type == TOK_RPAREN || rest.type == TOK_EOF) closed = true;
+    }
+    out->kind = 4;
+    out->bezier[0] = fminf(fmaxf(v[0], 0.0f), 1.0f);
+    out->bezier[1] = v[1];
+    out->bezier[2] = fminf(fmaxf(v[2], 0.0f), 1.0f);
+    out->bezier[3] = v[3];
+    return true;
+}
+
+/** Reads a CSS time (`0.3s`, `250ms`) from a token. */
+static bool token_time(const Token *t, float *seconds)
+{
+    if (t->type != TOK_DIMENSION) return false;
+    if (strcasecmp(t->unit, "s") == 0) { *seconds = t->number; return true; }
+    if (strcasecmp(t->unit, "ms") == 0) { *seconds = t->number / 1000.0f; return true; }
+    return false;
+}
+
+/**
+ * Maps a transition-property name to a property id: a CA_CSS_PROP_*, one
+ * of the CA_MOTION_GROUP_* shorthands, CA_MOTION_ALL, or 0 for `none` and
+ * for names that animate nothing.
+ */
+static int motion_property_id(const char *name)
+{
+    if (strcasecmp(name, "all") == 0) return CA_MOTION_ALL;
+    if (strcasecmp(name, "none") == 0) return 0;
+    if (strcasecmp(name, "padding") == 0) return CA_MOTION_GROUP_PADDING;
+    if (strcasecmp(name, "margin") == 0) return CA_MOTION_GROUP_MARGIN;
+    if (strcasecmp(name, "border") == 0) return CA_MOTION_GROUP_BORDER;
+    if (strcasecmp(name, "border-color") == 0) return CA_MOTION_GROUP_BORDER_COLOR;
+    if (strcasecmp(name, "border-width") == 0) return CA_MOTION_GROUP_BORDER_WIDTH;
+    if (strcasecmp(name, "background") == 0) return CA_MOTION_GROUP_BACKGROUND;
+    return (int)lookup_property(name);
+}
+
+/* A growable list of equally sized items, interned into the motion pool when done. */
+typedef struct {
+    unsigned char *data;
+    uint32_t       count, capacity;
+    size_t         item_size;
+    bool           failed;
+} ItemBuf;
+
+static ItemBuf item_buf(size_t item_size)
+{
+    return (ItemBuf){ .item_size = item_size };
+}
+
+static void item_push(ItemBuf *b, const void *item)
+{
+    if (b->failed) return;
+    if (b->count == b->capacity) {
+        const uint32_t capacity = b->capacity ? b->capacity * 2u : 4u;
+        unsigned char *grown = realloc(b->data, b->item_size * capacity);
+        if (!grown) { b->failed = true; return; }
+        b->data = grown;
+        b->capacity = capacity;
+    }
+    memcpy(b->data + (size_t)b->count * b->item_size, item, b->item_size);
+    b->count++;
+}
+
+/** Interns the buffer as a pool list and releases it; 0 when empty or on failure. */
+static uint32_t item_intern(ItemBuf *b, Ca_MotionListKind kind)
+{
+    const uint32_t handle = b->failed ? 0u : ca_motion_list_intern(kind, b->data, b->count);
+    free(b->data);
+    *b = item_buf(b->item_size);
+    return handle;
+}
+
+static void emit_list(Ca_CssRule *rule, Ca_CssPropId prop, uint32_t handle)
+{
+    Ca_CssValue v = {0};
+    v.type    = CA_CSS_VAL_NUMBER;
+    v.keyword = (int)handle;
+    add_decl(rule, prop, v);
+}
+
+/** True when the cursor is at the end of a list item (comma) or declaration. */
+static bool at_item_boundary(Parser *p)
+{
+    skip_ws(p);
+    Token t = parser_peek(p);
+    return t.type == TOK_COMMA || t.type == TOK_SEMICOLON || t.type == TOK_RBRACE ||
+           t.type == TOK_EOF || t.type == TOK_BANG;
+}
+
+/** Consumes the comma between list items; false at the end of the declaration. */
+static bool next_list_item(Parser *p)
+{
+    skip_ws(p);
+    if (parser_peek(p).type != TOK_COMMA) return false;
+    parser_next(p);
+    return true;
+}
+
+/** Parses `transition: <property> <time> <timing> <delay>, ...` (any order within an item). */
+static void parse_transition_shorthand(Parser *p, Ca_CssRule *rule)
+{
+    ItemBuf props = item_buf(sizeof(int)), durations = item_buf(sizeof(float));
+    ItemBuf delays = item_buf(sizeof(float)), timings = item_buf(sizeof(Ca_EasingDef));
+    do {
+        int prop = CA_MOTION_ALL;
+        float time[2] = {0, 0};
+        int times = 0;
+        EasingParse easing = default_easing();
+        bool have_prop = false;
+        while (!at_item_boundary(p)) {
+            EasingParse e;
+            if (parse_easing(p, &e)) { easing = e; continue; }
+            Token t = parser_next(p);
+            float seconds;
+            if (token_time(&t, &seconds)) {
+                if (times < 2) time[times++] = seconds;
+            } else if (t.type == TOK_IDENT && !have_prop) {
+                prop = motion_property_id(t.text);
+                have_prop = true;
+            }
+        }
+        const Ca_EasingDef def = easing_def(&easing);
+        item_push(&props, &prop);
+        item_push(&durations, &time[0]);
+        item_push(&delays, &time[1]);
+        item_push(&timings, &def);
+    } while (next_list_item(p));
+    emit_list(rule, CA_CSS_PROP_TRANSITION_PROPERTY, item_intern(&props, CA_MOTION_LIST_TRANSITION_PROPERTY));
+    emit_list(rule, CA_CSS_PROP_TRANSITION_DURATION, item_intern(&durations, CA_MOTION_LIST_TRANSITION_DURATION));
+    emit_list(rule, CA_CSS_PROP_TRANSITION_DELAY, item_intern(&delays, CA_MOTION_LIST_TRANSITION_DELAY));
+    emit_list(rule, CA_CSS_PROP_TRANSITION_TIMING, item_intern(&timings, CA_MOTION_LIST_TRANSITION_TIMING));
+}
+
+/** Parses `animation: <name> <time> <timing> <delay> <count> <direction> <fill> <state>, ...`. */
+static void parse_animation_shorthand(Parser *p, Ca_CssRule *rule)
+{
+    ItemBuf names = item_buf(sizeof(uint32_t)), durations = item_buf(sizeof(float));
+    ItemBuf delays = item_buf(sizeof(float)), timings = item_buf(sizeof(Ca_EasingDef));
+    ItemBuf counts = item_buf(sizeof(float)), directions = item_buf(sizeof(uint8_t));
+    ItemBuf fills = item_buf(sizeof(uint8_t)), states = item_buf(sizeof(uint8_t));
+    do {
+        uint32_t name = 0;
+        float time[2] = {0, 0};
+        int times = 0;
+        float iterations = 1.0f;
+        uint8_t direction = 0, fill = 0, state = 0;
+        EasingParse easing = default_easing();
+        bool have_name = false;
+        while (!at_item_boundary(p)) {
+            EasingParse e;
+            if (parse_easing(p, &e)) { easing = e; continue; }
+            Token t = parser_next(p);
+            float seconds;
+            if (token_time(&t, &seconds)) {
+                if (times < 2) time[times++] = seconds;
+            } else if (t.type == TOK_NUMBER) {
+                iterations = t.number;
+            } else if (t.type == TOK_IDENT) {
+                if (strcasecmp(t.text, "infinite") == 0) iterations = INFINITY;
+                else if (strcasecmp(t.text, "normal") == 0) direction = 0;
+                else if (strcasecmp(t.text, "reverse") == 0) direction = 1;
+                else if (strcasecmp(t.text, "alternate") == 0) direction = 2;
+                else if (strcasecmp(t.text, "alternate-reverse") == 0) direction = 3;
+                else if (strcasecmp(t.text, "forwards") == 0) fill = 1;
+                else if (strcasecmp(t.text, "backwards") == 0) fill = 2;
+                else if (strcasecmp(t.text, "both") == 0) fill = 3;
+                else if (strcasecmp(t.text, "running") == 0) state = 0;
+                else if (strcasecmp(t.text, "paused") == 0) state = 1;
+                else if (!have_name) {
+                    name = strcasecmp(t.text, "none") == 0 ? 0u : ca_css_name_hash(t.text);
+                    have_name = true;
+                }
+            }
+        }
+        const Ca_EasingDef def = easing_def(&easing);
+        item_push(&names, &name);
+        item_push(&durations, &time[0]);
+        item_push(&delays, &time[1]);
+        item_push(&timings, &def);
+        item_push(&counts, &iterations);
+        item_push(&directions, &direction);
+        item_push(&fills, &fill);
+        item_push(&states, &state);
+    } while (next_list_item(p));
+    emit_list(rule, CA_CSS_PROP_ANIMATION_NAME, item_intern(&names, CA_MOTION_LIST_ANIMATION_NAME));
+    emit_list(rule, CA_CSS_PROP_ANIMATION_DURATION, item_intern(&durations, CA_MOTION_LIST_ANIMATION_DURATION));
+    emit_list(rule, CA_CSS_PROP_ANIMATION_DELAY, item_intern(&delays, CA_MOTION_LIST_ANIMATION_DELAY));
+    emit_list(rule, CA_CSS_PROP_ANIMATION_TIMING, item_intern(&timings, CA_MOTION_LIST_ANIMATION_TIMING));
+    emit_list(rule, CA_CSS_PROP_ANIMATION_ITERATIONS, item_intern(&counts, CA_MOTION_LIST_ANIMATION_ITERATIONS));
+    emit_list(rule, CA_CSS_PROP_ANIMATION_DIRECTION, item_intern(&directions, CA_MOTION_LIST_ANIMATION_DIRECTION));
+    emit_list(rule, CA_CSS_PROP_ANIMATION_FILL, item_intern(&fills, CA_MOTION_LIST_ANIMATION_FILL));
+    emit_list(rule, CA_CSS_PROP_ANIMATION_PLAY_STATE, item_intern(&states, CA_MOTION_LIST_ANIMATION_PLAY_STATE));
+}
+
+typedef enum {
+    MOTION_NONE, MOTION_TRANSITION, MOTION_ANIMATION,
+    MOTION_T_PROPERTY, MOTION_T_DURATION, MOTION_T_DELAY, MOTION_T_TIMING,
+    MOTION_A_NAME, MOTION_A_DURATION, MOTION_A_DELAY, MOTION_A_TIMING,
+    MOTION_A_COUNT, MOTION_A_DIRECTION, MOTION_A_FILL, MOTION_A_STATE,
+} MotionDecl;
+
+/** Parses one longhand's comma list and emits its single carrier declaration. */
+static void parse_motion_longhand(Parser *p, Ca_CssRule *rule, MotionDecl kind)
+{
+    ItemBuf ints = item_buf(sizeof(int)), floats = item_buf(sizeof(float));
+    ItemBuf easings = item_buf(sizeof(Ca_EasingDef)), hashes = item_buf(sizeof(uint32_t));
+    ItemBuf bytes = item_buf(sizeof(uint8_t));
+    do {
+        skip_ws(p);
+        if (at_item_boundary(p)) continue;
+        EasingParse e;
+        if ((kind == MOTION_T_TIMING || kind == MOTION_A_TIMING) && parse_easing(p, &e)) {
+            const Ca_EasingDef def = easing_def(&e);
+            item_push(&easings, &def);
+            continue;
+        }
+        Token t = parser_next(p);
+        float seconds = 0.0f;
+        switch (kind) {
+            case MOTION_T_PROPERTY: {
+                const int prop = t.type == TOK_IDENT ? motion_property_id(t.text) : 0;
+                item_push(&ints, &prop);
+                break;
+            }
+            case MOTION_T_DURATION: case MOTION_T_DELAY: case MOTION_A_DURATION: case MOTION_A_DELAY:
+                if (!token_time(&t, &seconds)) seconds = 0.0f;
+                item_push(&floats, &seconds);
+                break;
+            case MOTION_T_TIMING: case MOTION_A_TIMING: {
+                const EasingParse fallback = default_easing();
+                const Ca_EasingDef def = easing_def(&fallback);
+                item_push(&easings, &def);
+                break;
+            }
+            case MOTION_A_NAME: {
+                const uint32_t hash = t.type == TOK_IDENT && strcasecmp(t.text, "none") != 0
+                                    ? ca_css_name_hash(t.text) : 0u;
+                item_push(&hashes, &hash);
+                break;
+            }
+            case MOTION_A_COUNT: {
+                float n = 1.0f;
+                if (t.type == TOK_NUMBER) n = t.number;
+                else if (t.type == TOK_IDENT && strcasecmp(t.text, "infinite") == 0) n = INFINITY;
+                item_push(&floats, &n);
+                break;
+            }
+            case MOTION_A_DIRECTION: {
+                const uint8_t d = t.type != TOK_IDENT ? 0 :
+                    strcasecmp(t.text, "reverse") == 0 ? 1 :
+                    strcasecmp(t.text, "alternate") == 0 ? 2 :
+                    strcasecmp(t.text, "alternate-reverse") == 0 ? 3 : 0;
+                item_push(&bytes, &d);
+                break;
+            }
+            case MOTION_A_FILL: {
+                const uint8_t f = t.type != TOK_IDENT ? 0 :
+                    strcasecmp(t.text, "forwards") == 0 ? 1 :
+                    strcasecmp(t.text, "backwards") == 0 ? 2 :
+                    strcasecmp(t.text, "both") == 0 ? 3 : 0;
+                item_push(&bytes, &f);
+                break;
+            }
+            case MOTION_A_STATE: {
+                const uint8_t paused = t.type == TOK_IDENT && strcasecmp(t.text, "paused") == 0;
+                item_push(&bytes, &paused);
+                break;
+            }
+            default: break;
+        }
+    } while (next_list_item(p));
+
+    switch (kind) {
+        case MOTION_T_PROPERTY:
+            emit_list(rule, CA_CSS_PROP_TRANSITION_PROPERTY, item_intern(&ints, CA_MOTION_LIST_TRANSITION_PROPERTY)); break;
+        case MOTION_T_DURATION:
+            emit_list(rule, CA_CSS_PROP_TRANSITION_DURATION, item_intern(&floats, CA_MOTION_LIST_TRANSITION_DURATION)); break;
+        case MOTION_T_DELAY:
+            emit_list(rule, CA_CSS_PROP_TRANSITION_DELAY, item_intern(&floats, CA_MOTION_LIST_TRANSITION_DELAY)); break;
+        case MOTION_T_TIMING:
+            emit_list(rule, CA_CSS_PROP_TRANSITION_TIMING, item_intern(&easings, CA_MOTION_LIST_TRANSITION_TIMING)); break;
+        case MOTION_A_NAME:
+            emit_list(rule, CA_CSS_PROP_ANIMATION_NAME, item_intern(&hashes, CA_MOTION_LIST_ANIMATION_NAME)); break;
+        case MOTION_A_DURATION:
+            emit_list(rule, CA_CSS_PROP_ANIMATION_DURATION, item_intern(&floats, CA_MOTION_LIST_ANIMATION_DURATION)); break;
+        case MOTION_A_DELAY:
+            emit_list(rule, CA_CSS_PROP_ANIMATION_DELAY, item_intern(&floats, CA_MOTION_LIST_ANIMATION_DELAY)); break;
+        case MOTION_A_TIMING:
+            emit_list(rule, CA_CSS_PROP_ANIMATION_TIMING, item_intern(&easings, CA_MOTION_LIST_ANIMATION_TIMING)); break;
+        case MOTION_A_COUNT:
+            emit_list(rule, CA_CSS_PROP_ANIMATION_ITERATIONS, item_intern(&floats, CA_MOTION_LIST_ANIMATION_ITERATIONS)); break;
+        case MOTION_A_DIRECTION:
+            emit_list(rule, CA_CSS_PROP_ANIMATION_DIRECTION, item_intern(&bytes, CA_MOTION_LIST_ANIMATION_DIRECTION)); break;
+        case MOTION_A_FILL:
+            emit_list(rule, CA_CSS_PROP_ANIMATION_FILL, item_intern(&bytes, CA_MOTION_LIST_ANIMATION_FILL)); break;
+        case MOTION_A_STATE:
+            emit_list(rule, CA_CSS_PROP_ANIMATION_PLAY_STATE, item_intern(&bytes, CA_MOTION_LIST_ANIMATION_PLAY_STATE)); break;
+        default: break;
+    }
+    free(ints.data); free(floats.data); free(easings.data); free(hashes.data); free(bytes.data);
+}
+
+/**
+ * Parses a motion declaration whose property name has already been read
+ * and whose ':' has been consumed.
+ *
+ * @param p    Parser positioned at the value.
+ * @param rule Rule receiving the declarations.
+ * @param name Property name as written.
+ * @return true when `name` is a motion property (the declaration, through
+ *         its ';', has been consumed); false to let the generic path run.
+ */
+static bool parse_motion_declaration(Parser *p, Ca_CssRule *rule, const char *name)
+{
+    static const struct { const char *name; MotionDecl kind; } names[] = {
+        { "transition", MOTION_TRANSITION }, { "animation", MOTION_ANIMATION },
+        { "transition-property", MOTION_T_PROPERTY }, { "transition-duration", MOTION_T_DURATION },
+        { "transition-delay", MOTION_T_DELAY }, { "transition-timing-function", MOTION_T_TIMING },
+        { "animation-name", MOTION_A_NAME }, { "animation-duration", MOTION_A_DURATION },
+        { "animation-delay", MOTION_A_DELAY }, { "animation-timing-function", MOTION_A_TIMING },
+        { "animation-iteration-count", MOTION_A_COUNT }, { "animation-direction", MOTION_A_DIRECTION },
+        { "animation-fill-mode", MOTION_A_FILL }, { "animation-play-state", MOTION_A_STATE },
+    };
+    MotionDecl kind = MOTION_NONE;
+    for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); ++i)
+        if (strcasecmp(name, names[i].name) == 0) kind = names[i].kind;
+    if (kind == MOTION_NONE) return false;
+
+    const int from = rule->decl_count;
+    if (kind == MOTION_TRANSITION) parse_transition_shorthand(p, rule);
+    else if (kind == MOTION_ANIMATION) parse_animation_shorthand(p, rule);
+    else parse_motion_longhand(p, rule, kind);
+    consume_important(p, rule, from);
+    skip_ws(p);
+    Token end = parser_peek(p);
+    while (end.type != TOK_SEMICOLON && end.type != TOK_RBRACE && end.type != TOK_EOF) {
+        parser_next(p);
+        end = parser_peek(p);
+    }
+    if (end.type == TOK_SEMICOLON) parser_next(p);
+    return true;
+}
+
 static void parse_declarations(Parser *p, Ca_CssRule *rule)
 {
     /* Already consumed '{'. Parse until '}'. */
@@ -1815,73 +2249,8 @@ static void parse_declarations(Parser *p, Ca_CssRule *rule)
             continue;
         }
 
-        /* Handle 'transition' shorthand:
-           transition: <property> <duration> [<easing>]
-           We store the duration as a number value and encode the target
-           property id in the keyword field.  Multiple transitions
-           (comma-separated) are not yet supported — only the first is used. */
-        if (strcasecmp(prop_name, "transition") == 0) {
-            skip_ws(p);
-            Token prop_tok = parser_next(p);
-            Ca_CssPropId trans_prop = CA_CSS_PROP_NONE;
-            if (prop_tok.type == TOK_IDENT) {
-                if (strcasecmp(prop_tok.text, "all") == 0) {
-                    trans_prop = CA_CSS_PROP_COUNT; /* sentinel: all */
-                } else {
-                    trans_prop = lookup_property(prop_tok.text);
-                }
-            }
-
-            /* Duration (in seconds or ms) */
-            float duration = 0.0f;
-            skip_ws(p);
-            Token dur_tok = parser_peek(p);
-            if (dur_tok.type == TOK_DIMENSION || dur_tok.type == TOK_NUMBER) {
-                parser_next(p);
-                duration = dur_tok.number;
-                if (dur_tok.type == TOK_DIMENSION &&
-                    strcasecmp(dur_tok.unit, "ms") == 0)
-                    duration /= 1000.0f;
-            }
-
-            /* Optional easing keyword, then skip any remaining tokens. */
-            int easing = -1; /* -1: none specified, keep node's current/default */
-            skip_ws(p);
-            Token ease_tok = parser_peek(p);
-            if (ease_tok.type == TOK_IDENT) {
-                if (strcasecmp(ease_tok.text, "linear") == 0) easing = 0;       /* CA_EASING_LINEAR */
-                else if (strcasecmp(ease_tok.text, "ease-in") == 0) easing = 1;  /* CA_EASING_EASE_IN */
-                else if (strcasecmp(ease_tok.text, "ease-out") == 0) easing = 2; /* CA_EASING_EASE_OUT */
-                else if (strcasecmp(ease_tok.text, "ease-in-out") == 0 ||
-                         strcasecmp(ease_tok.text, "ease") == 0) easing = 3;     /* CA_EASING_EASE_IN_OUT */
-                if (easing >= 0) parser_next(p);
-            }
-            while (1) {
-                Token pk = parser_peek(p);
-                if (pk.type == TOK_SEMICOLON || pk.type == TOK_RBRACE || pk.type == TOK_EOF) break;
-                parser_next(p);
-            }
-
-            if (trans_prop != CA_CSS_PROP_NONE && duration > 0.0f) {
-                Ca_CssValue tv = {0};
-                tv.type    = CA_CSS_VAL_NUMBER;
-                tv.number  = duration;
-                tv.keyword = (int)trans_prop;
-                add_decl(rule, CA_CSS_PROP_TRANSITION, tv);
-                if (easing >= 0) {
-                    Ca_CssValue ev = {0};
-                    ev.type    = CA_CSS_VAL_KEYWORD;
-                    ev.keyword = easing;
-                    add_decl(rule, CA_CSS_PROP_TRANSITION_EASING, ev);
-                }
-            }
-
-            skip_ws(p);
-            t = parser_peek(p);
-            if (t.type == TOK_SEMICOLON) parser_next(p);
-            continue;
-        }
-
+        /* Motion: `transition` / `animation` shorthands and their longhands. */
+        if (parse_motion_declaration(p, rule, prop_name)) continue;
         /* box-shadow shorthand: [inset] offset-x offset-y [blur] [spread] [color]
            We ignore spread. Emits two decls:
              Decl A (keyword=0): type=COLOR, color=shadow color, keyword packs
@@ -2576,6 +2945,140 @@ static void skip_at_rule(Parser *p)
 }
 
 /* ============================================================
+   @keyframes
+   ============================================================ */
+
+/** Frees one keyframes block and everything it owns. */
+static void keyframes_destroy(Ca_CssKeyframes *kf)
+{
+    Ca_CssKeyframe *frames = kf->frame_storage.data;
+    for (size_t i = 0; i < kf->frame_storage.count; ++i)
+        ca_dyn_array_destroy(&frames[i].decl_storage);
+    ca_dyn_array_destroy(&kf->frame_storage);
+    kf->frames = NULL;
+    kf->frame_count = 0;
+}
+
+/** Parses a keyframe selector list (`from`, `to`, `40%`, comma separated) into offsets. */
+static void parse_keyframe_selectors(Parser *p, ItemBuf *offsets)
+{
+    for (;;) {
+        skip_ws(p);
+        Token t = parser_next(p);
+        float offset = -1.0f;
+        if (t.type == TOK_IDENT && strcasecmp(t.text, "from") == 0) offset = 0.0f;
+        else if (t.type == TOK_IDENT && strcasecmp(t.text, "to") == 0) offset = 1.0f;
+        else if (t.type == TOK_DIMENSION && strcmp(t.unit, "%") == 0 &&
+                 t.number >= 0.0f && t.number <= 100.0f) offset = t.number / 100.0f;
+        if (offset >= 0.0f) item_push(offsets, &offset);
+        skip_ws(p);
+        if (parser_peek(p).type != TOK_COMMA) return;
+        parser_next(p);
+    }
+}
+
+/**
+ * Parses the body of `@keyframes name { ... }`, positioned just after the
+ * `keyframes` keyword, and stores the block on the stylesheet. A block
+ * with a name already defined replaces it.
+ *
+ * @param p  Parser; consumes through the block's closing brace.
+ * @param ss Stylesheet receiving the block.
+ * @return false on allocation failure.
+ */
+static bool parse_keyframes_block(Parser *p, Ca_Stylesheet *ss)
+{
+    skip_ws(p);
+    Token name = parser_next(p);
+    skip_ws(p);
+    if ((name.type != TOK_IDENT && name.type != TOK_STRING) || parser_next(p).type != TOK_LBRACE) {
+        skip_at_rule(p);
+        return true;
+    }
+
+    Ca_CssKeyframes block = {0};
+    block.name_hash = ca_css_name_hash(name.text);
+    block.frame_storage = (Ca_DynArray)CA_DYN_ARRAY_INIT(Ca_CssKeyframe);
+    for (;;) {
+        skip_ws(p);
+        Token t = parser_peek(p);
+        if (t.type == TOK_RBRACE || t.type == TOK_EOF) {
+            parser_next(p);
+            break;
+        }
+        ItemBuf offsets = item_buf(sizeof(float));
+        parse_keyframe_selectors(p, &offsets);
+        skip_ws(p);
+        if (parser_next(p).type != TOK_LBRACE) {
+            free(offsets.data);
+            continue;
+        }
+
+        Ca_CssRule stops = {0};
+        stops.decl_storage = (Ca_DynArray)CA_DYN_ARRAY_INIT(Ca_CssDecl);
+        parse_declarations(p, &stops);
+        bool ok = !offsets.failed;
+        for (uint32_t o = 0; o < offsets.count && ok; ++o) {
+            Ca_CssKeyframe frame = {0};
+            memcpy(&frame.offset, offsets.data + (size_t)o * sizeof(float), sizeof(float));
+            frame.decl_storage = (Ca_DynArray)CA_DYN_ARRAY_INIT(Ca_CssDecl);
+            for (int d = 0; d < stops.decl_count && ok; ++d) {
+                const Ca_CssDecl *decl = &stops.decls[d];
+                if (decl->prop == CA_CSS_PROP_ANIMATION_TIMING) {
+                    uint32_t n = 0;
+                    const Ca_EasingDef *e = ca_motion_list_items((uint32_t)decl->value.keyword, &n);
+                    frame.has_timing = e && n > 0;
+                    if (frame.has_timing) {
+                        frame.timing_kind = e[0].kind;
+                        memcpy(frame.timing_bezier, e[0].bezier, sizeof(frame.timing_bezier));
+                    }
+                } else if (decl->prop < CA_CSS_PROP_TRANSITION_PROPERTY ||
+                           decl->prop > CA_CSS_PROP_ANIMATION_PLAY_STATE) {
+                    ok = ca_dyn_array_push(&frame.decl_storage, decl);
+                }
+            }
+            frame.decls = frame.decl_storage.data;
+            frame.decl_count = (int)frame.decl_storage.count;
+            /* Keep stops ordered by offset; equal offsets stay in source order. */
+            size_t at = block.frame_storage.count;
+            while (ok && at > 0 && ((Ca_CssKeyframe *)block.frame_storage.data)[at - 1].offset > frame.offset) --at;
+            if (ok) ok = ca_dyn_array_insert(&block.frame_storage, at, &frame, 1);
+            if (!ok) ca_dyn_array_destroy(&frame.decl_storage);
+        }
+        free(offsets.data);
+        ca_dyn_array_destroy(&stops.decl_storage);
+        if (!ok) {
+            keyframes_destroy(&block);
+            return false;
+        }
+    }
+    block.frames = block.frame_storage.data;
+    block.frame_count = (int)block.frame_storage.count;
+
+    for (int i = 0; i < ss->keyframes_count; ++i) {
+        if (ss->keyframes[i].name_hash != block.name_hash) continue;
+        keyframes_destroy(&ss->keyframes[i]);
+        ss->keyframes[i] = block;
+        return true;
+    }
+    if (!ca_dyn_array_push(&ss->keyframes_storage, &block)) {
+        keyframes_destroy(&block);
+        return false;
+    }
+    ss->keyframes = ss->keyframes_storage.data;
+    ss->keyframes_count = (int)ss->keyframes_storage.count;
+    return true;
+}
+
+const Ca_CssKeyframes *ca_css_find_keyframes(const Ca_Stylesheet *ss, uint32_t name_hash)
+{
+    if (!ss || !name_hash) return NULL;
+    for (int i = 0; i < ss->keyframes_count; ++i)
+        if (ss->keyframes[i].name_hash == name_hash) return &ss->keyframes[i];
+    return NULL;
+}
+
+/* ============================================================
    INLINE DECLARATIONS (style="..." attributes)
    ============================================================ */
 
@@ -2655,6 +3158,7 @@ Ca_Stylesheet *ca_css_parse(const char *css_text)
     ss->rule_storage = (Ca_DynArray)CA_DYN_ARRAY_INIT(Ca_CssRule);
     ss->var_storage = (Ca_DynArray)CA_DYN_ARRAY_INIT(Ca_CssVar);
     ss->str_pool_storage = (Ca_DynArray)CA_DYN_ARRAY_INIT(char);
+    ss->keyframes_storage = (Ca_DynArray)CA_DYN_ARRAY_INIT(Ca_CssKeyframes);
     ss->pos_dep_class_storage =
         (Ca_DynArray)CA_DYN_ARRAY_INIT(char[CA_CSS_CLASS_NAME_MAX]);
 
@@ -2671,6 +3175,18 @@ Ca_Stylesheet *ca_css_parse(const char *css_text)
 
         if (t.type == TOK_AT) {
             parser_next(&p); /* consume '@' */
+            skip_ws(&p);
+            Token keyword = parser_peek(&p);
+            if (keyword.type == TOK_IDENT &&
+                (strcasecmp(keyword.text, "keyframes") == 0 ||
+                 strcasecmp(keyword.text, "-webkit-keyframes") == 0)) {
+                parser_next(&p);
+                if (!parse_keyframes_block(&p, ss)) {
+                    ca_css_destroy(ss);
+                    return NULL;
+                }
+                continue;
+            }
             skip_at_rule(&p);
             continue;
         }
@@ -2758,6 +3274,9 @@ void ca_css_destroy(Ca_Stylesheet *ss)
     for (size_t i = 0; i < ss->rule_storage.count; ++i)
         rule_destroy(&ss->rules[i]);
     ca_dyn_array_destroy(&ss->rule_storage);
+    for (int i = 0; i < ss->keyframes_count; ++i)
+        keyframes_destroy(&ss->keyframes[i]);
+    ca_dyn_array_destroy(&ss->keyframes_storage);
     ca_dyn_array_destroy(&ss->var_storage);
     ca_dyn_array_destroy(&ss->str_pool_storage);
     ca_dyn_array_destroy(&ss->pos_dep_class_storage);

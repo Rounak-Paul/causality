@@ -129,7 +129,7 @@ typedef struct {
 /* Forward-declare Ca_Font (full definition lives in renderer/font.h) */
 typedef struct Ca_Font Ca_Font;
 
-/* Duration of the tab indicator's stretchy slide to a newly active tab. */
+/* Slide duration when the indicator's CSS sets no `transition`. */
 #define CA_TABBAR_SLIDE_SECONDS 0.42
 
 /* Draw modes for Ca_RectPushConst.draw_mode */
@@ -694,18 +694,57 @@ typedef enum {
     CA_EASING_EASE_IN,
     CA_EASING_EASE_OUT,
     CA_EASING_EASE_IN_OUT,
+    CA_EASING_BEZIER,      /* cubic-bezier(x1, y1, x2, y2); y may leave [0, 1] to overshoot */
 } Ca_Easing;
 
+/* animation-direction */
+typedef enum {
+    CA_ANIM_NORMAL = 0,
+    CA_ANIM_REVERSE,
+    CA_ANIM_ALTERNATE,
+    CA_ANIM_ALTERNATE_REVERSE,
+} Ca_AnimDirection;
+
+/* animation-fill-mode */
+typedef enum {
+    CA_ANIM_FILL_NONE = 0,
+    CA_ANIM_FILL_FORWARDS,
+    CA_ANIM_FILL_BACKWARDS,
+    CA_ANIM_FILL_BOTH,
+} Ca_AnimFill;
+
+/* Most float components one animatable property can carry (a colour is four). */
+#define CA_ANIM_MAXF 24
+
+/* A node's zipped `transition` list: which property, how long, delayed by, eased how. */
 typedef struct {
-    uint8_t  prop;           /* Ca_CssPropId being animated */
-    bool     active;
-    float    from_f;         /* start value (float) or unpacked from color */
-    float    to_f;           /* target value (float) */
-    uint32_t from_color;     /* start RGBA (for color props) */
-    uint32_t to_color;       /* target RGBA */
-    double   start_time;     /* glfwGetTime() when transition began */
-    float    duration;       /* seconds */
-    Ca_Easing easing;
+    int          prop;
+    float        duration, delay;
+    Ca_EasingDef easing;
+} Ca_TransitionSpec;
+
+/* A node's zipped `animation` list. */
+typedef struct {
+    uint32_t     name;
+    float        duration, delay, iterations;
+    uint8_t      direction, fill;
+    bool         paused;
+    Ca_EasingDef easing;
+} Ca_AnimSpec;
+
+/* Runtime animation state of one node (defined in motion.c). */
+typedef struct Ca_NodeAnim Ca_NodeAnim;
+
+typedef struct {
+    uint8_t      entry;      /* index into the motion property table */
+    bool         active;
+    double       start_time; /* glfwGetTime() when the transition began */
+    float        duration;   /* seconds */
+    float        delay;      /* seconds the old value is held first */
+    Ca_EasingDef easing;
+    float        from[CA_ANIM_MAXF];
+    float        to[CA_ANIM_MAXF];
+    uint32_t     text_end;   /* the raw text colour the transition settles on (0 = palette default) */
 } Ca_Transition;
 
 /* ======================================================
@@ -787,12 +826,15 @@ struct Ca_Node {
     /* Transition animations */
     Ca_DynArray   transition_storage;
     Ca_Transition *transitions;
-    float         transition_duration;   /* default duration from CSS (sec) */
-    uint64_t      transition_props;      /* bitmask of props that should animate */
-    Ca_Easing     transition_easing;     /* default easing from CSS, applies
-                                             to every property this node
-                                             transitions (one shorthand per
-                                             node, matching transition_duration) */
+    Ca_TransitionSpec *transition_specs; /* zipped from CSS, heap, see ca_motion_store */
+    uint32_t      transition_spec_count;
+    float         transition_stretch;    /* `transition-stretch`, see CA_CSS_PROP_TRANSITION_STRETCH */
+    Ca_AnimSpec  *anim_specs;            /* zipped `animation` list, heap */
+    uint32_t      anim_spec_count;
+    Ca_MotionLists motion_applied;       /* the lists the specs above were zipped from */
+    bool          motion_applied_valid;
+    Ca_NodeAnim  *anims;                 /* running animations, heap, owned by motion.c */
+    uint32_t      anim_count;
     /* Drag callbacks (user-level drag interaction) */
     void         *drag_fn_start;    /* Ca_DragFn */
     void         *drag_fn_move;     /* Ca_DragFn */
@@ -1008,6 +1050,10 @@ struct Ca_TabBar {
        the bar's content space; the current rect eases from `ind_from` to
        `ind_to` over CA_TABBAR_SLIDE_SECONDS. */
     Ca_Node      *indicator;
+    float         ind_duration;     /* seconds, frozen from the indicator's CSS at slide start */
+    float         ind_delay;
+    Ca_EasingDef  ind_easing;
+    float         ind_stretch;
     bool          ind_valid;
     bool          ind_anim;
     int           ind_wait;       /* frames spent waiting for the active tab's first layout */
@@ -1292,6 +1338,7 @@ struct Ca_Window {
     uint32_t       layout_scratch_used;
     Ca_DynArray    layout_scratch_storage;
     Ca_DynArray    geometry_snapshot;
+    Ca_DynArray    motion_memory;      /* animation continuity across rebuilt nodes, see motion.c */
     Ca_DynArray    paint_cache_spans;
 
     /* Widget pools */

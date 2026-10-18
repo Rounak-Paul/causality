@@ -5,6 +5,31 @@
 #pragma once
 
 #include "ca_internal.h"
+#include "css.h"
+
+/** The widget's own foreground colour, or 0 when it has none or uses the palette default. */
+uint32_t ca_widget_text_color(const Ca_Node *node);
+
+/** The colour a widget paints its text with when it has no colour of its own. */
+uint32_t ca_widget_default_text_color(const Ca_Node *node);
+
+/** Sets the widget's foreground colour and marks it for repaint. */
+void ca_widget_set_text_color(Ca_Node *node, uint32_t color);
+
+/**
+ * Resolves one keyframe's declarations the way a node's own CSS resolves.
+ *
+ * @param node  Node whose window scale and stylesheets apply.
+ * @param owner Stylesheet that holds the keyframes; var() names resolve through its string pool.
+ * @param decls Keyframe declarations.
+ * @param count Number of declarations.
+ * @param rs    Receives the resolved style (zeroed first).
+ * @param desc  Receives the node descriptor those declarations produce (zeroed first).
+ * @param text  Receives the resolved text colour (0 when unset).
+ */
+void ca_widget_resolve_keyframe(const Ca_Node *node, const Ca_Stylesheet *owner,
+                                const Ca_CssDecl *decls, int count,
+                                Ca_ResolvedStyle *rs, Ca_NodeDesc *desc, uint32_t *text);
 
 /* Check mouse position against button hit-boxes and fire callbacks.
    Called once per window per frame inside ca_ui_update. */

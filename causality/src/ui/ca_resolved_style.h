@@ -11,9 +11,49 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+/* Matches every animatable property in `transition-property: all`. */
+#define CA_MOTION_ALL 0x7FFF
+
+/* One resolved timing function: kind is a Ca_Easing value, bezier its control points. */
+typedef struct {
+    int   kind;
+    float bezier[4];
+} Ca_EasingDef;
+
+/* Transition and animation lists as written in CSS. Each is a handle into
+   the pool of motion_lists.h (0 = the list is empty or was never written);
+   a shorter list repeats cyclically against the longest (see ca_motion_store). */
+typedef struct {
+    uint32_t transition_property;   /* item: Ca_CssPropId, a CA_MOTION_GROUP_*, CA_MOTION_ALL or 0 = none */
+    uint32_t transition_duration;
+    uint32_t transition_delay;
+    uint32_t transition_timing;
+    float    stretch;               /* transition-stretch */
+
+    uint32_t anim_name;             /* item: ca_css_name_hash of the @keyframes name; 0 = none */
+    uint32_t anim_duration;
+    uint32_t anim_delay;
+    uint32_t anim_timing;
+    uint32_t anim_iterations;
+    uint32_t anim_direction;
+    uint32_t anim_fill;
+    uint32_t anim_play_state;
+} Ca_MotionLists;
+
+/* Transition-property groups: shorthand names that cover several animatable properties. */
+enum {
+    CA_MOTION_GROUP_PADDING      = -1,
+    CA_MOTION_GROUP_MARGIN       = -2,
+    CA_MOTION_GROUP_BORDER       = -3,
+    CA_MOTION_GROUP_BORDER_COLOR = -4,
+    CA_MOTION_GROUP_BORDER_WIDTH = -5,
+    CA_MOTION_GROUP_BACKGROUND   = -6,
+};
+
 typedef struct {
     uint64_t set_mask;    /* bitmask of which CA_CSS_PROP_* (low 64) were set by CSS */
-    uint64_t set_mask2;   /* bitmask for props >= 64 */
+    uint64_t set_mask2;   /* bitmask for props 64..127 */
+    uint64_t set_mask3;   /* bitmask for props 128..191 */
 
     /* Sizing */
     float    width, height;
@@ -67,10 +107,10 @@ typedef struct {
     int      user_select;
     int      scroll_behavior;
     int      box_sizing;
-    /* Transition */
-    float    transition_duration;
-    uint64_t transition_props;
-    int      transition_easing;
+    /* Motion: transition and animation lists as written in CSS. Each
+       property is its own comma list; a shorter list repeats cyclically
+       against the longest (see ca_motion_store). */
+    Ca_MotionLists motion;
     /* Border — uniform */
     float    border_width;
     uint32_t border_color;

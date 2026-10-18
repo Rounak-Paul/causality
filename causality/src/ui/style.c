@@ -4,6 +4,7 @@
 /* style.c — CSS style resolution, specificity calculation, and cascade */
 #include "style.h"
 
+#include <math.h>
 #include <string.h>
 #include <stdio.h>
 #include <ctype.h>
@@ -628,8 +629,8 @@ Ca_CssValue ca_style_lookup_var(const Ca_VarScope *scope, const char *name)
 }
 
 /* Resolve a declaration value, substituting var() through the whole scope. */
-static Ca_CssValue resolve_value(const Ca_VarScope *scope, const Ca_Stylesheet *ss,
-                                 const Ca_CssValue *in)
+Ca_CssValue ca_style_resolve_value(const Ca_VarScope *scope, const Ca_Stylesheet *ss,
+                                   const Ca_CssValue *in)
 {
     if (in->type != CA_CSS_VAL_VAR) return *in;
     return ca_style_lookup_var(scope, ca_css_str(ss, in->keyword));
@@ -645,10 +646,23 @@ static Ca_CssValue resolve_value(const Ca_VarScope *scope, const Ca_Stylesheet *
    behavior for the existing cascade path is unchanged. */
 static inline void style_mark_set(Ca_ResolvedStyle *out, Ca_CssPropId prop)
 {
-    if ((int)prop < 64)
-        out->set_mask  |= (1ULL << (int)prop);
-    else
-        out->set_mask2 |= (1ULL << ((int)prop - 64));
+    const int p = (int)prop;
+    if (p < 64)
+        out->set_mask  |= (1ULL << p);
+    else if (p < 128)
+        out->set_mask2 |= (1ULL << (p - 64));
+    else if (p < 192)
+        out->set_mask3 |= (1ULL << (p - 128));
+}
+
+bool ca_style_prop_is_set(const Ca_ResolvedStyle *style, Ca_CssPropId prop)
+{
+    const int p = (int)prop;
+    if (!style || p < 0) return false;
+    if (p < 64)  return (style->set_mask  & (1ULL << p)) != 0;
+    if (p < 128) return (style->set_mask2 & (1ULL << (p - 64))) != 0;
+    if (p < 192) return (style->set_mask3 & (1ULL << (p - 128))) != 0;
+    return false;
 }
 
 void ca_style_apply_one_declaration(Ca_ResolvedStyle *out, Ca_CssPropId prop,
@@ -792,18 +806,21 @@ void ca_style_apply_one_declaration(Ca_ResolvedStyle *out, Ca_CssPropId prop,
         case CA_CSS_PROP_SCROLLBAR_THUMB_BORDER_LEFT_COLOR:
             if (val->type == CA_CSS_VAL_COLOR) out->scrollbar_thumb_border_left_color = val->color;
             break;
-        case CA_CSS_PROP_TRANSITION: {
-            int tprop = val->keyword;
-            float dur = val->number;
-            out->transition_duration = dur;
-            if (tprop == (int)CA_CSS_PROP_COUNT)
-                out->transition_props = ~0ULL; /* all */
-            else if (tprop > 0)
-                out->transition_props |= (1ULL << tprop);
-            break;
-        }
-        case CA_CSS_PROP_TRANSITION_EASING:
-            out->transition_easing = val->keyword;
+        /* List carriers: keyword is the handle of an interned list (see css.h). */
+        case CA_CSS_PROP_TRANSITION_PROPERTY: out->motion.transition_property = (uint32_t)val->keyword; break;
+        case CA_CSS_PROP_TRANSITION_DURATION: out->motion.transition_duration = (uint32_t)val->keyword; break;
+        case CA_CSS_PROP_TRANSITION_DELAY:    out->motion.transition_delay    = (uint32_t)val->keyword; break;
+        case CA_CSS_PROP_TRANSITION_TIMING:   out->motion.transition_timing   = (uint32_t)val->keyword; break;
+        case CA_CSS_PROP_ANIMATION_NAME:       out->motion.anim_name       = (uint32_t)val->keyword; break;
+        case CA_CSS_PROP_ANIMATION_DURATION:   out->motion.anim_duration   = (uint32_t)val->keyword; break;
+        case CA_CSS_PROP_ANIMATION_DELAY:      out->motion.anim_delay      = (uint32_t)val->keyword; break;
+        case CA_CSS_PROP_ANIMATION_TIMING:     out->motion.anim_timing     = (uint32_t)val->keyword; break;
+        case CA_CSS_PROP_ANIMATION_ITERATIONS: out->motion.anim_iterations = (uint32_t)val->keyword; break;
+        case CA_CSS_PROP_ANIMATION_DIRECTION:  out->motion.anim_direction  = (uint32_t)val->keyword; break;
+        case CA_CSS_PROP_ANIMATION_FILL:       out->motion.anim_fill       = (uint32_t)val->keyword; break;
+        case CA_CSS_PROP_ANIMATION_PLAY_STATE: out->motion.anim_play_state = (uint32_t)val->keyword; break;
+        case CA_CSS_PROP_TRANSITION_STRETCH:
+            out->motion.stretch = fmaxf(css_val_to_px(val), 0.0f);
             break;
         case CA_CSS_PROP_BORDER_WIDTH: {
             float w = css_val_to_px(val);
@@ -1062,7 +1079,7 @@ static void style_resolve_sheet(Ca_Stylesheet *ss,
                 (pass == 1 && !decl->important))
                 continue;
             Ca_CssPropId prop = decl->prop;
-            Ca_CssValue resolved = resolve_value(scope, ss, &decl->value);
+            Ca_CssValue resolved = ca_style_resolve_value(scope, ss, &decl->value);
             const Ca_CssValue *val = &resolved;
 
             if (val->type == CA_CSS_VAL_NONE) continue;
@@ -1152,16 +1169,13 @@ void ca_style_resolve_layers(Ca_Stylesheet *defaults,
    APPLY STYLE TO NODE DESC
    ============================================================ */
 
-#define STYLE_SET(prop) \
-    (((int)(prop) < 64) \
-        ? (style->set_mask  & (1ULL << (int)(prop))) \
-        : (style->set_mask2 & (1ULL << ((int)(prop) - 64))))
+#define STYLE_SET(prop) ca_style_prop_is_set(style, (prop))
 
 void ca_style_apply_to_node(const Ca_ResolvedStyle *style,
                             Ca_NodeDesc *nd,
                             uint32_t *out_color)
 {
-    if (!style || (style->set_mask == 0 && style->set_mask2 == 0)) return;
+    if (!style || (style->set_mask == 0 && style->set_mask2 == 0 && style->set_mask3 == 0)) return;
 
     /* display: none collapses the node immediately */
     if (STYLE_SET(CA_CSS_PROP_DISPLAY) && style->display == CA_CSS_DISPLAY_NONE) {

@@ -1491,6 +1491,32 @@ CA_API void ca_image(const Ca_ImageDesc *desc);
 
    Values: px, %, auto, #hex, rgb(), rgba(), named colours, keywords
 
+   Motion (transitions and animations):
+     transition: <property> <duration> <timing> <delay>, ...   (also the
+       longhands transition-property / -duration / -timing-function / -delay;
+       a shorter list repeats against the longest, as in CSS; lists can be
+       any length)
+     transition-stretch: <n>   how gel-like a tab bar's sliding pill moves
+     Animatable: background-color, gradients (end colour, angle, centre),
+       color, opacity, width, height, min/max sizes, left/right/top/bottom,
+       padding, margin, gap, font-size, letter-spacing, border-radius,
+       border-color, border-width, box-shadow, glow-radius, glow-color,
+       backdrop-filter. `all`, `none`, and the padding / margin / border /
+       background shorthands name groups. A text colour may transition from
+       or to "no colour of its own" (the palette default). Pseudo-state rules
+       (:hover, :focus, :active) transition too, layout properties included.
+     Timing: linear, ease, ease-in, ease-out, ease-in-out, ease-in-back,
+       ease-out-back, ease-in-out-back, cubic-bezier(x1, y1, x2, y2); a
+       y outside 0..1 overshoots.
+     @keyframes <name> { from { ... } 40% { ... } to { ... } }
+       any number of stops; var() resolves against the :root variables.
+     animation: <name> <duration> <timing> <delay> <count|infinite>
+       <direction> <fill-mode> <play-state>, ...   (also the animation-*
+       longhands; any number of animations per element, any number of
+       properties per animation). A paused animation holds its progress
+       and resumes from it. A node rebuilt in the same place keeps its
+       animation running instead of restarting it.
+
    Example:
      ca_instance_load_css(inst,
          ".container { padding: 16px; gap: 8px; flex-direction: column; }\n"

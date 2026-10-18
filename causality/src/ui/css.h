@@ -120,12 +120,25 @@ typedef enum {
     CA_CSS_PROP_OVERFLOW,
     CA_CSS_PROP_OVERFLOW_X,
     CA_CSS_PROP_OVERFLOW_Y,
-    /* Transitions */
-    CA_CSS_PROP_TRANSITION,
-    /* Emitted as a second decl by the `transition:` shorthand when an
-       easing keyword follows the duration; `keyword` holds a Ca_Easing
-       value. Not settable as its own CSS property. */
-    CA_CSS_PROP_TRANSITION_EASING,
+    /* Motion. The `transition` / `animation` shorthands and their longhands
+       parse into one carrier declaration per list they write; the carrier's
+       `keyword` is a handle into the interned list pool (motion_lists.h),
+       0 for an empty list. A later rule's carrier replaces an earlier one. */
+    CA_CSS_PROP_TRANSITION_PROPERTY,
+    CA_CSS_PROP_TRANSITION_DURATION,
+    CA_CSS_PROP_TRANSITION_DELAY,
+    CA_CSS_PROP_TRANSITION_TIMING,
+    /* `transition-stretch`: how strongly an element that supports it (the
+       tab bar's sliding indicator) stretches while moving; 0 = rigid. */
+    CA_CSS_PROP_TRANSITION_STRETCH,
+    CA_CSS_PROP_ANIMATION_NAME,
+    CA_CSS_PROP_ANIMATION_DURATION,
+    CA_CSS_PROP_ANIMATION_DELAY,
+    CA_CSS_PROP_ANIMATION_TIMING,
+    CA_CSS_PROP_ANIMATION_ITERATIONS,
+    CA_CSS_PROP_ANIMATION_DIRECTION,
+    CA_CSS_PROP_ANIMATION_FILL,
+    CA_CSS_PROP_ANIMATION_PLAY_STATE,
     /* Border — uniform */
     CA_CSS_PROP_BORDER_WIDTH,
     CA_CSS_PROP_BORDER_COLOR,
@@ -451,6 +464,25 @@ typedef struct {
    CSS STYLESHEET
    ============================================================ */
 
+/* One `@keyframes` stop: the declarations that hold at `offset` (0..1). */
+typedef struct {
+    float       offset;
+    bool        has_timing;        /* an `animation-timing-function` inside the stop */
+    int         timing_kind;       /* Ca_Easing */
+    float       timing_bezier[4];
+    Ca_DynArray decl_storage;
+    Ca_CssDecl *decls;
+    int         decl_count;
+} Ca_CssKeyframe;
+
+/* A named `@keyframes` block; stops are sorted by offset. */
+typedef struct {
+    uint32_t        name_hash;     /* ca_css_name_hash of the name */
+    Ca_DynArray     frame_storage;
+    Ca_CssKeyframe *frames;
+    int             frame_count;
+} Ca_CssKeyframes;
+
 /* Custom-property storage. Root-scoped only (:root { --name: value; }).
    Per-element overrides would require per-node resolution tables — out of
    scope for this revision. */
@@ -484,6 +516,10 @@ typedef struct Ca_Stylesheet {
     Ca_DynArray str_pool_storage;
     char       *str_pool;
     int        str_pool_used;
+    /* `@keyframes` blocks, later definitions of a name replace earlier ones. */
+    Ca_DynArray     keyframes_storage;
+    Ca_CssKeyframes *keyframes;
+    int             keyframes_count;
     /* See the position-dependent selector classification notes above. */
     Ca_DynArray pos_dep_class_storage;
     char       (*pos_dep_classes)[CA_CSS_CLASS_NAME_MAX];
@@ -494,6 +530,12 @@ typedef struct Ca_Stylesheet {
        falls back to "always resolve fresh" rather than risk missing it. */
     bool       pos_dep_classless_selector_exists;
 } Ca_Stylesheet;
+
+/* Stable 32-bit name hash (FNV-1a); 0 is reserved for "no name". */
+uint32_t ca_css_name_hash(const char *name);
+
+/* The `@keyframes` block with this name hash, or NULL. */
+const Ca_CssKeyframes *ca_css_find_keyframes(const Ca_Stylesheet *ss, uint32_t name_hash);
 
 /* Helpers — intern/resolve strings in the stylesheet pool. */
 int         ca_css_intern(Ca_Stylesheet *ss, const char *s); /* returns offset, -1 on overflow */

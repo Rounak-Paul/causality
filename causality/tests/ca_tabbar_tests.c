@@ -5,8 +5,10 @@ typedef struct GLFWwindow GLFWwindow;
 #include "node.h"
 #include "style.h"
 #include "widget.h"
+#include "motion.h"
 
 #include <stdio.h>
+#include <string.h>
 
 #define CHECK(condition) do { \
     if (!(condition)) { \
@@ -87,6 +89,13 @@ static bool test_indicator_slides_to_active_tab(void)
     tabs->count = 2;
     tabs->active = 0;
 
+    /* The slide's feel comes from the indicator's CSS: `transition: left 0.4s ease-out-back`, full stretch. */
+    indicator->transition_specs = CA_CALLOC(1, sizeof(Ca_TransitionSpec));
+    indicator->transition_spec_count = 1;
+    indicator->transition_specs[0] = (Ca_TransitionSpec){
+        CA_CSS_PROP_LEFT, 0.4f, 0.0f, { CA_EASING_BEZIER, { 0.34f, 1.56f, 0.64f, 1.0f } } };
+    indicator->transition_stretch = 1.0f;
+
     CHECK(!ca_tabbar_tick(&window, 1.0));
     CHECK(tabs->ind_valid && tabs->ind_cur[0] == 0.0f && tabs->ind_cur[2] == 50.0f);
     CHECK(!indicator->desc.hidden && indicator->desc.position == CA_POSITION_ABSOLUTE);
@@ -96,14 +105,24 @@ static bool test_indicator_slides_to_active_tab(void)
     CHECK(tabs->ind_cur[0] == 0.0f);
     /* Mid-flight the leading (right) edge is ahead of the lagging (left) edge:
        the pill is stretched beyond both resting widths and squashed in height. */
-    CHECK(ca_tabbar_tick(&window, 2.0 + CA_TABBAR_SLIDE_SECONDS * 0.4));
+    CHECK(ca_tabbar_tick(&window, 2.0 + 0.4 * 0.4));
     CHECK(tabs->ind_cur[0] > 0.0f && tabs->ind_cur[0] < 52.0f);
     CHECK(tabs->ind_cur[2] > 80.0f);
     CHECK(tabs->ind_cur[3] < 20.0f);
     CHECK(tabs->ind_cur[0] + tabs->ind_cur[2] < 132.0f * 1.25f);
-    CHECK(!ca_tabbar_tick(&window, 2.0 + CA_TABBAR_SLIDE_SECONDS * 2.0));
+    CHECK(!ca_tabbar_tick(&window, 2.0 + 0.4 * 2.0));
     CHECK(tabs->ind_cur[0] == 52.0f && tabs->ind_cur[2] == 80.0f);
     CHECK(indicator->desc.pos_x == 52.0f && indicator->base_desc.width == 80.0f);
+
+    /* Without CSS the pill falls back to a rigid, non-overshooting ease-out slide. */
+    indicator->transition_spec_count = 0;
+    indicator->transition_stretch    = 0.0f;
+    tabs->active = 0;
+    CHECK(ca_tabbar_tick(&window, 3.0));
+    CHECK(ca_tabbar_tick(&window, 3.0 + CA_TABBAR_SLIDE_SECONDS * 0.5));
+    CHECK(tabs->ind_cur[0] < 52.0f && tabs->ind_cur[0] >= 0.0f && tabs->ind_cur[3] == 20.0f);
+    CHECK(!ca_tabbar_tick(&window, 3.0 + CA_TABBAR_SLIDE_SECONDS * 2.0));
+    CHECK(tabs->ind_cur[0] == 0.0f && tabs->ind_cur[2] == 50.0f);
 
     /* A tab that never gets a rect must not keep the frame loop alive forever. */
     tab_b->w = 0.0f;

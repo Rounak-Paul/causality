@@ -251,6 +251,19 @@ if(BUILD_TESTING)
     )
     add_test(NAME causality_tabbar_tests COMMAND causality_tabbar_tests)
 
+    add_executable(causality_motion_tests tests/ca_motion_tests.c)
+    target_include_directories(causality_motion_tests PRIVATE
+        include src/core src/ui src/renderer
+    )
+    target_compile_definitions(causality_motion_tests PRIVATE
+        causality_EXPORTS
+        $<$<CONFIG:Debug>:CAUSALITY_VULKAN_VALIDATION>
+    )
+    target_link_libraries(causality_motion_tests PRIVATE
+        causality Vulkan::Vulkan VulkanMemoryAllocator glfw
+    )
+    add_test(NAME causality_motion_tests COMMAND causality_motion_tests)
+
     add_executable(causality_color_picker_tests tests/ca_color_picker_tests.c)
     target_include_directories(causality_color_picker_tests PRIVATE
         src/core src/ui src/renderer
