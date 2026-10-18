@@ -1582,6 +1582,7 @@ struct Ca_Instance {
 #endif
     VkPhysicalDevice         vk_gpu;
     VkDevice                 vk_device;
+    bool                     renderer_failed;
     VkQueue                  gfx_queue;
     VkQueue                  present_queue;
     uint32_t                 gfx_family;

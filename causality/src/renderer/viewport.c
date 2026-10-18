@@ -391,7 +391,12 @@ void ca_viewport_render_all(Ca_Instance *inst, Ca_Window *win,
            single-fence design. */
         ca_profile_begin(inst, "Platform Viewport Fence");
         double timing_start = glfwGetTime();
-        vkWaitForFences(inst->vk_device, 1, &f->render_fence, VK_TRUE, UINT64_MAX);
+        VkResult fence_result = vkWaitForFences(inst->vk_device, 1, &f->render_fence, VK_TRUE, UINT64_MAX);
+        if (fence_result != VK_SUCCESS) {
+            fprintf(stderr, "[viewport] render fence failed: %d\n", fence_result);
+            inst->renderer_failed = true;
+            return;
+        }
         vkResetFences(inst->vk_device, 1, &f->render_fence);
         inst->frame_timing.viewport_fence_ms += (glfwGetTime() - timing_start) * 1000.0;
         ca_profile_end(inst, "Platform Viewport Fence");
@@ -477,6 +482,7 @@ void ca_viewport_render_all(Ca_Instance *inst, Ca_Window *win,
         ca_profile_end(inst, "Platform Viewport Submit");
         if (vr != VK_SUCCESS) {
             fprintf(stderr, "[viewport] vkQueueSubmit failed: %d\n", vr);
+            if (vr == VK_ERROR_DEVICE_LOST) { inst->renderer_failed = true; return; }
             /* The real submit above didn't happen, so render_fence would
                otherwise never be signaled — same recovery as the other
                failure paths in this loop. render_done was never signaled

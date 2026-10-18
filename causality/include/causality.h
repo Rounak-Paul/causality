@@ -167,8 +167,11 @@ CA_API void ca_set_allocator(Ca_MallocFn mal, Ca_CallocFn cal,
                               Ca_ReallocFn ral, Ca_FreeFn fre);
 
 /* Pumps the event loop: processes window events, updates UI, renders one frame.
-   Returns false when all windows have been closed. */
+   Returns false when all windows have been closed or the graphics device has failed. */
 CA_API bool         ca_instance_tick(Ca_Instance *instance);
+
+/** Whether an unrecoverable graphics failure terminated this instance's frame pump. */
+CA_API bool         ca_instance_renderer_failed(const Ca_Instance *instance);
 
 /**
  * Installs optional profiler callbacks for frame-phase instrumentation.

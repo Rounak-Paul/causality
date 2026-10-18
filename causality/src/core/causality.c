@@ -121,6 +121,12 @@ void ca_instance_destroy(Ca_Instance *instance)
     printf("[causality] instance destroyed\n");
 }
 
+/** Reports whether a terminal graphics failure stopped this instance. */
+bool ca_instance_renderer_failed(const Ca_Instance *instance)
+{
+    return instance && instance->renderer_failed;
+}
+
 /*
  * Advance one application frame.
  *
@@ -129,10 +135,11 @@ void ca_instance_destroy(Ca_Instance *instance)
  * and submits a renderer frame.
  *
  * instance  Instance to tick.
- * Returns   true while at least one window is open; false when all are closed.
+ * Returns   true while a window is open and the renderer remains usable.
  */
 bool ca_instance_tick(Ca_Instance *instance)
 {
+    if (!instance || instance->renderer_failed) return false;
     const double tick_start = glfwGetTime();
     Ca_FrameTiming *timing = &instance->frame_timing;
     *timing = (Ca_FrameTiming){ .frame_index = instance->frame_timing_index };
@@ -180,7 +187,7 @@ bool ca_instance_tick(Ca_Instance *instance)
     if (instance->frame_timing_callback)
         instance->frame_timing_callback(instance->frame_timing_user_data, timing);
     instance->frame_timing_index++;
-    return true;
+    return !instance->renderer_failed;
 }
 
 void ca_instance_set_profile_hooks(Ca_Instance *instance,

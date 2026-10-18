@@ -377,9 +377,11 @@ void ca_swapchain_destroy(Ca_Instance *inst, Ca_Window *win)
     Ca_Swapchain *sc = &win->sc;
     if (sc->swapchain == VK_NULL_HANDLE) return;
 
-    vkDeviceWaitIdle(inst->vk_device);
+    if (vkDeviceWaitIdle(inst->vk_device) == VK_ERROR_DEVICE_LOST) inst->renderer_failed = true;
     ca_viewport_collect_retired(inst, win, true);
-    if (win->capture.state == CA_CAPTURE_RECORDED)
+    if (inst->renderer_failed)
+        ca_swapchain_capture_cancel(inst, win);
+    else if (win->capture.state == CA_CAPTURE_RECORDED)
         capture_deliver(inst, win);
 
     for (uint32_t i = 0; i < CA_FRAMES_IN_FLIGHT; ++i) {
@@ -1376,14 +1378,20 @@ static void swapchain_abandon_frame(Ca_Instance *inst, Ca_Window *win,
 
 void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
 {
+    if (inst->renderer_failed) return;
     Ca_Swapchain *sc = &win->sc;
     Ca_Frame     *f  = &sc->frames[sc->current_frame];
 
     ca_profile_begin(inst, "Platform Swapchain Fence");
     double timing_start = glfwGetTime();
-    vkWaitForFences(inst->vk_device, 1, &f->in_flight, VK_TRUE, UINT64_MAX);
+    VkResult fence_result = vkWaitForFences(inst->vk_device, 1, &f->in_flight, VK_TRUE, UINT64_MAX);
     inst->frame_timing.swapchain_fence_ms += (glfwGetTime() - timing_start) * 1000.0;
     ca_profile_end(inst, "Platform Swapchain Fence");
+    if (fence_result != VK_SUCCESS) {
+        fprintf(stderr, "[vk] swapchain fence failed: %d\n", fence_result);
+        inst->renderer_failed = true;
+        return;
+    }
 
     if (win->capture.state == CA_CAPTURE_RECORDED && win->capture.frame_slot == sc->current_frame)
         capture_deliver(inst, win);
@@ -1420,6 +1428,7 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
     }
     if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR) {
         fprintf(stderr, "[vk] vkAcquireNextImageKHR failed: %d\n", result);
+        if (result == VK_ERROR_DEVICE_LOST) inst->renderer_failed = true;
         return;
     }
 
@@ -1434,6 +1443,7 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
     ca_profile_begin(inst, "Platform Viewport Pass");
     ca_viewport_render_all(inst, win, &sc->viewport_wait_storage);
     ca_profile_end(inst, "Platform Viewport Pass");
+    if (inst->renderer_failed) return;
     VkSemaphore *viewport_wait_sems = sc->viewport_wait_storage.data;
     uint32_t viewport_wait_count = (uint32_t)sc->viewport_wait_storage.count;
 
@@ -1704,6 +1714,7 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
     ca_profile_end(inst, "Platform Swapchain Submit");
     if (result != VK_SUCCESS) {
         fprintf(stderr, "[vk] vkQueueSubmit failed: %d\n", result);
+        if (result == VK_ERROR_DEVICE_LOST) { inst->renderer_failed = true; return; }
         /* The real submit did not happen, so its waits were never consumed
            and in_flight (reset above) would never signal; the frame's
            content is dropped. */
@@ -1725,6 +1736,7 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
     result = vkQueuePresentKHR(inst->present_queue, &present);
     inst->frame_timing.present_ms += (glfwGetTime() - timing_start) * 1000.0;
     ca_profile_end(inst, "Platform Present");
+    if (result == VK_ERROR_DEVICE_LOST) inst->renderer_failed = true;
     if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR) {
         int w, h;
         glfwGetFramebufferSize(win->glfw, &w, &h);

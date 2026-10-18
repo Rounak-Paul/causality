@@ -211,6 +211,12 @@ if(BUILD_TESTING)
     )
     add_test(NAME causality_style_tests COMMAND causality_style_tests)
 
+    add_executable(causality_renderer_lifecycle_tests tests/ca_renderer_lifecycle_tests.c)
+    target_include_directories(causality_renderer_lifecycle_tests PRIVATE src/core src/ui)
+    target_compile_definitions(causality_renderer_lifecycle_tests PRIVATE causality_EXPORTS)
+    target_link_libraries(causality_renderer_lifecycle_tests PRIVATE causality Vulkan::Vulkan VulkanMemoryAllocator)
+    add_test(NAME causality_renderer_lifecycle_tests COMMAND causality_renderer_lifecycle_tests)
+
     add_executable(causality_input_capture_tests tests/ca_input_capture_tests.c)
     target_include_directories(causality_input_capture_tests PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/include
