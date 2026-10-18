@@ -1067,6 +1067,32 @@ static void paint_border(Ca_Window *win, Ca_Node *node, ClipRect clip)
         node->desc.border_top_c == node->desc.border_left_c;
     bool uniform_drawn = uniform_sides && node->desc.border_width > 0.0f &&
         node->desc.border_color != 0 && node->w > 0.0f && node->h > 0.0f;
+    /* A rounded box whose sides share one width but not one colour is a
+       bevel: one ring that follows the corners, lit top -> bottom. */
+    const float bevel_w = node->desc.border_top_w;
+    const float bevel_radius = fmaxf(fmaxf(ca_desc_corner_tl(&node->desc), ca_desc_corner_tr(&node->desc)),
+                                     fmaxf(ca_desc_corner_br(&node->desc), ca_desc_corner_bl(&node->desc)));
+    if (!uniform_sides && bevel_w > 0.0f && bevel_radius > 0.0f &&
+        node->desc.border_right_w == bevel_w && node->desc.border_bottom_w == bevel_w &&
+        node->desc.border_left_w == bevel_w && node->w > 0.0f && node->h > 0.0f) {
+        if (!ca_window_reserve_draw_commands(win, (size_t)win->draw_cmd_count + 1u)) return;
+        Ca_DrawCmd *ring = &win->draw_cmds[win->draw_cmd_count++];
+        memset(ring, 0, sizeof(*ring));
+        ring->type        = CA_DRAW_RECT;
+        ring->draw_mode   = CA_DRAW_MODE_BORDER_RING;
+        ring->x = node->x; ring->y = node->y; ring->w = node->w; ring->h = node->h;
+        unpack_color(node->desc.border_top_c, &ring->r, &ring->g, &ring->b, &ring->a);
+        unpack_color(node->desc.border_bottom_c, &ring->color2_r, &ring->color2_g, &ring->color2_b, &ring->color2_a);
+        ring->corner_tl = ca_desc_corner_tl(&node->desc);
+        ring->corner_tr = ca_desc_corner_tr(&node->desc);
+        ring->corner_br = ca_desc_corner_br(&node->desc);
+        ring->corner_bl = ca_desc_corner_bl(&node->desc);
+        ring->blur_radius = bevel_w;
+        ring->z_index = node->desc.z_index;
+        ring->in_use = true;
+        set_clip(ring, clip);
+        return;
+    }
     if (uniform_drawn) {
         float half_extent = 0.5f * (node->w < node->h ? node->w : node->h);
         float width = node->desc.border_width < half_extent

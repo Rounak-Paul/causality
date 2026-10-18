@@ -10,6 +10,16 @@
    Called once per window per frame inside ca_ui_update. */
 void ca_widget_input_pass(Ca_Window *win);
 
+/**
+ * Advances every tab bar's sliding indicator toward its active tab.
+ *
+ * @param win Window whose tab bars are stepped.
+ * @param now Current time in seconds (glfwGetTime).
+ * @return true while an indicator is still moving or waiting on layout, so
+ *         the caller keeps frames coming.
+ */
+bool ca_tabbar_tick(Ca_Window *win, double now);
+
 /* Activate / deactivate the widget build context for a window.
    Used by ca_ui_update to wrap the on_frame callback so that
    widget creation functions work inside per-frame callbacks. */

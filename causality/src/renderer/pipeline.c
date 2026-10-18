@@ -138,6 +138,7 @@ static const char *FRAG_GLSL =
     "#define MODE_WAVE        5u\n"
     "#define MODE_DASH        6u\n"
     "#define MODE_INSET_SHADOW 7u\n"
+    "#define MODE_BORDER_RING 8u\n"
     "\n"
     "vec3 srgb_to_linear(vec3 c) {\n"
     "    bvec3 cut = lessThan(c, vec3(0.04045));\n"
@@ -220,6 +221,20 @@ static const char *FRAG_GLSL =
     "        out_color = vec4(srgb_to_linear(v_color.rgb), alp);\n"
     "        return;\n"
     "    }\n"
+    /* Bevelled border: the ring between the box and the box inset by the
+       ring width, lit from above (colour blends top -> bottom). */
+    "    if (v_mode == MODE_BORDER_RING) {\n"
+    "        float hw     = 0.875 / max(clip_pc.edge_aa_scale, 1e-4);\n"
+    "        float outer  = 1.0 - smoothstep(-hw, hw, roundedBoxSDF(p, box_half, r));\n"
+    "        vec2  ih     = max(box_half - vec2(v_blur), vec2(0.0));\n"
+    "        float inner  = 1.0 - smoothstep(-hw, hw, roundedBoxSDF(p, ih, max(r - vec4(v_blur), vec4(0.0))));\n"
+    "        float t      = clamp(p.y / max(box_half.y, 1e-4) * 0.5 + 0.5, 0.0, 1.0);\n"
+    "        vec4  col    = mix(v_color, v_color2, t);\n"
+    "        float alp    = max(outer - inner, 0.0) * col.a;\n"
+    "        if (alp < 0.001) discard;\n"
+    "        out_color = vec4(srgb_to_linear(col.rgb), alp);\n"
+    "        return;\n"
+    "    }\n"
     /* ---- Wavy stroke: distance to y = A sin(kx) over its slope gives an
        even-width anti-aliased curve. Phase uses absolute x so decoration
        rects of adjacent text runs join into one continuous wave. ---- */
@@ -274,9 +289,9 @@ static const char *FRAG_GLSL =
     "    /* ---- Compute fill color (solid, linear-gradient, radial-gradient) ---- */\n"
     "    vec4 fill_color;\n"
     "    if (v_mode == MODE_LINEAR_GRAD) {\n"
-    "        /* Angle 0 = top→bottom, 90 = left→right (CSS convention) */\n"
+    "        /* CSS convention: 0 = to top, 90 = to right, 180 = to bottom (y grows downward) */\n"
     "        float rad = v_grad_angle * 3.14159265 / 180.0;\n"
-    "        vec2  dir = vec2(sin(rad), cos(rad));\n"
+    "        vec2  dir = vec2(sin(rad), -cos(rad));\n"
     "        /* Project centred position onto gradient axis — t in [-0.5, 0.5] → [0,1] */\n"
     "        float proj = dot(p / box_half, dir) * 0.5 + 0.5;\n"
     "        proj = clamp(proj, 0.0, 1.0);\n"

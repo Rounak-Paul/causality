@@ -356,6 +356,7 @@ void ca_ui_update(Ca_Instance *inst)
                 trans_count++;
             }
         }
+        if (ca_tabbar_tick(win, now)) any_transitions = true;
         win->dbg_transition_count = trans_count;
         ca_profile_end(inst, "Platform UI Transitions");
 

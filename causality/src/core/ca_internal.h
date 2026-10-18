@@ -129,6 +129,9 @@ typedef struct {
 /* Forward-declare Ca_Font (full definition lives in renderer/font.h) */
 typedef struct Ca_Font Ca_Font;
 
+/* Duration of the tab indicator's stretchy slide to a newly active tab. */
+#define CA_TABBAR_SLIDE_SECONDS 0.42
+
 /* Draw modes for Ca_RectPushConst.draw_mode */
 typedef enum {
     CA_DRAW_MODE_GLOW        = 4,  /* outer glow around the unexpanded source shape */
@@ -151,6 +154,10 @@ typedef enum {
        a Gaussian-edged hole (the box shifted by gradient_cx/cy) leaves it
        uncovered. blur_radius = blur. */
     CA_DRAW_MODE_INSET_SHADOW = 7,
+    /* Bevelled border ring following the rounded box: blur_radius = ring
+       width; colour fades from the top colour (r,g,b,a) at the box top to
+       color2 at the box bottom. */
+    CA_DRAW_MODE_BORDER_RING = 8,
 } Ca_DrawMode;
 
 /* GPU-side instance data — must exactly match RectData in VERT_GLSL (std430).
@@ -997,6 +1004,15 @@ struct Ca_TabBar {
     void         *drag_data;
     bool          in_use;
     char          tab_style[CA_NODE_CLASS_MAX];
+    /* Sliding highlight behind the tabs (optional). Rects are x, y, w, h in
+       the bar's content space; the current rect eases from `ind_from` to
+       `ind_to` over CA_TABBAR_SLIDE_SECONDS. */
+    Ca_Node      *indicator;
+    bool          ind_valid;
+    bool          ind_anim;
+    int           ind_wait;       /* frames spent waiting for the active tab's first layout */
+    float         ind_from[4], ind_to[4], ind_cur[4];
+    double        ind_start;
 };
 
 struct Ca_TreeNode {

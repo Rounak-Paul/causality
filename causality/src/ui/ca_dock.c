@@ -511,6 +511,7 @@ static void emit_group(Ca_Dock *dock, int node)
         view->tabs = ca_tabs(&(Ca_TabBarDesc){
             .labels = labels, .count = count, .active = entry->active,
             .style = "ca-dock-tabs", .tab_style = "ca-dock-tab", .id = tabs_key,
+            .indicator_style = "ca-dock-tab-indicator",
             .on_change = on_tab_change, .change_data = binding,
             .closable = true, .on_close = on_tab_close, .close_data = binding,
             .on_drag_start = on_tab_drag_start, .drag_data = binding,

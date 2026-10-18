@@ -2854,6 +2854,128 @@ static void tabbar_reveal_active(Ca_TabBar *tabs)
     node->dirty |= CA_DIRTY_LAYOUT | CA_DIRTY_CONTENT;
 }
 
+/* Writes the indicator's current rect into its descriptors (live and CSS-base). */
+static void tabbar_indicator_place(Ca_TabBar *tb)
+{
+    Ca_Node *ind = tb->indicator;
+    if (!ind) return;
+    Ca_NodeDesc *targets[2] = { &ind->desc, &ind->base_desc };
+    for (int i = 0; i < 2; ++i) {
+        Ca_NodeDesc *d = targets[i];
+        d->position         = CA_POSITION_ABSOLUTE;
+        d->position_offsets = 1u | 4u;
+        d->position_percent = 0;
+        d->pos_x            = tb->ind_cur[0];
+        d->pos_y            = tb->ind_cur[1];
+        d->width            = tb->ind_cur[2];
+        d->height           = tb->ind_cur[3];
+        d->width_pct        = false;
+        d->height_pct       = false;
+        d->no_hover         = true;
+        d->hidden           = !tb->ind_valid;
+    }
+}
+
+/**
+ * Sets the indicator's current rect at progress t of a slide, as stretchy glass.
+ *
+ * The edge facing the direction of travel launches first and overshoots its
+ * target, the trailing edge lags and then snaps up, so the pill stretches
+ * mid-flight and relaxes on arrival; its height squashes a little while
+ * stretched.
+ *
+ * @param tb Tab bar owning the indicator; ind_from / ind_to define the slide.
+ * @param t  Linear progress in [0, 1]; 1 lands exactly on ind_to.
+ */
+static void tabbar_indicator_stretch(Ca_TabBar *tb, float t)
+{
+    if (t >= 1.0f) {
+        memcpy(tb->ind_cur, tb->ind_to, sizeof(tb->ind_cur));
+        return;
+    }
+    const float overshoot = 1.5f;
+    const float lag_delay = 0.14f;
+    const float lead_p = fminf(t / 0.62f, 1.0f);
+    const float lag_p  = fmaxf(0.0f, (t - lag_delay) / (1.0f - lag_delay));
+    const float lead_q = lead_p - 1.0f;
+    const float lag_q  = lag_p - 1.0f;
+    const float lead = 1.0f + (overshoot + 1.0f) * lead_q * lead_q * lead_q + overshoot * lead_q * lead_q;
+    const float lag  = 1.0f + lag_q * lag_q * lag_q;
+
+    const float from_l = tb->ind_from[0], from_r = tb->ind_from[0] + tb->ind_from[2];
+    const float to_l   = tb->ind_to[0],   to_r   = tb->ind_to[0] + tb->ind_to[2];
+    const bool rightward = (to_l + to_r) >= (from_l + from_r);
+    const float l = from_l + (to_l - from_l) * (rightward ? lag : lead);
+    const float r = from_r + (to_r - from_r) * (rightward ? lead : lag);
+    const float min_w = fminf(tb->ind_from[2], tb->ind_to[2]) * 0.6f;
+
+    const float rest_w = tb->ind_from[2] + (tb->ind_to[2] - tb->ind_from[2]) * lag;
+    const float stretch = fmaxf(0.0f, ((r - l) - rest_w) / fmaxf(rest_w, 1.0f));
+    const float squash = 1.0f / (1.0f + 0.35f * fminf(stretch, 1.0f));
+    const float cy = tb->ind_from[1] + tb->ind_from[3] * 0.5f +
+        ((tb->ind_to[1] + tb->ind_to[3] * 0.5f) - (tb->ind_from[1] + tb->ind_from[3] * 0.5f)) * lag;
+    const float h = (tb->ind_from[3] + (tb->ind_to[3] - tb->ind_from[3]) * lag) * squash;
+
+    tb->ind_cur[0] = l;
+    tb->ind_cur[2] = fmaxf(r - l, min_w);
+    tb->ind_cur[3] = h;
+    tb->ind_cur[1] = cy - h * 0.5f;
+}
+
+bool ca_tabbar_tick(Ca_Window *win, double now)
+{
+    bool busy = false;
+    for (uint32_t i = 0; i < ca_pool_slot_count(&win->tabbar_pool); ++i) {
+        Ca_TabBar *tb = CA_POOL_AT(win->tabbar_pool, Ca_TabBar, i);
+        if (!tb->in_use || !tb->indicator || !tb->node || !tb->node->in_use) continue;
+
+        const Ca_Node *bar = tb->node;
+        const Ca_Node *tab = (tb->active >= 0 && tb->active < tb->count && tb->tab_nodes)
+                           ? tb->tab_nodes[tb->active] : NULL;
+        if (!tab || !tab->in_use || tab->w <= 0.0f || tab->h <= 0.0f) {
+            /* Freshly rebuilt tabs have no rect until layout runs. */
+            if (tb->count > 0 && tb->ind_wait < 3) { tb->ind_wait++; busy = true; }
+            continue;
+        }
+        tb->ind_wait = 0;
+
+        const float target[4] = {
+            tab->x - (bar->x + bar->desc.padding_left) + bar->scroll_x,
+            tab->y - (bar->y + bar->desc.padding_top),
+            tab->w, tab->h,
+        };
+        bool moved = false;
+        for (int k = 0; k < 4; ++k)
+            if (fabsf(target[k] - tb->ind_to[k]) > 0.5f) moved = true;
+
+        bool changed = false;
+        if (!tb->ind_valid) {
+            memcpy(tb->ind_to, target, sizeof(target));
+            memcpy(tb->ind_cur, target, sizeof(target));
+            tb->ind_valid = true;
+            tb->ind_anim  = false;
+            changed = true;
+        } else if (moved) {
+            memcpy(tb->ind_from, tb->ind_cur, sizeof(tb->ind_cur));
+            memcpy(tb->ind_to, target, sizeof(target));
+            tb->ind_start = now;
+            tb->ind_anim  = true;
+        }
+        if (tb->ind_anim) {
+            float t = (float)((now - tb->ind_start) / CA_TABBAR_SLIDE_SECONDS);
+            if (t >= 1.0f) { t = 1.0f; tb->ind_anim = false; }
+            tabbar_indicator_stretch(tb, t);
+            changed = true;
+            if (tb->ind_anim) busy = true;
+        }
+        if (changed) {
+            tabbar_indicator_place(tb);
+            tb->indicator->dirty |= CA_DIRTY_LAYOUT | CA_DIRTY_CONTENT;
+        }
+    }
+    return busy;
+}
+
 Ca_TabBar *ca_tabs(const Ca_TabBarDesc *desc)
 {
     assert(g_ctx.active && desc);
@@ -2934,6 +3056,18 @@ Ca_TabBar *ca_tabs(const Ca_TabBarDesc *desc)
     node->scroll_fn = node->desc.overflow_x ? (void *)tabbar_scroll : NULL;
     node->scroll_data = tb;
     ca_node_trim_children(node, 0);
+
+    tb->indicator = NULL;
+    if (desc->indicator_style && desc->indicator_style[0]) {
+        Ca_NodeDesc ind_nd = {0};
+        Ca_Node *ind = ca_node_add(node, &ind_nd);
+        if (ind) {
+            uint32_t unused_color = 0;
+            apply_css(ind, &ind->desc, CA_ELEM_DIV, desc->indicator_style, NULL, &unused_color, NULL);
+            tb->indicator = ind;
+            tabbar_indicator_place(tb);
+        }
+    }
 
     for (int i = 0; i < tb->count; ++i) {
         Ca_NodeDesc tnd = {0};

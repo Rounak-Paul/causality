@@ -207,6 +207,7 @@ typedef struct Ca_TabBarDesc {
     void        *change_data;
     const char  *id, *style;
     const char  *tab_style;        /* classes on every `tab` header; the active one also gets `active` */
+    const char  *indicator_style;  /* classes on a highlight that slides behind the tabs to the active one; NULL = none */
     bool         tabs_fill;        /* true: tabs flex-grow to fill available row space */
     bool         closable;         /* every tab shows a close button that fires on_close */
     Ca_TabIndexFn on_close;
