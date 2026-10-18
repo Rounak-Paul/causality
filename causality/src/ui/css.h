@@ -213,8 +213,8 @@ typedef enum {
     /* `backdrop-cutout: <top> <right> <bottom> <left> [round <radius>]`: a rounded window, inset from
        the element's box, where its backdrop-filter does not apply. `keyword` is a cutout handle (mask.h). */
     CA_CSS_PROP_BACKDROP_CUTOUT,
-    /* `ambient-light: <blur> <reach> [<strength>]`: the element's painted box, blurred, spills
-       colour outward over its surroundings. `keyword` is an ambient handle (mask.h). */
+    /* `ambient-light: <blur> <falloff> [<strength>]`: the element's painted box, blurred, spills
+       colour outward over everything around it, fading with distance (no hard limit). `keyword` is an ambient handle (mask.h). */
     CA_CSS_PROP_AMBIENT_LIGHT,
 
     CA_CSS_PROP_COUNT

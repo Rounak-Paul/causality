@@ -782,11 +782,11 @@ static void record_rects(PaintCtx *ctx, int band, uint32_t lo, uint32_t hi)
         Ca_ClipPushConst clip_new = { 0 };
         clip_new.edge_aa_scale = ctx->scale_x;
         if (cmd->has_clip) {
-            clip_new.pos[0]  = cmd->clip_x;
-            clip_new.pos[1]  = cmd->clip_y;
-            clip_new.size[0] = cmd->clip_w;
-            clip_new.size[1] = cmd->clip_h;
-            clip_new.radius  = cmd->clip_radius;
+            clip_new.pos[0]  = cmd->clip_shape[0];
+            clip_new.pos[1]  = cmd->clip_shape[1];
+            clip_new.size[0] = cmd->clip_shape[2];
+            clip_new.size[1] = cmd->clip_shape[3];
+            if (cmd->clip_shape[2] > 0.0f) memcpy(clip_new.radii, cmd->clip_radii, sizeof(clip_new.radii));
         }
 
         /* Flush on scissor OR clip-shape change: a plain rectangular clip
@@ -883,7 +883,13 @@ static void record_glyphs(PaintCtx *ctx, int band, uint32_t lo, uint32_t hi)
         }
         cur_sc = sc_new;
         first  = false;
-        pack_textured_instance(ctx, cmd, &ctx->ti_base[ctx->ti_n++]);
+        Ca_TextInstance *glyph = &ctx->ti_base[ctx->ti_n++];
+        pack_textured_instance(ctx, cmd, glyph);
+        memset(glyph->_pad1, 0, sizeof(glyph->_pad1));
+        if (cmd->has_clip && cmd->clip_shape[2] > 0.0f) {
+            memcpy(&glyph->_pad1[0], cmd->clip_shape, sizeof(cmd->clip_shape));
+            memcpy(&glyph->_pad1[4], cmd->clip_radii, sizeof(cmd->clip_radii));
+        }
     }
     if (ctx->ti_n > batch_start) {
         vkCmdSetScissor(cb, 0, 1, &cur_sc);
@@ -948,6 +954,10 @@ static void record_images(PaintCtx *ctx, int band, uint32_t lo, uint32_t hi)
         Ca_TextInstance *dst = &ctx->ti_base[ctx->ti_n++];
         pack_textured_instance(ctx, cmd, dst);
         image_instance_pack_corner_radii(dst, cmd, ctx->scale_x);
+        if (cmd->has_clip && cmd->clip_shape[2] > 0.0f) {
+            memcpy(&dst->_pad1[5], cmd->clip_shape, sizeof(cmd->clip_shape));
+            memcpy(&dst->_pad1[9], cmd->clip_radii, sizeof(cmd->clip_radii));
+        }
     }
     if (ctx->ti_n > batch_start) {
         vkCmdSetScissor(cb, 0, 1, &cur_sc);
@@ -1210,8 +1220,9 @@ static void record_backdrop(PaintCtx *ctx, const Ca_DrawCmd *cmd)
 /**
  * Paints one element's ambient light at its place in paint order: the box
  * (everything painted inside it so far) is blurred, and the blurred copy is
- * screen-blended over the surroundings just outside the box's rounded edge,
- * fading out over `reach`. The box itself is left untouched.
+ * screen-blended over the whole window outside the box's rounded edge, its
+ * intensity decaying exponentially with distance (so it has no hard reach).
+ * The box itself is left untouched.
  *
  * @param ctx Frame recording state.
  * @param cmd CA_DRAW_AMBIENT command.
@@ -1224,16 +1235,14 @@ static void record_ambient(PaintCtx *ctx, const Ca_DrawCmd *cmd)
     float light[3];
     if (!ca_ambient_resolve(cmd->ambient_light, ui_scale, light) || !(light[1] > 0.0f)) return;
 
-    VkRect2D scissor = cmd_scissor(ctx, cmd, true);
     VkRect2D region;
-    if (!backdrop_region(ctx, cmd, scissor, &region)) return;
+    if (!backdrop_region(ctx, cmd, ctx->full_scissor, &region)) return;
 
     Ca_DrawCmd quad = *cmd;
-    quad.x -= light[1]; quad.y -= light[1];
-    quad.w += 2.0f * light[1]; quad.h += 2.0f * light[1];
-    VkRect2D spill = cmd_scissor(ctx, &quad, true);
-    VkRect2D spill_region;
-    if (!backdrop_region(ctx, &quad, spill, &spill_region)) return;
+    quad.has_clip = false;
+    quad.xf_active = false;
+    quad.x = 0.0f; quad.y = 0.0f;
+    quad.w = (float)ctx->log_w; quad.h = (float)ctx->log_h;
 
     Ca_Instance *inst = ctx->inst;
     VkCommandBuffer cb = ctx->f->cmd;
@@ -1253,7 +1262,7 @@ static void record_ambient(PaintCtx *ctx, const Ca_DrawCmd *cmd)
 
     vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, inst->ambient_pipeline);
     vkCmdSetViewport(cb, 0, 1, &ctx->viewport);
-    vkCmdSetScissor(cb, 0, 1, &spill_region);
+    vkCmdSetScissor(cb, 0, 1, &ctx->full_scissor);
     vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS,
                             inst->text_pipeline.layout, 0, 1, &ctx->f->ssbo_set, 0, NULL);
     vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS,
@@ -1267,10 +1276,10 @@ static void record_ambient(PaintCtx *ctx, const Ca_DrawCmd *cmd)
     dst->uv[3] = 0.0f;
     image_instance_pack_corner_radii(dst, cmd, ctx->scale_x);
     const float inv_x = 1.0f / ctx->scale_x, inv_y = 1.0f / ctx->scale_y;
-    dst->_pad1[5] = (float)region.offset.x * inv_x - quad.x;
-    dst->_pad1[6] = (float)region.offset.y * inv_y - quad.y;
-    dst->_pad1[7] = (float)(region.offset.x + (int32_t)region.extent.width) * inv_x - quad.x;
-    dst->_pad1[8] = (float)(region.offset.y + (int32_t)region.extent.height) * inv_y - quad.y;
+    dst->_pad1[5] = (float)region.offset.x * inv_x;
+    dst->_pad1[6] = (float)region.offset.y * inv_y;
+    dst->_pad1[7] = (float)(region.offset.x + (int32_t)region.extent.width) * inv_x;
+    dst->_pad1[8] = (float)(region.offset.y + (int32_t)region.extent.height) * inv_y;
     dst->_pad1[9] = light[1];
     dst->_pad1[10] = light[2];
     vkCmdDraw(cb, 6, 1, 0, ctx->ti_n);

@@ -214,7 +214,7 @@ typedef struct {
 typedef struct {
     float pos[2];
     float size[2];
-    float radius;
+    float radii[4];       /* tl, tr, br, bl */
     float edge_aa_scale;
 } Ca_ClipPushConst;
 
@@ -608,7 +608,8 @@ typedef struct {
        overflow:hidden ancestor has a nonzero corner-radius, so content
        painted near a rounded panel's edge is masked to the same curve
        instead of poking past it into the panel's square bounding box. */
-    float       clip_radius;
+    float       clip_shape[4];   /* rounded clip box x, y, w, h (w == 0: none) */
+    float       clip_radii[4];   /* its corner radii: tl, tr, br, bl */
     /* Border — uniform */
     float       border_width;
     float       border_r, border_g, border_b, border_a;

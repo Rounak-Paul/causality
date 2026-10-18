@@ -147,14 +147,14 @@ static bool test_glow(void)
     source.a = 0.5f; source.z_index = 4;
     source.corner_tl = 2; source.corner_tr = 3;
     source.has_clip = true; source.clip_x = 0; source.clip_y = 0;
-    source.clip_w = 100; source.clip_h = 100; source.clip_radius = 8;
+    source.clip_w = 100; source.clip_h = 100; source.clip_shape[2] = 100; source.clip_radii[0] = source.clip_radii[1] = source.clip_radii[2] = source.clip_radii[3] = 8;
     paint_glow(&window, &source, node.desc.glow_radius, node.desc.glow_color);
     CHECK(window.draw_cmd_count == 1);
     const Ca_DrawCmd *glow = &window.draw_cmds[0];
     CHECK(glow->draw_mode == CA_DRAW_MODE_GLOW && glow->blur_radius == 9);
     CHECK(glow->x == 11 && glow->y == 21 && glow->w == 28 && glow->h == 30);
     CHECK(glow->corner_tl == 2 && glow->corner_tr == 3 && glow->z_index == 4);
-    CHECK(glow->has_clip && glow->clip_radius == 8 && glow->clip_w == 100);
+    CHECK(glow->has_clip && glow->clip_radii[0] == 8 && glow->clip_w == 100);
     CHECK(fabsf(glow->a - 0.5f * 128.0f / 255.0f) < 0.00001f);
     paint_glow(&window, &source, 0, 0xFFFFFFFFu);
     paint_glow(&window, &source, -1, 0xFFFFFFFFu);

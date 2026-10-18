@@ -84,20 +84,32 @@ static OverlayCssStyle overlay_css_style(Ca_Window *window, Ca_Node *owner,
 /* Clip rect state passed through the tree */
 typedef struct {
     bool  active;
-    float x, y, w, h;
-    /* Corner radius of the innermost (nearest) clipping ancestor that
-       contributed this rect. Zero for a plain rectangular clip. Only ever
-       set by the ancestor whose bounds equal the final intersected rect —
-       an outer rounded ancestor whose rect got shrunk by a tighter,
-       square-cornered descendant clip no longer owns visible corners, so
-       its radius must not leak through. */
-    float radius;
+    float x, y, w, h;           /* visible rectangle: the scissor */
+    /* Rounded shape: the box of the ancestor that supplies the rounded
+       corners, which can be larger than the visible rectangle (a card
+       scrolled half out of a rounded gutter is cut by the gutter's corner,
+       not its own). sw == 0 means no rounded shape. Radii: tl, tr, br, bl. */
+    float sx, sy, sw, sh;
+    float radii[4];
 } ClipRect;
 
+/**
+ * Intersects a node's overflow box with the inherited clip.
+ *
+ * The rounded shape is the innermost rounded ancestor box that lies fully
+ * inside the inherited visible rectangle; an inner box that crosses the
+ * inherited edge keeps the inherited shape, since that edge's rounded
+ * corner is the one actually cutting content.
+ *
+ * @param parent     Inherited clip.
+ * @param cx cy cw ch The node's box.
+ * @param new_radius The node's corner radius (0 for a square clip).
+ * @return The clip for the node's children.
+ */
 static ClipRect clip_intersect(ClipRect parent, float cx, float cy, float cw, float ch,
                                float new_radius)
 {
-    ClipRect r;
+    ClipRect r = parent;
     r.active = true;
     float x0 = parent.active ? (cx > parent.x ? cx : parent.x) : cx;
     float y0 = parent.active ? (cy > parent.y ? cy : parent.y) : cy;
@@ -111,16 +123,12 @@ static ClipRect clip_intersect(ClipRect parent, float cx, float cy, float cw, fl
     r.w = (x1 > x0) ? x1 - x0 : 0.0f;
     r.h = (y1 > y0) ? y1 - y0 : 0.0f;
 
-    /* The new ancestor's radius only applies where its own edge is still
-       the visible boundary (i.e. its rect was not shrunk by the parent's
-       tighter bound on that side); otherwise a square-cornered parent
-       clip already owns that corner and must keep it square. */
-    bool edge_unshrunk =
-        (!parent.active || parent.x <= cx) &&
-        (!parent.active || parent.y <= cy) &&
-        (!parent.active || parent.x + parent.w >= cx + cw) &&
-        (!parent.active || parent.y + parent.h >= cy + ch);
-    r.radius = edge_unshrunk ? new_radius : 0.0f;
+    const bool inside = !parent.active ||
+        (cx >= parent.x && cy >= parent.y && cx + cw <= parent.x + parent.w && cy + ch <= parent.y + parent.h);
+    if (new_radius > 0.0f && (inside || parent.sw <= 0.0f)) {
+        r.sx = cx; r.sy = cy; r.sw = cw; r.sh = ch;
+        for (int c = 0; c < 4; ++c) r.radii[c] = new_radius;
+    }
     return r;
 }
 
@@ -132,7 +140,9 @@ static void set_clip(Ca_DrawCmd *cmd, ClipRect clip)
         cmd->clip_y = clip.y;
         cmd->clip_w = clip.w;
         cmd->clip_h = clip.h;
-        cmd->clip_radius = clip.radius;
+        cmd->clip_shape[0] = clip.sx; cmd->clip_shape[1] = clip.sy;
+        cmd->clip_shape[2] = clip.sw; cmd->clip_shape[3] = clip.sh;
+        memcpy(cmd->clip_radii, clip.radii, sizeof(cmd->clip_radii));
     }
 }
 
@@ -165,22 +175,23 @@ static void paint_cursor(Ca_Window *win, Ca_Font *font,
                          Ca_Node *node, const char *text, int cursor_pos);
 static void paint_focus_ring(Ca_Window *win, Ca_Node *node);
 
-/* Walk up from a node and compute its effective clip rect from ancestors
-   with overflow != visible. */
+/** Effective clip of `cur` and its ancestors with overflow != visible, applied outermost first. */
+static ClipRect clip_of_ancestors(Ca_Node *cur)
+{
+    if (!cur) return (ClipRect){ .active = false };
+    ClipRect clip = clip_of_ancestors(cur->parent);
+    if (cur->desc.overflow_x >= 1 || cur->desc.overflow_y >= 1)
+        clip = clip_intersect(clip, cur->x, cur->y,
+                              ca_scrollbar_viewport_width(cur),
+                              ca_scrollbar_viewport_height(cur),
+                              cur->desc.corner_radius);
+    return clip;
+}
+
+/* Compute a node's effective clip rect from its ancestors with overflow != visible. */
 static ClipRect find_clip_for_node(Ca_Node *node)
 {
-    ClipRect clip = { .active = false };
-    Ca_Node *cur = node->parent;
-    while (cur) {
-        if (cur->desc.overflow_x >= 1 || cur->desc.overflow_y >= 1) {
-            clip = clip_intersect(clip, cur->x, cur->y,
-                                  ca_scrollbar_viewport_width(cur),
-                                  ca_scrollbar_viewport_height(cur),
-                                  cur->desc.corner_radius);
-        }
-        cur = cur->parent;
-    }
-    return clip;
+    return clip_of_ancestors(node->parent);
 }
 
 /** Resolve glyph clipping from node overflow and clipping ancestors.
@@ -3328,7 +3339,8 @@ static bool snapshot_tree(Ca_Window *target, const Ca_Node *node, Ca_Transform2D
             if (cmd->has_clip) {
                 cmd->clip_x = (cmd->clip_x - x) * scale;
                 cmd->clip_y = (cmd->clip_y - y) * scale;
-                cmd->clip_w *= scale; cmd->clip_h *= scale; cmd->clip_radius *= scale;
+                cmd->clip_w *= scale; cmd->clip_h *= scale;
+                for (int c = 0; c < 4; ++c) { cmd->clip_radii[c] *= scale; cmd->clip_shape[c] *= scale; }
             }
         }
         if (!post && !node->desc.inline_flow)

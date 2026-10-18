@@ -1925,10 +1925,11 @@ static void parse_backdrop_cutout(Parser *p, Ca_CssRule *rule)
 
 
 /**
- * Parses `ambient-light: <blur> <reach> [<strength>]` and emits its declaration.
+ * Parses `ambient-light: <blur> <falloff> [<strength>]` and emits its declaration.
  *
- * `blur` is the Gaussian blur length in px, `reach` how far (px) the light
- * spills beyond the box, `strength` an intensity multiplier (default 1).
+ * `blur` is the Gaussian blur length in px, `falloff` the distance (px) over
+ * which the spilled light fades to 1/e of its edge intensity (it never stops
+ * abruptly), `strength` an intensity multiplier (default 1).
  *
  * @param p    Parser positioned at the value.
  * @param rule Rule receiving the declaration.

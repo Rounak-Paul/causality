@@ -60,7 +60,8 @@ static bool test_overflow_boundaries(void)
     label.x = 20; label.y = 20; label.w = 7; label.h = 12;
     ClipRect clip = text_clip_for_node(&label);
     CHECK(clip.active && clip.x == 10 && clip.w == 100);
-    CHECK(clip.y == 10 && clip.h == 40 && clip.radius == 8);
+    CHECK(clip.y == 10 && clip.h == 40 && clip.sx == 10 && clip.sw == 100 && clip.sh == 40);
+    CHECK(clip.radii[0] == 8 && clip.radii[1] == 8 && clip.radii[2] == 8 && clip.radii[3] == 8);
     label.desc.overflow_x = 1;
     clip = text_clip_for_node(&label);
     CHECK(clip.x == 20 && clip.w == 7 && clip.y == 10 && clip.h == 40);
@@ -75,6 +76,30 @@ static bool test_overflow_boundaries(void)
     label.w = 7; label.x = 200;
     clip = text_clip_for_node(&label);
     CHECK(clip.active && clip.w == 0);
+    return true;
+}
+
+/** A rounded box crossing its rounded ancestor's edge keeps the ancestor's corners; one inside owns its own. */
+static bool test_rounded_clip_shape_ownership(void)
+{
+    Ca_Node strip = {0};
+    strip.x = 100; strip.y = 0; strip.w = 400; strip.h = 74;
+    strip.desc.overflow_x = 1; strip.desc.corner_radius = 17;
+    Ca_Node card = {0};
+    card.parent = &strip;
+    card.desc.overflow_x = 1; card.desc.overflow_y = 1; card.desc.corner_radius = 12;
+    Ca_Node label = {0};
+    label.parent = &card;
+    label.w = 7; label.h = 12;
+
+    card.x = 60; card.y = 4; card.w = 116; card.h = 66;
+    ClipRect clip = text_clip_for_node(&label);
+    CHECK(clip.x == 100 && clip.w == 76 && clip.y == 4 && clip.h == 66);
+    CHECK(clip.sx == 100 && clip.sw == 400 && clip.sh == 74 && clip.radii[0] == 17);
+
+    card.x = 200;
+    clip = text_clip_for_node(&label);
+    CHECK(clip.sx == 200 && clip.sw == 116 && clip.sh == 66 && clip.radii[2] == 12);
     return true;
 }
 
@@ -328,6 +353,7 @@ int main(void)
 {
     bool ok = test_glyph_overhang();
     ok = test_overflow_boundaries() && ok;
+    ok = test_rounded_clip_shape_ownership() && ok;
     ok = test_decoration_parsing() && ok;
     ok = test_decoration_rects() && ok;
     ok = test_decoration_style_parsing() && ok;

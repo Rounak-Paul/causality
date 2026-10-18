@@ -71,8 +71,8 @@ bool ca_cutout_resolve(uint32_t handle, float px_scale, float out[5]);
  * Resolves an ambient-light handle.
  *
  * @param handle   Ambient handle; 0 yields false.
- * @param px_scale Factor applied to the blur and reach lengths (the window UI scale).
- * @param out      Receives the blur length (px), the reach (px) and the strength.
+ * @param px_scale Factor applied to the blur and falloff lengths (the window UI scale).
+ * @param out      Receives the blur length (px), the falloff length (px) and the strength.
  * @return true when the handle names an ambient light.
  */
 bool ca_ambient_resolve(uint32_t handle, float px_scale, float out[3]);

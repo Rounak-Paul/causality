@@ -1533,14 +1533,15 @@ CA_API void ca_image(const Ca_ImageDesc *desc);
      Lengths may be negative (`top: -12px`, `margin-left: -4px`).
 
    Ambient light:
-     ambient-light: <blur> <reach> [<strength>]
+     ambient-light: <blur> <falloff> [<strength>]
        The element's painted box (its content, as of the end of its subtree)
-       is blurred by `blur` px and the blurred copy spills outward as light,
-       screen-blended over whatever surrounds the box and fading to nothing
-       over `reach` px (the box's rounded edge is the origin; its edge
-       colours extend outward). Not clipped by ancestors, so it crosses
-       panel edges. `strength` scales the intensity (default 1). Content
-       painted into a higher z-index band later is not part of the copy.
+       is blurred by `blur` px and the blurred copy spills outward as light
+       over the whole window, screen-blended outside the box's rounded edge.
+       Intensity decays exponentially with distance (`falloff` px per 1/e),
+       so there is no hard reach. Edge colours extend outward; not clipped
+       by ancestors, so it crosses panel edges. `strength` scales the
+       intensity (default 1). Content painted into a higher z-index band
+       later is not part of the copy.
 
    Example:
      ca_instance_load_css(inst,

@@ -247,8 +247,8 @@ static const char *BACKDROP_FRAG_GLSL =
     "}\n";
 
 /* Ambient light vertex stage: the same instance record, with the quad
-   covering the box expanded by `reach`. _pad1[5..10] = clamp rect (lo.xy,
-   hi.xy, quad-local px), reach, strength. */
+   covering the whole window. _pad1[5..10] = box (lo.xy, hi.xy, window
+   logical px), decay length, strength. */
 static const char *AMBIENT_VERT_GLSL =
     "#version 450\n"
     "struct ImageData {\n"
@@ -293,7 +293,10 @@ static const char *AMBIENT_VERT_GLSL =
 
 /* Ambient light fragment stage: outside the box's rounded edge, the blurred
    copy of the box (sampled at the nearest point inside it, so its edge
-   colours extend outward) is screen-blended with a falloff over `reach`. */
+   colours extend outward) is screen-blended with an intensity that decays
+   exponentially over `decay` px of distance, so the light has no hard reach.
+   The quad covers the whole window: v_local is in window logical px and
+   v_clamp is the box (lo.xy, hi.xy) in the same space. */
 static const char *AMBIENT_FRAG_GLSL =
     "#version 450\n"
     "layout(set = 1, binding = 0) uniform sampler2D tex;\n"
@@ -302,8 +305,8 @@ static const char *AMBIENT_FRAG_GLSL =
     "layout(location = 2) flat in vec2 v_size;\n"
     "layout(location = 3) flat in vec4 v_corner_radii;\n"
     "layout(location = 4) flat in float v_edge_aa_scale;\n"
-    "layout(location = 5) flat in vec4 v_clamp;   // sample rect lo.xy, hi.xy (quad-local)\n"
-    "layout(location = 6) flat in vec2 v_light;   // reach, strength\n"
+    "layout(location = 5) flat in vec4 v_clamp;   // box lo.xy, hi.xy\n"
+    "layout(location = 6) flat in vec2 v_light;   // decay length, strength\n"
     "layout(location = 0) out vec4 out_color;\n"
     "float roundedBoxSDF(vec2 p, vec2 b, vec4 r) {\n"
     "    float radius = (p.x > 0.0) ?\n"
@@ -314,14 +317,11 @@ static const char *AMBIENT_FRAG_GLSL =
     "    return length(max(d, vec2(0.0))) + min(max(d.x, d.y), 0.0) - radius;\n"
     "}\n"
     "void main() {\n"
-    "    float reach = v_light.x;\n"
-    "    vec2 half_size = v_size * 0.5;\n"
-    "    float dist = roundedBoxSDF(v_local - half_size, half_size - vec2(reach), v_corner_radii);\n"
+    "    vec2 centre = (v_clamp.xy + v_clamp.zw) * 0.5;\n"
+    "    float dist = roundedBoxSDF(v_local - centre, (v_clamp.zw - v_clamp.xy) * 0.5, v_corner_radii);\n"
     "    float aa_hw = 0.875 / max(v_edge_aa_scale, 1e-4);\n"
-    "    float edge = smoothstep(-aa_hw, aa_hw, dist);\n"
-    "    float fall = 1.0 - clamp(dist / reach, 0.0, 1.0);\n"
-    "    float strength = v_light.y * edge * fall * fall;\n"
-    "    if (strength < 0.001) discard;\n"
+    "    float strength = v_light.y * smoothstep(-aa_hw, aa_hw, dist) * exp(-max(dist, 0.0) / v_light.x);\n"
+    "    if (strength < 0.002) discard;\n"
     "    vec2 inside = clamp(v_local, v_clamp.xy, v_clamp.zw);\n"
     "    vec2 frag = gl_FragCoord.xy + (inside - v_local) * v_edge_aa_scale;\n"
     "    vec3 c = texture(tex, frag * v_uv_scale).rgb;\n"
