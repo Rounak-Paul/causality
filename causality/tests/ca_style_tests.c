@@ -125,6 +125,25 @@ static bool test_border_shorthand_resets_sides(void)
     return true;
 }
 
+/** A color function that closes a gradient stop must not consume the gradient's own closing paren. */
+static bool test_gradient_rgba_stops_keep_following_rules(void)
+{
+    Ca_Stylesheet *ss = ca_css_parse(
+        ".x { background: linear-gradient(to bottom, rgba(255, 255, 255, 0.5), rgba(0, 0, 0, 0.25)); }"
+        ".y { background: radial-gradient(circle at 50 50, hsla(10, 50%, 50%, 0.5), hsla(200, 50%, 50%, 0.25)); }"
+        ".z { color: rgba(1, 2, 3, 0.5); }");
+    CHECK(ss && ss->rule_count == 3);
+
+    Ca_ResolvedStyle x = {0};
+    for (int i = 0; i < ss->rules[0].decl_count; ++i)
+        ca_style_apply_one_declaration(&x, ss->rules[0].decls[i].prop, &ss->rules[0].decls[i].value);
+    CHECK((x.background_color & 0xFFu) == 0x7Fu);
+    CHECK((x.gradient_color2 & 0xFFu) == 0x3Fu);
+
+    ca_css_destroy(ss);
+    return true;
+}
+
 /** Property keywords spelled "auto" resolve as keywords; sizing "auto" stays a generic value. */
 static bool test_auto_keywords(void)
 {
@@ -655,6 +674,7 @@ int main(void)
     if (!test_default_palette()) return 1;
     if (!test_author_vars_override_defaults()) return 1;
     if (!test_border_shorthand_resets_sides()) return 1;
+    if (!test_gradient_rgba_stops_keep_following_rules()) return 1;
     if (!test_auto_keywords()) return 1;
     if (!test_label_inline_color_survives_restyle()) return 1;
     if (!test_node_graph_stubs_unfit_text()) return 1;

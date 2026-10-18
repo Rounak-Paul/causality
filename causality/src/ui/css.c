@@ -422,6 +422,7 @@ static uint32_t parse_rgb_func(Parser *p, bool has_alpha)
 {
     float vals[4] = { 0, 0, 0, 1.0f };
     int max_args = has_alpha ? 4 : 3;
+    bool closed = false;
 
     for (int i = 0; i < max_args; ++i) {
         skip_ws(p);
@@ -430,14 +431,16 @@ static uint32_t parse_rgb_func(Parser *p, bool has_alpha)
             vals[i] = t.number;
         skip_ws(p);
         Token comma = parser_next(p);
-        if (comma.type == TOK_RPAREN) break;
-        if (comma.type != TOK_COMMA && comma.type != TOK_RPAREN)
-            ; /* skip bad tokens */
+        if (comma.type == TOK_RPAREN) { closed = true; break; }
     }
 
-    /* Consume trailing ) if not consumed */
-    Token t = parser_peek(p);
-    if (t.type == TOK_RPAREN) parser_next(p);
+    /* The last argument's separator is the closing paren; only consume
+       further when extra arguments precede it, so an enclosing function's
+       paren (e.g. gradient stops) is never taken. */
+    while (!closed) {
+        Token t = parser_next(p);
+        if (t.type == TOK_RPAREN || t.type == TOK_EOF) closed = true;
+    }
 
     uint32_t r = (uint32_t)(vals[0] > 255 ? 255 : (vals[0] < 0 ? 0 : vals[0]));
     uint32_t g = (uint32_t)(vals[1] > 255 ? 255 : (vals[1] < 0 ? 0 : vals[1]));
@@ -475,6 +478,7 @@ static uint32_t parse_hsl_func(Parser *p, bool has_alpha)
     float h = 0, s = 0, l = 0, a = 1.0f;
     int max_args = has_alpha ? 4 : 3;
     float vals[4] = { 0, 0, 0, 1.0f };
+    bool closed = false;
 
     for (int i = 0; i < max_args; ++i) {
         skip_ws(p);
@@ -491,11 +495,12 @@ static uint32_t parse_hsl_func(Parser *p, bool has_alpha)
         }
         skip_ws(p);
         Token comma = parser_next(p);
-        if (comma.type == TOK_RPAREN) break;
+        if (comma.type == TOK_RPAREN) { closed = true; break; }
     }
-    /* Consume trailing ) if still present */
-    Token tt = parser_peek(p);
-    if (tt.type == TOK_RPAREN) parser_next(p);
+    while (!closed) {
+        Token tt = parser_next(p);
+        if (tt.type == TOK_RPAREN || tt.type == TOK_EOF) closed = true;
+    }
 
     h = vals[0]; s = vals[1]; l = vals[2]; a = has_alpha ? vals[3] : 1.0f;
     if (s < 0) s = 0; if (s > 1) s = 1;
