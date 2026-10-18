@@ -1999,6 +1999,11 @@ void ca_node_sync_scroll_y_signal(Ca_Node *n)
         ca_signal_set_float(n->scroll_y_signal, n->scroll_y);
 }
 
+void ca_node_sync_scroll_x_signal(Ca_Node *node)
+{
+    if (node && node->scroll_x_signal) ca_signal_set_float(node->scroll_x_signal, node->scroll_x);
+}
+
 void ca_scroll_to_top(Ca_Window *window, const char *id)
 {
     Ca_Node *n = find_node_by_id(window, id);
@@ -2035,23 +2040,39 @@ void ca_set_scroll_y(Ca_Window *window, const char *id, float y)
     ca_node_sync_scroll_y_signal(n);
 }
 
-/* Scroll overflow container n by one wheel step of dy, clamped to its range. */
-static void node_apply_wheel(Ca_Node *n, double dy)
+/* Scroll the requested axis by delta, clamped to its resolved overflow range. */
+static void node_apply_wheel(Ca_Node *n, double delta, bool horizontal)
 {
     const float ui_s = n->window && n->window->ui_scale > 0.0f ? n->window->ui_scale : 1.0f;
-    n->scroll_y -= (float)dy * CA_WHEEL_SCROLL_PX * ui_s;
-    const float max_scroll = ca_scrollbar_max_y(n);
-    if (n->scroll_y > max_scroll) n->scroll_y = max_scroll;
-    if (n->scroll_y < 0.0f)       n->scroll_y = 0.0f;
+    float *offset = horizontal ? &n->scroll_x : &n->scroll_y;
+    *offset -= (float)delta * CA_WHEEL_SCROLL_PX * ui_s;
+    const float maximum = horizontal ? ca_scrollbar_max_x(n) : ca_scrollbar_max_y(n);
+    if (*offset > maximum) *offset = maximum;
+    if (*offset < 0.0f) *offset = 0.0f;
     n->dirty |= CA_DIRTY_LAYOUT | CA_DIRTY_CONTENT;
-    ca_node_sync_scroll_y_signal(n);
+    if (horizontal) ca_node_sync_scroll_x_signal(n);
+    else ca_node_sync_scroll_y_signal(n);
 }
 
 void ca_scroll_wheel(Ca_Window *window, const char *id, double dy)
 {
     Ca_Node *n = find_node_by_id(window, id);
     if (!n || n->desc.overflow_y < 2) return;
-    node_apply_wheel(n, dy);
+    node_apply_wheel(n, dy, false);
+}
+
+void ca_scroll_wheel_x(Ca_Window *window, const char *id, double dx)
+{
+    Ca_Node *node = find_node_by_id(window, id);
+    if (node && node->desc.overflow_x >= 2) node_apply_wheel(node, dx, true);
+}
+
+Ca_Signal *ca_get_scroll_x_signal(Ca_Window *window, const char *id)
+{
+    Ca_Node *node = find_node_by_id(window, id);
+    if (!node) return NULL;
+    if (!node->scroll_x_signal) node->scroll_x_signal = ca_signal_float(window->instance, node->scroll_x);
+    return node->scroll_x_signal;
 }
 
 Ca_Signal *ca_get_scroll_y_signal(Ca_Window *window, const char *id)
@@ -2803,6 +2824,7 @@ static void tabbar_scroll(double dx, double dy, void *user_data)
     offset = fminf(fmaxf(offset, 0.0f), ca_scrollbar_max_x(node));
     if (offset == node->scroll_x) return;
     node->scroll_x = offset;
+    ca_node_sync_scroll_x_signal(node);
     node->dirty |= CA_DIRTY_LAYOUT | CA_DIRTY_CONTENT;
 }
 
@@ -2827,6 +2849,7 @@ static void tabbar_reveal_active(Ca_TabBar *tabs)
     offset = fmaxf(offset, 0.0f);
     if (offset == node->scroll_x) return;
     node->scroll_x = offset;
+    ca_node_sync_scroll_x_signal(node);
     node->dirty |= CA_DIRTY_LAYOUT | CA_DIRTY_CONTENT;
 }
 
@@ -4800,6 +4823,7 @@ void ca_widget_input_pass(Ca_Window *win)
                 float new_scroll = pct * max_s;
                 if (new_scroll != n->scroll_x) {
                     n->scroll_x = new_scroll;
+                    ca_node_sync_scroll_x_signal(n);
                     n->dirty |= CA_DIRTY_LAYOUT | CA_DIRTY_CONTENT;
                 }
             }
@@ -4935,17 +4959,22 @@ void ca_widget_input_pass(Ca_Window *win)
                 ((Ca_ScrollFn)scroll_cb_node->scroll_fn)(
                     win->scroll_dx, win->scroll_dy, scroll_cb_node->scroll_data);
             } else {
-                /* Standard overflow scroll containers */
+                bool horizontal = fabs(win->scroll_dx) > fabs(win->scroll_dy);
                 Ca_Node *scroll_target = NULL;
-                for (uint32_t i = 0; i < ca_pool_slot_count(&win->node_pool); ++i) {
-                    Ca_Node *n = CA_POOL_AT(win->node_pool, Ca_Node, i);
-                    if (!n->in_use) continue;
-                    if (n->desc.overflow_y < 2) continue;
-                    if (!wheel_reaches_node(n, mx, my, top_z, top_hit)) continue;
-                    if (!scroll_target || (n->w * n->h < scroll_target->w * scroll_target->h))
-                        scroll_target = n;
+                for (int pass = 0; pass < (horizontal ? 1 : 2) && !scroll_target; ++pass) {
+                    bool axis = pass == 0 ? horizontal : !horizontal;
+                    for (uint32_t i = 0; i < ca_pool_slot_count(&win->node_pool); ++i) {
+                        Ca_Node *n = CA_POOL_AT(win->node_pool, Ca_Node, i);
+                        if (!n->in_use || (axis ? n->desc.overflow_x : n->desc.overflow_y) < 2) continue;
+                        if (!wheel_reaches_node(n, mx, my, top_z, top_hit)) continue;
+                        if (!scroll_target || (n->w * n->h < scroll_target->w * scroll_target->h))
+                            scroll_target = n;
+                    }
+                    if (scroll_target) {
+                        double delta = horizontal ? win->scroll_dx : win->scroll_dy;
+                        node_apply_wheel(scroll_target, delta, axis);
+                    }
                 }
-                if (scroll_target) node_apply_wheel(scroll_target, win->scroll_dy);
             }
         }
     }

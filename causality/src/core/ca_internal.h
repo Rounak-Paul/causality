@@ -763,6 +763,7 @@ struct Ca_Node {
        scroll position the same way it depends on any other signal,
        instead of polling ca_get_scroll_y every frame. */
     Ca_Signal    *scroll_y_signal;
+    Ca_Signal    *scroll_x_signal;  /* horizontal counterpart, mirrored at every offset mutation */
     Ca_Signal    *size_signal;      /* Ca_DivSize; lazily created by ca_div_size_signal */
     /* Resolved inline formatting-context layout — only allocated for a
        node with desc.inline_flow set (see inline_layout.h). NULL for

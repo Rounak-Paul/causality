@@ -662,9 +662,59 @@ static bool test_reconciled_context_targets(void)
     return true;
 }
 
+/** Route each wheel axis to its nested owner and pan horizontal-only headers. */
+static bool test_nested_axis_scrolling(void)
+{
+    Ca_Instance instance = {0};
+    Ca_Window window = {0};
+    window.instance = &instance;
+    window.ui_scale = 1;
+    CHECK(ca_node_system_init(&window));
+    Ca_Node *root = ca_node_root(&window);
+    ca_widget_ctx_enter(&window);
+    ca_reconcile_begin((Ca_Div *)root);
+    Ca_Node *horizontal = (Ca_Node *)ca_div_begin(&(Ca_DivDesc){.direction = CA_HORIZONTAL, .id = "horizontal-owner"});
+    Ca_Node *vertical = (Ca_Node *)ca_div_begin(&(Ca_DivDesc){.direction = CA_VERTICAL});
+    ca_div_end(); ca_div_end(); ca_div_end();
+    ca_widget_ctx_leave();
+    place_node(root, 0, 0, 200, 150);
+    place_node(horizontal, 0, 0, 200, 150);
+    place_node(vertical, 0, 50, 200, 100);
+    horizontal->desc.overflow_x = 2; horizontal->content_w = 2000;
+    vertical->desc.overflow_y = 2; vertical->content_h = 400;
+    Ca_Signal *offset = ca_get_scroll_x_signal(&window, "horizontal-owner");
+    CHECK(offset && ca_signal_get_float(offset) == 0);
+    CHECK(!ca_get_scroll_x_signal(&window, "missing"));
+    window.mouse_x = 50; window.mouse_y = 80;
+    window.scroll_this_frame = true; window.scroll_dx = -2;
+    ca_widget_input_pass(&window);
+    CHECK(horizontal->scroll_x > 0 && vertical->scroll_y == 0);
+    CHECK(ca_signal_get_float(offset) == horizontal->scroll_x);
+    float x = horizontal->scroll_x;
+    window.scroll_dx = 0; window.scroll_dy = -2;
+    ca_widget_input_pass(&window);
+    CHECK(horizontal->scroll_x == x && vertical->scroll_y > 0);
+    window.mouse_y = 10;
+    ca_widget_input_pass(&window);
+    CHECK(horizontal->scroll_x > x);
+    window.scroll_dx = -1e9; window.scroll_dy = 0;
+    ca_widget_input_pass(&window);
+    CHECK(horizontal->scroll_x == 1800);
+    window.scroll_dx = 1e9;
+    ca_widget_input_pass(&window);
+    CHECK(horizontal->scroll_x == 0 && ca_signal_get_float(offset) == 0);
+    ca_scroll_wheel_x(&window, "horizontal-owner", -1);
+    CHECK(horizontal->scroll_x > 0 && ca_signal_get_float(offset) == horizontal->scroll_x);
+    ca_scroll_wheel_x(&window, "missing", -1);
+    ca_node_system_shutdown(&window);
+    ca_widget_ctx_release_instance(&instance);
+    return true;
+}
+
 /** Runs focused input ownership regression tests. */
 int main(void)
 {
+    if (!test_nested_axis_scrolling()) return 1;
     if (!test_reconciled_context_targets()) return 1;
     if (!test_tab_overflow_navigation()) return 1;
     if (!test_builder_inside_reconciled_container()) return 1;

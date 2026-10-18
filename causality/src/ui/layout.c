@@ -898,6 +898,8 @@ static void layout_node(Ca_Node *node, float x, float y, float avail_w, float av
                This is critical: if the child grew (e.g. flex-wrap creating
                multiple lines), we must respect its real size, not the
                hypothetical pre-computed size. */
+            float actual_cross = cross_cursor + cross_offset + (is_row ? child->h : child->w) + mc1;
+            if (actual_cross > max_cross_extent) max_cross_extent = actual_cross;
             float actual_main = is_row ? child->w : child->h;
             float end = main_cursor + actual_main;
             if (end > max_main_extent) max_main_extent = end;
@@ -924,9 +926,9 @@ static void layout_node(Ca_Node *node, float x, float y, float avail_w, float av
                              : (node->desc.padding_left + node->desc.padding_right);
     if (is_row) {
         node->content_w = max_main_extent + pad_main;
-        node->content_h = (do_wrap ? max_cross_extent : avail_cross) + pad_cross;
+        node->content_h = max_cross_extent + pad_cross;
     } else {
-        node->content_w = (do_wrap ? max_cross_extent : avail_cross) + pad_cross;
+        node->content_w = max_cross_extent + pad_cross;
         node->content_h = max_main_extent + pad_main;
     }
 
@@ -946,7 +948,10 @@ static void layout_node(Ca_Node *node, float x, float y, float avail_w, float av
     }
     if (node->desc.overflow_x >= 1) {
         float max_sx = ca_scrollbar_max_x(node);
-        if (node->scroll_x > max_sx) node->scroll_x = max_sx;
+        if (node->scroll_x > max_sx) {
+            node->scroll_x = max_sx;
+            ca_node_sync_scroll_x_signal(node);
+        }
     }
 
     /* Post-layout auto-sizing: shrink the node to fit its actual content

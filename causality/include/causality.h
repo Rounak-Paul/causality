@@ -1282,6 +1282,11 @@ CA_API void  ca_scroll_wheel(Ca_Window *window, const char *id, double dy);
  */
 CA_API Ca_Signal *ca_get_scroll_y_signal(Ca_Window *window, const char *id);
 
+/** Observe container id's horizontal offset in window; NULL when missing or allocation fails. */
+CA_API Ca_Signal *ca_get_scroll_x_signal(Ca_Window *window, const char *id);
+/** Apply horizontal wheel delta dx to container id in window, clamping to its range. */
+CA_API void ca_scroll_wheel_x(Ca_Window *window, const char *id, double dx);
+
 /* A div's laid-out size in logical px (the units of Ca_DivDesc sizes). */
 typedef struct Ca_DivSize {
     float width, height;
