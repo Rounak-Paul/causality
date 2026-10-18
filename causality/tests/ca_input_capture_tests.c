@@ -6,6 +6,7 @@ typedef struct GLFWwindow GLFWwindow;
 #include "ca_internal.h"
 #include "widget.h"
 #include "node.h"
+#include "paint.h"
 #include "ca_reactive.h"
 #include "../src/reactive/reactive.h"
 
@@ -711,9 +712,43 @@ static bool test_nested_axis_scrolling(void)
     return true;
 }
 
+/** Drag snapshots retain their children and borders but exclude overlapping siblings and overlays. */
+static bool test_isolated_drag_snapshot(void)
+{
+    Ca_DrawCmd cache[4] = {
+        {.in_use=true,.type=CA_DRAW_RECT,.x=100,.y=50,.w=80,.h=40,.r=.1f,.a=1},
+        {.in_use=true,.type=CA_DRAW_IMAGE,.x=110,.y=60,.w=30,.h=20,.r=.2f,.a=1,.image_index=7},
+        {.in_use=true,.type=CA_DRAW_RECT,.x=100,.y=50,.w=80,.h=40,.r=.3f,.a=1,.border_width=1},
+        {.in_use=true,.type=CA_DRAW_RECT,.x=100,.y=50,.w=80,.h=40,.r=1,.a=1,.z_index=20}
+    };
+    Ca_Window source = {.paint_cache=cache,.draw_cmds=cache,.draw_cmd_count=4};
+    Ca_Node child = {.in_use=true,.window=&source,.cache_start=1,.cache_count=1};
+    Ca_Node *children[] = {&child};
+    Ca_Node dragged = {.in_use=true,.window=&source,.x=100,.y=50,.w=80,.h=40,
+        .cache_count=1,.cache_post_start=2,.cache_post_count=1,.children=children,.child_count=1};
+    child.parent=&dragged;
+    Ca_Node root = {.draw_cmd_idx=0};
+    Ca_Window target = {.root=&root,.draw_cmd_storage=CA_DYN_ARRAY_INIT(Ca_DrawCmd)};
+    CHECK(ca_paint_snapshot(&target,&dragged,100,50,.5f));
+    CHECK(target.paint_snapshot && root.draw_cmd_idx==-1 && target.draw_cmd_count==3);
+    CHECK(target.draw_cmds[0].r==.1f && target.draw_cmds[1].r==.2f && target.draw_cmds[2].r==.3f);
+    CHECK(target.draw_cmds[1].image_index==7 && target.draw_cmds[2].border_width==1);
+    CHECK(target.draw_cmds[0].xf_a==.5f && target.draw_cmds[0].xf_tx==-50 && target.draw_cmds[0].xf_ty==-25);
+    CHECK(cache[0].xf_active==false && source.draw_cmd_count==4);
+    Ca_Instance instance={0};
+    ca_paint_pass(&instance,&target);
+    CHECK(target.draw_cmd_count==3);
+    child.desc.hidden=true;
+    CHECK(ca_paint_snapshot(&target,&dragged,100,50,1));
+    CHECK(target.draw_cmd_count==2 && target.draw_cmds[1].r==.3f);
+    ca_dyn_array_destroy(&target.draw_cmd_storage);
+    return true;
+}
+
 /** Runs focused input ownership regression tests. */
 int main(void)
 {
+    if (!test_isolated_drag_snapshot()) return 1;
     if (!test_nested_axis_scrolling()) return 1;
     if (!test_reconciled_context_targets()) return 1;
     if (!test_tab_overflow_navigation()) return 1;

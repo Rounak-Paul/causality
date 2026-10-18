@@ -3223,8 +3223,63 @@ static void paint_debug_overlay(Ca_Instance *inst, Ca_Window *win)
    PUBLIC — paint pass entry point
    ================================================================ */
 
+/** Replay one subtree's cached content and borders, excluding unrelated overlays. */
+static bool snapshot_tree(Ca_Window *target, const Ca_Node *node, Ca_Transform2D parent,
+                          float x, float y, float scale)
+{
+    if (!node->in_use || node->desc.hidden) return true;
+    Ca_Transform2D transform = ca_transform_mul(parent,
+        ca_transform_from_desc(&node->desc, node->x, node->y, node->w, node->h));
+    Ca_Transform2D mapping = {.active = true, .a = scale, .d = scale, .tx = -x * scale, .ty = -y * scale};
+    for (int post = 0; post < 2; ++post) {
+        uint32_t count = post ? node->cache_post_count : node->cache_count;
+        uint32_t start = post ? node->cache_post_start : node->cache_start;
+        if (!ca_window_reserve_draw_commands(target, (size_t)target->draw_cmd_count + count)) return false;
+        uint32_t first = target->draw_cmd_count;
+        if (count) memcpy(target->draw_cmds + first, node->window->paint_cache + start, count * sizeof(Ca_DrawCmd));
+        target->draw_cmd_count += count;
+        apply_transform(target, first, count, ca_transform_mul(mapping, transform), true);
+        for (uint32_t i = first; i < target->draw_cmd_count; ++i) {
+            Ca_DrawCmd *cmd = &target->draw_cmds[i];
+            if (cmd->type == CA_DRAW_VIEWPORT) return false;
+            if (cmd->has_clip) {
+                cmd->clip_x = (cmd->clip_x - x) * scale;
+                cmd->clip_y = (cmd->clip_y - y) * scale;
+                cmd->clip_w *= scale; cmd->clip_h *= scale; cmd->clip_radius *= scale;
+            }
+        }
+        if (!post && !node->desc.inline_flow)
+            for (uint32_t i = 0; i < node->child_count; ++i)
+                if (!snapshot_tree(target, node->children[i], transform, x, y, scale)) return false;
+    }
+    return true;
+}
+
+/** Build an immutable draw list from the dragged subtree without window decorations. */
+bool ca_paint_snapshot(Ca_Window *target, const Ca_Node *node, float x, float y, float scale)
+{
+    if (!target || !node || !node->window || target == node->window || !(scale > 0) || !isfinite(scale)) return false;
+    target->paint_snapshot = false;
+    Ca_Transform2D parent = ca_transform_identity();
+    for (const Ca_Node *p = node->parent; p; p = p->parent)
+        parent = ca_transform_mul(ca_transform_from_desc(&p->desc, p->x, p->y, p->w, p->h), parent);
+    target->draw_cmd_count = 0;
+    if (!snapshot_tree(target, node, parent, x, y, scale) || !target->draw_cmd_count) {
+        target->draw_cmd_count = 0;
+        return false;
+    }
+    if (target->root) target->root->draw_cmd_idx = -1;
+    target->paint_snapshot = true;
+    target->needs_render = true;
+    return true;
+}
+
 void ca_paint_pass(Ca_Instance *inst, Ca_Window *win)
 {
+    if (win->paint_snapshot) {
+        touch_font_pages_for_cmds(inst->font, win->draw_cmds, win->draw_cmd_count);
+        return;
+    }
     if (!win->root) return;
 
     /* 1. Reset the draw command list — it is rebuilt from cached + fresh data */

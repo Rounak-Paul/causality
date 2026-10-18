@@ -16,3 +16,6 @@ void ca_paint_pass(Ca_Instance *inst, Ca_Window *win);
    front of the pool.  No nodes are marked dirty — only dead (orphaned)
    slots are reclaimed.  Call when paint_cache_used crosses a threshold. */
 void ca_paint_cache_compact(Ca_Window *win);
+
+/** Copy only node and its children into target, mapped from source coordinates by x/y/scale. */
+bool ca_paint_snapshot(Ca_Window *target, const Ca_Node *node, float x, float y, float scale);

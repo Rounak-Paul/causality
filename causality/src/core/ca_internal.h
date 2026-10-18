@@ -1312,9 +1312,9 @@ struct Ca_Window {
     float         user_drag_start_y;   /* mouse y when drag began */
     bool          user_drag_active;    /* true after drag threshold exceeded */
 
+    bool          paint_snapshot; /* immutable isolated commands until preview readback */
     Ca_Window    *user_drag_preview;
     Ca_Image     *user_drag_image;
-    float         user_drag_preview_width, user_drag_preview_height;
     uint64_t      user_drag_serial;
     bool          user_drag_capture;
     bool          user_drag_preview_attempted;
