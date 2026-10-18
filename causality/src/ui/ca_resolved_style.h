@@ -90,6 +90,7 @@ typedef struct {
     float    shadow_offset_x, shadow_offset_y;
     float    shadow_blur;
     uint32_t shadow_color;
+    bool     shadow_inset;
     /* Z-index */
     int      z_index;
     /* Text wrapping */

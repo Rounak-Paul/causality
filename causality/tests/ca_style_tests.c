@@ -144,6 +144,27 @@ static bool test_gradient_rgba_stops_keep_following_rules(void)
     return true;
 }
 
+/** `inset` marks the shadow as inner; offsets that pack to 1 are not mistaken for the blur declaration. */
+static bool test_inset_box_shadow(void)
+{
+    Ca_Stylesheet *ss = ca_css_parse(
+        ".in { box-shadow: inset 0px 1px 6px rgba(0, 0, 0, 0.5); }"
+        ".out { box-shadow: 0px 1px 9px rgba(0, 0, 0, 0.5); }");
+    CHECK(ss && ss->rule_count == 2);
+
+    Ca_ResolvedStyle in = {0}, out = {0};
+    for (int i = 0; i < ss->rules[0].decl_count; ++i)
+        ca_style_apply_one_declaration(&in, ss->rules[0].decls[i].prop, &ss->rules[0].decls[i].value);
+    for (int i = 0; i < ss->rules[1].decl_count; ++i)
+        ca_style_apply_one_declaration(&out, ss->rules[1].decls[i].prop, &ss->rules[1].decls[i].value);
+    CHECK(in.shadow_inset && in.shadow_blur == 6.0f && in.shadow_offset_y == 1.0f);
+    CHECK((in.shadow_color & 0xFFu) == 0x7Fu);
+    CHECK(!out.shadow_inset && out.shadow_blur == 9.0f && out.shadow_offset_y == 1.0f);
+
+    ca_css_destroy(ss);
+    return true;
+}
+
 /** Property keywords spelled "auto" resolve as keywords; sizing "auto" stays a generic value. */
 static bool test_auto_keywords(void)
 {
@@ -675,6 +696,7 @@ int main(void)
     if (!test_author_vars_override_defaults()) return 1;
     if (!test_border_shorthand_resets_sides()) return 1;
     if (!test_gradient_rgba_stops_keep_following_rules()) return 1;
+    if (!test_inset_box_shadow()) return 1;
     if (!test_auto_keywords()) return 1;
     if (!test_label_inline_color_survives_restyle()) return 1;
     if (!test_node_graph_stubs_unfit_text()) return 1;

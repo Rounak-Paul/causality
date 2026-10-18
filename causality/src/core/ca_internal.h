@@ -147,6 +147,10 @@ typedef enum {
        text decoration): blur_radius = period, gradient_cx = dash length.
        The pattern follows absolute x so adjacent rects stay in phase. */
     CA_DRAW_MODE_DASH        = 6,
+    /* Inset box-shadow: painted inside the caster's own rounded box, where
+       a Gaussian-edged hole (the box shifted by gradient_cx/cy) leaves it
+       uncovered. blur_radius = blur. */
+    CA_DRAW_MODE_INSET_SHADOW = 7,
 } Ca_DrawMode;
 
 /* GPU-side instance data — must exactly match RectData in VERT_GLSL (std430).
@@ -401,6 +405,7 @@ typedef struct {
     float        shadow_offset_x, shadow_offset_y;
     float        shadow_blur;
     uint32_t     shadow_color;
+    bool         shadow_inset;   /* box-shadow: inset — paint inside the box */
     /* Backdrop filter — blur applied to pixels behind this node */
     float        backdrop_blur;
     /* Z-index */

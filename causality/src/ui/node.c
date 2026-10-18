@@ -516,6 +516,7 @@ bool content_desc_changed(const Ca_NodeDesc *a, const Ca_NodeDesc *b)
            a->shadow_offset_y != b->shadow_offset_y ||
            a->shadow_blur     != b->shadow_blur     ||
            a->shadow_color    != b->shadow_color    ||
+           a->shadow_inset    != b->shadow_inset    ||
            a->glow_radius     != b->glow_radius     ||
            a->glow_color      != b->glow_color      ||
            a->backdrop_blur   != b->backdrop_blur   ||

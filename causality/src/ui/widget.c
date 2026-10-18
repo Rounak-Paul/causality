@@ -3855,6 +3855,8 @@ Ca_Splitter *ca_split_begin(const Ca_SplitDesc *desc)
     uint32_t dummy = 0;
     apply_css(node, &node->desc, CA_ELEM_SPLITTER,
               desc->style, id, &dummy, NULL);
+    /* A stylesheet `gap` on the splitter widens the gutter between its panes. */
+    if (node->desc.gap > 0.0f) sp->bar_size = node->desc.gap;
 
     ctx_push_mode(node, ctx_top_reconcile());
     return sp;

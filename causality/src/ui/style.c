@@ -856,9 +856,11 @@ void ca_style_apply_one_declaration(Ca_ResolvedStyle *out, Ca_CssPropId prop,
                Decl A (keyword=0): type=COLOR — color=shadow_color,
                                    keyword packs offset_x (upper 16 bits) and
                                    offset_y (lower 16 bits) as signed int16.
-               Decl B (keyword=1): type=NUMBER — number=blur radius. */
-            if (val->keyword == 1) {
-                out->shadow_blur = val->number;
+               Decl B (keyword=1|2): type=NUMBER — number=blur radius; bit 1
+                                   (value 2) marks an `inset` shadow. */
+            if (val->type == CA_CSS_VAL_NUMBER) {
+                out->shadow_blur  = val->number;
+                out->shadow_inset = (val->keyword & 2) != 0;
             } else {
                 out->shadow_color    = val->color;
                 int16_t ox = (int16_t)((uint32_t)val->keyword >> 16);
@@ -1473,6 +1475,7 @@ void ca_style_apply_to_node(const Ca_ResolvedStyle *style,
         nd->shadow_offset_y = style->shadow_offset_y;
         nd->shadow_blur     = style->shadow_blur;
         nd->shadow_color    = style->shadow_color;
+        nd->shadow_inset    = style->shadow_inset;
     }
     if (STYLE_SET(CA_CSS_PROP_SHADOW_OFFSET_X)) nd->shadow_offset_x = style->shadow_offset_x;
     if (STYLE_SET(CA_CSS_PROP_SHADOW_OFFSET_Y)) nd->shadow_offset_y = style->shadow_offset_y;

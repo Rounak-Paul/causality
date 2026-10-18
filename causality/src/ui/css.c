@@ -1883,15 +1883,16 @@ static void parse_declarations(Parser *p, Ca_CssRule *rule)
         }
 
         /* box-shadow shorthand: [inset] offset-x offset-y [blur] [spread] [color]
-           We ignore inset/spread. Emits two decls:
+           We ignore spread. Emits two decls:
              Decl A (keyword=0): type=COLOR, color=shadow color, keyword packs
                                  offset_x (upper 16 bits) and offset_y (lower 16 bits) as int16.
-             Decl B (keyword=1): type=NUMBER, number=blur radius. */
+             Decl B (keyword=1, or 3 for `inset`): type=NUMBER, number=blur radius. */
         if (prop_id == CA_CSS_PROP_BOX_SHADOW) {
             float offset_x = 0.0f, offset_y = 0.0f, blur = 0.0f;
             uint32_t color = 0x00000080;
             int nums_seen = 0;
             float nums[3] = {0};
+            bool inset = false;
 
             while (1) {
                 skip_ws(p);
@@ -1919,9 +1920,11 @@ static void parse_declarations(Parser *p, Ca_CssRule *rule)
                 } else if (pk.type == TOK_IDENT) {
                     parser_next(p);
                     uint32_t named;
-                    if (lookup_named_color(pk.text, &named))
+                    if (strcasecmp(pk.text, "inset") == 0)
+                        inset = true;
+                    else if (lookup_named_color(pk.text, &named))
                         color = named;
-                    /* unknown keywords (e.g. "inset") are skipped */
+                    /* other unknown keywords are skipped */
                 } else if ((pk.type == TOK_DIMENSION || pk.type == TOK_NUMBER) && nums_seen < 3) {
                     parser_next(p);
                     nums[nums_seen++] = pk.number;
@@ -1952,7 +1955,7 @@ static void parse_declarations(Parser *p, Ca_CssRule *rule)
             Ca_CssValue vb = {0};
             vb.type    = CA_CSS_VAL_NUMBER;
             vb.number  = blur;
-            vb.keyword = 1;
+            vb.keyword = inset ? 3 : 1;
             add_decl(rule, CA_CSS_PROP_BOX_SHADOW, vb);
             consume_important(p, rule, from);
 

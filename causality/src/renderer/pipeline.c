@@ -137,6 +137,7 @@ static const char *FRAG_GLSL =
     "#define MODE_RADIAL_GRAD 3u\n"
     "#define MODE_WAVE        5u\n"
     "#define MODE_DASH        6u\n"
+    "#define MODE_INSET_SHADOW 7u\n"
     "\n"
     "vec3 srgb_to_linear(vec3 c) {\n"
     "    bvec3 cut = lessThan(c, vec3(0.04045));\n"
@@ -202,6 +203,19 @@ static const char *FRAG_GLSL =
     "        vec2  caster_half = max(box_half - vec2(v_blur), vec2(0.0));\n"
     "        float d_caster = roundedBoxSDF(p + v_grad_center, caster_half, r);\n"
     "        alp *= smoothstep(-hw, hw, d_caster);\n"
+    "        if (alp < 0.001) discard;\n"
+    "        out_color = vec4(srgb_to_linear(v_color.rgb), alp);\n"
+    "        return;\n"
+    "    }\n"
+    /* Inset box-shadow: inside the caster's rounded box, tinted wherever
+       the box shifted by the shadow offset (the "hole") does not cover,
+       with a smooth edge of +-blur around the hole boundary. */
+    "    if (v_mode == MODE_INSET_SHADOW) {\n"
+    "        float hw      = 0.875 / max(clip_pc.edge_aa_scale, 1e-4);\n"
+    "        float inside  = 1.0 - smoothstep(-hw, hw, roundedBoxSDF(p, box_half, r));\n"
+    "        float d_hole  = roundedBoxSDF(p - v_grad_center, box_half, r);\n"
+    "        float edge    = (v_blur < 0.5) ? step(0.0, d_hole) : smoothstep(-v_blur, v_blur, d_hole);\n"
+    "        float alp     = edge * inside * v_color.a;\n"
     "        if (alp < 0.001) discard;\n"
     "        out_color = vec4(srgb_to_linear(v_color.rgb), alp);\n"
     "        return;\n"

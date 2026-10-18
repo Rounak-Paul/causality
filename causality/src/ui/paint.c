@@ -430,7 +430,7 @@ static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, Cli
     }
 
     /* ---- Box shadow — GPU SDF Gaussian blur ---- */
-    if (node->desc.shadow_color != 0 &&
+    if (node->desc.shadow_color != 0 && !node->desc.shadow_inset &&
         ca_window_reserve_draw_commands(win, (size_t)win->draw_cmd_count + 1u)) {
         float sr, sg, sb, sa;
         unpack_color(node->desc.shadow_color, &sr, &sg, &sb, &sa);
@@ -507,6 +507,30 @@ static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, Cli
 
         cmd->z_index = node->desc.z_index;
         cmd->in_use  = true;
+        set_clip(cmd, clip);
+    }
+
+    /* ---- Inset box-shadow — over the background, under the content ---- */
+    if (node->desc.shadow_color != 0 && node->desc.shadow_inset &&
+        ca_window_reserve_draw_commands(win, (size_t)win->draw_cmd_count + 1u)) {
+        Ca_DrawCmd *cmd = &win->draw_cmds[win->draw_cmd_count++];
+        memset(cmd, 0, sizeof(*cmd));
+        cmd->type        = CA_DRAW_RECT;
+        cmd->draw_mode   = CA_DRAW_MODE_INSET_SHADOW;
+        cmd->x           = node->x;
+        cmd->y           = node->y;
+        cmd->w           = node->w;
+        cmd->h           = node->h;
+        unpack_color(node->desc.shadow_color, &cmd->r, &cmd->g, &cmd->b, &cmd->a);
+        cmd->corner_tl   = ca_desc_corner_tl(&node->desc);
+        cmd->corner_tr   = ca_desc_corner_tr(&node->desc);
+        cmd->corner_br   = ca_desc_corner_br(&node->desc);
+        cmd->corner_bl   = ca_desc_corner_bl(&node->desc);
+        cmd->blur_radius = node->desc.shadow_blur;
+        cmd->gradient_cx = node->desc.shadow_offset_x;
+        cmd->gradient_cy = node->desc.shadow_offset_y;
+        cmd->z_index     = node->desc.z_index;
+        cmd->in_use      = true;
         set_clip(cmd, clip);
     }
 
