@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Sol/Causality contributors.
 
-/* motion_lists.h — interned comma lists for CSS transition / animation values.
+/* motion_lists.h — interned lists for CSS transition / animation / mask values.
 
    A `transition: a 1s, b 2s` declaration is a list of any length. Resolved
    styles are copied by value all over the style cascade, so they cannot own
@@ -28,6 +28,9 @@ typedef enum {
     CA_MOTION_LIST_ANIMATION_DIRECTION,   /* uint8_t Ca_AnimDirection */
     CA_MOTION_LIST_ANIMATION_FILL,        /* uint8_t Ca_AnimFill */
     CA_MOTION_LIST_ANIMATION_PLAY_STATE,  /* uint8_t: 0 running, 1 paused */
+    CA_MOTION_LIST_MASK_GRADIENT,         /* uint32_t words; see mask.h */
+    CA_MOTION_LIST_BACKDROP_CUTOUT,       /* uint32_t words (float bits); see mask.h */
+    CA_MOTION_LIST_AMBIENT_LIGHT,         /* uint32_t words (float bits); see mask.h */
     CA_MOTION_LIST_KIND_COUNT
 } Ca_MotionListKind;
 

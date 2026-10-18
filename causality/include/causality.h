@@ -1517,6 +1517,31 @@ CA_API void ca_image(const Ca_ImageDesc *desc);
        and resumes from it. A node rebuilt in the same place keeps its
        animation running instead of restarting it.
 
+   Masks:
+     mask-image: linear-gradient([<angle> | to <side>], <colour> [<pos> [<pos>]], ...)
+       (also -webkit-mask-image; `none` clears it). Any number of stops; only
+       each colour's alpha matters; a position is a length, a percentage or a
+       calc() sum of both, e.g. `calc(100% - 32px)`. The mask shapes the
+       element's backdrop-filter: blur, so a glass overlay placed after
+       scrolling content can frost it only toward the edges. It does not yet
+       mask the element's own background, border or children.
+     backdrop-cutout: <top> [<right> [<bottom> [<left>]]] [round <radius>]
+       A rounded window, inset from the element's box (insets may exceed the
+       box), where its backdrop-filter does not apply. A large glass overlay
+       can thus frost everything beneath it except a clear opening. Content
+       that must stay unblurred is raised above the overlay with z-index.
+     Lengths may be negative (`top: -12px`, `margin-left: -4px`).
+
+   Ambient light:
+     ambient-light: <blur> <reach> [<strength>]
+       The element's painted box (its content, as of the end of its subtree)
+       is blurred by `blur` px and the blurred copy spills outward as light,
+       screen-blended over whatever surrounds the box and fading to nothing
+       over `reach` px (the box's rounded edge is the origin; its edge
+       colours extend outward). Not clipped by ancestors, so it crosses
+       panel edges. `strength` scales the intensity (default 1). Content
+       painted into a higher z-index band later is not part of the copy.
+
    Example:
      ca_instance_load_css(inst,
          ".container { padding: 16px; gap: 8px; flex-direction: column; }\n"

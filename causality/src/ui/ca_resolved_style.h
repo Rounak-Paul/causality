@@ -159,4 +159,7 @@ typedef struct {
     uint32_t scrollbar_thumb_border_left_color;
     /* Backdrop filter */
     float    backdrop_blur;
+    uint32_t mask_image;      /* mask handle (mask.h), 0 = none */
+    uint32_t backdrop_cutout; /* cutout handle (mask.h), 0 = none */
+    uint32_t ambient_light;   /* ambient handle (mask.h), 0 = none */
 } Ca_ResolvedStyle;

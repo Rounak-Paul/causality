@@ -32,6 +32,9 @@ static const size_t k_item_size[CA_MOTION_LIST_KIND_COUNT] = {
     [CA_MOTION_LIST_ANIMATION_DIRECTION]  = sizeof(uint8_t),
     [CA_MOTION_LIST_ANIMATION_FILL]       = sizeof(uint8_t),
     [CA_MOTION_LIST_ANIMATION_PLAY_STATE] = sizeof(uint8_t),
+    [CA_MOTION_LIST_MASK_GRADIENT]        = sizeof(uint32_t),
+    [CA_MOTION_LIST_BACKDROP_CUTOUT]      = sizeof(uint32_t),
+    [CA_MOTION_LIST_AMBIENT_LIGHT]        = sizeof(uint32_t),
 };
 
 static void lock(void)

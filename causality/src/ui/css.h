@@ -208,6 +208,14 @@ typedef enum {
 
     /* Backdrop filter */
     CA_CSS_PROP_BACKDROP_FILTER,   /* backdrop-filter: blur(Xpx) */
+    /* `mask-image: linear-gradient(...)`: `keyword` is a mask handle (mask.h); 0 = none. */
+    CA_CSS_PROP_MASK_IMAGE,
+    /* `backdrop-cutout: <top> <right> <bottom> <left> [round <radius>]`: a rounded window, inset from
+       the element's box, where its backdrop-filter does not apply. `keyword` is a cutout handle (mask.h). */
+    CA_CSS_PROP_BACKDROP_CUTOUT,
+    /* `ambient-light: <blur> <reach> [<strength>]`: the element's painted box, blurred, spills
+       colour outward over its surroundings. `keyword` is an ambient handle (mask.h). */
+    CA_CSS_PROP_AMBIENT_LIGHT,
 
     CA_CSS_PROP_COUNT
 } Ca_CssPropId;

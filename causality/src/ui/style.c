@@ -819,6 +819,9 @@ void ca_style_apply_one_declaration(Ca_ResolvedStyle *out, Ca_CssPropId prop,
         case CA_CSS_PROP_ANIMATION_DIRECTION:  out->motion.anim_direction  = (uint32_t)val->keyword; break;
         case CA_CSS_PROP_ANIMATION_FILL:       out->motion.anim_fill       = (uint32_t)val->keyword; break;
         case CA_CSS_PROP_ANIMATION_PLAY_STATE: out->motion.anim_play_state = (uint32_t)val->keyword; break;
+        case CA_CSS_PROP_MASK_IMAGE: out->mask_image = (uint32_t)val->keyword; break;
+        case CA_CSS_PROP_BACKDROP_CUTOUT: out->backdrop_cutout = (uint32_t)val->keyword; break;
+        case CA_CSS_PROP_AMBIENT_LIGHT: out->ambient_light = (uint32_t)val->keyword; break;
         case CA_CSS_PROP_TRANSITION_STRETCH:
             out->motion.stretch = fmaxf(css_val_to_px(val), 0.0f);
             break;
@@ -1500,6 +1503,9 @@ void ca_style_apply_to_node(const Ca_ResolvedStyle *style,
 
     /* Backdrop filter — last rule wins */
     if (STYLE_SET(CA_CSS_PROP_BACKDROP_FILTER)) nd->backdrop_blur = style->backdrop_blur;
+    if (STYLE_SET(CA_CSS_PROP_MASK_IMAGE)) nd->mask_image = style->mask_image;
+    if (STYLE_SET(CA_CSS_PROP_BACKDROP_CUTOUT)) nd->backdrop_cutout = style->backdrop_cutout;
+    if (STYLE_SET(CA_CSS_PROP_AMBIENT_LIGHT)) nd->ambient_light = style->ambient_light;
 
     /* Z-index */
     if (nd->z_index == 0 && STYLE_SET(CA_CSS_PROP_Z_INDEX))

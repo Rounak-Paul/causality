@@ -12,6 +12,7 @@
 #include "widget.h"
 #include "motion.h"
 #include "motion_lists.h"
+#include "mask.h"
 #include "../src/reactive/reactive.h"
 
 #include <stdio.h>
@@ -396,6 +397,100 @@ static bool test_bezier_easing_curve(void)
         const float t = (float)i / 10.0f;
         CHECK(fabsf(ca_easing_eval(&diagonal, t) - t) < 0.01f);
     }
+    return true;
+}
+
+/** `mask-image: linear-gradient(...)` parses to a handle that resolves to alpha ramps over the box. */
+static bool test_mask_image(void)
+{
+    Ca_Stylesheet *ss = ca_css_parse(
+        ".fade { mask-image: linear-gradient(to right, #000, transparent 32px, transparent calc(100% - 32px), #000); }"
+        ".bare { -webkit-mask-image: linear-gradient(90deg, #000, transparent); }"
+        ".off  { mask-image: none; }"
+        ".bad  { mask-image: linear-gradient(to right, #000); }");
+    CHECK(ss && ss->rule_count == 4);
+    CHECK(ss->rules[0].decl_count == 1 && ss->rules[0].decls[0].prop == CA_CSS_PROP_MASK_IMAGE);
+    const uint32_t fade = (uint32_t)ss->rules[0].decls[0].value.keyword;
+    CHECK(fade != 0 && ca_mask_stop_count(fade) == 4);
+
+    Ca_MaskLine line;
+    Ca_MaskSegment seg[8];
+    CHECK(ca_mask_resolve(fade, 200.0f, 40.0f, 1.0f, &line, seg, 8) == 4);
+    CHECK(fabsf(line.dir_x - 1.0f) < 1e-5f && fabsf(line.dir_y) < 1e-5f && fabsf(line.half_length - 100.0f) < 1e-3f);
+    CHECK(seg[0].a0 == 1.0f && seg[0].a1 == 1.0f && fabsf(seg[0].t1) < 1e-3f);
+    CHECK(fabsf(seg[1].t0 - 0.0f) < 1e-3f && fabsf(seg[1].t1 - 32.0f) < 1e-3f && seg[1].a0 == 1.0f && seg[1].a1 == 0.0f);
+    CHECK(fabsf(seg[2].t0 - 168.0f) < 1e-3f && fabsf(seg[2].t1 - 200.0f) < 1e-3f && seg[2].a0 == 0.0f && seg[2].a1 == 1.0f);
+    CHECK(seg[3].t1 > 1.0e8f && seg[3].a0 == 1.0f);
+    CHECK(ca_mask_resolve(fade, 200.0f, 40.0f, 2.0f, NULL, seg, 8) == 4 && fabsf(seg[1].t1 - 64.0f) < 1e-3f);
+    CHECK(ca_mask_resolve(fade, 200.0f, 40.0f, 1.0f, NULL, NULL, 0) == 4);
+
+    const uint32_t bare = (uint32_t)ss->rules[1].decls[0].value.keyword;
+    CHECK(bare != 0 && ca_mask_resolve(bare, 100.0f, 10.0f, 1.0f, NULL, seg, 8) == 2);
+    CHECK(fabsf(seg[1].t0 - 0.0f) < 1e-3f && fabsf(seg[1].t1 - 100.0f) < 1e-3f);
+    CHECK(ss->rules[2].decls[0].value.keyword == 0);
+    CHECK(ss->rules[3].decls[0].value.keyword == 0);
+
+    Ca_ResolvedStyle rs;
+    memset(&rs, 0, sizeof(rs));
+    ca_style_apply_one_declaration(&rs, CA_CSS_PROP_MASK_IMAGE, &ss->rules[0].decls[0].value);
+    CHECK(ca_style_prop_is_set(&rs, CA_CSS_PROP_MASK_IMAGE) && rs.mask_image == fade);
+    ca_css_destroy(ss);
+    return true;
+}
+
+/** Negative lengths lex as signed numbers; `backdrop-cutout` resolves to a rounded window. */
+static bool test_negative_lengths_and_backdrop_cutout(void)
+{
+    Ca_Stylesheet *ss = ca_css_parse(
+        ".a { top: -12px; margin-left: -4px; width: calc(100% - 8px); }"
+        ".b { backdrop-cutout: 10px 20px 30px 40px round 6px; }"
+        ".c { backdrop-cutout: 5px 9px; }"
+        ".d { backdrop-cutout: none; }");
+    CHECK(ss && ss->rule_count == 4);
+    CHECK(ss->rules[0].decl_count == 3);
+    CHECK(ss->rules[0].decls[0].value.type == CA_CSS_VAL_PX && fabsf(ss->rules[0].decls[0].value.number + 12.0f) < 1e-5f);
+    CHECK(fabsf(ss->rules[0].decls[1].value.number + 4.0f) < 1e-5f);
+
+    float out[5];
+    const uint32_t b = (uint32_t)ss->rules[1].decls[0].value.keyword;
+    CHECK(ss->rules[1].decls[0].prop == CA_CSS_PROP_BACKDROP_CUTOUT && b != 0);
+    CHECK(ca_cutout_resolve(b, 2.0f, out));
+    CHECK(out[0] == 80.0f && out[1] == 20.0f && out[2] == 40.0f && out[3] == 60.0f && out[4] == 12.0f);
+    const uint32_t c = (uint32_t)ss->rules[2].decls[0].value.keyword;
+    CHECK(ca_cutout_resolve(c, 1.0f, out));
+    CHECK(out[0] == 9.0f && out[1] == 5.0f && out[2] == 9.0f && out[3] == 5.0f && out[4] == 0.0f);
+    CHECK(ss->rules[3].decls[0].value.keyword == 0 && !ca_cutout_resolve(0, 1.0f, out));
+
+    Ca_ResolvedStyle rs;
+    memset(&rs, 0, sizeof(rs));
+    ca_style_apply_one_declaration(&rs, CA_CSS_PROP_BACKDROP_CUTOUT, &ss->rules[1].decls[0].value);
+    CHECK(ca_style_prop_is_set(&rs, CA_CSS_PROP_BACKDROP_CUTOUT) && rs.backdrop_cutout == b);
+    ca_css_destroy(ss);
+    return true;
+}
+
+/** `ambient-light` parses to an ambient handle with blur, reach and a default strength of 1. */
+static bool test_ambient_light(void)
+{
+    Ca_Stylesheet *ss = ca_css_parse(
+        ".a { ambient-light: 48px 88px 2.4; }"
+        ".b { ambient-light: 10px 20px; }"
+        ".c { ambient-light: none; }"
+        ".d { ambient-light: 10px 0px; }");
+    CHECK(ss && ss->rule_count == 4);
+    float out[3];
+    const uint32_t a = (uint32_t)ss->rules[0].decls[0].value.keyword;
+    CHECK(ss->rules[0].decls[0].prop == CA_CSS_PROP_AMBIENT_LIGHT && a != 0);
+    CHECK(ca_ambient_resolve(a, 2.0f, out) && out[0] == 96.0f && out[1] == 176.0f && fabsf(out[2] - 2.4f) < 1e-5f);
+    const uint32_t b = (uint32_t)ss->rules[1].decls[0].value.keyword;
+    CHECK(ca_ambient_resolve(b, 1.0f, out) && out[0] == 10.0f && out[1] == 20.0f && out[2] == 1.0f);
+    CHECK(ss->rules[2].decls[0].value.keyword == 0 && ss->rules[3].decls[0].value.keyword == 0);
+    CHECK(!ca_ambient_resolve(0, 1.0f, out));
+    Ca_ResolvedStyle rs;
+    memset(&rs, 0, sizeof(rs));
+    ca_style_apply_one_declaration(&rs, CA_CSS_PROP_AMBIENT_LIGHT, &ss->rules[0].decls[0].value);
+    CHECK(ca_style_prop_is_set(&rs, CA_CSS_PROP_AMBIENT_LIGHT) && rs.ambient_light == a);
+    ca_css_destroy(ss);
     return true;
 }
 
@@ -937,6 +1032,9 @@ int main(void)
     if (!test_animation_shorthand()) return 1;
     if (!test_keyframes_parse()) return 1;
     if (!test_bezier_easing_curve()) return 1;
+    if (!test_mask_image()) return 1;
+    if (!test_negative_lengths_and_backdrop_cutout()) return 1;
+    if (!test_ambient_light()) return 1;
     if (!test_auto_keywords()) return 1;
     if (!test_label_inline_color_survives_restyle()) return 1;
     if (!test_node_graph_stubs_unfit_text()) return 1;

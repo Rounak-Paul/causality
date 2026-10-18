@@ -174,6 +174,10 @@ static const char *BACKDROP_VERT_GLSL =
     "layout(location = 2) flat out vec2 v_size;\n"
     "layout(location = 3) flat out vec4 v_corner_radii;\n"
     "layout(location = 4) flat out float v_edge_aa_scale;\n"
+    "layout(location = 5) flat out vec4 v_mask_ramp;\n"
+    "layout(location = 6) flat out uint v_mask_alphas;\n"
+    "layout(location = 7) flat out vec4 v_cut;\n"
+    "layout(location = 8) flat out float v_cut_radius;\n"
     "void main() {\n"
     "    ImageData d = ssb.data[gl_InstanceIndex];\n"
     "    const vec2 offsets[6] = vec2[6](\n"
@@ -187,6 +191,10 @@ static const char *BACKDROP_VERT_GLSL =
     "    v_size = d.size;\n"
     "    v_corner_radii = vec4(d.corner_01, d.corner_23);\n"
     "    v_edge_aa_scale = d.edge_aa_scale_pad.x;\n"
+    "    v_mask_ramp = vec4(d.edge_aa_scale_pad.y, d._pad1[0].x, 0.0, d._pad1[1].x);\n"
+    "    v_mask_alphas = floatBitsToUint(d._pad1[0].y);\n"
+    "    v_cut = vec4(d._pad1[1].y, d._pad1[2].x, d._pad1[2].y, d._pad1[3].x);\n"
+    "    v_cut_radius = d._pad1[3].y;\n"
     "}\n";
 
 /* Composite fragment stage: the blurred backdrop clipped to the element's
@@ -201,6 +209,10 @@ static const char *BACKDROP_FRAG_GLSL =
     "layout(location = 2) flat in vec2 v_size;\n"
     "layout(location = 3) flat in vec4 v_corner_radii;\n"
     "layout(location = 4) flat in float v_edge_aa_scale;\n"
+    "layout(location = 5) flat in vec4 v_mask_ramp;   // t0, t1, -, angle (t1 <= t0: unmasked)\n"
+    "layout(location = 6) flat in uint v_mask_alphas; // packHalf2x16(a0, a1)\n"
+    "layout(location = 7) flat in vec4 v_cut;         // cutout insets left, top, right, bottom\n"
+    "layout(location = 8) flat in float v_cut_radius; // cutout radius + 1 (0 = no cutout)\n"
     "layout(location = 0) out vec4 out_color;\n"
     "float roundedBoxSDF(vec2 p, vec2 b, vec4 r) {\n"
     "    float radius = (p.x > 0.0) ?\n"
@@ -215,12 +227,110 @@ static const char *BACKDROP_FRAG_GLSL =
     "    vec2 half_size = v_size * 0.5;\n"
     "    float dist = roundedBoxSDF(v_local - half_size, half_size, v_corner_radii);\n"
     "    float coverage = 1.0 - smoothstep(-aa_hw, aa_hw, dist);\n"
-    "    if (coverage < 0.001) discard;\n"
+    "    if (v_mask_ramp.y > v_mask_ramp.x) {\n"
+    "        vec2 dir = vec2(sin(v_mask_ramp.w), -cos(v_mask_ramp.w));\n"
+    "        float half_len = 0.5 * (abs(v_size.x * dir.x) + abs(v_size.y * dir.y));\n"
+    "        float t = dot(v_local - half_size, dir) + half_len;\n"
+    "        if (t < v_mask_ramp.x || t >= v_mask_ramp.y) discard;\n"
+    "        vec2 a = unpackHalf2x16(v_mask_alphas);\n"
+    "        coverage *= mix(a.x, a.y, (t - v_mask_ramp.x) / (v_mask_ramp.y - v_mask_ramp.x));\n"
+    "    }\n"
+    "    if (v_cut_radius > 0.0) {\n"
+    "        vec2 lo = v_cut.xy, hi = v_size - v_cut.zw;\n"
+    "        if (hi.x > lo.x && hi.y > lo.y) {\n"
+    "            float hole = roundedBoxSDF(v_local - (lo + hi) * 0.5, (hi - lo) * 0.5, vec4(v_cut_radius - 1.0));\n"
+    "            coverage *= smoothstep(-aa_hw, aa_hw, hole);\n"
+    "        }\n"
+    "    }\n"    "    if (coverage < 0.001) discard;\n"
     "    vec3 c = texture(tex, gl_FragCoord.xy * v_uv_scale).rgb;\n"
     "    out_color = vec4(c, coverage);\n"
     "}\n";
 
+/* Ambient light vertex stage: the same instance record, with the quad
+   covering the box expanded by `reach`. _pad1[5..10] = clamp rect (lo.xy,
+   hi.xy, quad-local px), reach, strength. */
+static const char *AMBIENT_VERT_GLSL =
+    "#version 450\n"
+    "struct ImageData {\n"
+    "    vec2 pos;\n"
+    "    vec2 size;\n"
+    "    vec4 uv;\n"
+    "    vec4 color;\n"
+    "    vec2 viewport;\n"
+    "    vec2 xf_ab;\n"
+    "    vec2 xf_cd;\n"
+    "    vec2 corner_01;\n"
+    "    vec2 corner_23;\n"
+    "    vec2 edge_aa_scale_pad;\n"
+    "    vec2 _pad1[4];\n"
+    "};\n"
+    "layout(std430, set = 0, binding = 0) readonly buffer SSB {\n"
+    "    ImageData data[];\n"
+    "} ssb;\n"
+    "layout(location = 0) flat out vec2 v_uv_scale;\n"
+    "layout(location = 1) out vec2 v_local;\n"
+    "layout(location = 2) flat out vec2 v_size;\n"
+    "layout(location = 3) flat out vec4 v_corner_radii;\n"
+    "layout(location = 4) flat out float v_edge_aa_scale;\n"
+    "layout(location = 5) flat out vec4 v_clamp;\n"
+    "layout(location = 6) flat out vec2 v_light;\n"
+    "void main() {\n"
+    "    ImageData d = ssb.data[gl_InstanceIndex];\n"
+    "    const vec2 offsets[6] = vec2[6](\n"
+    "        vec2(0.0, 0.0), vec2(1.0, 0.0), vec2(0.0, 1.0),\n"
+    "        vec2(1.0, 0.0), vec2(1.0, 1.0), vec2(0.0, 1.0));\n"
+    "    vec2 off = offsets[gl_VertexIndex];\n"
+    "    vec2 pixel = d.pos + mat2(d.xf_ab, d.xf_cd) * (off * d.size);\n"
+    "    gl_Position = vec4((pixel / d.viewport) * 2.0 - 1.0, 0.0, 1.0);\n"
+    "    v_uv_scale = d.uv.xy;\n"
+    "    v_local = off * d.size;\n"
+    "    v_size = d.size;\n"
+    "    v_corner_radii = vec4(d.corner_01, d.corner_23);\n"
+    "    v_edge_aa_scale = d.edge_aa_scale_pad.x;\n"
+    "    v_clamp = vec4(d.edge_aa_scale_pad.y, d._pad1[0].x, d._pad1[0].y, d._pad1[1].x);\n"
+    "    v_light = vec2(d._pad1[1].y, d._pad1[2].x);\n"
+    "}\n";
+
+/* Ambient light fragment stage: outside the box's rounded edge, the blurred
+   copy of the box (sampled at the nearest point inside it, so its edge
+   colours extend outward) is screen-blended with a falloff over `reach`. */
+static const char *AMBIENT_FRAG_GLSL =
+    "#version 450\n"
+    "layout(set = 1, binding = 0) uniform sampler2D tex;\n"
+    "layout(location = 0) flat in vec2 v_uv_scale;\n"
+    "layout(location = 1) in vec2 v_local;\n"
+    "layout(location = 2) flat in vec2 v_size;\n"
+    "layout(location = 3) flat in vec4 v_corner_radii;\n"
+    "layout(location = 4) flat in float v_edge_aa_scale;\n"
+    "layout(location = 5) flat in vec4 v_clamp;   // sample rect lo.xy, hi.xy (quad-local)\n"
+    "layout(location = 6) flat in vec2 v_light;   // reach, strength\n"
+    "layout(location = 0) out vec4 out_color;\n"
+    "float roundedBoxSDF(vec2 p, vec2 b, vec4 r) {\n"
+    "    float radius = (p.x > 0.0) ?\n"
+    "        ((p.y > 0.0) ? r.z : r.y) :\n"
+    "        ((p.y > 0.0) ? r.w : r.x);\n"
+    "    radius = clamp(radius, 0.0, min(b.x, b.y));\n"
+    "    vec2 d = abs(p) - b + vec2(radius);\n"
+    "    return length(max(d, vec2(0.0))) + min(max(d.x, d.y), 0.0) - radius;\n"
+    "}\n"
+    "void main() {\n"
+    "    float reach = v_light.x;\n"
+    "    vec2 half_size = v_size * 0.5;\n"
+    "    float dist = roundedBoxSDF(v_local - half_size, half_size - vec2(reach), v_corner_radii);\n"
+    "    float aa_hw = 0.875 / max(v_edge_aa_scale, 1e-4);\n"
+    "    float edge = smoothstep(-aa_hw, aa_hw, dist);\n"
+    "    float fall = 1.0 - clamp(dist / reach, 0.0, 1.0);\n"
+    "    float strength = v_light.y * edge * fall * fall;\n"
+    "    if (strength < 0.001) discard;\n"
+    "    vec2 inside = clamp(v_local, v_clamp.xy, v_clamp.zw);\n"
+    "    vec2 frag = gl_FragCoord.xy + (inside - v_local) * v_edge_aa_scale;\n"
+    "    vec3 c = texture(tex, frag * v_uv_scale).rgb;\n"
+    "    out_color = vec4(c * strength, 0.0);\n"
+    "}\n";
+
 /* ---- Pipelines ---- */
+
+typedef enum { BLEND_NONE, BLEND_OVER, BLEND_SCREEN } BlendMode;
 
 typedef struct {
     float   texel_size[2];
@@ -237,13 +347,13 @@ typedef struct {
  * @param frag_src     Fragment GLSL source.
  * @param layout       Pipeline layout.
  * @param color_format Color attachment format.
- * @param blend        Whether to enable premultiplied-by-alpha src-over blending.
+ * @param blend        Blending: none, src-over, or screen (additive-style light).
  * @param out          Receives the pipeline on success.
  * @return true on success.
  */
 static bool create_pipeline(Ca_Instance *inst, const char *vert_src,
                             const char *frag_src, VkPipelineLayout layout,
-                            VkFormat color_format, bool blend,
+                            VkFormat color_format, BlendMode blend,
                             VkPipeline *out)
 {
     VkShaderModule vert = ca_shader_compile(inst, vert_src, VK_SHADER_STAGE_VERTEX_BIT);
@@ -277,9 +387,11 @@ static bool create_pipeline(Ca_Instance *inst, const char *vert_src,
         .sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
         .rasterizationSamples = VK_SAMPLE_COUNT_1_BIT };
     VkPipelineColorBlendAttachmentState blend_att = {
-        .blendEnable         = blend ? VK_TRUE : VK_FALSE,
-        .srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA,
-        .dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
+        .blendEnable         = blend != BLEND_NONE ? VK_TRUE : VK_FALSE,
+        .srcColorBlendFactor = blend == BLEND_SCREEN ? VK_BLEND_FACTOR_ONE_MINUS_DST_COLOR
+                                                     : VK_BLEND_FACTOR_SRC_ALPHA,
+        .dstColorBlendFactor = blend == BLEND_SCREEN ? VK_BLEND_FACTOR_ONE
+                                                     : VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
         .colorBlendOp        = VK_BLEND_OP_ADD,
         .srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE,
         .dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
@@ -351,10 +463,13 @@ bool ca_blur_pipeline_create(Ca_Instance *inst, VkFormat color_format)
        sample returns linear RGB for the sRGB swapchain to re-encode. */
     if (!create_pipeline(inst, BLUR_VERT_GLSL, BLUR_FRAG_GLSL,
                          inst->blur_pipeline_layout, VK_FORMAT_R8G8B8A8_SRGB,
-                         false, &inst->blur_pipeline) ||
+                         BLEND_NONE, &inst->blur_pipeline) ||
         !create_pipeline(inst, BACKDROP_VERT_GLSL, BACKDROP_FRAG_GLSL,
                          inst->text_pipeline.layout, color_format,
-                         true, &inst->backdrop_pipeline)) {
+                         BLEND_OVER, &inst->backdrop_pipeline) ||
+        !create_pipeline(inst, AMBIENT_VERT_GLSL, AMBIENT_FRAG_GLSL,
+                         inst->text_pipeline.layout, color_format,
+                         BLEND_SCREEN, &inst->ambient_pipeline)) {
         ca_blur_pipeline_destroy(inst);
         return false;
     }
@@ -363,6 +478,10 @@ bool ca_blur_pipeline_create(Ca_Instance *inst, VkFormat color_format)
 
 void ca_blur_pipeline_destroy(Ca_Instance *inst)
 {
+    if (inst->ambient_pipeline != VK_NULL_HANDLE) {
+        vkDestroyPipeline(inst->vk_device, inst->ambient_pipeline, NULL);
+        inst->ambient_pipeline = VK_NULL_HANDLE;
+    }
     if (inst->backdrop_pipeline != VK_NULL_HANDLE) {
         vkDestroyPipeline(inst->vk_device, inst->backdrop_pipeline, NULL);
         inst->backdrop_pipeline = VK_NULL_HANDLE;

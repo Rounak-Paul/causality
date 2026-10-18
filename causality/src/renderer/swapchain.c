@@ -7,8 +7,10 @@
 #include "viewport.h"
 #include "blur.h"
 #include "node.h"
+#include "mask.h"
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 /* ---- Helpers ---- */
@@ -737,6 +739,7 @@ static uint32_t range_types(const PaintCtx *ctx, int band, uint32_t lo, uint32_t
         case CA_DRAW_IMAGE:    mask |= RANGE_HAS_IMAGE;    break;
         case CA_DRAW_VIEWPORT: mask |= RANGE_HAS_VIEWPORT; break;
         case CA_DRAW_BACKDROP_BLUR: break;
+        case CA_DRAW_AMBIENT:       break;
         }
     }
     return mask;
@@ -1097,6 +1100,28 @@ static bool backdrop_region(const PaintCtx *ctx, const Ca_DrawCmd *cmd,
 }
 
 /**
+ * Converts a float in [0, 1] to IEEE half precision bits.
+ *
+ * @param f Value; clamped to [0, 1].
+ * @return The 16-bit half-float pattern.
+ */
+static uint32_t unit_to_half(float f)
+{
+    if (!(f > 0.0f)) return 0u;
+    if (f >= 1.0f) return 0x3C00u;
+    uint32_t bits;
+    memcpy(&bits, &f, sizeof(bits));
+    const int exponent = (int)((bits >> 23) & 0xFFu) - 127 + 15;
+    uint32_t mantissa = bits & 0x7FFFFFu;
+    if (exponent <= 0) {
+        if (exponent < -10) return 0u;
+        mantissa |= 0x800000u;
+        return (mantissa >> (14 - exponent)) & 0x3FFu;
+    }
+    return ((uint32_t)exponent << 10) | (mantissa >> 13);
+}
+
+/**
  * Paints one element's CSS backdrop-filter: blur() at its exact position in
  * paint order. Everything recorded so far is its backdrop; dynamic
  * rendering is suspended for the region capture/blur and resumed with
@@ -1141,13 +1166,113 @@ static void record_backdrop(PaintCtx *ctx, const Ca_DrawCmd *cmd)
     vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS,
                             inst->text_pipeline.layout, 1, 1, &win->blur_desc_set, 0, NULL);
 
+    Ca_MaskSegment inline_segments[8];
+    Ca_MaskSegment *segments = inline_segments;
+    Ca_MaskLine line = {0};
+    uint32_t segment_count = 1;
+    const float ui_scale = win->ui_scale > 0.0f ? win->ui_scale : 1.0f;
+    if (cmd->mask_image) {
+        segment_count = ca_mask_resolve(cmd->mask_image, cmd->w, cmd->h, ui_scale, &line, NULL, 0);
+        if (segment_count > 8u) {
+            segments = malloc(sizeof(*segments) * segment_count);
+            if (!segments) return;
+        }
+        ca_mask_resolve(cmd->mask_image, cmd->w, cmd->h, ui_scale, &line, segments, segment_count);
+    }
+    float cutout[5];
+    const bool has_cutout = cmd->backdrop_cutout && ca_cutout_resolve(cmd->backdrop_cutout, ui_scale, cutout);
+    for (uint32_t s = 0; s < segment_count; ++s) {
+        Ca_TextInstance *dst = &ctx->ti_base[ctx->ti_n];
+        pack_textured_instance(ctx, cmd, dst);
+        dst->uv[0] = uv_scale[0];
+        dst->uv[1] = uv_scale[1];
+        dst->uv[2] = 0.0f;
+        dst->uv[3] = 0.0f;
+        image_instance_pack_corner_radii(dst, cmd, ctx->scale_x);
+        if (cmd->mask_image) {
+            const uint32_t alphas = unit_to_half(segments[s].a0) | (unit_to_half(segments[s].a1) << 16);
+            dst->_pad1[5] = segments[s].t0;
+            dst->_pad1[6] = segments[s].t1;
+            memcpy(&dst->_pad1[7], &alphas, sizeof(alphas));
+            dst->_pad1[8] = line.angle;
+        }
+        if (has_cutout) {
+            memcpy(&dst->_pad1[9], cutout, sizeof(float) * 4);
+            dst->_pad1[13] = cutout[4] + 1.0f;
+        }
+        vkCmdDraw(cb, 6, 1, 0, ctx->ti_n);
+        ctx->ti_n++;
+        ctx->batch_n++;
+    }
+    if (segments != inline_segments) free(segments);
+}
+
+/**
+ * Paints one element's ambient light at its place in paint order: the box
+ * (everything painted inside it so far) is blurred, and the blurred copy is
+ * screen-blended over the surroundings just outside the box's rounded edge,
+ * fading out over `reach`. The box itself is left untouched.
+ *
+ * @param ctx Frame recording state.
+ * @param cmd CA_DRAW_AMBIENT command.
+ */
+static void record_ambient(PaintCtx *ctx, const Ca_DrawCmd *cmd)
+{
+    if (!ctx->can_blur || ctx->inst->ambient_pipeline == VK_NULL_HANDLE) return;
+    Ca_Window *win = ctx->win;
+    const float ui_scale = win->ui_scale > 0.0f ? win->ui_scale : 1.0f;
+    float light[3];
+    if (!ca_ambient_resolve(cmd->ambient_light, ui_scale, light) || !(light[1] > 0.0f)) return;
+
+    VkRect2D scissor = cmd_scissor(ctx, cmd, true);
+    VkRect2D region;
+    if (!backdrop_region(ctx, cmd, scissor, &region)) return;
+
+    Ca_DrawCmd quad = *cmd;
+    quad.x -= light[1]; quad.y -= light[1];
+    quad.w += 2.0f * light[1]; quad.h += 2.0f * light[1];
+    VkRect2D spill = cmd_scissor(ctx, &quad, true);
+    VkRect2D spill_region;
+    if (!backdrop_region(ctx, &quad, spill, &spill_region)) return;
+
+    Ca_Instance *inst = ctx->inst;
+    VkCommandBuffer cb = ctx->f->cmd;
+    float uv_scale[2];
+    vkCmdEndRendering(cb);
+    bool captured = ca_blur_capture_region(inst, win, cb, ctx->swapchain_image, ctx->extent, region,
+                                           light[0] * ctx->scale_x, uv_scale);
+    VkRenderingInfo reload_info = {
+        .sType                = VK_STRUCTURE_TYPE_RENDERING_INFO,
+        .renderArea           = { .offset = { 0, 0 }, .extent = ctx->extent },
+        .layerCount           = 1,
+        .colorAttachmentCount = 1,
+        .pColorAttachments    = &ctx->reload_attach,
+    };
+    vkCmdBeginRendering(cb, &reload_info);
+    if (!captured) return;
+
+    vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, inst->ambient_pipeline);
+    vkCmdSetViewport(cb, 0, 1, &ctx->viewport);
+    vkCmdSetScissor(cb, 0, 1, &spill_region);
+    vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                            inst->text_pipeline.layout, 0, 1, &ctx->f->ssbo_set, 0, NULL);
+    vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                            inst->text_pipeline.layout, 1, 1, &win->blur_desc_set, 0, NULL);
+
     Ca_TextInstance *dst = &ctx->ti_base[ctx->ti_n];
-    pack_textured_instance(ctx, cmd, dst);
+    pack_textured_instance(ctx, &quad, dst);
     dst->uv[0] = uv_scale[0];
     dst->uv[1] = uv_scale[1];
     dst->uv[2] = 0.0f;
     dst->uv[3] = 0.0f;
     image_instance_pack_corner_radii(dst, cmd, ctx->scale_x);
+    const float inv_x = 1.0f / ctx->scale_x, inv_y = 1.0f / ctx->scale_y;
+    dst->_pad1[5] = (float)region.offset.x * inv_x - quad.x;
+    dst->_pad1[6] = (float)region.offset.y * inv_y - quad.y;
+    dst->_pad1[7] = (float)(region.offset.x + (int32_t)region.extent.width) * inv_x - quad.x;
+    dst->_pad1[8] = (float)(region.offset.y + (int32_t)region.extent.height) * inv_y - quad.y;
+    dst->_pad1[9] = light[1];
+    dst->_pad1[10] = light[2];
     vkCmdDraw(cb, 6, 1, 0, ctx->ti_n);
     ctx->ti_n++;
     ctx->batch_n++;
@@ -1170,9 +1295,10 @@ static void record_band(PaintCtx *ctx, int band)
         const Ca_DrawCmd *cmd = &ctx->win->draw_cmds[paint_index(ctx, pos)];
         if (!cmd->in_use || cmd_paint_band(cmd) != band)
             continue;
-        if (cmd->type == CA_DRAW_BACKDROP_BLUR) {
+        if (cmd->type == CA_DRAW_BACKDROP_BLUR || cmd->type == CA_DRAW_AMBIENT) {
             record_range(ctx, band, lo, pos);
-            record_backdrop(ctx, cmd);
+            if (cmd->type == CA_DRAW_AMBIENT) record_ambient(ctx, cmd);
+            else record_backdrop(ctx, cmd);
             lo = pos + 1;
         } else if (cmd->paint_barrier) {
             record_range(ctx, band, lo, pos);
@@ -1250,9 +1376,14 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
         capture_deliver(inst, win);
 
     ca_profile_begin(inst, "Platform UI Buffer Ensure");
-    if (!ca_instance_buf_ensure(inst, f,
-                                win->draw_cmd_count > 0
-                                    ? win->draw_cmd_count : 1u)) {
+    /* A masked backdrop composites once per mask segment (stops + 1). */
+    uint64_t instance_count = win->draw_cmd_count > 0 ? win->draw_cmd_count : 1u;
+    for (uint32_t d = 0; d < win->draw_cmd_count; ++d) {
+        const Ca_DrawCmd *c = &win->draw_cmds[d];
+        if (c->in_use && c->type == CA_DRAW_BACKDROP_BLUR && c->mask_image)
+            instance_count += ca_mask_stop_count(c->mask_image);
+    }
+    if (instance_count > UINT32_MAX || !ca_instance_buf_ensure(inst, f, (uint32_t)instance_count)) {
         ca_profile_end(inst, "Platform UI Buffer Ensure");
         fprintf(stderr, "[vk] unable to grow frame instance storage\n");
         return;

@@ -398,6 +398,36 @@ static void paint_color_picker(Ca_Window *win, Ca_Node *node, const Ca_ColorPick
                       6.0f * ui_s, r.alpha_h + 4.0f * ui_s, ui_s);
 }
 
+/**
+ * Emits the node's ambient-light command, after its children so the blurred
+ * copy contains everything painted inside the box.
+ *
+ * @param win  Window receiving the command.
+ * @param node Node whose desc carries the ambient light.
+ *
+ * The spill is deliberately not clipped by any ancestor: like light, it
+ * crosses panel edges and lands on whatever lies around the box.
+ */
+static void paint_ambient(Ca_Window *win, const Ca_Node *node)
+{
+    if (!node->desc.ambient_light || node->w <= 0.0f || node->h <= 0.0f ||
+        node->desc.hidden || node->desc.visibility_hidden ||
+        !ca_window_reserve_draw_commands(win, (size_t)win->draw_cmd_count + 1u))
+        return;
+    Ca_DrawCmd *cmd = &win->draw_cmds[win->draw_cmd_count++];
+    memset(cmd, 0, sizeof(*cmd));
+    cmd->type          = CA_DRAW_AMBIENT;
+    cmd->x = node->x; cmd->y = node->y; cmd->w = node->w; cmd->h = node->h;
+    cmd->corner_radius = node->desc.corner_radius;
+    cmd->corner_tl = ca_desc_corner_tl(&node->desc);
+    cmd->corner_tr = ca_desc_corner_tr(&node->desc);
+    cmd->corner_br = ca_desc_corner_br(&node->desc);
+    cmd->corner_bl = ca_desc_corner_bl(&node->desc);
+    cmd->ambient_light = node->desc.ambient_light;
+    cmd->z_index       = node->desc.z_index;
+    cmd->in_use        = true;
+}
+
 static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, ClipRect clip)
 {
     if (!node->in_use) return;
@@ -419,6 +449,8 @@ static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, Cli
         cmd->w                    = node->w;
         cmd->h                    = node->h;
         cmd->backdrop_blur_radius = node->desc.backdrop_blur;
+        cmd->mask_image           = node->desc.mask_image;
+        cmd->backdrop_cutout      = node->desc.backdrop_cutout;
         cmd->corner_radius        = node->desc.corner_radius;
         cmd->corner_tl = ca_desc_corner_tl(&node->desc);
         cmd->corner_tr = ca_desc_corner_tr(&node->desc);
@@ -2435,6 +2467,7 @@ static void paint_tree_cached(Ca_Instance *inst, Ca_Window *win,
         paint_splitter(win, node, own_clip);
         paint_border(win, node, own_clip);
         paint_scrollbars(win, node, own_clip);
+        paint_ambient(win, node);
         uint32_t sb_count = win->draw_cmd_count - sb_start;
         apply_inherited_z(win, sb_start, sb_count, effective_z);
         apply_transform(win, sb_start, sb_count, effective_xf, false);

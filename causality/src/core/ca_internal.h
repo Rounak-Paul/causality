@@ -415,6 +415,12 @@ typedef struct {
     bool         shadow_inset;   /* box-shadow: inset — paint inside the box */
     /* Backdrop filter — blur applied to pixels behind this node */
     float        backdrop_blur;
+    /* Alpha mask (CSS mask-image) for the backdrop blur; mask handle, 0 = none */
+    uint32_t     mask_image;
+    /* Rounded window where the backdrop blur does not apply; cutout handle, 0 = none */
+    uint32_t     backdrop_cutout;
+    /* Ambient light: blurred colour spill around the box; ambient handle, 0 = none */
+    uint32_t     ambient_light;
     /* Z-index */
     int16_t      z_index;
     /* Text wrapping */
@@ -576,6 +582,7 @@ typedef enum {
     CA_DRAW_IMAGE          = 2,  /* user-loaded image textured quad      */
     CA_DRAW_VIEWPORT       = 3,  /* offscreen viewport textured quad     */
     CA_DRAW_BACKDROP_BLUR  = 4,  /* frosted-glass: blur what's behind    */
+    CA_DRAW_AMBIENT        = 5,  /* blurred copy of the box spilling outward */
 } Ca_DrawType;
 
 typedef struct {
@@ -615,6 +622,12 @@ typedef struct {
     Ca_DrawMode draw_mode;
     /* Backdrop blur radius in pixels (CA_DRAW_BACKDROP_BLUR only) */
     float       backdrop_blur_radius;
+    /* Alpha mask applied to the backdrop blur (mask handle, 0 = none) */
+    uint32_t    mask_image;
+    /* Cutout window of the backdrop blur (cutout handle, 0 = none) */
+    uint32_t    backdrop_cutout;
+    /* Ambient light parameters (CA_DRAW_AMBIENT only; ambient handle) */
+    uint32_t    ambient_light;
     /* Z-index for draw order sorting */
     int16_t     z_index;
     uint32_t    image_index;
@@ -1646,6 +1659,8 @@ struct Ca_Instance {
     VkPipeline       blur_pipeline;
     VkPipelineLayout blur_pipeline_layout;
     VkPipeline       backdrop_pipeline;
+    /* Ambient light spill: screen-blends the blurred box outside its edge. */
+    VkPipeline       ambient_pipeline;
 
     /* Stable user-image handles and growable sampled-image descriptor pools. */
     Ca_Pool           images;

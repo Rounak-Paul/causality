@@ -5,6 +5,7 @@
 #include "css.h"
 #include "style.h"
 #include "motion_lists.h"
+#include "mask.h"
 #include "causality_config.h"
 
 #include <ctype.h>
@@ -173,11 +174,16 @@ static Token next_token(Lexer *lex)
         return tok;
     }
 
-    /* Number / dimension */
-    if (isdigit((unsigned char)c) || (c == '.' && lex->pos + 1 < lex->len &&
+    /* Number / dimension; a '-' directly before a digit (or `.digit`) is the number's sign. */
+    const char after_sign = lex->pos + 2 < lex->len ? lex->src[lex->pos + 2] : '\0';
+    const bool negative = c == '-' && lex->pos + 1 < lex->len &&
+        (isdigit((unsigned char)lex->src[lex->pos + 1]) ||
+         (lex->src[lex->pos + 1] == '.' && isdigit((unsigned char)after_sign)));
+    if (negative || isdigit((unsigned char)c) || (c == '.' && lex->pos + 1 < lex->len &&
         isdigit((unsigned char)lex->src[lex->pos + 1]))) {
         int i = 0;
         bool dot = false;
+        if (negative) tok.text[i++] = advance(lex);
         while (i < 255) {
             char d = peek(lex);
             if (isdigit((unsigned char)d)) { tok.text[i++] = advance(lex); }
@@ -714,7 +720,7 @@ static float parse_calc_expr(Parser *p)
             continue;
         }
         if (t.type == TOK_PLUS)  { op = '+'; continue; }
-        if (t.type == TOK_MINUS) { op = '-'; continue; }
+        if (t.type == TOK_MINUS || (t.type == TOK_IDENT && strcmp(t.text, "-") == 0)) { op = '-'; continue; }
         if (t.type == TOK_STAR)  { op = '*'; continue; }
         /* '/' would need a special token — skip unknown */
     }
@@ -892,6 +898,10 @@ static Ca_CssPropId lookup_property(const char *name)
         { "scrollbar-thumb-border-bottom-color", CA_CSS_PROP_SCROLLBAR_THUMB_BORDER_BOTTOM_COLOR },
         { "scrollbar-thumb-border-left-color", CA_CSS_PROP_SCROLLBAR_THUMB_BORDER_LEFT_COLOR },
         { "backdrop-filter",            CA_CSS_PROP_BACKDROP_FILTER },
+        { "mask-image",                 CA_CSS_PROP_MASK_IMAGE },
+        { "backdrop-cutout",            CA_CSS_PROP_BACKDROP_CUTOUT },
+        { "ambient-light",              CA_CSS_PROP_AMBIENT_LIGHT },
+        { "-webkit-mask-image",         CA_CSS_PROP_MASK_IMAGE },
     };
     int count = (int)(sizeof(props) / sizeof(props[0]));
     for (int i = 0; i < count; ++i) {
@@ -1417,6 +1427,60 @@ static void skip_gradient_stop_hints(Parser *p)
     }
 }
 
+/**
+ * Parses the optional direction of a linear-gradient() (`to <side>[ <side>]`
+ * or an angle) and the comma after it.
+ *
+ * @param p     Parser positioned just after the function's '('.
+ * @param angle Receives the angle in degrees (CSS: 0 = to top); untouched when no direction is written.
+ */
+static void parse_linear_direction(Parser *p, float *angle_out)
+{
+    float angle = *angle_out;
+    skip_ws(p);
+    Token t = parser_peek(p);
+    if (t.type == TOK_IDENT && strcasecmp(t.text, "to") == 0) {
+        parser_next(p); /* consume "to" */
+        skip_ws(p);
+        Token dir = parser_next(p);
+        if (dir.type == TOK_IDENT) {
+            if      (strcasecmp(dir.text, "bottom") == 0) angle = 180.0f;
+            else if (strcasecmp(dir.text, "top")    == 0) angle = 0.0f;
+            else if (strcasecmp(dir.text, "right")  == 0) angle = 90.0f;
+            else if (strcasecmp(dir.text, "left")   == 0) angle = 270.0f;
+            /* "to top right" etc. — peek for second direction word */
+            skip_ws(p);
+            Token dir2 = parser_peek(p);
+            if (dir2.type == TOK_IDENT &&
+                (strcasecmp(dir2.text, "top")    == 0 || strcasecmp(dir2.text, "bottom") == 0 ||
+                 strcasecmp(dir2.text, "left")   == 0 || strcasecmp(dir2.text, "right")  == 0)) {
+                parser_next(p); /* consume second direction, use approximate diagonal */
+                if (strcasecmp(dir.text, "top") == 0 && strcasecmp(dir2.text, "right") == 0)  angle = 45.0f;
+                else if (strcasecmp(dir.text, "bottom") == 0 && strcasecmp(dir2.text, "right") == 0) angle = 135.0f;
+                else if (strcasecmp(dir.text, "bottom") == 0 && strcasecmp(dir2.text, "left") == 0)  angle = 225.0f;
+                else if (strcasecmp(dir.text, "top") == 0 && strcasecmp(dir2.text, "left") == 0)     angle = 315.0f;
+            }
+        }
+        skip_ws(p);
+        t = parser_peek(p);
+        if (t.type == TOK_COMMA) { parser_next(p); }
+    } else if (t.type == TOK_DIMENSION || t.type == TOK_NUMBER) {
+        /* Numeric angle like "45deg" or "0.5turn" */
+        parser_next(p);
+        angle = t.number;
+        if (t.unit[0] && (strcasecmp(t.unit, "turn") == 0 || strcasecmp(t.unit, "turns") == 0))
+            angle *= 360.0f;
+        else if (t.unit[0] && strcasecmp(t.unit, "rad") == 0)
+            angle *= (180.0f / 3.14159265f);
+        else if (t.unit[0] && strcasecmp(t.unit, "grad") == 0)
+            angle *= 0.9f;
+        skip_ws(p);
+        t = parser_peek(p);
+        if (t.type == TOK_COMMA) parser_next(p);
+    }
+    *angle_out = angle;
+}
+
 /* Parse linear-gradient() or radial-gradient() and emit 5 declarations:
      CA_CSS_PROP_BACKGROUND       — start color (RRGGBBAA)
      CA_CSS_PROP_GRADIENT_COLOR2  — end color
@@ -1434,46 +1498,7 @@ static void parse_gradient_func(Parser *p, Ca_CssRule *rule, int is_radial)
     Token t = parser_peek(p);
 
     if (!is_radial) {
-        /* Check for optional angle: e.g., "to bottom", "45deg", "180deg" */
-        if (t.type == TOK_IDENT && strcasecmp(t.text, "to") == 0) {
-            parser_next(p); /* consume "to" */
-            skip_ws(p);
-            Token dir = parser_next(p);
-            if (dir.type == TOK_IDENT) {
-                if      (strcasecmp(dir.text, "bottom") == 0) angle = 180.0f;
-                else if (strcasecmp(dir.text, "top")    == 0) angle = 0.0f;
-                else if (strcasecmp(dir.text, "right")  == 0) angle = 90.0f;
-                else if (strcasecmp(dir.text, "left")   == 0) angle = 270.0f;
-                /* "to top right" etc. — peek for second direction word */
-                skip_ws(p);
-                Token dir2 = parser_peek(p);
-                if (dir2.type == TOK_IDENT &&
-                    (strcasecmp(dir2.text, "top")    == 0 || strcasecmp(dir2.text, "bottom") == 0 ||
-                     strcasecmp(dir2.text, "left")   == 0 || strcasecmp(dir2.text, "right")  == 0)) {
-                    parser_next(p); /* consume second direction, use approximate diagonal */
-                    if (strcasecmp(dir.text, "top") == 0 && strcasecmp(dir2.text, "right") == 0)  angle = 45.0f;
-                    else if (strcasecmp(dir.text, "bottom") == 0 && strcasecmp(dir2.text, "right") == 0) angle = 135.0f;
-                    else if (strcasecmp(dir.text, "bottom") == 0 && strcasecmp(dir2.text, "left") == 0)  angle = 225.0f;
-                    else if (strcasecmp(dir.text, "top") == 0 && strcasecmp(dir2.text, "left") == 0)     angle = 315.0f;
-                }
-            }
-            skip_ws(p);
-            t = parser_peek(p);
-            if (t.type == TOK_COMMA) { parser_next(p); }
-        } else if (t.type == TOK_DIMENSION || t.type == TOK_NUMBER) {
-            /* Numeric angle like "45deg" or "0.5turn" */
-            parser_next(p);
-            angle = t.number;
-            if (t.unit[0] && (strcasecmp(t.unit, "turn") == 0 || strcasecmp(t.unit, "turns") == 0))
-                angle *= 360.0f;
-            else if (t.unit[0] && strcasecmp(t.unit, "rad") == 0)
-                angle *= (180.0f / 3.14159265f);
-            else if (t.unit[0] && strcasecmp(t.unit, "grad") == 0)
-                angle *= 0.9f;
-            skip_ws(p);
-            t = parser_peek(p);
-            if (t.type == TOK_COMMA) parser_next(p);
-        }
+        parse_linear_direction(p, &angle);
     } else {
         /* Radial: optional "circle at <cx> <cy>" prefix */
         if (t.type == TOK_IDENT && strcasecmp(t.text, "circle") == 0) {
@@ -1725,6 +1750,209 @@ static bool next_list_item(Parser *p)
     if (parser_peek(p).type != TOK_COMMA) return false;
     parser_next(p);
     return true;
+}
+
+
+static uint32_t float_word(float f)
+{
+    uint32_t w;
+    memcpy(&w, &f, sizeof(w));
+    return w;
+}
+
+/** Adds a length token's value to a mask position: `%` to the percent part, anything else to px. */
+static void mask_position_add(const Token *t, float sign, float *pct, float *px)
+{
+    if (t->type == TOK_DIMENSION && strcmp(t->unit, "%") == 0) { *pct += sign * t->number; return; }
+    float v = t->number;
+    if (t->type == TOK_DIMENSION) {
+        if      (strcmp(t->unit, "em")  == 0 || strcmp(t->unit, "rem") == 0) v *= 16.0f;
+        else if (strcmp(t->unit, "pt")  == 0) v *= 96.0f / 72.0f;
+    }
+    *px += sign * v;
+}
+
+/**
+ * Parses one mask stop position: `<percent>`, `<length>`, `0`, or a
+ * `calc()` sum of those.
+ *
+ * @param p   Parser positioned at the position token.
+ * @param pct Receives the percent part.
+ * @param px  Receives the px part.
+ * @return true when a position was consumed.
+ */
+static bool parse_mask_position(Parser *p, float *pct, float *px)
+{
+    skip_ws(p);
+    Token t = parser_peek(p);
+    *pct = 0.0f; *px = 0.0f;
+    if (t.type == TOK_NUMBER || t.type == TOK_DIMENSION) {
+        parser_next(p);
+        mask_position_add(&t, 1.0f, pct, px);
+        return true;
+    }
+    if (t.type != TOK_FUNCTION || strcasecmp(t.text, "calc") != 0) return false;
+    parser_next(p);
+    float sign = 1.0f;
+    for (;;) {
+        skip_ws(p);
+        Token term = parser_next(p);
+        if (term.type == TOK_RPAREN || term.type == TOK_EOF) break;
+        if (term.type == TOK_PLUS) sign = 1.0f;
+        else if (term.type == TOK_MINUS || (term.type == TOK_IDENT && strcmp(term.text, "-") == 0)) sign = -1.0f;
+        else if (term.type == TOK_NUMBER || term.type == TOK_DIMENSION) {
+            mask_position_add(&term, sign, pct, px);
+            sign = 1.0f;
+        }
+    }
+    return true;
+}
+
+/**
+ * Parses `mask-image` and emits its CA_CSS_PROP_MASK_IMAGE declaration.
+ *
+ * Supports `none` and `linear-gradient([angle | to side], stop, ...)` with
+ * any number of stops; each stop is a colour (only its alpha matters) and
+ * zero, one or two positions. Anything else leaves the mask unset.
+ *
+ * @param p    Parser positioned at the value.
+ * @param rule Rule receiving the declaration.
+ */
+static void parse_mask_image(Parser *p, Ca_CssRule *rule)
+{
+    const int from = rule->decl_count;
+    skip_ws(p);
+    Token t = parser_peek(p);
+    uint32_t handle = 0;
+    if (t.type == TOK_FUNCTION && strcasecmp(t.text, "linear-gradient") == 0) {
+        parser_next(p);
+        float angle = 180.0f;
+        parse_linear_direction(p, &angle);
+        ItemBuf words = item_buf(sizeof(uint32_t));
+        const uint32_t angle_word = float_word(angle);
+        item_push(&words, &angle_word);
+        uint32_t stops = 0;
+        for (;;) {
+            skip_ws(p);
+            Token peek = parser_peek(p);
+            if (peek.type == TOK_RPAREN || peek.type == TOK_EOF) { if (peek.type == TOK_RPAREN) parser_next(p); break; }
+            const uint32_t color = parse_gradient_color_stop(p);
+            const uint32_t alpha_word = float_word((float)(color & 0xFFu) / 255.0f);
+            float pct, px;
+            bool positioned = false;
+            for (int n = 0; n < 2 && parse_mask_position(p, &pct, &px); ++n) {
+                const uint32_t stop[3] = { float_word(pct), float_word(px), alpha_word };
+                for (int k = 0; k < 3; ++k) item_push(&words, &stop[k]);
+                ++stops;
+                positioned = true;
+            }
+            if (!positioned) {
+                const uint32_t stop[3] = { float_word(NAN), float_word(0.0f), alpha_word };
+                for (int k = 0; k < 3; ++k) item_push(&words, &stop[k]);
+                ++stops;
+            }
+            skip_ws(p);
+            if (parser_peek(p).type == TOK_COMMA) parser_next(p);
+        }
+        if (stops >= 2u) handle = item_intern(&words, CA_MOTION_LIST_MASK_GRADIENT);
+        else { free(words.data); }
+    } else if (t.type == TOK_IDENT) {
+        parser_next(p);
+    }
+    emit_list(rule, CA_CSS_PROP_MASK_IMAGE, handle);
+    consume_important(p, rule, from);
+    skip_ws(p);
+    Token end = parser_peek(p);
+    while (end.type != TOK_SEMICOLON && end.type != TOK_RBRACE && end.type != TOK_EOF) {
+        parser_next(p);
+        end = parser_peek(p);
+    }
+    if (end.type == TOK_SEMICOLON) parser_next(p);
+}
+
+
+/** Reads a length token as px (em/rem count as 16px); false when the next token is not a length. */
+static bool parse_px_length(Parser *p, float *out)
+{
+    skip_ws(p);
+    Token t = parser_peek(p);
+    if (t.type != TOK_NUMBER && t.type != TOK_DIMENSION) return false;
+    parser_next(p);
+    float v = t.number;
+    if (t.type == TOK_DIMENSION && (strcmp(t.unit, "em") == 0 || strcmp(t.unit, "rem") == 0)) v *= 16.0f;
+    *out = v;
+    return true;
+}
+
+/**
+ * Parses `backdrop-cutout: <top> [<right> [<bottom> [<left>]]] [round <radius>]`
+ * (margin-style shorthand for the insets) and emits its declaration.
+ *
+ * @param p    Parser positioned at the value.
+ * @param rule Rule receiving the declaration.
+ */
+static void parse_backdrop_cutout(Parser *p, Ca_CssRule *rule)
+{
+    const int from = rule->decl_count;
+    float inset[4] = { 0 }, radius = 0.0f;
+    int count = 0;
+    while (count < 4 && parse_px_length(p, &inset[count])) ++count;
+    skip_ws(p);
+    Token t = parser_peek(p);
+    if (t.type == TOK_IDENT && strcasecmp(t.text, "round") == 0) {
+        parser_next(p);
+        parse_px_length(p, &radius);
+    }
+    uint32_t handle = 0;
+    if (count > 0) {
+        if (count == 1) inset[1] = inset[2] = inset[3] = inset[0];
+        else if (count == 2) { inset[2] = inset[0]; inset[3] = inset[1]; }
+        else if (count == 3) inset[3] = inset[1];
+        const uint32_t words[5] = { float_word(inset[0]), float_word(inset[1]), float_word(inset[2]),
+                                    float_word(inset[3]), float_word(radius) };
+        handle = ca_motion_list_intern(CA_MOTION_LIST_BACKDROP_CUTOUT, words, 5);
+    }
+    emit_list(rule, CA_CSS_PROP_BACKDROP_CUTOUT, handle);
+    consume_important(p, rule, from);
+    skip_ws(p);
+    Token end = parser_peek(p);
+    while (end.type != TOK_SEMICOLON && end.type != TOK_RBRACE && end.type != TOK_EOF) {
+        parser_next(p);
+        end = parser_peek(p);
+    }
+    if (end.type == TOK_SEMICOLON) parser_next(p);
+}
+
+
+/**
+ * Parses `ambient-light: <blur> <reach> [<strength>]` and emits its declaration.
+ *
+ * `blur` is the Gaussian blur length in px, `reach` how far (px) the light
+ * spills beyond the box, `strength` an intensity multiplier (default 1).
+ *
+ * @param p    Parser positioned at the value.
+ * @param rule Rule receiving the declaration.
+ */
+static void parse_ambient_light(Parser *p, Ca_CssRule *rule)
+{
+    const int from = rule->decl_count;
+    float v[3] = { 0.0f, 0.0f, 1.0f };
+    int count = 0;
+    while (count < 3 && parse_px_length(p, &v[count])) ++count;
+    uint32_t handle = 0;
+    if (count >= 2 && v[0] >= 0.0f && v[1] > 0.0f && v[2] >= 0.0f) {
+        const uint32_t words[3] = { float_word(v[0]), float_word(v[1]), float_word(v[2]) };
+        handle = ca_motion_list_intern(CA_MOTION_LIST_AMBIENT_LIGHT, words, 3);
+    }
+    emit_list(rule, CA_CSS_PROP_AMBIENT_LIGHT, handle);
+    consume_important(p, rule, from);
+    skip_ws(p);
+    Token end = parser_peek(p);
+    while (end.type != TOK_SEMICOLON && end.type != TOK_RBRACE && end.type != TOK_EOF) {
+        parser_next(p);
+        end = parser_peek(p);
+    }
+    if (end.type == TOK_SEMICOLON) parser_next(p);
 }
 
 /** Parses `transition: <property> <time> <timing> <delay>, ...` (any order within an item). */
@@ -2248,6 +2476,10 @@ static void parse_declarations(Parser *p, Ca_CssRule *rule)
             if (t.type == TOK_SEMICOLON) parser_next(p);
             continue;
         }
+
+        if (prop_id == CA_CSS_PROP_MASK_IMAGE) { parse_mask_image(p, rule); continue; }
+        if (prop_id == CA_CSS_PROP_BACKDROP_CUTOUT) { parse_backdrop_cutout(p, rule); continue; }
+        if (prop_id == CA_CSS_PROP_AMBIENT_LIGHT) { parse_ambient_light(p, rule); continue; }
 
         /* Motion: `transition` / `animation` shorthands and their longhands. */
         if (parse_motion_declaration(p, rule, prop_name)) continue;
