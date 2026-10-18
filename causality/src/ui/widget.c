@@ -999,6 +999,7 @@ Ca_Div *ca_div_begin(const Ca_DivDesc *desc)
         node->drag_fn_move  = (void *)desc->on_drag;
         node->drag_fn_end   = (void *)desc->on_drag_end;
         node->drag_data     = desc->drag_data;
+        node->drag_preview  = desc->drag_preview;
         node->scroll_fn     = (void *)desc->on_scroll;
         node->scroll_data   = desc->scroll_data;
     }
@@ -5755,6 +5756,7 @@ void ca_widget_input_pass(Ca_Window *win)
                 }
             }
             if (best) {
+                ca_drag_preview_clear(win);
                 win->user_drag_node    = best;
                 win->user_drag_start_x = px;
                 win->user_drag_start_y = py;
@@ -5778,6 +5780,7 @@ void ca_widget_input_pass(Ca_Window *win)
         /* Continue drag */
         if (win->user_drag_active && left_down && win->user_drag_node) {
             Ca_Node *dn = win->user_drag_node;
+            ca_drag_preview_update(win);
             if (dn->drag_fn_move) {
                 Ca_DragEvent ev = {
                     .window  = win,
@@ -5795,8 +5798,11 @@ void ca_widget_input_pass(Ca_Window *win)
             }
         }
 
+        if (win->user_drag_active && !win->user_drag_node) ca_drag_preview_clear(win);
+
         /* End drag */
         if (win->user_drag_active && !left_down) {
+            ca_drag_preview_clear(win);
             Ca_Node *dn = win->user_drag_node;
             if (dn && dn->drag_fn_end) {
                 Ca_DragEvent ev = {

@@ -222,6 +222,7 @@ bool ca_ui_window_init(Ca_Window *win)
 
 void ca_ui_window_shutdown(Ca_Window *win)
 {
+    ca_drag_preview_clear(win);
     ca_menu_storage_destroy(&win->titlebar_menu_storage,
                             &win->titlebar_menus);
     ca_node_system_shutdown(win);

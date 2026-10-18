@@ -48,3 +48,8 @@ void ca_window_sync_size_signals(Ca_Window *win);
 
 /** Width reserved at a closable tab header's trailing edge for its close glyph. */
 float ca_tab_close_zone(const Ca_Node *tab_node);
+
+/** Release a source window's drag snapshot and invalidate pending readbacks. */
+void ca_drag_preview_clear(Ca_Window *win);
+/** Update the opt-in source snapshot and its non-interactive native window. */
+void ca_drag_preview_update(Ca_Window *win);

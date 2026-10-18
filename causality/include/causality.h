@@ -915,6 +915,7 @@ typedef struct Ca_DivDesc {
     Ca_DragFn on_drag;             /* called every frame during drag         */
     Ca_DragFn on_drag_end;         /* called when mouse released             */
     void     *drag_data;           /* user_data passed to drag callbacks     */
+    bool      drag_preview;        /* snapshot follows pointer during transfer/reorder drags */
     /* Border */
     float    border_width;         /* border thickness in px (0 = none)     */
     uint32_t border_color;         /* ca_color(r,g,b,a)                     */

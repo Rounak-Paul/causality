@@ -786,6 +786,7 @@ struct Ca_Node {
     void         *drag_fn_move;     /* Ca_DragFn */
     void         *drag_fn_end;      /* Ca_DragFn */
     void         *drag_data;        /* user_data for drag callbacks */
+    bool          drag_preview;
     uint8_t       tree_drop_indicator;
     uint32_t      tree_drop_color;
     /* Scroll callback */
@@ -1310,6 +1311,13 @@ struct Ca_Window {
     float         user_drag_start_x;   /* mouse x when drag began */
     float         user_drag_start_y;   /* mouse y when drag began */
     bool          user_drag_active;    /* true after drag threshold exceeded */
+
+    Ca_Window    *user_drag_preview;
+    Ca_Image     *user_drag_image;
+    float         user_drag_preview_width, user_drag_preview_height;
+    uint64_t      user_drag_serial;
+    bool          user_drag_capture;
+    bool          user_drag_preview_attempted;
 
     /* Scrollbar drag state */
     Ca_Node      *scrollbar_drag_node; /* node whose scrollbar is being dragged */

@@ -979,7 +979,7 @@ static Ca_Window *window_create_in_pool(Ca_Instance *inst,
        keyboard/mouse focus.  Without this the first click on the window
        is consumed by the OS to bring it into focus rather than being
        delivered to the app as a button event. */
-    glfwFocusWindow(glfw);
+    if (!desc->no_focus) glfwFocusWindow(glfw);
 
     return slot;
 }
