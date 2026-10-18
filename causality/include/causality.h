@@ -822,6 +822,7 @@ typedef void (*Ca_ChangeFn)(Ca_TextInput *input, void *user_data);
    'dx' and 'dy' are the delta from the drag start point. */
 typedef struct Ca_DragEvent {
     Ca_Window *window;
+    int        button;        /* 0 = left, 1 = right */
     float      x, y;           /* current mouse position */
     float      start_x, start_y; /* where mouse was when drag began */
     float      dx, dy;         /* x - start_x, y - start_y */
@@ -916,6 +917,7 @@ typedef struct Ca_DivDesc {
     Ca_DragFn on_drag_end;         /* called when mouse released             */
     void     *drag_data;           /* user_data passed to drag callbacks     */
     bool      drag_preview;        /* snapshot follows pointer during transfer/reorder drags */
+    unsigned  drag_buttons;        /* bit 0 = left, bit 1 = right; zero defaults to left. Right drag starts after 4px and suppresses the release context menu. */
     /* Border */
     float    border_width;         /* border thickness in px (0 = none)     */
     uint32_t border_color;         /* ca_color(r,g,b,a)                     */
@@ -1679,7 +1681,7 @@ CA_API uint32_t ca_viewport_height(const Ca_Viewport *viewport);
 /* Returns the Ca_Instance that owns this viewport. */
 CA_API Ca_Instance *ca_viewport_instance(Ca_Viewport *viewport);
 
-/* Mark the viewport as needing a redraw on the next frame. */
+/* Dirty the viewport image and retained UI composite, and schedule the next frame. NULL is safe. */
 CA_API void ca_viewport_request_redraw(Ca_Viewport *viewport);
 
 /*

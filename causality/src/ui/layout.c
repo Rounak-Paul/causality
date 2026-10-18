@@ -901,9 +901,9 @@ static void layout_node(Ca_Node *node, float x, float y, float avail_w, float av
             float actual_cross = cross_cursor + cross_offset + (is_row ? child->h : child->w) + mc1;
             if (actual_cross > max_cross_extent) max_cross_extent = actual_cross;
             float actual_main = is_row ? child->w : child->h;
-            float end = main_cursor + actual_main;
+            float end = main_cursor + mb + actual_main + ma;
             if (end > max_main_extent) max_main_extent = end;
-            main_cursor += actual_main + jc_spacing;
+            main_cursor += mb + actual_main + ma + jc_spacing;
             vis_in_line++;
         }
 

@@ -854,6 +854,7 @@ struct Ca_Node {
     void         *drag_fn_move;     /* Ca_DragFn */
     void         *drag_fn_end;      /* Ca_DragFn */
     void         *drag_data;        /* user_data for drag callbacks */
+    unsigned      drag_buttons;
     bool          drag_preview;
     uint8_t       tree_drop_indicator;
     uint32_t      tree_drop_color;
@@ -1392,6 +1393,7 @@ struct Ca_Window {
     Ca_Node      *user_drag_node;      /* node being dragged by user drag callbacks */
     float         user_drag_start_x;   /* mouse x when drag began */
     float         user_drag_start_y;   /* mouse y when drag began */
+    int           user_drag_button;
     bool          user_drag_active;    /* true after drag threshold exceeded */
 
     bool          paint_snapshot; /* immutable isolated commands until preview readback */
@@ -1416,6 +1418,9 @@ struct Ca_Window {
     /* Input state (updated by GLFW callbacks each tick) */
     double        mouse_x, mouse_y;
     double        mouse_press_x, mouse_press_y;
+    double        right_press_x, right_press_y;
+    bool          right_click_this_frame;
+    bool          right_gesture_pending, right_gesture_moved;
     double        mouse_release_x[3], mouse_release_y[3];
     bool          mouse_released[3];
     int           mouse_mods;   /* CA_MOD_* held at the latest mouse button event */

@@ -351,6 +351,12 @@ static void glfw_mouse_button_cb(GLFWwindow *glfw, int button, int action, int m
         if (win->mouse_press_x < 0.0 || win->mouse_press_y < 0.0)
             glfwGetCursorPos(glfw, &win->mouse_press_x, &win->mouse_press_y);
     }
+    if (button == 1 && action == GLFW_PRESS) {
+        win->right_click_this_frame = true;
+        win->right_press_x = win->mouse_x; win->right_press_y = win->mouse_y;
+        if (win->right_press_x < 0 || win->right_press_y < 0)
+            glfwGetCursorPos(glfw, &win->right_press_x, &win->right_press_y);
+    }
     if (button >= 0 && button < 3 && action == GLFW_RELEASE) {
         int wx, wy;
         double cx = win->mouse_x, cy = win->mouse_y;
@@ -771,6 +777,7 @@ bool ca_window_system_tick(Ca_Instance *inst)
         Ca_Window *window = CA_POOL_AT(inst->windows, Ca_Window, i);
         if (window->in_use) {
             window->mouse_click_this_frame = false;
+            window->right_click_this_frame = false;
             memset(window->mouse_released, 0, sizeof(window->mouse_released));
             window->scroll_dx = 0;
             window->scroll_dy = 0;

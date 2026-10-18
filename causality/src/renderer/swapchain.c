@@ -1030,6 +1030,10 @@ static void record_viewports(PaintCtx *ctx, int band, uint32_t lo, uint32_t hi)
         Ca_TextInstance *dst = &ctx->ti_base[ctx->ti_n++];
         pack_textured_instance(ctx, cmd, dst);
         image_instance_pack_corner_radii(dst, cmd, ctx->scale_x);
+        if (cmd->has_clip && cmd->clip_shape[2] > 0.0f) {
+            memcpy(&dst->_pad1[5], cmd->clip_shape, sizeof(cmd->clip_shape));
+            memcpy(&dst->_pad1[9], cmd->clip_radii, sizeof(cmd->clip_radii));
+        }
     }
     if (ctx->ti_n > batch_start) {
         vkCmdSetScissor(cb, 0, 1, &cur_sc);

@@ -495,7 +495,8 @@ CA_API void ca_tooltip_set_text(Ca_Tooltip *tooltip, const char *text);
 /* ---- Context menu ---- */
 
 /*
- * Attach a context menu to the previously created element.
+ * Attach a context menu to the previously created element. Opens on right-button
+ * release when the gesture stays within the click threshold; dragging suppresses it.
  *
  * desc  Item list, selection callback, and open callback.
  */

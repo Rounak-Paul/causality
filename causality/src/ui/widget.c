@@ -1020,6 +1020,7 @@ Ca_Div *ca_div_begin(const Ca_DivDesc *desc)
         node->drag_fn_end   = (void *)desc->on_drag_end;
         node->drag_data     = desc->drag_data;
         node->drag_preview  = desc->drag_preview;
+        node->drag_buttons  = desc->drag_buttons;
         node->scroll_fn     = (void *)desc->on_scroll;
         node->scroll_data   = desc->scroll_data;
     }
@@ -4259,7 +4260,10 @@ void ca_viewport_set_callbacks(Ca_Viewport *viewport,
 
 void ca_viewport_request_redraw(Ca_Viewport *viewport)
 {
-    if (viewport) viewport->needs_redraw = true;
+    if (!viewport) return;
+    viewport->needs_redraw = true;
+    if (viewport->node) viewport->node->dirty |= CA_DIRTY_CONTENT;
+    ca_instance_request_frame_after(viewport->instance, 0);
 }
 
 void ca_viewport_screen_rect(const Ca_Viewport *viewport,
@@ -4839,6 +4843,35 @@ static bool wheel_reaches_node(Ca_Node *n, float px, float py,
     for (Ca_Node *p = top_hit; p; p = p->parent)
         if (p == n) return true;
     return !n->desc.no_hover && node_effective_z(n) >= top_z;
+}
+
+/** Find the topmost enabled drag receiver at x/y for the requested mouse button. */
+static Ca_Node *drag_target(Ca_Window *win, float x, float y, int button)
+{
+    Ca_Node *best=NULL; int best_z=-32768;
+    const int16_t top_z=pointer_top_z(win,x,y);
+    for (uint32_t i=0;i<ca_pool_slot_count(&win->node_pool);++i) {
+        Ca_Node *node=CA_POOL_AT(win->node_pool,Ca_Node,i);
+        if (!node->in_use || node_is_ancestor_hidden(node) || is_effectively_disabled(node)) continue;
+        if (!node->drag_fn_start && !node->drag_fn_move && !node->drag_fn_end) continue;
+        unsigned buttons=node->drag_buttons ? node->drag_buttons : 1u;
+        if (!(buttons & (1u << button))) continue;
+        if (!point_within_clip_ancestors(node,x,y) || !point_reaches_node(node,x,y,top_z)) continue;
+        int z=node_effective_z(node);
+        if (!best || z>best_z || (z==best_z && node_paints_after(node,best))) {best=node;best_z=z;}
+    }
+    return best;
+}
+
+/** Dispatch a captured user drag callback with its original button and press coordinates. */
+static void dispatch_drag(Ca_Window *win, Ca_Node *node, void *callback, float x, float y)
+{
+    if (!node || !callback) return;
+    Ca_DragEvent event={.window=win,.button=win->user_drag_button,.x=x,.y=y,
+        .start_x=win->user_drag_start_x,.start_y=win->user_drag_start_y,
+        .dx=x-win->user_drag_start_x,.dy=y-win->user_drag_start_y,
+        .local_x=x-node->x,.local_y=y-node->y,.node_w=node->w,.node_h=node->h};
+    ((Ca_DragFn)callback)(&event,node->drag_data);
 }
 
 void ca_widget_input_pass(Ca_Window *win)
@@ -5746,10 +5779,37 @@ void ca_widget_input_pass(Ca_Window *win)
         /* Context menu — right-click detection is below */
     }
 
-    /* --- Right-click for context menus --- */
+    /* Right-button gestures distinguish release context menus from thresholded drags. */
+    bool right_now=win->mouse_buttons[1];
+    bool right_pressed=win->right_click_this_frame || (right_now&&!win->prev_mouse_right);
+    if (right_pressed) {
+        if (!win->right_click_this_frame) {win->right_press_x=mx;win->right_press_y=my;}
+        win->right_gesture_pending=true; win->right_gesture_moved=false;
+    }
+    if (win->right_gesture_pending) {
+        double dx=mx-win->right_press_x,dy=my-win->right_press_y;
+        if (dx*dx+dy*dy>16*ui_s*ui_s) win->right_gesture_moved=true;
+    }
+    if (right_pressed&&!win->user_drag_node&&!left_down) {
+        float px=win->right_click_this_frame ? (float)win->right_press_x : mx;
+        float py=win->right_click_this_frame ? (float)win->right_press_y : my;
+        Ca_Node *target=drag_target(win,px,py,1);
+        if (target) {
+            win->user_drag_node=target; win->user_drag_button=1;
+            win->user_drag_start_x=px; win->user_drag_start_y=py; win->user_drag_active=false;
+        }
+    }
+    bool right_capture=win->user_drag_node&&win->user_drag_button==1;
+    if (right_capture&&!win->user_drag_active) {
+        float dx=mx-win->user_drag_start_x,dy=my-win->user_drag_start_y;
+        if (dx*dx+dy*dy>16*ui_s*ui_s) {
+            win->user_drag_active=true;
+            dispatch_drag(win,win->user_drag_node,win->user_drag_node->drag_fn_start,mx,my);
+        }
+    }
+    bool right_click_release=win->right_gesture_pending&&!right_now&&!win->right_gesture_moved;
     if (ca_pool_slot_count(&win->ctxmenu_pool) > 0) {
-        bool right_now = win->mouse_buttons[1];
-        if (right_now && !win->prev_mouse_right) {
+        if (right_pressed || right_click_release) {
             /* Close any currently-open context menu first */
             for (uint32_t i = 0; i < ca_pool_slot_count(&win->ctxmenu_pool); ++i) {
                 Ca_CtxMenu *cm = CA_POOL_AT(win->ctxmenu_pool, Ca_CtxMenu, i);
@@ -5774,7 +5834,8 @@ void ca_widget_input_pass(Ca_Window *win)
                     if (area < best_area) { best_area = area; best = cm; }
                 }
             }
-            if (best) {
+            if (best && right_click_release && point_within_clip_ancestors(best->node,(float)win->right_press_x,(float)win->right_press_y) &&
+                point_reaches_node(best->node,(float)win->right_press_x,(float)win->right_press_y,top_z)) {
                 best->open   = true;
                 best->hover_index = -1;
                 best->open_x = mx;
@@ -5786,8 +5847,9 @@ void ca_widget_input_pass(Ca_Window *win)
                 if (best->node) best->node->dirty |= CA_DIRTY_CONTENT;
             }
         }
-        win->prev_mouse_right = right_now;
     }
+    if (!right_now) win->right_gesture_pending=false;
+    win->prev_mouse_right = right_now;
 
     update_context_menu_hover(win, mx, my, ui_s);
 
@@ -5903,99 +5965,29 @@ void ca_widget_input_pass(Ca_Window *win)
         }
     }
 
-    /* --- Generic drag interaction (user-defined drag callbacks on divs) --- */
+    /* Generic drag interaction; left remains immediate, right waits for movement. */
     {
-        /* Start a new user drag */
         if (win->mouse_click_this_frame && !win->user_drag_node) {
-            const float px = (float)win->mouse_press_x;
-            const float py = (float)win->mouse_press_y;
-            const int16_t press_z = pointer_top_z(win, px, py);
-            /* Find the topmost draggable node under the cursor. */
-            Ca_Node *best = NULL;
-            int best_z = -32768;
-            if (ca_pool_slot_count(&win->node_pool) > 0) {
-                for (uint32_t i = 0; i < ca_pool_slot_count(&win->node_pool); ++i) {
-                    Ca_Node *n = CA_POOL_AT(win->node_pool, Ca_Node, i);
-                    if (!n->in_use || node_is_ancestor_hidden(n)) continue;
-                    if (is_effectively_disabled(n)) continue;
-                    if (!n->drag_fn_start && !n->drag_fn_move && !n->drag_fn_end) continue;
-                    if (!point_within_clip_ancestors(n, px, py)) continue;
-                    if (!point_reaches_node(n, px, py, press_z)) continue;
-
-                    int z = node_effective_z(n);
-                    if (!best || z > best_z ||
-                        (z == best_z && node_paints_after(n, best))) {
-                        best_z = z;
-                        best = n;
-                    }
-                }
-            }
+            float px=(float)win->mouse_press_x,py=(float)win->mouse_press_y;
+            Ca_Node *best=drag_target(win,px,py,0);
             if (best) {
                 ca_drag_preview_clear(win);
-                win->user_drag_node    = best;
-                win->user_drag_start_x = px;
-                win->user_drag_start_y = py;
-                win->user_drag_active  = true;
-                if (best->drag_fn_start) {
-                    Ca_DragEvent ev = {
-                        .window  = win,
-                        .x = mx, .y = my,
-                        .start_x = px, .start_y = py,
-                        .dx = mx - px, .dy = my - py,
-                        .local_x = mx - best->x,
-                        .local_y = my - best->y,
-                        .node_w  = best->w,
-                        .node_h  = best->h,
-                    };
-                    ((Ca_DragFn)best->drag_fn_start)(&ev, best->drag_data);
-                }
+                win->user_drag_node=best; win->user_drag_button=0;
+                win->user_drag_start_x=px; win->user_drag_start_y=py; win->user_drag_active=true;
+                dispatch_drag(win,best,best->drag_fn_start,mx,my);
             }
         }
-
-        /* Continue drag */
-        if (win->user_drag_active && left_down && win->user_drag_node) {
-            Ca_Node *dn = win->user_drag_node;
-            ca_drag_preview_update(win);
-            if (dn->drag_fn_move) {
-                Ca_DragEvent ev = {
-                    .window  = win,
-                    .x = mx, .y = my,
-                    .start_x = win->user_drag_start_x,
-                    .start_y = win->user_drag_start_y,
-                    .dx = mx - win->user_drag_start_x,
-                    .dy = my - win->user_drag_start_y,
-                    .local_x = mx - dn->x,
-                    .local_y = my - dn->y,
-                    .node_w  = dn->w,
-                    .node_h  = dn->h,
-                };
-                ((Ca_DragFn)dn->drag_fn_move)(&ev, dn->drag_data);
-            }
+        Ca_Node *node=win->user_drag_node;
+        bool down=win->mouse_buttons[win->user_drag_button];
+        if (node&&win->user_drag_active&&down) {
+            if (!win->user_drag_button) ca_drag_preview_update(win);
+            dispatch_drag(win,node,node->drag_fn_move,mx,my);
         }
-
-        if (win->user_drag_active && !win->user_drag_node) ca_drag_preview_clear(win);
-
-        /* End drag */
-        if (win->user_drag_active && !left_down) {
+        if (!node&&win->user_drag_active) ca_drag_preview_clear(win);
+        if (!down&&(node||win->user_drag_active)) {
             ca_drag_preview_clear(win);
-            Ca_Node *dn = win->user_drag_node;
-            if (dn && dn->drag_fn_end) {
-                Ca_DragEvent ev = {
-                    .window  = win,
-                    .x = mx, .y = my,
-                    .start_x = win->user_drag_start_x,
-                    .start_y = win->user_drag_start_y,
-                    .dx = mx - win->user_drag_start_x,
-                    .dy = my - win->user_drag_start_y,
-                    .local_x = dn ? mx - dn->x : 0.0f,
-                    .local_y = dn ? my - dn->y : 0.0f,
-                    .node_w  = dn ? dn->w : 0.0f,
-                    .node_h  = dn ? dn->h : 0.0f,
-                };
-                ((Ca_DragFn)dn->drag_fn_end)(&ev, dn->drag_data);
-            }
-            win->user_drag_node   = NULL;
-            win->user_drag_active = false;
+            if (win->user_drag_active) dispatch_drag(win,node,node ? node->drag_fn_end : NULL,mx,my);
+            win->user_drag_node=NULL; win->user_drag_active=false;
         }
     }
 

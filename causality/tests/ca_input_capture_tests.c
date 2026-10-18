@@ -647,9 +647,10 @@ static bool test_reconciled_context_targets(void)
             window.mouse_x = 10; window.mouse_y = node->y + 10;
             window.mouse_buttons[1] = true;
             ca_widget_input_pass(&window);
-            CHECK(menu->open);
+            CHECK(!menu->open);
             window.mouse_buttons[1] = false;
             ca_widget_input_pass(&window);
+            CHECK(menu->open);
             window.mouse_click_this_frame = true;
             window.mouse_press_x = 20; window.mouse_press_y = (int)(menu->open_y + 15);
             ca_widget_input_pass(&window);
@@ -745,9 +746,87 @@ static bool test_isolated_drag_snapshot(void)
     return true;
 }
 
-/** Runs focused input ownership regression tests. */
+typedef struct RightDragRecord { int starts, moves, ends; Ca_DragEvent last; } RightDragRecord;
+
+/** Count thresholded start callbacks and record the originating button. */
+static void right_drag_start(const Ca_DragEvent *event, void *data)
+{
+    RightDragRecord *record=data; ++record->starts; record->last=*event;
+}
+/** Count movement callbacks for an active right-button gesture. */
+static void right_drag_move(const Ca_DragEvent *event, void *data)
+{
+    RightDragRecord *record=data; ++record->moves; record->last=*event;
+}
+/** Record the final release delta even when it returns to the press point. */
+static void right_drag_end(const Ca_DragEvent *event, void *data)
+{
+    RightDragRecord *record=data; ++record->ends; record->last=*event;
+}
+
+/** Right clicks open menus only on release; drags suppress menus and preserve left-button behavior. */
+static bool test_right_drag_context_release(void)
+{
+    Ca_Instance instance={0}; Ca_Window window={0}; RightDragRecord record={0};
+    window.instance=&instance;window.ui_scale=1;
+    CHECK(ca_node_system_init(&window));CHECK(ca_node_root(&window));
+    ca_widget_ctx_enter(&window);ca_reconcile_begin((Ca_Div *)window.root);
+    Ca_Node *node=(Ca_Node *)ca_div_begin(&(Ca_DivDesc){.drag_buttons=3,
+        .on_drag_start=right_drag_start,.on_drag=right_drag_move,.on_drag_end=right_drag_end,.drag_data=&record});
+    ca_div_end();const char *items[]={"Action"};
+    ca_context_menu(&(Ca_CtxMenuDesc){.items=items,.item_count=1});
+    ca_div_end();ca_widget_ctx_leave();
+    place_node(window.root,0,0,300,300);place_node(node,0,0,200,200);
+    Ca_CtxMenu *menu=NULL;
+    for (uint32_t i=0;i<ca_pool_slot_count(&window.ctxmenu_pool);++i) {
+        Ca_CtxMenu *candidate=CA_POOL_AT(window.ctxmenu_pool,Ca_CtxMenu,i);
+        if (candidate->in_use&&candidate->node==node) menu=candidate;
+    }
+    CHECK(menu);
+    window.mouse_x=window.mouse_y=20;window.mouse_buttons[1]=true;
+    ca_widget_input_pass(&window);CHECK(!menu->open&&record.starts==0);
+    window.mouse_x=22;ca_widget_input_pass(&window);CHECK(!menu->open&&record.starts==0);
+    window.mouse_buttons[1]=false;ca_widget_input_pass(&window);
+    CHECK(menu->open&&record.starts==0&&record.ends==0);
+    window.mouse_x=window.mouse_y=20;window.mouse_buttons[1]=true;
+    ca_widget_input_pass(&window);CHECK(!menu->open);
+    window.mouse_x=50;ca_widget_input_pass(&window);
+    CHECK(record.starts==1&&record.moves==1&&record.last.button==1&&record.last.start_x==20);
+    window.mouse_x=20;ca_widget_input_pass(&window);
+    window.mouse_buttons[1]=false;ca_widget_input_pass(&window);
+    CHECK(record.ends==1&&!menu->open&&!window.user_drag_active&&!window.user_drag_node);
+    window.mouse_click_this_frame=true;window.mouse_press_x=window.mouse_press_y=20;
+    window.mouse_buttons[0]=true;ca_widget_input_pass(&window);
+    CHECK(record.starts==2&&record.last.button==0);
+    window.mouse_click_this_frame=false;window.mouse_buttons[0]=false;ca_widget_input_pass(&window);
+    CHECK(record.ends==2);
+    /* Press and release batched into one frame still open a context menu. */
+    window.right_click_this_frame=true;window.right_press_x=window.right_press_y=20;
+    ca_widget_input_pass(&window);CHECK(menu->open&&record.starts==2);
+    window.right_click_this_frame=false;
+    ca_node_system_shutdown(&window);ca_widget_ctx_release_instance(&instance);
+    return true;
+}
+
+/** A viewport redraw invalidates its retained composite even when no other UI state changes. */
+static bool test_viewport_redraw_invalidates_content(void)
+{
+    Ca_Node node={0}; Ca_Viewport viewport={.node=&node};
+    ca_viewport_request_redraw(&viewport);
+    CHECK(viewport.needs_redraw);
+    CHECK(node.dirty&CA_DIRTY_CONTENT);
+    CHECK(!(node.dirty&CA_DIRTY_LAYOUT));
+    node.dirty=0;viewport.needs_redraw=false;
+    ca_viewport_request_redraw(&viewport);
+    CHECK(viewport.needs_redraw&&(node.dirty&CA_DIRTY_CONTENT));
+    ca_viewport_request_redraw(NULL);
+    return true;
+}
+
 int main(void)
 {
+    if (!test_viewport_redraw_invalidates_content()) return 1;
+    if (!test_right_drag_context_release()) return 1;
     if (!test_isolated_drag_snapshot()) return 1;
     if (!test_nested_axis_scrolling()) return 1;
     if (!test_reconciled_context_targets()) return 1;
