@@ -1290,6 +1290,8 @@ CA_API Ca_Signal *ca_get_scroll_y_signal(Ca_Window *window, const char *id);
 
 /** Observe container id's horizontal offset in window; NULL when missing or allocation fails. */
 CA_API Ca_Signal *ca_get_scroll_x_signal(Ca_Window *window, const char *id);
+/** Set container id's horizontal pixel offset in window, clamped to its range. Non-finite x is ignored. */
+CA_API void ca_set_scroll_x(Ca_Window *window, const char *id, float x);
 /** Apply horizontal wheel delta dx to container id in window, clamping to its range. */
 CA_API void ca_scroll_wheel_x(Ca_Window *window, const char *id, double dx);
 

@@ -2090,6 +2090,17 @@ void ca_scroll_wheel(Ca_Window *window, const char *id, double dy)
     node_apply_wheel(n, dy, false);
 }
 
+void ca_set_scroll_x(Ca_Window *window, const char *id, float x)
+{
+    Ca_Node *node = find_node_by_id(window, id);
+    if (!node || !isfinite(x)) return;
+    x = fminf(fmaxf(x, 0), ca_scrollbar_max_x(node));
+    if (x == node->scroll_x) return;
+    node->scroll_x = x;
+    node->dirty |= CA_DIRTY_LAYOUT | CA_DIRTY_CONTENT;
+    ca_node_sync_scroll_x_signal(node);
+}
+
 void ca_scroll_wheel_x(Ca_Window *window, const char *id, double dx)
 {
     Ca_Node *node = find_node_by_id(window, id);

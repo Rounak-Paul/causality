@@ -10,6 +10,7 @@ typedef struct GLFWwindow GLFWwindow;
 #include "ca_reactive.h"
 #include "../src/reactive/reactive.h"
 
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -708,6 +709,15 @@ static bool test_nested_axis_scrolling(void)
     ca_scroll_wheel_x(&window, "horizontal-owner", -1);
     CHECK(horizontal->scroll_x > 0 && ca_signal_get_float(offset) == horizontal->scroll_x);
     ca_scroll_wheel_x(&window, "missing", -1);
+    ca_set_scroll_x(&window, "horizontal-owner", 123);
+    CHECK(horizontal->scroll_x == 123 && ca_signal_get_float(offset) == 123);
+    ca_set_scroll_x(&window, "horizontal-owner", INFINITY);
+    CHECK(horizontal->scroll_x == 123);
+    ca_set_scroll_x(&window, "horizontal-owner", -5);
+    CHECK(horizontal->scroll_x == 0 && ca_signal_get_float(offset) == 0);
+    ca_set_scroll_x(&window, "horizontal-owner", 1e9f);
+    CHECK(horizontal->scroll_x == 1800 && ca_signal_get_float(offset) == 1800);
+    ca_set_scroll_x(&window, "missing", 123);
     ca_node_system_shutdown(&window);
     ca_widget_ctx_release_instance(&instance);
     return true;
