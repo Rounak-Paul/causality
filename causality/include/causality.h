@@ -1689,6 +1689,10 @@ CA_API Ca_Instance *ca_viewport_instance(Ca_Viewport *viewport);
 /* Dirty the viewport image and retained UI composite, and schedule the next frame. NULL is safe. */
 CA_API void ca_viewport_request_redraw(Ca_Viewport *viewport);
 
+/* Cap the image's longest edge in pixels without changing layout or pointer coordinates.
+   max_dimension  Zero restores native pixel density. NULL viewport is safe. */
+CA_API void ca_viewport_set_max_dimension(Ca_Viewport *viewport, uint32_t max_dimension);
+
 /*
  * Retrieve the viewport's layout-computed screen-space rectangle.
  *

@@ -1196,6 +1196,7 @@ struct Ca_Viewport {
     VkSampler            sampler;
     VkFormat             format;
     uint32_t             width, height; /* current pixel dimensions */
+    uint32_t             max_dimension; /* zero preserves native pixel density */
     /* Callbacks */
     Ca_ViewportRenderFn  on_render;
     void                *render_data;

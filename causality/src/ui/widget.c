@@ -4258,6 +4258,13 @@ Ca_Instance *ca_viewport_instance(Ca_Viewport *viewport)
     return viewport ? viewport->instance : NULL;
 }
 
+void ca_viewport_set_max_dimension(Ca_Viewport *viewport, uint32_t max_dimension)
+{
+    if (!viewport || viewport->max_dimension == max_dimension) return;
+    viewport->max_dimension = max_dimension;
+    ca_viewport_request_redraw(viewport);
+}
+
 void ca_viewport_set_callbacks(Ca_Viewport *viewport,
                                Ca_ViewportRenderFn on_render, void *render_data,
                                Ca_ViewportResizeFn on_resize, void *resize_data)

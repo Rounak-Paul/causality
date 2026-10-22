@@ -367,6 +367,13 @@ void ca_viewport_render_all(Ca_Instance *inst, Ca_Window *win,
             uint32_t new_h = (uint32_t)(vp->node->h * content_scale);
             if (new_w < 1) new_w = 1;
             if (new_h < 1) new_h = 1;
+            uint32_t edge = new_w > new_h ? new_w : new_h;
+            if (vp->max_dimension && edge > vp->max_dimension) {
+                new_w = (uint32_t)((uint64_t)new_w * vp->max_dimension / edge);
+                new_h = (uint32_t)((uint64_t)new_h * vp->max_dimension / edge);
+                if (new_w < 1) new_w = 1;
+                if (new_h < 1) new_h = 1;
+            }
 
             if (new_w != vp->width || new_h != vp->height) {
                 /* Resize retires every slot for deferred release (still

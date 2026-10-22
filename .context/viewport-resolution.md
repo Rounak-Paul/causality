@@ -1,0 +1,3 @@
+# Viewport image resolution — 23 October 2026
+
+Flow playback uses ca_viewport_set_max_dimension(viewport,960); pause restores0/native. The cap changes GPU image density only. Layout and pointer coordinates are unchanged. Renderer resize scales both native dimensions proportionally with uint64 integer multiplication, clamps nonzero dimensions, and uses existing in-flight image retirement/fences. Setter invalidates the retained composite and schedules redraw; allocation happens at the next render boundary. Fl_TimelinePlayback native regression validates GPU size, stable layout and restoration under real window ticks. No commits/pushes.
