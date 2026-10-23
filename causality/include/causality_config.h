@@ -20,7 +20,7 @@
 #  define CA_BUTTON_TEXT_MAX 128
 #endif
 #ifndef CA_INPUT_TEXT_MAX
-#  define CA_INPUT_TEXT_MAX 512
+#  define CA_INPUT_TEXT_MAX 16385
 #endif
 #ifndef CA_OPTION_TEXT_MAX
 #  define CA_OPTION_TEXT_MAX 128

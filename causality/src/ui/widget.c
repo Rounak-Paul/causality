@@ -1334,6 +1334,8 @@ Ca_TextInput *ca_input(const Ca_InputDesc *desc)
     inp->in_use     = true;
     inp->text_color = desc->text_color;
     inp->input_mode = desc->input_mode;
+    inp->multiline = desc->multiline && desc->input_mode == CA_INPUT_TEXT;
+    inp->max_length = desc->max_length && desc->max_length < CA_INPUT_TEXT_MAX ? desc->max_length : CA_INPUT_TEXT_MAX - 1;
     inp->drag_speed = desc->drag_speed > 0.0f
         ? desc->drag_speed
         : (desc->input_mode == CA_INPUT_FLOAT ? 0.1f : 1.0f);
@@ -1341,7 +1343,7 @@ Ca_TextInput *ca_input(const Ca_InputDesc *desc)
     WIDGET_SET_TEXT(node, reused, inp->text, CA_INPUT_TEXT_MAX, desc->text);
 
     if (desc->placeholder)
-        snprintf(inp->placeholder, CA_INPUT_TEXT_MAX, "%s", desc->placeholder);
+        snprintf(inp->placeholder, sizeof(inp->placeholder), "%s", desc->placeholder);
     else
         inp->placeholder[0] = '\0';
 
@@ -1362,6 +1364,7 @@ Ca_TextInput *ca_input(const Ca_InputDesc *desc)
     apply_css(node, &node->desc, CA_ELEM_INPUT,
               desc->style, id, &inp->text_color, desc->inline_style);
 
+    if (inp->multiline) {node->desc.overflow_x = 1; node->desc.overflow_y = 1;}
     /* Default size if neither user nor CSS set it */
     if (node->desc.width  <= 0.0f) node->desc.width  = s(160.0f);
     if (node->desc.height <= 0.0f) node->desc.height = s(24.0f);
@@ -4680,6 +4683,86 @@ static bool input_delete_selection(Ca_TextInput *input)
     return true;
 }
 
+/* Return the end of one visual row, wrapping at a space or a UTF-8 boundary. */
+int ca_input_line_end(const Ca_TextInput *input, int start)
+{
+    const char *text = input->text;
+    Ca_Node *node = input->node;
+    float available = fmaxf(1.0f, node->w - node->desc.padding_left - node->desc.padding_right);
+    float width = 0;
+    int pos = start, space = -1;
+    while (text[pos] && text[pos] != '\n') {
+        int next = pos + 1;
+        while (text[next] && ((unsigned char)text[next] & 0xc0) == 0x80) ++next;
+        char glyph[5] = {0};
+        memcpy(glyph, text + pos, (size_t)(next - pos));
+        float advance = ca_measure_text_px(node->window, glyph, node->desc.font_size);
+        if (width + advance > available && pos > start) return space > start ? space : pos;
+        width += advance; pos = next;
+        if (text[pos - 1] == ' ') space = pos;
+    }
+    return pos;
+}
+
+/* Return the logical line box height for input, including UI scale. */
+float ca_input_line_height(const Ca_TextInput *input)
+{
+    Ca_Window *win = input->node->window;
+    float scale = win->ui_scale > 0 ? win->ui_scale : 1;
+    float size = input->node->desc.font_size > 0 ? input->node->desc.font_size : (win->instance->font ? win->instance->font->default_size : 14.0f);
+    return size * scale * 1.6f;
+}
+
+/* Map a pointer position to the closest UTF-8 caret position in a wrapped input. */
+int ca_input_hit(const Ca_TextInput *input, float x, float y)
+{
+    Ca_Node *node = input->node;
+    int row = input->first_line + (int)floorf((y - node->y - node->desc.padding_top) / ca_input_line_height(input));
+    if (row < 0) row = 0;
+    int start = 0, end = 0;
+    for (int i = 0; i <= row; ++i) {
+        end = ca_input_line_end(input, start);
+        if (i == row || !input->text[end]) break;
+        start = end + (input->text[end] == '\n');
+    }
+    float target = x - node->x - node->desc.padding_left, width = 0;
+    int pos = start;
+    while (pos < end) {
+        int next = pos + 1;
+        while (next < end && ((unsigned char)input->text[next] & 0xc0) == 0x80) ++next;
+        char glyph[5] = {0}; memcpy(glyph, input->text + pos, (size_t)(next - pos));
+        float advance = ca_measure_text_px(node->window, glyph, node->desc.font_size);
+        if (target < width + advance * 0.5f) break;
+        width += advance; pos = next;
+    }
+    return pos;
+}
+
+/* Insert bounded UTF-8 text at the selection; reject overflow without destroying selected text. */
+static bool input_insert(Ca_TextInput *input, const char *text)
+{
+    char normalized[CA_INPUT_TEXT_MAX];
+    size_t size = 0;
+    for (size_t i = 0; text[i]; ++i) {
+        unsigned char c = (unsigned char)text[i];
+        if (c == '\r') {if (text[i + 1] == '\n') continue; c = '\n';}
+        if (c == '\n' && !input->multiline) c = ' ';
+        if (c < 32 && c != '\n' && c != '\t') continue;
+        if (size + 1 >= sizeof(normalized)) return false;
+        normalized[size++] = c == '\t' ? ' ' : (char)c;
+    }
+    normalized[size] = 0;
+    int selected = input->sel_start < 0 ? 0 : abs(input->sel_start - input->cursor);
+    size_t length = strlen(input->text);
+    if (!size || length - (size_t)selected + size > input->max_length) return false;
+    input_delete_selection(input);
+    length = strlen(input->text);
+    memmove(input->text + input->cursor + size, input->text + input->cursor, length - (size_t)input->cursor + 1);
+    memcpy(input->text + input->cursor, normalized, size);
+    input->cursor += (int)size; input->sel_start = -1;
+    return true;
+}
+
 /* Handle keyboard input for a focused text input */
 static void input_handle_keys(Ca_Window *win, Ca_TextInput *inp)
 {
@@ -4693,6 +4776,40 @@ static void input_handle_keys(Ca_Window *win, Ca_TextInput *inp)
         bool primary = (mods & (CA_MOD_CONTROL | CA_MOD_SUPER)) != 0;
         bool shift = (mods & CA_MOD_SHIFT) != 0;
         len = (int)strlen(inp->text);
+        if (primary && (key == CA_KEY_C || key == CA_KEY_X)) {
+            if (inp->sel_start >= 0 && inp->sel_start != inp->cursor) {
+                int begin = inp->sel_start < inp->cursor ? inp->sel_start : inp->cursor;
+                int end = inp->sel_start > inp->cursor ? inp->sel_start : inp->cursor;
+                char copy[CA_INPUT_TEXT_MAX]; memcpy(copy, inp->text + begin, (size_t)(end - begin)); copy[end - begin] = 0;
+                ca_clipboard_set_text(win, copy);
+                if (key == CA_KEY_X) changed |= input_delete_selection(inp);
+            }
+            win->key_consumed[key] = true; continue;
+        }
+        if (primary && key == CA_KEY_V && inp->input_mode == CA_INPUT_TEXT) {
+            const char *paste = ca_clipboard_get_text(win);
+            if (paste) changed |= input_insert(inp, paste);
+            win->key_consumed[key] = true; continue;
+        }
+        if (inp->multiline && key == CA_KEY_ENTER) {
+            changed |= input_insert(inp, "\n"); win->key_consumed[key] = true; continue;
+        }
+        if (inp->multiline && (key == CA_KEY_UP || key == CA_KEY_DOWN)) {
+            int row = 0, start = 0, end;
+            while ((end = ca_input_line_end(inp, start)) < inp->cursor && inp->text[end]) {
+                start = end + (inp->text[end] == '\n'); ++row;
+            }
+            if (shift && inp->sel_start < 0) inp->sel_start = inp->cursor;
+            if (!shift) inp->sel_start = -1;
+            char prefix[CA_INPUT_TEXT_MAX]; size_t bytes = (size_t)(inp->cursor - start);
+            memcpy(prefix, inp->text + start, bytes); prefix[bytes] = 0;
+            float x = inp->node->x + inp->node->desc.padding_left + ca_measure_text_px(win, prefix, inp->node->desc.font_size);
+            int target = row + (key == CA_KEY_DOWN ? 1 : -1);
+            if (target < 0) target = 0;
+            inp->cursor = ca_input_hit(inp, x, inp->node->y + inp->node->desc.padding_top +
+                ((float)(target - inp->first_line) + 0.5f) * ca_input_line_height(inp));
+            inp->node->dirty |= CA_DIRTY_CONTENT; win->key_consumed[key] = true; continue;
+        }
         if (primary && key == CA_KEY_A) {
             inp->sel_start = 0;
             inp->cursor = len;
@@ -4751,9 +4868,16 @@ static void input_handle_keys(Ca_Window *win, Ca_TextInput *inp)
                     inp->cursor++;
             }
         } else if (key == 268 /* GLFW_KEY_HOME */) {
-            inp->cursor = 0;
+            int start = 0, end;
+            if (inp->multiline && !primary) while ((end = ca_input_line_end(inp, start)) < inp->cursor && inp->text[end])
+                start = end + (inp->text[end] == '\n');
+            inp->cursor = start;
         } else if (key == 269 /* GLFW_KEY_END */) {
-            inp->cursor = len;
+            if (inp->multiline && !primary) {
+                int start = 0, end;
+                while ((end = ca_input_line_end(inp, start)) < inp->cursor && inp->text[end]) start = end + (inp->text[end] == '\n');
+                inp->cursor = end;
+            } else inp->cursor = len;
         }
     }
 
@@ -4767,7 +4891,7 @@ static void input_handle_keys(Ca_Window *win, Ca_TextInput *inp)
         inp->sel_start = -1;
         char encoded[4];
         int enc_len = utf8_encode(cp, encoded);
-        if (len + enc_len < CA_INPUT_TEXT_MAX - 1) {
+        if ((size_t)(len + enc_len) <= inp->max_length) {
             /* Insert at cursor */
             memmove(inp->text + inp->cursor + enc_len,
                     inp->text + inp->cursor,
@@ -4779,6 +4903,22 @@ static void input_handle_keys(Ca_Window *win, Ca_TextInput *inp)
         }
     }
 
+    if (inp->multiline && (win->key_count || win->char_count)) {
+        int row = 0, start = 0, end;
+        while ((end = ca_input_line_end(inp, start)) < inp->cursor && inp->text[end]) {
+            start = end + (inp->text[end] == '\n'); ++row;
+        }
+        int visible = (int)((inp->node->h - inp->node->desc.padding_top - inp->node->desc.padding_bottom) / ca_input_line_height(inp));
+        if (visible < 1) visible = 1;
+        int first = inp->first_line;
+        if (row < first) inp->first_line = row;
+        if (row >= first + visible) inp->first_line = row - visible + 1;
+        int rows = 1; start = 0;
+        while (inp->text[(end = ca_input_line_end(inp, start))]) {start = end + (inp->text[end] == '\n'); ++rows;}
+        int maximum = rows > visible ? rows - visible : 0;
+        if (inp->first_line > maximum) inp->first_line = maximum;
+        if (first != inp->first_line) inp->node->dirty |= CA_DIRTY_CONTENT;
+    }
     if (changed) {
         inp->node->dirty |= CA_DIRTY_CONTENT;
         if (inp->on_change)
@@ -4908,6 +5048,14 @@ void ca_widget_input_pass(Ca_Window *win)
          win->mouse_click_this_frame || win->scroll_this_frame ||
          ca_pool_slot_count(&win->splitter_pool) > 0)
             ? pointer_top_z(win, mx, my) : 0;
+
+    for (uint32_t i = 0; i < ca_pool_slot_count(&win->input_pool); ++i) {
+        Ca_TextInput *input = CA_POOL_AT(win->input_pool, Ca_TextInput, i);
+        if (!input->in_use || !input->selecting) continue;
+        if (!left_down || input->node != win->focused_node) {input->selecting = false; continue;}
+        int cursor = ca_input_hit(input, mx, my);
+        if (cursor != input->cursor) {input->cursor = cursor; input->node->dirty |= CA_DIRTY_CONTENT;}
+    }
 
     /* --- Scrollbar drag handling ---
        Scrollbars are paint-only overlays (no nodes).  We hit-test them here
@@ -5182,7 +5330,18 @@ void ca_widget_input_pass(Ca_Window *win)
                 float area = n->w * n->h;
                 if (area < min_area) { min_area = area; scroll_cb_node = n; }
             }
-            if (scroll_cb_node) {
+            Ca_TextInput *area = input_for_node(win, top_hit);
+            if (area && area->multiline && win->scroll_dy != 0) {
+                int count = 1, start = 0, end;
+                while (area->text[(end = ca_input_line_end(area, start))]) {start = end + (area->text[end] == '\n'); ++count;}
+                int visible = (int)((area->node->h - area->node->desc.padding_top - area->node->desc.padding_bottom) / ca_input_line_height(area));
+                int maximum = count - (visible > 0 ? visible : 1);
+                if (maximum < 0) maximum = 0;
+                area->first_line -= (int)(win->scroll_dy * 3);
+                if (area->first_line < 0) area->first_line = 0;
+                if (area->first_line > maximum) area->first_line = maximum;
+                area->node->dirty |= CA_DIRTY_CONTENT;
+            } else if (scroll_cb_node) {
                 ((Ca_ScrollFn)scroll_cb_node->scroll_fn)(
                     win->scroll_dx, win->scroll_dy, scroll_cb_node->scroll_data);
             } else {
@@ -5548,6 +5707,14 @@ void ca_widget_input_pass(Ca_Window *win)
                 if (is_effectively_disabled(inp->node)) continue;
                 if (point_reaches_node(inp->node, mx, my, top_z)) {
                     clicked_focus = inp->node;
+                    if (inp->multiline) {
+                        int previous = inp->cursor;
+                        inp->cursor = ca_input_hit(inp, mx, my);
+                        if (!(win->mouse_mods & CA_MOD_SHIFT)) inp->sel_start = inp->cursor;
+                        else if (inp->sel_start < 0) inp->sel_start = previous;
+                        inp->selecting = true;
+                        inp->node->dirty |= CA_DIRTY_CONTENT;
+                    }
                     break;
                 }
             }

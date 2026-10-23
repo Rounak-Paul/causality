@@ -167,6 +167,7 @@ static void paint_text_wrapped(Ca_Window *win, Ca_Font *font,
                                const char *text, uint32_t packed_color);
 static void paint_inline_children(Ca_Window *win, Ca_Font *font,
                                   Ca_Node *node, ClipRect clip);
+static void paint_input_area(Ca_Window *win, Ca_Font *font, Ca_TextInput *input, bool caret);
 static void paint_text_left(Ca_Window *win, Ca_Font *font,
                             Ca_Node *node,
                             const char *text, uint32_t packed_color);
@@ -656,7 +657,9 @@ static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, Cli
     case CA_WIDGET_TEXT_INPUT: {
         Ca_TextInput *inp = (Ca_TextInput *)node->widget;
         if (inp && inp->in_use) {
-            if (inp->text[0] != '\0') {
+            if (inp->multiline) {
+                paint_input_area(win, font, inp, false);
+            } else if (inp->text[0] != '\0') {
                 if (inp->input_mode == CA_INPUT_PASSWORD) {
                     char masked[CA_INPUT_TEXT_MAX];
                     ca_mask_password_text(inp->text, masked, sizeof(masked));
@@ -2175,6 +2178,53 @@ static void paint_cursor(Ca_Window *win, Ca_Font *font,
     set_clip(cmd, input_clip);
 }
 
+/* Paint wrapped input rows and selection, or its uncached caret, with the same geometry as hit testing. */
+static void paint_input_area(Ca_Window *win, Ca_Font *font, Ca_TextInput *input, bool caret)
+{
+    Ca_Node *node = input->node;
+    float height = ca_input_line_height(input);
+    int row = 0, start = 0;
+    int selected_start = input->sel_start < input->cursor ? input->sel_start : input->cursor;
+    int selected_end = input->sel_start > input->cursor ? input->sel_start : input->cursor;
+    do {
+        int end = ca_input_line_end(input, start);
+        float y = node->y + node->desc.padding_top + (float)(row - input->first_line) * height;
+        if (row >= input->first_line && y < node->y + node->h - node->desc.padding_bottom) {
+            char line[CA_INPUT_TEXT_MAX];
+            size_t length = (size_t)(end - start); memcpy(line, input->text + start, length); line[length] = 0;
+            Ca_Node box = *node;
+            box.parent = node; box.y = y; box.h = height;
+            box.desc.padding_top = box.desc.padding_bottom = 0;
+            if (!caret && input->sel_start >= 0 && selected_start < end && selected_end > start && node == win->focused_node) {
+                int begin = selected_start > start ? selected_start - start : 0;
+                int finish = selected_end < end ? selected_end - start : end - start;
+                char prefix[CA_INPUT_TEXT_MAX]; memcpy(prefix, line, (size_t)finish); prefix[finish] = 0;
+                float right = ca_measure_text_px(win, prefix, node->desc.font_size);
+                prefix[begin] = 0;
+                float left = ca_measure_text_px(win, prefix, node->desc.font_size);
+                if (ca_window_reserve_draw_commands(win, (size_t)win->draw_cmd_count + 1)) {
+                    Ca_DrawCmd *cmd = &win->draw_cmds[win->draw_cmd_count++]; memset(cmd, 0, sizeof(*cmd));
+                    cmd->type = CA_DRAW_RECT; cmd->x = node->x + node->desc.padding_left + left;
+                    cmd->y = y; cmd->w = right - left; cmd->h = height;
+                    unpack_color(win_palette(win)->accent, &cmd->r, &cmd->g, &cmd->b, &cmd->a);
+                    cmd->a *= 0.35f; cmd->in_use = true; set_clip(cmd, text_clip_for_node(node));
+                }
+            }
+            if (!caret) {
+                if (!input->text[0]) paint_text_left(win, font, &box, input->placeholder, win_palette(win)->text_dim);
+                else paint_text_left(win, font, &box, line, input->text_color);
+            } else if (input->cursor >= start && input->cursor <= end) {
+                int count = 0;
+                for (int i = start; i < input->cursor; ++i) if (((unsigned char)input->text[i] & 0xc0) != 0x80) ++count;
+                paint_cursor(win, font, &box, line, count);
+                return;
+            }
+        }
+        if (!input->text[end]) break;
+        start = end + (input->text[end] == '\n'); ++row;
+    } while (true);
+}
+
 /* Paint a focus ring (outline) around a node */
 static void paint_focus_ring(Ca_Window *win, Ca_Node *node)
 {
@@ -3410,7 +3460,9 @@ void ca_paint_pass(Ca_Instance *inst, Ca_Window *win)
                             cursor_cp++;
                         }
                     }
-                    if (inp->input_mode == CA_INPUT_PASSWORD) {
+                    if (inp->multiline) {
+                        paint_input_area(win, font, inp, true);
+                    } else if (inp->input_mode == CA_INPUT_PASSWORD) {
                         char masked[CA_INPUT_TEXT_MAX];
                         ca_mask_password_text(inp->text, masked, sizeof(masked));
                         paint_cursor(win, font, inp->node, masked, cursor_cp);

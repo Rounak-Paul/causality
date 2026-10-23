@@ -1055,6 +1055,8 @@ typedef enum Ca_InputMode {
 
 /* <input> — single-line text or draggable numeric input field. */
 typedef struct Ca_InputDesc {
+    bool multiline;               /* wrapped text area; Enter inserts a newline */
+    size_t max_length;            /* UTF-8 byte limit; zero uses buffer capacity */
     const char *text;              /* initial text (NULL = empty)            */
     const char *placeholder;       /* placeholder text (greyed out)          */
     float       width, height;     /* 0 = auto                              */

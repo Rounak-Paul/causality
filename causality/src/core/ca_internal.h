@@ -932,7 +932,10 @@ struct Ca_TextInput {
     Ca_Node    *node;
     char        text[CA_INPUT_TEXT_MAX];
     uint32_t    text_color;
-    char        placeholder[CA_INPUT_TEXT_MAX];
+    char        placeholder[512];
+    bool multiline, selecting;
+    size_t max_length;
+    int first_line;
     int         cursor;       /* byte offset into text */
     int         sel_start;    /* selection anchor (-1 = no selection) */
     Ca_ChangeFn on_change;
@@ -1731,3 +1734,8 @@ struct Ca_CondVar {
     pthread_cond_t     handle;
 #endif
 };
+
+/* Shared wrapped-input geometry. Byte offsets are UTF-8 boundaries. */
+int ca_input_line_end(const Ca_TextInput *input, int start);
+float ca_input_line_height(const Ca_TextInput *input);
+int ca_input_hit(const Ca_TextInput *input, float x, float y);
