@@ -758,6 +758,9 @@ void ca_widget_reapply_css(Ca_Node *node)
     nd->margin_top = saved_mt;     nd->margin_right   = saved_mr;
     nd->margin_bottom = saved_mb;  nd->margin_left    = saved_ml;
     nd->gap = saved_gap; nd->row_gap = saved_rg; nd->column_gap = saved_cg;
+    nd->flex_grow = old.flex_grow; nd->flex_shrink = old.flex_shrink;
+    nd->flex_basis = old.flex_basis; nd->flex_order = old.flex_order;
+    nd->flex_wrap = old.flex_wrap;
 
     /* Layout properties are not re-resolved wholesale (widgets override some
        after CSS), but one a pseudo-state rule moved is followed, so :hover
