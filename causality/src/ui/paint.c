@@ -897,7 +897,8 @@ static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, Cli
             paint_text(win, font, node, tb->labels[ti], or_palette(tb->text_colors[ti], fallback));
             if (tb->closable) {
                 const float zone = ca_tab_close_zone(node);
-                const bool over = win->mouse_x >= node->x + node->w - zone &&
+                const bool over = !win->pointer_over_overlay &&
+                                  win->mouse_x >= node->x + node->w - zone &&
                                   win->mouse_x < node->x + node->w &&
                                   win->mouse_y >= node->y && win->mouse_y < node->y + node->h;
                 Ca_Node glyph = *node;

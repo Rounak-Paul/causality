@@ -1383,6 +1383,7 @@ struct Ca_Window {
 
     /* Hover / drag state for interactive widgets */
     Ca_Node      *hovered_node;
+    bool          pointer_over_overlay; /* cursor is over an open select/menu/modal overlay */
     Ca_Node      *drag_node;
     float         drag_start_x;
     float         drag_start_value;

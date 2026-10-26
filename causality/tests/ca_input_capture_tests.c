@@ -354,6 +354,57 @@ static bool test_stacking_layer_occludes_pointer(void)
     return true;
 }
 
+/** Verifies a button scrolled out of its clipping ancestor cannot be clicked at its stale position. */
+static bool test_clipped_button_ignores_pointer(void)
+{
+    Ca_Instance instance = {0};
+    Ca_Window window = {0};
+    Ca_Node root = {0};
+    window.instance = &instance;
+    window.ui_scale = 1.0f;
+    window.root = &root;
+    root.window = &window;
+    root.in_use = true;
+    CHECK(ca_pool_init(&window.node_pool, sizeof(Ca_Node), 8));
+    CHECK(ca_pool_init(&window.button_pool, sizeof(Ca_Button), 4));
+
+    int clicks = 0;
+    ca_widget_ctx_enter(&window);
+    ca_reconcile_begin((Ca_Div *)&root);
+    Ca_Div *scroller = ca_div_begin(&(Ca_DivDesc){ .direction = CA_VERTICAL });
+    Ca_Button *row = ca_btn_begin(&(Ca_BtnDesc){
+        .text = "Row", .on_click = count_click, .click_data = &clicks });
+    ca_btn_end();
+    ca_div_end();
+    ca_div_end();
+    ca_widget_ctx_leave();
+    CHECK(scroller && row);
+
+    Ca_Node *scroll_node = (Ca_Node *)scroller;
+    place_node(&root, 0.0f, 0.0f, 200.0f, 200.0f);
+    place_node(scroll_node, 0.0f, 100.0f, 200.0f, 100.0f);
+    place_node(row->node, 0.0f, 20.0f, 200.0f, 20.0f);
+    scroll_node->desc.overflow_y = 2;
+
+    window.mouse_x = window.mouse_press_x = 50.0;
+    window.mouse_y = window.mouse_press_y = 30.0;
+    window.mouse_click_this_frame = true;
+    ca_widget_input_pass(&window);
+    CHECK(clicks == 0);
+
+    window.mouse_x = window.mouse_press_x = 50.0;
+    window.mouse_y = window.mouse_press_y = 110.0;
+    place_node(row->node, 0.0f, 100.0f, 200.0f, 20.0f);
+    ca_widget_input_pass(&window);
+    CHECK(clicks == 1);
+
+    ca_node_clear(&root);
+    ca_pool_destroy(&window.button_pool, NULL, NULL);
+    ca_pool_destroy(&window.node_pool, NULL, NULL);
+    ca_widget_ctx_release_instance(&instance);
+    return true;
+}
+
 /** Verifies a no-hover overlay only receives wheel through its descendants. */
 static bool test_transparent_overlay_wheel_routing(void)
 {
@@ -851,6 +902,7 @@ int main(void)
     if (!test_consumed_key_query()) return 1;
     if (!test_app_keyboard_blocks_button_activation()) return 1;
     if (!test_stacking_layer_occludes_pointer()) return 1;
+    if (!test_clipped_button_ignores_pointer()) return 1;
     if (!test_transparent_overlay_wheel_routing()) return 1;
     puts("causality input capture tests passed");
     return 0;

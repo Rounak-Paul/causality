@@ -4956,6 +4956,7 @@ static bool node_is_pointer_candidate(Ca_Node *n, float px, float py)
     return n->in_use && !n->desc.hidden && !n->desc.no_hover &&
            n->desc.pointer_events != CA_CSS_POINTER_EVENTS_NONE &&
            point_in_node(n, px, py) && !node_is_ancestor_hidden(n) &&
+           point_within_clip_ancestors(n, px, py) &&
            (n->widget_type != CA_WIDGET_SPLITTER || point_in_splitter_handle(n, px, py));
 }
 
@@ -4974,11 +4975,13 @@ static int16_t pointer_top_z(Ca_Window *win, float px, float py)
     return top_z;
 }
 
-/* True when (px, py) lies inside n and n belongs to the topmost stacking
-   layer at that point (top_z from pointer_top_z). */
+/* True when (px, py) lies inside n, is not clipped out by a scroll/overflow
+   ancestor, and n belongs to the topmost stacking layer at that point
+   (top_z from pointer_top_z). */
 static bool point_reaches_node(Ca_Node *n, float px, float py, int16_t top_z)
 {
-    return node_effective_z(n) >= top_z && point_in_node(n, px, py);
+    return node_effective_z(n) >= top_z && point_in_node(n, px, py) &&
+           point_within_clip_ancestors(n, px, py);
 }
 
 /* Most specific (smallest) pointer candidate at (px, py) within layer top_z. */
@@ -5036,11 +5039,113 @@ static void dispatch_drag(Ca_Window *win, Ca_Node *node, void *callback, float x
     ((Ca_DragFn)callback)(&event,node->drag_data);
 }
 
+/* True when (mx, my) lies over an open overlay (select list, context menu,
+   menu-bar dropdown/submenu, or any visible modal). Overlays are painted
+   outside the node tree, so hover and pointer states of the nodes beneath
+   them must be suppressed explicitly. */
+static bool pointer_over_overlay(Ca_Window *win, float mx, float my, float ui_s)
+{
+    bool over_overlay = false;
+
+    /* Ca_Select open dropdown */
+    if (!over_overlay && ca_pool_slot_count(&win->select_pool) > 0) {
+        for (uint32_t i = 0; i < ca_pool_slot_count(&win->select_pool) && !over_overlay; ++i) {
+            Ca_Select *sel = CA_POOL_AT(win->select_pool, Ca_Select, i);
+            if (!sel->in_use || !sel->open || !sel->node) continue;
+            Ca_Node *sn = sel->node;
+            int visible = sel->option_count < CA_SELECT_MAX_VISIBLE
+                          ? sel->option_count : CA_SELECT_MAX_VISIBLE;
+            float drop_y = sn->y + sn->h;
+            float drop_h = sn->h * (float)visible;
+            if (mx >= sn->x && mx <= sn->x + sn->w &&
+                my >= drop_y  && my <= drop_y + drop_h)
+                over_overlay = true;
+        }
+    }
+
+    /* Ca_CtxMenu open */
+    if (!over_overlay && ca_pool_slot_count(&win->ctxmenu_pool) > 0) {
+        const float cm_item_h = 24.0f * ui_s;
+        const float cm_sep_h  =  8.0f * ui_s;
+        const float cm_menu_w = 180.0f * ui_s;
+        for (uint32_t i = 0; i < ca_pool_slot_count(&win->ctxmenu_pool) && !over_overlay; ++i) {
+            Ca_CtxMenu *cm = CA_POOL_AT(win->ctxmenu_pool, Ca_CtxMenu, i);
+            if (!cm->in_use || !cm->open) continue;
+            if (cm->node && node_is_ancestor_hidden(cm->node)) continue;
+            float menu_h = 6.0f * ui_s;
+            for (int mi = 0; mi < cm->item_count; ++mi) {
+                bool is_sep = (cm->items[mi][0] == '-' && cm->items[mi][1] == '\0');
+                menu_h += is_sep ? cm_sep_h : cm_item_h;
+            }
+            float cx = cm->open_x, cy = cm->open_y;
+            if (win->sc.extent.width  > 0 && cx + cm_menu_w > (float)win->sc.extent.width)
+                cx = (float)win->sc.extent.width  - cm_menu_w;
+            if (win->sc.extent.height > 0 && cy + menu_h > (float)win->sc.extent.height)
+                cy = (float)win->sc.extent.height - menu_h;
+            if (cx < 0) cx = 0;
+            if (cy < 0) cy = 0;
+            if (mx >= cx && mx <= cx + cm_menu_w && my >= cy && my <= cy + menu_h)
+                over_overlay = true;
+        }
+    }
+
+    /* Ca_MenuBar active dropdown (and sub-menu) */
+    if (!over_overlay && ca_pool_slot_count(&win->menubar_pool) > 0) {
+        const float mb_item_h = 24.0f * ui_s;
+        const float mb_sep_h  =  8.0f * ui_s;
+        const float mb_menu_w = 180.0f * ui_s;
+        for (uint32_t i = 0; i < ca_pool_slot_count(&win->menubar_pool) && !over_overlay; ++i) {
+            Ca_MenuBar *mb = CA_POOL_AT(win->menubar_pool, Ca_MenuBar, i);
+            if (!mb->in_use || mb->active_menu < 0) continue;
+            Ca_MenuBarMenu *am = &mb->menus[mb->active_menu];
+            Ca_Node *hdr = am->header_node;
+            if (!hdr) continue;
+            float menu_h = 6.0f * ui_s;
+            for (int ii = 0; ii < am->item_count; ++ii)
+                menu_h += am->items[ii].separator ? mb_sep_h : mb_item_h;
+            float drop_x = 0.0f;
+            float drop_y = 0.0f;
+            ca_menubar_dropdown_geometry(win, hdr, mb_menu_w, menu_h,
+                                         &drop_x, &drop_y);
+            if (mx >= drop_x && mx <= drop_x + mb_menu_w &&
+                my >= drop_y  && my <= drop_y + menu_h)
+                over_overlay = true;
+            /* Sub-menu panel */
+            if (!over_overlay && am->active_sub >= 0 && am->active_sub < am->item_count) {
+                float parent_offset_y = 3.0f * ui_s;
+                for (int jj = 0; jj < am->active_sub; ++jj)
+                    parent_offset_y += am->items[jj].separator ? mb_sep_h : mb_item_h;
+                float sub_h = mb_item_h * (float)am->items[am->active_sub].sub_item_count + 6.0f * ui_s;
+                float sub_x = 0.0f;
+                float sub_y = 0.0f;
+                ca_menubar_submenu_geometry(win, drop_x, drop_y,
+                                            mb_menu_w, mb_menu_w, sub_h,
+                                            parent_offset_y,
+                                            &sub_x, &sub_y);
+                if (mx >= sub_x && mx <= sub_x + mb_menu_w &&
+                    my >= sub_y  && my <= sub_y + sub_h)
+                    over_overlay = true;
+            }
+        }
+    }
+
+    /* Ca_Modal visible — overlay covers the full window */
+    if (!over_overlay && ca_pool_slot_count(&win->modal_pool) > 0) {
+        for (uint32_t i = 0; i < ca_pool_slot_count(&win->modal_pool) && !over_overlay; ++i) {
+            Ca_Modal *m = CA_POOL_AT(win->modal_pool, Ca_Modal, i);
+            if (m->in_use && m->visible) over_overlay = true;
+        }
+    }
+
+    return over_overlay;
+}
+
 void ca_widget_input_pass(Ca_Window *win)
 {
     float mx = (float)win->mouse_x;
     float my = (float)win->mouse_y;
     float ui_s = win->ui_scale > 0.0f ? win->ui_scale : 1.0f;
+    win->pointer_over_overlay = pointer_over_overlay(win, mx, my, ui_s);
     /* Query live OS button state where available.  GLFW's per-window cached
        state can miss releases when borderless-window drags leave the content
        area, so use the platform window helper and clear stale cached state on
@@ -5700,6 +5805,37 @@ void ca_widget_input_pass(Ca_Window *win)
             }
         }
 
+        if (!click_consumed && ca_pool_slot_count(&win->select_pool) > 0) {
+            /* An open select list is an overlay: a click on an option picks it
+               and a click on its own header closes it, both consumed so they
+               never reach widgets underneath. A click elsewhere only closes
+               the list and still reaches whatever it landed on. */
+            for (uint32_t i = 0; i < ca_pool_slot_count(&win->select_pool); ++i) {
+                Ca_Select *sel = CA_POOL_AT(win->select_pool, Ca_Select, i);
+                if (!sel->in_use || !sel->node || !sel->open) continue;
+                if (node_is_ancestor_hidden(sel->node)) { sel->open = false; continue; }
+                const float opt_y = sel->node->y + sel->node->h;
+                const float opt_h = sel->node->h;
+                int visible = sel->option_count < CA_SELECT_MAX_VISIBLE
+                              ? sel->option_count : CA_SELECT_MAX_VISIBLE;
+                int scroll = sel->scroll_offset;
+                if (scroll > sel->option_count - visible) scroll = sel->option_count - visible;
+                if (scroll < 0) scroll = 0;
+                const bool in_x = mx >= sel->node->x && mx <= sel->node->x + sel->node->w;
+                const bool on_list = in_x && my >= opt_y && my < opt_y + opt_h * (float)visible;
+                const bool on_header = point_in_node(sel->node, mx, my);
+                sel->open = false;
+                sel->hover_item = -1;
+                sel->scroll_accum = 0.0f;
+                sel->node->dirty |= CA_DIRTY_CONTENT;
+                if (on_list) {
+                    sel->selected = scroll + (int)((my - opt_y) / opt_h);
+                    if (sel->on_change) sel->on_change(sel, sel->change_data);
+                }
+                if (on_list || on_header) click_consumed = true;
+            }
+        }
+
         if (!click_consumed) {
         /* Click on an input or button focuses it */
         Ca_Node *clicked_focus = NULL;
@@ -5832,52 +5968,17 @@ void ca_widget_input_pass(Ca_Window *win)
             }
         }
 
-        /* Select dropdown — toggle open/close, or pick option */
+        /* Select dropdown — open on header click (open lists are resolved above) */
         if (ca_pool_slot_count(&win->select_pool) > 0) {
-            bool select_handled = false;
             for (uint32_t i = 0; i < ca_pool_slot_count(&win->select_pool); ++i) {
                 Ca_Select *sel = CA_POOL_AT(win->select_pool, Ca_Select, i);
                 if (!sel->in_use || !sel->node) continue;
                 if (is_effectively_disabled(sel->node)) continue;
-                /* Force-close and skip selects inside hidden panels */
                 if (node_is_ancestor_hidden(sel->node)) {
                     sel->open = false;
                     continue;
                 }
-                if (sel->open) {
-                    /* Check if clicked on a visible dropdown option */
-                    float opt_y = sel->node->y + sel->node->h;
-                    float opt_h = sel->node->h;
-                    int   visible = sel->option_count < CA_SELECT_MAX_VISIBLE
-                                    ? sel->option_count : CA_SELECT_MAX_VISIBLE;
-                    int   scroll  = sel->scroll_offset;
-                    if (scroll > sel->option_count - visible) scroll = sel->option_count - visible;
-                    if (scroll < 0) scroll = 0;
-                    bool clicked_option = false;
-                    for (int vi = 0; vi < visible; ++vi) {
-                        float oy = opt_y + opt_h * (float)vi;
-                        if (mx >= sel->node->x && mx <= sel->node->x + sel->node->w &&
-                            my >= oy && my <= oy + opt_h) {
-                            sel->selected = scroll + vi;
-                            sel->open = false;
-                            sel->hover_item = -1;
-                            sel->scroll_accum = 0.0f;
-                            sel->node->dirty |= CA_DIRTY_CONTENT;
-                            if (sel->on_change) sel->on_change(sel, sel->change_data);
-                            select_handled = true;
-                            clicked_option = true;
-                            break;
-                        }
-                    }
-                    if (!clicked_option) {
-                        /* Click anywhere else closes the dropdown */
-                        sel->open = false;
-                        sel->hover_item = -1;
-                        sel->scroll_accum = 0.0f;
-                        sel->node->dirty |= CA_DIRTY_CONTENT;
-                        select_handled = true;
-                    }
-                } else if (point_reaches_node(sel->node, mx, my, top_z)) {
+                if (point_reaches_node(sel->node, mx, my, top_z)) {
                     sel->open = true;
                     /* Scroll so selected item is visible */
                     {
@@ -5889,7 +5990,6 @@ void ca_widget_input_pass(Ca_Window *win)
                             sel->scroll_offset = sel->selected;
                     }
                     sel->node->dirty |= CA_DIRTY_CONTENT;
-                    select_handled = true;
                 }
             }
         }
@@ -6112,7 +6212,8 @@ void ca_widget_input_pass(Ca_Window *win)
         for (uint32_t i = 0; i < ca_pool_slot_count(&win->splitter_pool); ++i) {
             Ca_Splitter *sp = CA_POOL_AT(win->splitter_pool, Ca_Splitter, i);
             if (!sp->in_use || !sp->node) continue;
-            bool now_hovered = node_effective_z(sp->node) >= top_z &&
+            bool now_hovered = !win->pointer_over_overlay &&
+                               node_effective_z(sp->node) >= top_z &&
                                point_in_splitter_handle(sp->node, mx, my);
             if (now_hovered != sp->bar_hovered) {
                 sp->bar_hovered = now_hovered;
@@ -6184,101 +6285,7 @@ void ca_widget_input_pass(Ca_Window *win)
     Ca_Node *previous_hovered = win->hovered_node;
     win->hovered_node = NULL;
 
-    /* If the cursor is over an active overlay (select dropdown, context menu,
-       menu-bar dropdown, or modal) do NOT let hover pierce through to background
-       nodes — that would cause tooltips and hover styles to fire on invisible
-       elements sitting behind the overlay. */
-    bool over_overlay = false;
-
-    /* Ca_Select open dropdown */
-    if (!over_overlay && ca_pool_slot_count(&win->select_pool) > 0) {
-        for (uint32_t i = 0; i < ca_pool_slot_count(&win->select_pool) && !over_overlay; ++i) {
-            Ca_Select *sel = CA_POOL_AT(win->select_pool, Ca_Select, i);
-            if (!sel->in_use || !sel->open || !sel->node) continue;
-            Ca_Node *sn = sel->node;
-            int visible = sel->option_count < CA_SELECT_MAX_VISIBLE
-                          ? sel->option_count : CA_SELECT_MAX_VISIBLE;
-            float drop_y = sn->y + sn->h;
-            float drop_h = sn->h * (float)visible;
-            if (mx >= sn->x && mx <= sn->x + sn->w &&
-                my >= drop_y  && my <= drop_y + drop_h)
-                over_overlay = true;
-        }
-    }
-
-    /* Ca_CtxMenu open */
-    if (!over_overlay && ca_pool_slot_count(&win->ctxmenu_pool) > 0) {
-        const float cm_item_h = 24.0f * ui_s;
-        const float cm_sep_h  =  8.0f * ui_s;
-        const float cm_menu_w = 180.0f * ui_s;
-        for (uint32_t i = 0; i < ca_pool_slot_count(&win->ctxmenu_pool) && !over_overlay; ++i) {
-            Ca_CtxMenu *cm = CA_POOL_AT(win->ctxmenu_pool, Ca_CtxMenu, i);
-            if (!cm->in_use || !cm->open) continue;
-            if (cm->node && node_is_ancestor_hidden(cm->node)) continue;
-            float menu_h = 6.0f * ui_s;
-            for (int mi = 0; mi < cm->item_count; ++mi) {
-                bool is_sep = (cm->items[mi][0] == '-' && cm->items[mi][1] == '\0');
-                menu_h += is_sep ? cm_sep_h : cm_item_h;
-            }
-            float cx = cm->open_x, cy = cm->open_y;
-            if (win->sc.extent.width  > 0 && cx + cm_menu_w > (float)win->sc.extent.width)
-                cx = (float)win->sc.extent.width  - cm_menu_w;
-            if (win->sc.extent.height > 0 && cy + menu_h > (float)win->sc.extent.height)
-                cy = (float)win->sc.extent.height - menu_h;
-            if (cx < 0) cx = 0;
-            if (cy < 0) cy = 0;
-            if (mx >= cx && mx <= cx + cm_menu_w && my >= cy && my <= cy + menu_h)
-                over_overlay = true;
-        }
-    }
-
-    /* Ca_MenuBar active dropdown (and sub-menu) */
-    if (!over_overlay && ca_pool_slot_count(&win->menubar_pool) > 0) {
-        const float mb_item_h = 24.0f * ui_s;
-        const float mb_sep_h  =  8.0f * ui_s;
-        const float mb_menu_w = 180.0f * ui_s;
-        for (uint32_t i = 0; i < ca_pool_slot_count(&win->menubar_pool) && !over_overlay; ++i) {
-            Ca_MenuBar *mb = CA_POOL_AT(win->menubar_pool, Ca_MenuBar, i);
-            if (!mb->in_use || mb->active_menu < 0) continue;
-            Ca_MenuBarMenu *am = &mb->menus[mb->active_menu];
-            Ca_Node *hdr = am->header_node;
-            if (!hdr) continue;
-            float menu_h = 6.0f * ui_s;
-            for (int ii = 0; ii < am->item_count; ++ii)
-                menu_h += am->items[ii].separator ? mb_sep_h : mb_item_h;
-            float drop_x = 0.0f;
-            float drop_y = 0.0f;
-            ca_menubar_dropdown_geometry(win, hdr, mb_menu_w, menu_h,
-                                         &drop_x, &drop_y);
-            if (mx >= drop_x && mx <= drop_x + mb_menu_w &&
-                my >= drop_y  && my <= drop_y + menu_h)
-                over_overlay = true;
-            /* Sub-menu panel */
-            if (!over_overlay && am->active_sub >= 0 && am->active_sub < am->item_count) {
-                float parent_offset_y = 3.0f * ui_s;
-                for (int jj = 0; jj < am->active_sub; ++jj)
-                    parent_offset_y += am->items[jj].separator ? mb_sep_h : mb_item_h;
-                float sub_h = mb_item_h * (float)am->items[am->active_sub].sub_item_count + 6.0f * ui_s;
-                float sub_x = 0.0f;
-                float sub_y = 0.0f;
-                ca_menubar_submenu_geometry(win, drop_x, drop_y,
-                                            mb_menu_w, mb_menu_w, sub_h,
-                                            parent_offset_y,
-                                            &sub_x, &sub_y);
-                if (mx >= sub_x && mx <= sub_x + mb_menu_w &&
-                    my >= sub_y  && my <= sub_y + sub_h)
-                    over_overlay = true;
-            }
-        }
-    }
-
-    /* Ca_Modal visible — overlay covers the full window */
-    if (!over_overlay && ca_pool_slot_count(&win->modal_pool) > 0) {
-        for (uint32_t i = 0; i < ca_pool_slot_count(&win->modal_pool) && !over_overlay; ++i) {
-            Ca_Modal *m = CA_POOL_AT(win->modal_pool, Ca_Modal, i);
-            if (m->in_use && m->visible) over_overlay = true;
-        }
-    }
+    const bool over_overlay = win->pointer_over_overlay;
 
     if (!over_overlay && ca_pool_slot_count(&win->node_pool) > 0) {
         /* Find the deepest / smallest node under the cursor (most specific hit).
