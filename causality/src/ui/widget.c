@@ -4949,11 +4949,12 @@ static bool point_in_splitter_handle(Ca_Node *n, float px, float py)
 }
 
 /* True when node n is a pointer hit-test candidate at (px, py): visible, not
-   flagged no_hover, and under the point (splitters only in their handle
+   flagged no_hover or styled pointer-events: none, and under the point (splitters only in their handle
    gutter). no_hover nodes are transparent; their descendants still qualify. */
 static bool node_is_pointer_candidate(Ca_Node *n, float px, float py)
 {
     return n->in_use && !n->desc.hidden && !n->desc.no_hover &&
+           n->desc.pointer_events != CA_CSS_POINTER_EVENTS_NONE &&
            point_in_node(n, px, py) && !node_is_ancestor_hidden(n) &&
            (n->widget_type != CA_WIDGET_SPLITTER || point_in_splitter_handle(n, px, py));
 }
