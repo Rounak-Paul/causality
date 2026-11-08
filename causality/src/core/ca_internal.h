@@ -1490,6 +1490,8 @@ struct Ca_Window {
     Ca_Node       *content_root;          /* user content is built here          */
     Ca_Node       *status_bar_node;       /* system-managed status bar container */
     char           title[256];            /* window title text                   */
+    void         (*titlebar_controls_fn)(void *);
+    void          *titlebar_controls_data;
     bool           titlebar_needs_rebuild;
     bool           titlebar_hidden;
     bool           title_left_aligned;

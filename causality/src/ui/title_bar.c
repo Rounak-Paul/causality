@@ -281,6 +281,9 @@ titlebar_menu_done:
     });
     ctrl->dirty |= CA_DIRTY_LAYOUT;
 
+    if (win->titlebar_controls_fn)
+        win->titlebar_controls_fn(win->titlebar_controls_data);
+
     Ca_Button *min_btn = ca_btn_begin(&(Ca_BtnDesc){
         .text       = CA_ICON_FA_MINUS,
         .width      = 0.0f,
@@ -360,6 +363,18 @@ void ca_title_bar_position_title(Ca_Window *win)
 /* ------------------------------------------------------------------ */
 /* Public API implementations                                          */
 /* ------------------------------------------------------------------ */
+
+void ca_window_set_title_bar_controls(Ca_Window *window,
+                                      void (*build)(void *), void *user_data)
+{
+    if (!window || !window->in_use || window->native_frame)
+        return;
+    window->titlebar_controls_fn = build;
+    window->titlebar_controls_data = user_data;
+    window->titlebar_needs_rebuild = true;
+    window->needs_render = true;
+    ca_instance_wake();
+}
 
 void ca_window_set_title_bar_visible(Ca_Window *window, bool visible)
 {

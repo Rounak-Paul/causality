@@ -15,6 +15,12 @@
 
 /* ---- Helpers ---- */
 
+/** Decodes an sRGB channel for the linear framebuffer clear. */
+static float srgb_channel_to_linear(float channel)
+{
+    return channel < 0.04045f ? channel / 12.92f : powf((channel + 0.055f) / 1.055f, 2.4f);
+}
+
 static void capture_deliver(Ca_Instance *inst, Ca_Window *win);
 
 /* Compare draw commands by z_index for stable sort (preserves original order
@@ -1506,9 +1512,9 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
     float bg_r = 0.15f, bg_g = 0.15f, bg_b = 0.17f, bg_a = 1.0f;
     uint32_t root_bg_idx = find_root_bg_cmd_index(win);
     if (root_bg_idx != UINT32_MAX) {
-        bg_r = win->draw_cmds[root_bg_idx].r;
-        bg_g = win->draw_cmds[root_bg_idx].g;
-        bg_b = win->draw_cmds[root_bg_idx].b;
+        bg_r = srgb_channel_to_linear(win->draw_cmds[root_bg_idx].r);
+        bg_g = srgb_channel_to_linear(win->draw_cmds[root_bg_idx].g);
+        bg_b = srgb_channel_to_linear(win->draw_cmds[root_bg_idx].b);
         bg_a = win->draw_cmds[root_bg_idx].a;
     }
 

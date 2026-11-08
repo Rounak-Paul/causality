@@ -440,6 +440,16 @@ CA_API float      ca_window_get_title_bar_height(Ca_Window *window);
 /** Shows or hides the custom title bar; native OS frames are unaffected. */
 CA_API void       ca_window_set_title_bar_visible(Ca_Window *window, bool visible);
 
+/**
+ * Installs a builder for controls placed before Minimize in the custom title bar.
+ * The builder runs with the controls container active. Pass NULL to remove it.
+ */
+CA_API void ca_window_set_title_bar_controls(Ca_Window *window,
+                                             void (*build)(void *), void *user_data);
+
+/** Sets the window canvas color behind both title bar and content (packed RGBA). */
+CA_API void ca_window_set_canvas_color(Ca_Window *window, uint32_t color);
+
 /* Instance-wide UI scale — like browser zoom.
    1.0 = 100% (default), 1.5 = 150%, 2.0 = 200%, etc.
    Affects all widget sizes, paddings, gaps, and text rendering.

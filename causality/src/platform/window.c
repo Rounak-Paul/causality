@@ -1501,9 +1501,10 @@ bool ca_window_titlebar_drag_pass(Ca_Window *win)
         }
     }
 
-    float ui_s = win->ui_scale > 0.0f ? win->ui_scale : 1.0f;
-    double control_zone_w = 104.0 * (double)ui_s;
-    if (local_x >= (double)win_w - control_zone_w)
+    const Ca_Node *drag = win->title_drag_node;
+    if (!drag || !drag->in_use || drag->desc.hidden ||
+        local_x < drag->x || local_x >= drag->x + drag->w ||
+        local_y < drag->y || local_y >= drag->y + drag->h)
         return false;
 
     win->titlebar_drag_active = true;
@@ -1664,6 +1665,19 @@ float ca_window_get_pixel_ratio(Ca_Window *window)
  * window  Window to query.
  * Returns Reserved title-bar height, or 0 when unavailable.
  */
+void ca_window_set_canvas_color(Ca_Window *window, uint32_t color)
+{
+    if (!window || !window->in_use || !window->root)
+        return;
+    Ca_Node *root = window->root;
+    root->desc.background = color;
+    if (root->has_base_desc)
+        root->base_desc.background = color;
+    root->dirty |= CA_DIRTY_CONTENT;
+    window->needs_render = true;
+    ca_instance_wake();
+}
+
 float ca_window_get_title_bar_height(Ca_Window *window)
 {
     if (!window || !window->title_bar_node || window->native_frame || window->titlebar_hidden) return 0.0f;
