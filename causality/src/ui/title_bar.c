@@ -73,7 +73,7 @@ static void title_bar_apply_style(Ca_Window *win)
     tb->desc.height_pct    = false;
     tb->desc.padding_left  *= sc;
     tb->desc.padding_right *= sc;
-    tb->dirty |= CA_DIRTY_LAYOUT;
+    tb->dirty |= CA_DIRTY_LAYOUT | CA_DIRTY_CONTENT;
 }
 
 /* ------------------------------------------------------------------ */

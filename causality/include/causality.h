@@ -1588,7 +1588,7 @@ CA_API Ca_Stylesheet *ca_css_retain(Ca_Stylesheet *ss);
 CA_API void           ca_css_destroy(Ca_Stylesheet *ss);
 
 /*
- * Attach a parsed author stylesheet to the instance.
+ * Attach a parsed author stylesheet and restyle existing windows.
  *
  * instance  Owning Ca_Instance.
  * ss        Stylesheet to attach; ownership is NOT transferred — the caller

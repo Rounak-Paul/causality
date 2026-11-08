@@ -280,7 +280,7 @@ void ca_instance_set_stylesheet(Ca_Instance *instance, Ca_Stylesheet *ss)
 {
     if (!instance) return;
     instance->stylesheet = ss;
-    ca_instance_resolve_palette(instance);
+    ca_instance_refresh_styles(instance);
 }
 
 Ca_Stylesheet *ca_instance_stylesheet(const Ca_Instance *instance)
