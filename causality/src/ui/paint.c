@@ -173,7 +173,7 @@ static void paint_text_left(Ca_Window *win, Ca_Font *font,
                             const char *text, uint32_t packed_color);
 static void ca_mask_password_text(const char *real_text, char *out, size_t out_size);
 static void paint_cursor(Ca_Window *win, Ca_Font *font,
-                         Ca_Node *node, const char *text, int cursor_pos);
+                         Ca_Node *node, const char *text, int cursor_cp_count, uint32_t text_color);
 static void paint_focus_ring(Ca_Window *win, Ca_Node *node);
 
 /** Effective clip of `cur` and its ancestors with overflow != visible, applied outermost first. */
@@ -660,7 +660,7 @@ static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, Cli
             if (inp->multiline) {
                 paint_input_area(win, font, inp, false);
             } else if (inp->text[0] != '\0') {
-                if (inp->input_mode == CA_INPUT_PASSWORD) {
+                if (inp->input_mode == CA_INPUT_PASSWORD && !inp->password_visible) {
                     char masked[CA_INPUT_TEXT_MAX];
                     ca_mask_password_text(inp->text, masked, sizeof(masked));
                     paint_text_left(win, font, node, masked, inp->text_color);
@@ -2152,7 +2152,7 @@ static float measure_text_advance(Ca_Font *font, const char *text, int cp_count,
 /* Paint a thin cursor line at the given cursor position (a codepoint
    count, not a byte offset — see measure_text_advance) in text. */
 static void paint_cursor(Ca_Window *win, Ca_Font *font,
-                         Ca_Node *node, const char *text, int cursor_cp_count)
+                         Ca_Node *node, const char *text, int cursor_cp_count, uint32_t text_color)
 {
     if (!ca_window_reserve_draw_commands(win, (size_t)win->draw_cmd_count + 1u)) return;
 
@@ -2161,7 +2161,9 @@ static void paint_cursor(Ca_Window *win, Ca_Font *font,
                                          node->desc.font_size,
                                          node->desc.font_bold);
     float cursor_x = node->x + node->desc.padding_left + advance;
-    float cursor_h = node->h * 0.7f;
+    float ui_scale = win->ui_scale > 0.0f ? win->ui_scale : 1.0f;
+    float font_size = node->desc.font_size > 0.0f ? node->desc.font_size : font->default_size;
+    float cursor_h = fminf(node->h, font_size * ui_scale);
     float cursor_y = node->y + (node->h - cursor_h) * 0.5f;
 
     Ca_DrawCmd *cmd = &win->draw_cmds[win->draw_cmd_count++];
@@ -2171,7 +2173,14 @@ static void paint_cursor(Ca_Window *win, Ca_Font *font,
     cmd->y      = cursor_y;
     cmd->w      = 1.5f * (win->ui_scale > 0.0f ? win->ui_scale : 1.0f);
     cmd->h      = cursor_h;
-    unpack_color(win_palette(win)->text_bright, &cmd->r, &cmd->g, &cmd->b, &cmd->a);
+    unpack_text_color(win, text_color, &cmd->r, &cmd->g, &cmd->b, &cmd->a);
+    /* The caret is painted after the tree, so it must inherit the input's layer here. */
+    for (const Ca_Node *ancestor = node; ancestor; ancestor = ancestor->parent) {
+        if (ancestor->desc.z_index != 0) {
+            cmd->z_index = ancestor->desc.z_index;
+            break;
+        }
+    }
     cmd->in_use = true;
 
     ClipRect clip = find_clip_for_node(node);
@@ -2217,7 +2226,7 @@ static void paint_input_area(Ca_Window *win, Ca_Font *font, Ca_TextInput *input,
             } else if (input->cursor >= start && input->cursor <= end) {
                 int count = 0;
                 for (int i = start; i < input->cursor; ++i) if (((unsigned char)input->text[i] & 0xc0) != 0x80) ++count;
-                paint_cursor(win, font, &box, line, count);
+                paint_cursor(win, font, &box, line, count, input->text_color);
                 return;
             }
         }
@@ -3463,12 +3472,12 @@ void ca_paint_pass(Ca_Instance *inst, Ca_Window *win)
                     }
                     if (inp->multiline) {
                         paint_input_area(win, font, inp, true);
-                    } else if (inp->input_mode == CA_INPUT_PASSWORD) {
+                    } else if (inp->input_mode == CA_INPUT_PASSWORD && !inp->password_visible) {
                         char masked[CA_INPUT_TEXT_MAX];
                         ca_mask_password_text(inp->text, masked, sizeof(masked));
-                        paint_cursor(win, font, inp->node, masked, cursor_cp);
+                        paint_cursor(win, font, inp->node, masked, cursor_cp, inp->text_color);
                     } else {
-                        paint_cursor(win, font, inp->node, inp->text, cursor_cp);
+                        paint_cursor(win, font, inp->node, inp->text, cursor_cp, inp->text_color);
                     }
                     break;
                 }

@@ -1336,6 +1336,8 @@ Ca_TextInput *ca_input(const Ca_InputDesc *desc)
     inp->node       = node;
     inp->in_use     = true;
     inp->text_color = desc->text_color;
+    if (inp->input_mode != desc->input_mode)
+        inp->password_visible = false;
     inp->input_mode = desc->input_mode;
     inp->multiline = desc->multiline && desc->input_mode == CA_INPUT_TEXT;
     inp->max_length = desc->max_length && desc->max_length < CA_INPUT_TEXT_MAX ? desc->max_length : CA_INPUT_TEXT_MAX - 1;
@@ -1614,6 +1616,17 @@ void ca__set_disabled_widget(void *widget, bool disabled)
 const char *ca_input_text(const Ca_TextInput *input)
 {
     return input ? input->text : "";
+}
+
+void ca_input_set_password_visible(Ca_TextInput *input, bool visible)
+{
+    if (!input || !input->node || input->input_mode != CA_INPUT_PASSWORD ||
+        input->password_visible == visible)
+        return;
+
+    input->password_visible = visible;
+    input->node->dirty |= CA_DIRTY_CONTENT;
+    ca_instance_request_frame_after(input->node->window->instance, 0);
 }
 
 /* ---- Focus query ---- */

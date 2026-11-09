@@ -941,6 +941,7 @@ struct Ca_TextInput {
     Ca_ChangeFn on_change;
     void       *change_data;
     Ca_InputMode input_mode;
+    bool        password_visible;
     float       drag_speed;
     bool        in_use;
 };

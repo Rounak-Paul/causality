@@ -1055,11 +1055,11 @@ typedef enum Ca_InputMode {
     CA_INPUT_INT,
     CA_INPUT_UINT,
     /* Edits exactly like CA_INPUT_TEXT (any character accepted, no
-       numeric filtering/clamping) but every character renders as '*'
-       instead of the real glyph. ca_input_text() still returns the
+       numeric filtering/clamping) but each character renders as a mask
+       glyph by default. ca_input_text() still returns the
        real, unmasked value — only the painted glyphs and the cursor's
-       horizontal position are computed from the masked string, so the
-       caret still tracks the visible '*' characters exactly. */
+       horizontal position are computed from the displayed string, so the
+       caret tracks the rendered glyphs. */
     CA_INPUT_PASSWORD,
 } Ca_InputMode;
 
@@ -1771,6 +1771,13 @@ CA_API void        ca__set_background_widget(void *widget, uint32_t color);
  * Returns Pointer to the null-terminated UTF-8 text; "" when input is NULL.
  */
 CA_API const char *ca_input_text(const Ca_TextInput *input);
+
+/**
+ * Controls whether a password input paints its characters in plain text.
+ * input   Password input. Other input modes are ignored.
+ * visible True to reveal the text, false to mask it.
+ */
+CA_API void ca_input_set_password_visible(Ca_TextInput *input, bool visible);
 
 /* Returns true when the text input currently holds keyboard focus. */
 CA_API bool ca_input_is_focused(const Ca_TextInput *input);
