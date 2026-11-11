@@ -1738,6 +1738,7 @@ CA_API void ca_viewport_set_callbacks(Ca_Viewport *viewport,
 /* Component widgets and the reactivity primitives are part of the canonical
    public surface; pull them in here so consumers only need <causality.h>. */
 #include "ca_components.h"
+#include "ca_file_browser.h"
 #include "ca_reactive.h"
 
 /* ============================================================
