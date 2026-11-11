@@ -787,6 +787,7 @@ void ca_widget_reapply_css(Ca_Node *node)
     /* Pseudo-state fades: a transition started mid-fade continues from the
        interpolated value `old` still holds. */
     ca_motion_begin_transitions(node, &old, old_text, ca_widget_text_color(node));
+    ca_motion_reassert(node, ca_platform_time());
 }
 
 void ca_widget_refresh_css(Ca_Node *node)
@@ -1483,6 +1484,7 @@ static void node_set_style(Ca_Node *node, const char *style,
 
     ca_motion_begin_transitions(node, &old_desc, old_text_color,
                                 out_text_color ? *out_text_color : 0u);
+    ca_motion_reassert(node, ca_platform_time());
 }
 
 static void mark_subtree_content_dirty(Ca_Node *node);
@@ -1494,7 +1496,10 @@ static void node_set_hidden(Ca_Node *node, bool hidden)
         node->dirty |= CA_DIRTY_LAYOUT | CA_DIRTY_CONTENT;
         /* Painting skips hidden subtrees and clears their dirty flags, so anything built or changed
            while hidden has no draw commands yet: repaint the whole subtree when it is shown. */
-        if (!hidden) mark_subtree_content_dirty(node);
+        if (!hidden) {
+            mark_subtree_content_dirty(node);
+            ca_motion_tick_shown(node, ca_platform_time());
+        }
         if (node->parent)
             node->parent->dirty |= CA_DIRTY_LAYOUT | CA_DIRTY_CONTENT;
     }

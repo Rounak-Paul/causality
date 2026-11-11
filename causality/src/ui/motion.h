@@ -76,6 +76,25 @@ void ca_motion_follow_layout(Ca_Node *node, const Ca_NodeDesc *prev_css,
 bool ca_motion_tick(Ca_Node *node, double now, bool *layout_affected);
 
 /**
+ * Steps every animation and transition in a subtree that has just been shown, so the first frame
+ * painted after it appears is already the animations' first frame rather than the resting state.
+ *
+ * @param node Root of the subtree.
+ * @param now  Current time in seconds.
+ */
+void ca_motion_tick_shown(Ca_Node *node, double now);
+
+/**
+ * Writes a node's running animation values back after its style was re-resolved from CSS
+ * (a hover change, a class change), which resets animated properties to their resting values
+ * and would otherwise paint one unanimated frame before the next tick.
+ *
+ * @param node Node whose style was just re-resolved.
+ * @param now  Current time in seconds.
+ */
+void ca_motion_reassert(Ca_Node *node, double now);
+
+/**
  * Drops continuity records of animations nobody has refreshed lately.
  *
  * @param win Window whose records are pruned.

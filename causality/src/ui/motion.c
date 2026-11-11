@@ -481,6 +481,7 @@ struct Ca_NodeAnim {
     Ca_AnimSpec spec;
     double      start;
     double      paused_at;     /* when the current pause began; meaningful while `paused` */
+    double      last_tick;     /* when the animation last advanced; 0 before its first tick */
     uint64_t    memory_key;    /* identity of the node's place in the tree, see "continuity" */
     bool        missing;       /* no @keyframes of that name */
     bool        done;          /* finite animation that has finished */
@@ -832,6 +833,10 @@ static void anims_suspend(Ca_Node *node, double now, bool *layout_affected)
     }
 }
 
+/** A gap between ticks longer than this is a stalled frame, not an idle animation. */
+#define ANIM_STALL_SECONDS 0.1
+#define ANIM_FRAME_SECONDS (1.0 / 60.0)
+
 static bool tick_animations(Ca_Node *node, double now, bool *layout_affected)
 {
     if (node->anim_spec_count == 0 && node->anim_count == 0) return false;
@@ -847,7 +852,16 @@ static bool tick_animations(Ca_Node *node, double now, bool *layout_affected)
         if (a->suspended) {
             a->suspended = false;
             a->start = now;
+            a->last_tick = 0.0;
         }
+
+        /* A frame that stalls (a heavy rebuild, a slow device) must not eat the start of an
+           animation: the time lost beyond one normal frame is taken off its clock. */
+        if (!spec->paused && !a->paused && a->last_tick > 0.0) {
+            const double gap = now - a->last_tick;
+            if (gap > ANIM_STALL_SECONDS) a->start += gap - ANIM_FRAME_SECONDS;
+        }
+        a->last_tick = now;
 
         /* animation-play-state: a pause freezes progress; resuming shifts the start by the pause. */
         double clock = now;
@@ -906,6 +920,28 @@ bool ca_motion_tick(Ca_Node *node, double now, bool *layout_affected)
     bool busy = tick_transitions(node, now, layout_affected);
     if (tick_animations(node, now, layout_affected)) busy = true;
     return busy;
+}
+
+void ca_motion_reassert(Ca_Node *node, double now)
+{
+    if (node->anim_count == 0 && node->anim_spec_count == 0) return;
+    bool layout = false;
+    if (tick_animations(node, now, &layout)) {
+        node->dirty |= CA_DIRTY_CONTENT;
+        if (layout) node->dirty |= CA_DIRTY_LAYOUT;
+    }
+}
+
+void ca_motion_tick_shown(Ca_Node *node, double now)
+{
+    if (!node || !node->in_use) return;
+    bool layout = false;
+    if (ca_motion_tick(node, now, &layout)) {
+        node->dirty |= CA_DIRTY_CONTENT;
+        if (layout) node->dirty |= CA_DIRTY_LAYOUT;
+    }
+    for (uint32_t i = 0; i < node->child_count; ++i)
+        ca_motion_tick_shown(node->children[i], now);
 }
 
 void ca_motion_node_destroy(Ca_Node *node)

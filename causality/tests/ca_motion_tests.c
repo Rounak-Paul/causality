@@ -24,8 +24,36 @@ typedef struct {
     Ca_Node    *node;
 } Rig;
 
+/** Ticks the clock the way a running frame loop does: in 50 ms steps up to `until`, returning whether any step was busy. */
+static Ca_Node *tick_node;
+static double   tick_time;
+
+static bool tick_to(Ca_Node *node, double until, bool *layout)
+{
+    const bool continues = node == tick_node && until > tick_time;
+    double t = continues ? tick_time : until;
+    bool busy = continues ? false : ca_motion_tick(node, until, layout);
+    while (continues && t < until) {
+        t = t + 0.05 < until ? t + 0.05 : until;
+        busy |= ca_motion_tick(node, t, layout);
+    }
+    tick_node = node;
+    tick_time = until;
+    return busy;
+}
+
+
+/** A single tick at `at`, for a frame that follows a deliberate gap (an element shown or rebuilt). */
+static bool tick_once(Ca_Node *node, double at, bool *layout)
+{
+    tick_node = node;
+    tick_time = at;
+    return ca_motion_tick(node, at, layout);
+}
+
 static bool rig_init(Rig *rig, const char *css)
 {
+    tick_node = NULL;
     memset(rig, 0, sizeof(*rig));
     rig->window.instance = &rig->instance;
     rig->window.ui_scale = 1.0f;
@@ -159,18 +187,18 @@ static bool test_transition_runs_with_delay(void)
     for (size_t i = 0; i < node->transition_storage.count; ++i) node->transitions[i].start_time = 10.0;
 
     bool layout = false;
-    CHECK(ca_motion_tick(node, 10.2, &layout));
+    CHECK(tick_to(node, 10.2, &layout));
     CHECK(node->desc.background == 0x000000FFu && node->desc.width == 100.0f);   /* still in the delay */
 
-    CHECK(ca_motion_tick(node, 11.0, &layout));   /* half way through the 1s after the 0.5s delay */
+    CHECK(tick_to(node, 11.0, &layout));   /* half way through the 1s after the 0.5s delay */
     const uint32_t red = node->desc.background >> 24;
     CHECK(red >= 126 && red <= 129);
     CHECK(fabsf(node->desc.width - 150.0f) < 0.01f);
     CHECK(layout);
 
-    CHECK(ca_motion_tick(node, 13.0, &layout));   /* lands on the final value and is still reported busy */
+    CHECK(tick_to(node, 13.0, &layout));   /* lands on the final value and is still reported busy */
     CHECK(node->desc.background == 0xFF0000FFu && node->desc.width == 200.0f);
-    CHECK(!ca_motion_tick(node, 13.1, &layout));
+    CHECK(!tick_to(node, 13.1, &layout));
 
     rig_destroy(&rig);
     return true;
@@ -235,7 +263,7 @@ static bool test_transition_retarget_and_cancel(void)
     ca_motion_begin_transitions(node, &old, 0u, 0u);
     CHECK(!node->transitions[0].active);
     bool layout = false;
-    ca_motion_tick(node, 100.0, &layout);
+    tick_to(node, 100.0, &layout);
     CHECK(node->desc.opacity == 1.0f);
 
     /* Re-resolving to the target a transition is already heading for leaves it running. */
@@ -243,7 +271,7 @@ static bool test_transition_retarget_and_cancel(void)
     node->desc.opacity = 0.5f;
     ca_motion_begin_transitions(node, &old, 0u, 0u);
     node->transitions[0].start_time = 200.0;
-    ca_motion_tick(node, 200.5, &layout);
+    tick_to(node, 200.5, &layout);
     CHECK(fabsf(node->desc.opacity - 0.75f) < 0.001f);
     old = node->desc;                                          /* shown 0.75, resolved target still 0.5 */
     node->desc.opacity = 0.5f;
@@ -273,10 +301,10 @@ static bool test_text_colour_transitions(void)
     CHECK(label.color == 0xEEEEEEFFu);                 /* the old, palette-default look is held */
     node->transitions[0].start_time = 20.0;
     bool layout = false;
-    CHECK(ca_motion_tick(node, 20.5, &layout));
+    CHECK(tick_to(node, 20.5, &layout));
     const uint32_t g = (label.color >> 16) & 0xFFu;
     CHECK(g > 0x50 && g < 0x90);                       /* half way between 0xEE and 0x00 */
-    CHECK(ca_motion_tick(node, 22.0, &layout));
+    CHECK(tick_to(node, 22.0, &layout));
     CHECK(label.color == 0xFF0000FFu);
 
     /* Red -> no colour: lands back on "palette default", not on a frozen explicit colour. */
@@ -284,7 +312,7 @@ static bool test_text_colour_transitions(void)
     ca_motion_begin_transitions(node, &old, 0xFF0000FFu, 0u);
     CHECK(label.color == 0xFF0000FFu);
     node->transitions[0].start_time = 30.0;
-    CHECK(ca_motion_tick(node, 32.0, &layout));
+    CHECK(tick_to(node, 32.0, &layout));
     CHECK(label.color == 0u);
 
     rig_destroy(&rig);
@@ -309,10 +337,10 @@ static bool test_gradient_transitions(void)
     CHECK(node->desc.gradient_color2 == 0x000000FFu && node->desc.gradient_angle == 0.0f);
     for (size_t i = 0; i < node->transition_storage.count; ++i) node->transitions[i].start_time = 5.0;
     bool layout = false;
-    ca_motion_tick(node, 5.5, &layout);
+    tick_to(node, 5.5, &layout);
     CHECK(fabsf(node->desc.gradient_angle - 45.0f) < 0.01f);
     CHECK(((node->desc.gradient_color2 >> 24) & 0xFFu) >= 126 && ((node->desc.gradient_color2 >> 24) & 0xFFu) <= 129);
-    ca_motion_tick(node, 7.0, &layout);
+    tick_to(node, 7.0, &layout);
     CHECK(node->desc.gradient_color2 == 0xFF0000FFu && node->desc.gradient_angle == 90.0f);
 
     /* Solid -> gradient has nothing to interpolate between: applied at once. */
@@ -337,16 +365,16 @@ static bool test_animation_playback(void)
     set_animation(node, &spec);
 
     bool layout = false;
-    CHECK(ca_motion_tick(node, 100.0, &layout));              /* starts, applies progress 0 */
+    CHECK(tick_to(node, 100.0, &layout));              /* starts, applies progress 0 */
     CHECK(node->desc.width == 100.0f && layout);
-    CHECK(ca_motion_tick(node, 100.5, &layout) && fabsf(node->desc.width - 150.0f) < 0.01f);
-    CHECK(ca_motion_tick(node, 101.25, &layout) && fabsf(node->desc.width - 175.0f) < 0.01f);   /* 2nd pass runs backwards */
-    CHECK(ca_motion_tick(node, 102.5, &layout));              /* finished: lands, restores the base */
+    CHECK(tick_to(node, 100.5, &layout) && fabsf(node->desc.width - 150.0f) < 0.01f);
+    CHECK(tick_to(node, 101.25, &layout) && fabsf(node->desc.width - 175.0f) < 0.01f);   /* 2nd pass runs backwards */
+    CHECK(tick_to(node, 102.5, &layout));              /* finished: lands, restores the base */
     CHECK(node->desc.width == 50.0f);
-    CHECK(!ca_motion_tick(node, 102.6, &layout) && node->desc.width == 50.0f);
+    CHECK(!tick_to(node, 102.6, &layout) && node->desc.width == 50.0f);
 
     set_animation(node, NULL);                                /* animation removed from the CSS */
-    CHECK(!ca_motion_tick(node, 103.0, &layout) && node->anim_count == 0);
+    CHECK(!tick_to(node, 103.0, &layout) && node->anim_count == 0);
 
     rig_destroy(&rig);
     return true;
@@ -363,14 +391,14 @@ static bool test_animation_fill_and_implicit_stops(void)
     set_animation(node, &spec);
 
     bool layout = false;
-    ca_motion_tick(node, 10.0, &layout);                      /* in the 1s delay, fill backwards */
+    tick_to(node, 10.0, &layout);                      /* in the 1s delay, fill backwards */
     CHECK(node->desc.width == 50.0f);                          /* the implicit 0% stop is the base */
-    ca_motion_tick(node, 11.5, &layout);
+    tick_to(node, 11.5, &layout);
     CHECK(fabsf(node->desc.width - 125.0f) < 0.01f);           /* halfway from the base to 200 */
-    ca_motion_tick(node, 13.0, &layout);                      /* finished, fill forwards holds 200 */
+    tick_to(node, 13.0, &layout);                      /* finished, fill forwards holds 200 */
     CHECK(node->desc.width == 200.0f);
     node->desc.width = 50.0f;                                  /* a rebuild resets the desc to its CSS value */
-    ca_motion_tick(node, 13.1, &layout);
+    tick_to(node, 13.1, &layout);
     CHECK(node->desc.width == 200.0f);                         /* the held state is written again */
 
     rig_destroy(&rig);
@@ -387,7 +415,7 @@ static bool test_animation_missing_keyframes(void)
     const Ca_AnimSpec spec = anim_spec("nope", 1.0f, 0.0f, 1.0f, CA_ANIM_NORMAL, CA_ANIM_FILL_NONE);
     set_animation(node, &spec);
     bool layout = false;
-    CHECK(!ca_motion_tick(node, 1.0, &layout));
+    CHECK(!tick_to(node, 1.0, &layout));
     CHECK(node->desc.width == 50.0f && !layout);
     rig_destroy(&rig);
     return true;
@@ -404,21 +432,21 @@ static bool test_animation_play_state(void)
     set_animation(node, &spec);
 
     bool layout = false;
-    ca_motion_tick(node, 0.0, &layout);
-    ca_motion_tick(node, 0.25, &layout);
+    tick_to(node, 0.0, &layout);
+    tick_to(node, 0.25, &layout);
     CHECK(fabsf(node->desc.width - 125.0f) < 0.01f);
 
     node->anim_specs[0].paused = true;                        /* the pause is noticed on the next tick, at 30% */
-    CHECK(!ca_motion_tick(node, 0.30, &layout));              /* nothing is moving: no more frames wanted */
+    CHECK(!tick_to(node, 0.30, &layout));              /* nothing is moving: no more frames wanted */
     CHECK(fabsf(node->desc.width - 130.0f) < 0.01f);
     node->desc.width = 50.0f;                                  /* a rebuild resets the desc */
-    ca_motion_tick(node, 5.0, &layout);                       /* a long pause changes nothing */
+    tick_to(node, 5.0, &layout);                       /* a long pause changes nothing */
     CHECK(fabsf(node->desc.width - 130.0f) < 0.01f);
 
     node->anim_specs[0].paused = false;                       /* resume: carries on from 30% */
-    CHECK(ca_motion_tick(node, 5.0, &layout));
+    CHECK(tick_to(node, 5.0, &layout));
     CHECK(fabsf(node->desc.width - 130.0f) < 0.01f);
-    ca_motion_tick(node, 5.25, &layout);
+    tick_to(node, 5.25, &layout);
     CHECK(fabsf(node->desc.width - 155.0f) < 0.01f);
 
     rig_destroy(&rig);
@@ -435,10 +463,10 @@ static bool test_keyframes_resolve_var(void)
     const Ca_AnimSpec spec = anim_spec("grow", 1.0f, 0.0f, 1.0f, CA_ANIM_NORMAL, CA_ANIM_FILL_FORWARDS);
     set_animation(node, &spec);
     bool layout = false;
-    ca_motion_tick(node, 1.0, &layout);
-    ca_motion_tick(node, 1.5, &layout);
+    tick_to(node, 1.0, &layout);
+    tick_to(node, 1.5, &layout);
     CHECK(fabsf(node->desc.width - 200.0f) < 0.01f);           /* halfway from 100 to the variable's 300 */
-    ca_motion_tick(node, 3.0, &layout);
+    tick_to(node, 3.0, &layout);
     CHECK(node->desc.width == 300.0f);
     rig_destroy(&rig);
     return true;
@@ -457,12 +485,12 @@ static bool test_gradient_keyframes(void)
     const Ca_AnimSpec spec = anim_spec("shift", 1.0f, 0.0f, 1.0f, CA_ANIM_NORMAL, CA_ANIM_FILL_FORWARDS);
     set_animation(node, &spec);
     bool layout = false;
-    ca_motion_tick(node, 0.0, &layout);
-    ca_motion_tick(node, 0.5, &layout);
+    tick_to(node, 0.0, &layout);
+    tick_to(node, 0.5, &layout);
     CHECK(fabsf(node->desc.gradient_angle - 90.0f) < 0.5f);
     CHECK(((node->desc.background >> 24) & 0xFFu) >= 126 && ((node->desc.background >> 24) & 0xFFu) <= 129);
     CHECK(((node->desc.gradient_color2 >> 8) & 0xFFu) >= 126 && ((node->desc.gradient_color2 >> 8) & 0xFFu) <= 129);
-    ca_motion_tick(node, 2.0, &layout);
+    tick_to(node, 2.0, &layout);
     CHECK(node->desc.background == 0xFF0000FFu && node->desc.gradient_color2 == 0x0000FFFFu);
     CHECK(node->desc.gradient_angle == 180.0f);
     rig_destroy(&rig);
@@ -480,8 +508,8 @@ static bool test_animation_survives_rebuild(void)
     Ca_Node *node = rig.node;
     snprintf(node->id, sizeof(node->id), "card");
     set_animation(node, &spec);
-    ca_motion_tick(node, 50.0, &layout);
-    ca_motion_tick(node, 51.0, &layout);                       /* 25% in */
+    tick_to(node, 50.0, &layout);
+    tick_to(node, 51.0, &layout);                       /* 25% in */
     CHECK(fabsf(node->desc.width - 125.0f) < 0.01f);
 
     /* A builder rebuilds the subtree: same id, same place, brand new node. */
@@ -492,7 +520,7 @@ static bool test_animation_survives_rebuild(void)
     snprintf(again->id, sizeof(again->id), "card");
     set_animation(again, &spec);
     again->desc.width = 50.0f;
-    ca_motion_tick(again, 51.5, &layout);
+    tick_to(again, 51.5, &layout);
     CHECK(fabsf(again->desc.width - 137.5f) < 0.01f);          /* 37.5% in, not 0% */
 
     /* Gone for longer than the continuity window, it starts over. */
@@ -503,7 +531,7 @@ static bool test_animation_survives_rebuild(void)
     snprintf(fresh->id, sizeof(fresh->id), "card");
     set_animation(fresh, &spec);
     fresh->desc.width = 50.0f;
-    ca_motion_tick(fresh, 60.0, &layout);
+    tick_once(fresh, 60.0, &layout);
     CHECK(fresh->desc.width == 100.0f);
 
     rig_destroy(&rig);
@@ -521,32 +549,32 @@ static bool test_animation_restarts_when_displayed(void)
     set_animation(node, &spec);
 
     bool layout = false;
-    CHECK(ca_motion_tick(node, 100.0, &layout));
-    CHECK(ca_motion_tick(node, 101.0, &layout) && fabsf(node->desc.width - 125.0f) < 0.01f);
+    CHECK(tick_to(node, 100.0, &layout));
+    CHECK(tick_to(node, 101.0, &layout) && fabsf(node->desc.width - 125.0f) < 0.01f);
 
     node->desc.hidden = true;
-    CHECK(!ca_motion_tick(node, 102.0, &layout));
+    CHECK(!tick_to(node, 102.0, &layout));
     CHECK(node->desc.width == 50.0f);
-    CHECK(!ca_motion_tick(node, 103.5, &layout));
+    CHECK(!tick_to(node, 103.5, &layout));
 
     node->desc.hidden = false;
-    CHECK(ca_motion_tick(node, 104.0, &layout) && node->desc.width == 100.0f);
-    CHECK(ca_motion_tick(node, 105.0, &layout) && fabsf(node->desc.width - 125.0f) < 0.01f);
+    CHECK(tick_once(node, 104.0, &layout) && node->desc.width == 100.0f);
+    CHECK(tick_to(node, 105.0, &layout) && fabsf(node->desc.width - 125.0f) < 0.01f);
 
     Ca_Node *parent = node->parent;
     CHECK(parent != NULL);
     parent->desc.hidden = true;
-    CHECK(!ca_motion_tick(node, 106.0, &layout));
+    CHECK(!tick_to(node, 106.0, &layout));
     CHECK(node->desc.width == 50.0f);
     parent->desc.hidden = false;
-    CHECK(ca_motion_tick(node, 107.0, &layout) && node->desc.width == 100.0f);
+    CHECK(tick_once(node, 107.0, &layout) && node->desc.width == 100.0f);
 
-    CHECK(ca_motion_tick(node, 112.0, &layout));
-    CHECK(!ca_motion_tick(node, 113.0, &layout));
+    CHECK(tick_to(node, 112.0, &layout));
+    CHECK(!tick_to(node, 113.0, &layout));
     node->desc.hidden = true;
-    ca_motion_tick(node, 114.0, &layout);
+    tick_to(node, 114.0, &layout);
     node->desc.hidden = false;
-    CHECK(ca_motion_tick(node, 115.0, &layout) && node->desc.width == 100.0f);
+    CHECK(tick_once(node, 115.0, &layout) && node->desc.width == 100.0f);
 
     rig_destroy(&rig);
     return true;
@@ -575,8 +603,8 @@ static bool test_translate_property(void)
     const Ca_AnimSpec spec = anim_spec("slide", 2.0f, 0.0f, 1.0f, CA_ANIM_NORMAL, CA_ANIM_FILL_NONE);
     set_animation(node, &spec);
     bool layout = false;
-    CHECK(ca_motion_tick(node, 10.0, &layout) && node->desc.translate_x == 100.0f);
-    CHECK(ca_motion_tick(node, 11.0, &layout) && fabsf(node->desc.translate_x - 50.0f) < 0.01f);
+    CHECK(tick_to(node, 10.0, &layout) && node->desc.translate_x == 100.0f);
+    CHECK(tick_to(node, 11.0, &layout) && fabsf(node->desc.translate_x - 50.0f) < 0.01f);
     CHECK(!layout);
     rig_destroy(&rig);
     return true;
@@ -592,11 +620,74 @@ static bool test_opacity_animation_ends_opaque(void)
     const Ca_AnimSpec spec = anim_spec("fade", 1.0f, 0.0f, 1.0f, CA_ANIM_NORMAL, CA_ANIM_FILL_NONE);
     set_animation(node, &spec);
     bool layout = false;
-    CHECK(ca_motion_tick(node, 10.0, &layout) && node->desc.opacity < 0.01f);
-    CHECK(ca_motion_tick(node, 10.5, &layout) && fabsf(node->desc.opacity - 0.5f) < 0.01f);
-    CHECK(ca_motion_tick(node, 12.0, &layout));            /* lands */
+    CHECK(tick_to(node, 10.0, &layout) && node->desc.opacity < 0.01f);
+    CHECK(tick_to(node, 10.5, &layout) && fabsf(node->desc.opacity - 0.5f) < 0.01f);
+    CHECK(tick_to(node, 12.0, &layout));            /* lands */
     CHECK(node->desc.opacity >= 0.999f);                   /* not stuck at the 0.001 floor */
-    CHECK(!ca_motion_tick(node, 12.1, &layout) && node->desc.opacity >= 0.999f);
+    CHECK(!tick_to(node, 12.1, &layout) && node->desc.opacity >= 0.999f);
+    rig_destroy(&rig);
+    return true;
+}
+
+/** A frame that stalls does not skip the start of an animation: the lost time is not charged to it. */
+static bool test_animation_absorbs_stalled_frames(void)
+{
+    Rig rig;
+    CHECK(rig_init(&rig, "@keyframes grow { from { width: 100px; } to { width: 200px; } }"));
+    Ca_Node *node = rig.node;
+    const Ca_AnimSpec spec = anim_spec("grow", 1.0f, 0.0f, 1.0f, CA_ANIM_NORMAL, CA_ANIM_FILL_NONE);
+    set_animation(node, &spec);
+
+    bool layout = false;
+    CHECK(tick_once(node, 10.0, &layout) && node->desc.width == 100.0f);
+    CHECK(tick_once(node, 10.016, &layout));
+    CHECK(tick_once(node, 10.5, &layout));                          /* a 484 ms hitch */
+    CHECK(node->desc.width < 104.0f);                                /* barely advanced */
+    CHECK(tick_once(node, 10.516, &layout));
+    CHECK(tick_once(node, 10.616, &layout) && fabsf(node->desc.width - 114.9f) < 0.5f);
+    rig_destroy(&rig);
+    return true;
+}
+
+/** Showing an element leaves it at its animation's first frame at once, with no unanimated frame between. */
+static bool test_show_starts_animation_without_a_gap(void)
+{
+    Rig rig;
+    CHECK(rig_init(&rig, "@keyframes fade { from { opacity: 0; } to { opacity: 1; } }"));
+    Ca_Node *node = rig.node;
+    const Ca_AnimSpec spec = anim_spec("fade", 1.0f, 0.0f, 1.0f, CA_ANIM_NORMAL, CA_ANIM_FILL_NONE);
+    set_animation(node, &spec);
+
+    bool layout = false;
+    tick_once(node, 10.0, &layout);
+    ca__set_hidden_node((Ca_Div *)node, true);
+    tick_once(node, 10.5, &layout);
+    CHECK(node->desc.opacity >= 0.999f);
+
+    ca__set_hidden_node((Ca_Div *)node, false);
+    CHECK(node->desc.opacity > 0.0f && node->desc.opacity < 0.05f);
+    CHECK(node->dirty & CA_DIRTY_CONTENT);
+    rig_destroy(&rig);
+    return true;
+}
+
+/** Re-resolving a node's style resets animated values; reasserting them leaves no unanimated frame. */
+static bool test_reassert_restores_animated_values(void)
+{
+    Rig rig;
+    CHECK(rig_init(&rig, "@keyframes fade { from { opacity: 0; } to { opacity: 1; } }"));
+    Ca_Node *node = rig.node;
+    const Ca_AnimSpec spec = anim_spec("fade", 1.0f, 0.0f, 1.0f, CA_ANIM_NORMAL, CA_ANIM_FILL_NONE);
+    set_animation(node, &spec);
+
+    bool layout = false;
+    tick_once(node, 10.0, &layout);
+    CHECK(tick_to(node, 10.5, &layout) && fabsf(node->desc.opacity - 0.5f) < 0.05f);
+
+    node->desc.opacity = 0.0f;                     /* what a hover re-resolve does */
+    ca_motion_reassert(node, 10.5);
+    CHECK(fabsf(node->desc.opacity - 0.5f) < 0.05f);
+    CHECK(node->dirty & CA_DIRTY_CONTENT);
     rig_destroy(&rig);
     return true;
 }
@@ -622,9 +713,9 @@ static bool test_hover_layout_follows_and_transitions(void)
     CHECK(node->transition_storage.count >= 1);
     for (size_t i = 0; i < node->transition_storage.count; ++i) node->transitions[i].start_time = 1.0;
     bool layout = false;
-    CHECK(ca_motion_tick(node, 1.5, &layout) && layout);
+    CHECK(tick_to(node, 1.5, &layout) && layout);
     CHECK(fabsf(node->desc.padding_left - 8.0f) < 0.01f);
-    CHECK(ca_motion_tick(node, 3.0, &layout));
+    CHECK(tick_to(node, 3.0, &layout));
     CHECK(node->desc.padding_left == 12.0f && node->desc.padding_bottom == 12.0f);
 
     rig.window.hovered_node = NULL;                            /* unhover: back to 4, eased */
@@ -632,9 +723,9 @@ static bool test_hover_layout_follows_and_transitions(void)
     CHECK(node->desc.padding_left == 12.0f);
     for (size_t i = 0; i < node->transition_storage.count; ++i)
         if (node->transitions[i].active) node->transitions[i].start_time = 10.0;
-    ca_motion_tick(node, 10.5, &layout);
+    tick_to(node, 10.5, &layout);
     CHECK(fabsf(node->desc.padding_left - 8.0f) < 0.01f);
-    ca_motion_tick(node, 12.0, &layout);
+    tick_to(node, 12.0, &layout);
     CHECK(node->desc.padding_left == 4.0f);
 
     rig_destroy(&rig);
@@ -661,6 +752,9 @@ int main(void)
         { "animation_restarts_when_displayed", test_animation_restarts_when_displayed },
         { "translate_property", test_translate_property },
         { "opacity_animation_ends_opaque", test_opacity_animation_ends_opaque },
+        { "animation_absorbs_stalled_frames", test_animation_absorbs_stalled_frames },
+        { "show_starts_animation_without_a_gap", test_show_starts_animation_without_a_gap },
+        { "reassert_restores_animated_values", test_reassert_restores_animated_values },
         { "hover_layout_follows_and_transitions", test_hover_layout_follows_and_transitions },
     };
     int failed = 0;
