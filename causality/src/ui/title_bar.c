@@ -15,6 +15,7 @@
  *   └── win->content_root  (flex-grow: 1, holds user content)
  */
 
+#include "../platform/platform.h"
 #include "title_bar.h"
 #include "menu_storage.h"
 #include "node.h"
@@ -23,7 +24,6 @@
 #include "../core/ca_internal.h"
 #include "../../include/causality.h"
 
-#include <GLFW/glfw3.h>
 #include <string.h>
 #include <stdio.h>
 #include <assert.h>
@@ -91,7 +91,7 @@ static void on_minimize_click(Ca_Button *btn, void *ud)
 {
     (void)btn;
     Ca_Window *win = (Ca_Window *)ud;
-    glfwIconifyWindow(win->glfw);
+    ca_platform_window_minimize(win);
 }
 
 static void on_maximize_click(Ca_Button *btn, void *ud)
@@ -388,14 +388,14 @@ void ca_window_set_title_bar_visible(Ca_Window *window, bool visible)
     if (window->root) window->root->dirty |= CA_DIRTY_LAYOUT;
     if (!visible) window->titlebar_drag_active = false;
     window->needs_render = true;
-    if (window->glfw) ca_instance_wake();
+    ca_instance_wake();
 }
 
 void ca_window_set_title(Ca_Window *window, const char *title)
 {
     if (!window || !window->in_use) return;
     snprintf(window->title, sizeof(window->title), "%s", title ? title : "");
-    glfwSetWindowTitle(window->glfw, window->title);
+    ca_platform_window_set_title(window, window->title);
     window->titlebar_needs_rebuild = true;
 }
 

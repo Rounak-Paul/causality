@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Causality contributors.
 
-typedef struct GLFWwindow GLFWwindow;
 
 #include "ca_internal.h"
 #include "widget.h"

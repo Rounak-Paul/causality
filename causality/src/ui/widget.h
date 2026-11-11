@@ -7,6 +7,11 @@
 #include "ca_internal.h"
 #include "css.h"
 
+#define CA_WHEEL_SCROLL_PX 30.0f
+
+/** Reports whether a point hits an enabled, unoccluded splitter gutter. */
+bool ca_widget_splitter_hit_at(Ca_Window *window, float x, float y);
+
 /** The widget's own foreground colour, or 0 when it has none or uses the palette default. */
 uint32_t ca_widget_text_color(const Ca_Node *node);
 
@@ -42,7 +47,7 @@ float ca_split_clamp_first_size(const Ca_Splitter *splitter, float pane_space, f
  * Advances every tab bar's sliding indicator toward its active tab.
  *
  * @param win Window whose tab bars are stepped.
- * @param now Current time in seconds (glfwGetTime).
+ * @param now Current time in seconds (the backend's monotonic clock).
  * @return true while an indicator is still moving or waiting on layout, so
  *         the caller keeps frames coming.
  */

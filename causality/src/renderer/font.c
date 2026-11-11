@@ -1601,12 +1601,12 @@ void ca_font_flush_uploads(Ca_Instance *inst, Ca_Font *font)
 /*
  * Initialise a Ca_Font from in-memory font data.
  *
- * Queries the GLFW content scale, initialises FreeType, loads regular/bold/icon
+ * Initialises FreeType at content_scale, loads regular/bold/icon
  * faces, allocates the CPU-side atlas, uploads an empty atlas to the GPU, and
  * primes the default regular page.
  *
  * inst          Owning instance (Vulkan device and queue).
- * glfw_win      GLFW window used to query the content scale.
+ * content_scale Display pixels per logical window unit.
  * out_font      Font struct to populate; zeroed on entry by the caller.
  * regular_data  TTF/OTF bytes for the regular face.
  * regular_size  Byte count of regular_data.
@@ -1652,7 +1652,7 @@ static void font_load_embedded_face(FT_Library lib,
     *out_size = size;
 }
 
-static bool font_create_internal(Ca_Instance *inst, GLFWwindow *glfw_win,
+static bool font_create_internal(Ca_Instance *inst, float content_scale,
                                  Ca_Font *out_font,
                                  const unsigned char *regular_data,
                                  size_t               regular_size,
@@ -1663,9 +1663,7 @@ static bool font_create_internal(Ca_Instance *inst, GLFWwindow *glfw_win,
     out_font->dirty_rect_storage =
         (Ca_DynArray)CA_DYN_ARRAY_INIT(Ca_FontDirtyRect);
 
-    float cx = 1.0f;
-    glfwGetWindowContentScale(glfw_win, &cx, NULL);
-    if (!(cx > 0.0f)) cx = 1.0f;
+    const float cx = content_scale > 0.0f ? content_scale : 1.0f;
     out_font->display_scale = cx;
     out_font->content_scale = cx;
     out_font->default_size  = CA_FONT_DEFAULT_SIZE_PX;
@@ -1783,13 +1781,13 @@ static bool font_create_internal(Ca_Instance *inst, GLFWwindow *glfw_win,
  * bold_path may be NULL to skip the bold tier.
  *
  * inst          Owning instance.
- * glfw_win      GLFW window used to determine the display content scale.
+ * content_scale Display pixels per logical window unit.
  * out_font      Font struct to populate.
  * regular_path  File path to the regular-weight font.
  * bold_path     File path to the bold-weight font, or NULL.
  * Returns       true on success; false if a file cannot be read or init fails.
  */
-bool ca_font_create(Ca_Instance *inst, GLFWwindow *glfw_win,
+bool ca_font_create(Ca_Instance *inst, float content_scale,
                     Ca_Font *out_font,
                     const char *regular_path, const char *bold_path)
 {
@@ -1819,7 +1817,7 @@ bool ca_font_create(Ca_Instance *inst, GLFWwindow *glfw_win,
         }
     }
 
-    bool ok = font_create_internal(inst, glfw_win, out_font,
+    bool ok = font_create_internal(inst, content_scale, out_font,
                                    regular_buf, (size_t)regular_sz,
                                    bold_buf,    (size_t)bold_sz);
     CA_FREE(regular_buf);
@@ -1834,7 +1832,7 @@ bool ca_font_create(Ca_Instance *inst, GLFWwindow *glfw_win,
  * font bytes in memory (e.g. embedded bundled fonts).
  *
  * inst          Owning instance.
- * glfw_win      GLFW window used to determine the display content scale.
+ * content_scale Display pixels per logical window unit.
  * out_font      Font struct to populate.
  * regular_data  Regular-weight font bytes.
  * regular_size  Byte count of regular_data.
@@ -1842,18 +1840,18 @@ bool ca_font_create(Ca_Instance *inst, GLFWwindow *glfw_win,
  * bold_size     Byte count of bold_data; 0 if bold_data is NULL.
  * Returns       true on success; false on failure.
  */
-bool ca_font_create_from_memory(Ca_Instance *inst, GLFWwindow *glfw_win,
+bool ca_font_create_from_memory(Ca_Instance *inst, float content_scale,
                                 Ca_Font *out_font,
                                 const unsigned char *regular_data, unsigned int regular_size,
                                 const unsigned char *bold_data,    unsigned int bold_size)
 {
-    return font_create_internal(inst, glfw_win, out_font,
+    return font_create_internal(inst, content_scale, out_font,
                                 regular_data, (size_t)regular_size,
                                 bold_data,    (size_t)bold_size);
 }
 
 /*
- * Re-query glfw_win's content scale and, if it differs from the font's
+ * If content_scale differs from the font's
  * cached display_scale/content_scale, refresh both fields and force every
  * live atlas page to re-bake at the new physical pixel size.
  *
@@ -1868,15 +1866,13 @@ bool ca_font_create_from_memory(Ca_Instance *inst, GLFWwindow *glfw_win,
  * process restarts. This is the per-frame fix-up that keeps them in sync.
  *
  * font      Font whose cached scale/pages may need to change.
- * glfw_win  GLFW window used to query the live content scale.
+ * content_scale  Current display pixels per logical window unit.
  */
-void ca_font_refresh_content_scale(Ca_Font *font, GLFWwindow *glfw_win)
+void ca_font_refresh_content_scale(Ca_Font *font, float content_scale)
 {
-    if (!font || !glfw_win) return;
+    if (!font) return;
 
-    float cx = 1.0f;
-    glfwGetWindowContentScale(glfw_win, &cx, NULL);
-    if (!(cx > 0.0f)) cx = 1.0f;
+    const float cx = content_scale > 0.0f ? content_scale : 1.0f;
 
     if (cx == font->content_scale) return;
 

@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Sol/Causality contributors.
 
+#include "../platform/platform.h"
 #include "motion.h"
 #include "motion_lists.h"
 #include "node.h"
 #include "style.h"
 #include "widget.h"
 
-#include <GLFW/glfw3.h>
 #include <math.h>
 #include <stddef.h>
 #include <string.h>
@@ -387,7 +387,7 @@ void ca_motion_begin_transitions(Ca_Node *node, const Ca_NodeDesc *old,
         memset(t, 0, sizeof(*t));
         t->entry      = (uint8_t)e;
         t->active     = true;
-        t->start_time = glfwGetTime();
+        t->start_time = ca_platform_time();
         t->duration   = spec->duration;
         t->delay      = spec->delay;
         t->easing     = spec->easing;
@@ -399,7 +399,7 @@ void ca_motion_begin_transitions(Ca_Node *node, const Ca_NodeDesc *old,
         /* A transition can begin during the input pass, after the transition
            tick already ran this frame; wake an idle event loop so the next
            tick advances it. */
-        glfwPostEmptyEvent();
+        ca_instance_wake();
     }
 }
 

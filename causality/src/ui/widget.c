@@ -18,6 +18,7 @@
  *       ca_list_end();
  *     ca_ui_end();
  */
+#include "../platform/platform.h"
 #include "widget.h"
 #include "node.h"
 #include "motion.h"
@@ -34,10 +35,8 @@
 #include <stdio.h>
 #include <string.h>
 
-#include <GLFW/glfw3.h>
 
 /* Scroll distance of one wheel notch, in author pixels (scaled by ui_scale). */
-#define CA_WHEEL_SCROLL_PX 30.0f
 
 static float glyph_adv(Ca_FontTier *tier, uint32_t cp,
                        float cs, float desired_size)
@@ -1661,7 +1660,7 @@ bool ca_input_key_pressed(const Ca_TextInput *input, Ca_Key key)
     Ca_Window *win = input->node->window;
     if (!win) return false;
     for (uint32_t i = 0; i < win->key_count; ++i) {
-        if (win->key_buf[i] == (int)key && win->key_action_buf[i] != 0)
+        if (win->key_buf[i] == (int)key && win->key_action_buf[i] != CA_RELEASE)
             return true;
     }
     return false;
@@ -4228,8 +4227,7 @@ Ca_Viewport *ca_viewport(const Ca_ViewportDesc *desc)
 
     /* Calculate initial pixel dimensions from content scale */
     float content_scale = 1.0f;
-    if (win->glfw)
-        glfwGetWindowContentScale(win->glfw, &content_scale, NULL);
+    ca_platform_content_scale(win, &content_scale, NULL);
     uint32_t px_w = (uint32_t)(w * content_scale);
     uint32_t px_h = (uint32_t)(h * content_scale);
     if (px_w < 1) px_w = 64;
@@ -4869,7 +4867,7 @@ static void input_handle_keys(Ca_Window *win, Ca_TextInput *inp)
             inp->node->dirty |= CA_DIRTY_CONTENT;
         }
 
-        if (key == 259 /* GLFW_KEY_BACKSPACE */) {
+        if (key == CA_KEY_BACKSPACE) {
             if (inp->cursor > 0) {
                 /* Delete one byte before cursor (ASCII-safe; for UTF-8 multi-byte
                    we'd need to walk back, but for the common case this works) */
@@ -4884,7 +4882,7 @@ static void input_handle_keys(Ca_Window *win, Ca_TextInput *inp)
                 inp->cursor = del_pos;
                 changed = true;
             }
-        } else if (key == 261 /* GLFW_KEY_DELETE */) {
+        } else if (key == CA_KEY_DELETE) {
             if (inp->cursor < len) {
                 /* Find length of char at cursor */
                 int char_len = 1;
@@ -4898,24 +4896,24 @@ static void input_handle_keys(Ca_Window *win, Ca_TextInput *inp)
                         (size_t)(len - inp->cursor - char_len + 1));
                 changed = true;
             }
-        } else if (key == 263 /* GLFW_KEY_LEFT */) {
+        } else if (key == CA_KEY_LEFT) {
             if (inp->cursor > 0) {
                 inp->cursor--;
                 while (inp->cursor > 0 && (inp->text[inp->cursor] & 0xC0) == 0x80)
                     inp->cursor--;
             }
-        } else if (key == 262 /* GLFW_KEY_RIGHT */) {
+        } else if (key == CA_KEY_RIGHT) {
             if (inp->cursor < len) {
                 inp->cursor++;
                 while (inp->cursor < len && (inp->text[inp->cursor] & 0xC0) == 0x80)
                     inp->cursor++;
             }
-        } else if (key == 268 /* GLFW_KEY_HOME */) {
+        } else if (key == CA_KEY_HOME) {
             int start = 0, end;
             if (inp->multiline && !primary) while ((end = ca_input_line_end(inp, start)) < inp->cursor && inp->text[end])
                 start = end + (inp->text[end] == '\n');
             inp->cursor = start;
-        } else if (key == 269 /* GLFW_KEY_END */) {
+        } else if (key == CA_KEY_END) {
             if (inp->multiline && !primary) {
                 int start = 0, end;
                 while ((end = ca_input_line_end(inp, start)) < inp->cursor && inp->text[end]) start = end + (inp->text[end] == '\n');
@@ -5037,6 +5035,21 @@ static Ca_Node *pointer_top_node(Ca_Window *win, float px, float py, int16_t top
         if (area < best_area) { best_area = area; best = n; }
     }
     return best;
+}
+
+bool ca_widget_splitter_hit_at(Ca_Window *window, float x, float y)
+{
+    if (!ca_pool_slot_count(&window->splitter_pool))
+        return false;
+    int16_t top_z = pointer_top_z(window, x, y);
+    for (size_t i = 0; i < ca_pool_slot_count(&window->splitter_pool); ++i) {
+        Ca_Splitter *splitter = CA_POOL_AT(window->splitter_pool, Ca_Splitter, i);
+        Ca_Node *node = splitter->node;
+        if (splitter->in_use && node && node_effective_z(node) >= top_z &&
+            node_is_pointer_candidate(node, x, y))
+            return true;
+    }
+    return false;
 }
 
 /* True when a wheel at (px, py) may reach scroll consumer n: n is under the
@@ -5186,11 +5199,11 @@ void ca_widget_input_pass(Ca_Window *win)
     float my = (float)win->mouse_y;
     float ui_s = win->ui_scale > 0.0f ? win->ui_scale : 1.0f;
     win->pointer_over_overlay = pointer_over_overlay(win, mx, my, ui_s);
-    /* Query live OS button state where available.  GLFW's per-window cached
+    /* Query live OS button state where available.  The backend's per-window cached
        state can miss releases when borderless-window drags leave the content
        area, so use the platform window helper and clear stale cached state on
        physical release. */
-    bool left_down = ca_window_left_button_held(win);
+    bool left_down = ca_platform_primary_button_held(win);
     if (!left_down) win->mouse_buttons[0] = false;
     const int16_t top_z =
         (left_down || win->mouse_buttons[1] ||
@@ -5369,7 +5382,7 @@ void ca_widget_input_pass(Ca_Window *win)
             (!win->numeric_drag_input->in_use ||
              !win->numeric_drag_input->node ||
              is_effectively_disabled(win->numeric_drag_input->node))) {
-            ca_window_set_default_cursor(win);
+            ca_platform_set_default_cursor(win);
             win->numeric_drag_input = NULL;
             win->numeric_drag_active = false;
         }
@@ -5403,7 +5416,7 @@ void ca_widget_input_pass(Ca_Window *win)
             float delta = mx - win->numeric_drag_start_x;
             if (delta <= -2.0f || delta >= 2.0f) {
                 win->numeric_drag_active = true;
-                ca_window_set_horizontal_drag_cursor(win);
+                ca_platform_set_horizontal_drag_cursor(win);
                 double value = win->numeric_drag_start_value +
                                (double)delta * (double)input->drag_speed;
                 numeric_input_set_drag_value(input, value);
@@ -5414,7 +5427,7 @@ void ca_widget_input_pass(Ca_Window *win)
             if (win->numeric_drag_active) {
                 if (win->focused_node == win->numeric_drag_input->node)
                     win->focused_node = NULL;
-                ca_window_set_default_cursor(win);
+                ca_platform_set_default_cursor(win);
             }
             win->numeric_drag_input = NULL;
             win->numeric_drag_active = false;
@@ -5517,7 +5530,7 @@ void ca_widget_input_pass(Ca_Window *win)
     /* --- Tab focus navigation --- */
     for (uint32_t ki = 0; !win->app_keyboard && ki < win->key_count; ++ki) {
         int key = win->key_buf[ki];
-        if (key != 258 /* GLFW_KEY_TAB */) continue;
+        if (key != CA_KEY_TAB) continue;
 
         Ca_DynArray focusable_storage = CA_DYN_ARRAY_INIT(Ca_Node *);
         bool collected = !win->root ||
@@ -5529,7 +5542,7 @@ void ca_widget_input_pass(Ca_Window *win)
             break;
         }
 
-        bool shift = (win->key_mods_buf[ki] & 0x0001) != 0; /* GLFW_MOD_SHIFT */
+        bool shift = (win->key_mods_buf[ki] & CA_MOD_SHIFT) != 0;
         size_t cur_idx = SIZE_MAX;
         for (size_t i = 0; i < fcount; ++i) {
             if (focusable[i] == win->focused_node) { cur_idx = i; break; }
@@ -5559,7 +5572,7 @@ void ca_widget_input_pass(Ca_Window *win)
         if (fbtn && fbtn->on_click) {
             for (uint32_t ki = 0; ki < win->key_count; ++ki) {
                 int key = win->key_buf[ki];
-                if (key == 257 /* ENTER */ || key == 32 /* SPACE */) {
+                if (key == CA_KEY_ENTER || key == CA_KEY_SPACE) {
                     /* Keyboard activation has no spatial position; mark
                        the click pos invalid so handlers fall back to a
                        sensible default (typically end-of-line). */

@@ -2,6 +2,7 @@
 // Copyright 2026 Sol/Causality contributors.
 
 /* layout.c — flexbox-inspired single-axis layout with full flex support */
+#include "../platform/platform.h"
 #include "layout.h"
 #include "css.h"
 #include "font.h"
@@ -1054,10 +1055,9 @@ void ca_layout_pass(Ca_Window *win)
 
     /* Use logical (window) size so widget coordinates stay in the same
        pixel space as user-specified sizes (padding, width, height).
-       On Retina / HiDPI, glfwGetFramebufferSize returns 2× logical size
-       which would make every widget appear half-sized. */
+       Drawable pixels can be denser than logical window coordinates. */
     int lw, lh;
-    glfwGetWindowSize(win->glfw, &lw, &lh);
+    ca_platform_window_size(win, &lw, &lh);
     for (int pass = 0; pass < 3; ++pass) {
         layout_node(win->root, 0.0f, 0.0f, (float)lw, (float)lh);
 

@@ -1,9 +1,8 @@
 cmake_minimum_required(VERSION 3.20)
 
+project(causality LANGUAGES C CXX)
 if(APPLE)
-    project(causality LANGUAGES C CXX OBJC)
-else()
-    project(causality LANGUAGES C CXX)
+    enable_language(OBJC)
 endif()
 
 set(CMAKE_C_STANDARD 11)
@@ -33,12 +32,35 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 endif()
 
-# Vulkan
-find_package(Vulkan REQUIRED)
+# The iOS backend links MoltenVK directly. Desktop uses the system Vulkan loader.
+if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    if(CMAKE_VERSION VERSION_LESS 3.28)
+        message(FATAL_ERROR "The iOS target requires CMake 3.28 for XCFramework linking.")
+    endif()
+    find_path(CAUSALITY_MOLTENVK_XCFRAMEWORK Info.plist
+        HINTS "$ENV{VULKAN_SDK}/lib/MoltenVK.xcframework"
+              "$ENV{VULKAN_SDK}/MoltenVK/MoltenVK.xcframework"
+              "/usr/local/lib/MoltenVK.xcframework"
+        NO_DEFAULT_PATH NO_CMAKE_FIND_ROOT_PATH REQUIRED)
+    find_path(CAUSALITY_VULKAN_HEADERS vulkan/vulkan.h
+        HINTS "$ENV{VULKAN_SDK}/include" "/usr/local/include"
+        NO_CMAKE_FIND_ROOT_PATH REQUIRED)
+    add_library(causality_ios_vulkan INTERFACE)
+    target_include_directories(causality_ios_vulkan SYSTEM INTERFACE "${CAUSALITY_VULKAN_HEADERS}")
+    target_link_libraries(causality_ios_vulkan INTERFACE "${CAUSALITY_MOLTENVK_XCFRAMEWORK}"
+        "-framework Foundation" "-framework QuartzCore" "-framework Metal"
+        "-framework CoreGraphics" "-framework IOSurface")
+    set(CAUSALITY_VULKAN_TARGET causality_ios_vulkan)
+else()
+    find_package(Vulkan REQUIRED)
+    set(CAUSALITY_VULKAN_TARGET Vulkan::Vulkan)
+endif()
 find_package(Threads REQUIRED)
 
 # Platform definitions
-if(APPLE)
+if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    add_compile_definitions(CA_PLATFORM_IOS)
+elseif(APPLE)
     add_compile_definitions(CA_PLATFORM_APPLE)
 elseif(WIN32)
     add_compile_definitions(CA_PLATFORM_WINDOWS NOMINMAX WIN32_LEAN_AND_MEAN)
@@ -47,10 +69,12 @@ elseif(UNIX)
 endif()
 
 # Vendors
-set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
-set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
-add_subdirectory(vendors/glfw)
+if(NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
+    set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+    add_subdirectory(vendors/glfw)
+endif()
 
 add_subdirectory(vendors/vma)
 
@@ -78,5 +102,9 @@ add_subdirectory(causality)
 
 # Sandbox (only when causality is the top-level project)
 if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
-    add_subdirectory(sandbox)
+    if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+        add_subdirectory(sandbox/ios)
+    else()
+        add_subdirectory(sandbox)
+    endif()
 endif()

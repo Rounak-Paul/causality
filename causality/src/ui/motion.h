@@ -68,7 +68,7 @@ void ca_motion_follow_layout(Ca_Node *node, const Ca_NodeDesc *prev_css,
  * Advances a node's transitions and animations to `now`.
  *
  * @param node            Node to step.
- * @param now             Current time in seconds (glfwGetTime).
+ * @param now             Current time in seconds (the backend's monotonic clock).
  * @param layout_affected Set to true when a layout-affecting property moved.
  * @return true while anything is still running, including the frame that
  *         lands on a final value, so the caller repaints it.
@@ -79,7 +79,7 @@ bool ca_motion_tick(Ca_Node *node, double now, bool *layout_affected);
  * Drops continuity records of animations nobody has refreshed lately.
  *
  * @param win Window whose records are pruned.
- * @param now Current time in seconds (glfwGetTime).
+ * @param now Current time in seconds (the backend's monotonic clock).
  */
 void ca_motion_window_tick(Ca_Window *win, double now);
 

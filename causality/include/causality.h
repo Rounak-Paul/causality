@@ -170,6 +170,10 @@ CA_API void ca_set_allocator(Ca_MallocFn mal, Ca_CallocFn cal,
    Returns false when all windows have been closed or the graphics device has failed. */
 CA_API bool         ca_instance_tick(Ca_Instance *instance);
 
+/* Advance one frame without waiting for native input, for a host-driven loop.
+   Call on the UI thread. Returns false on the same conditions as tick. */
+CA_API bool         ca_instance_step(Ca_Instance *instance);
+
 /** Whether an unrecoverable graphics failure terminated this instance's frame pump. */
 CA_API bool         ca_instance_renderer_failed(const Ca_Instance *instance);
 
@@ -220,10 +224,9 @@ CA_API int          ca_codepoint_cell_width(uint32_t cp);
 CA_API void ca_instance_request_frame_after(Ca_Instance *instance,
                                              double delay_seconds);
 
-/* Enable or disable continuous rendering mode.
-   When true, ca_instance_tick uses glfwPollEvents() so the loop runs every
-   frame regardless of input — required for smooth camera / game-loop behaviour.
-   When false (default), the loop sleeps until an event or explicit wake. */
+/* Enable or disable continuous rendering mode for ca_instance_tick.
+   When true, tick polls events each frame. When false (default), tick may
+   wait until an event, wake or frame deadline. Step always polls. */
 CA_API void         ca_instance_set_continuous(Ca_Instance *instance, bool continuous);
 
 /* ============================================================
@@ -573,10 +576,8 @@ CA_API void ca_window_invalidate_status_bar(Ca_Window *window);
 #define CA_PRESS   1
 #define CA_REPEAT  2
 
-/* Keyboard key identifiers reported in Ca_Event.key.key and accepted by
-   ca_input_key_pressed().  Values match the platform backend's layout so no
-   translation table is required internally; consumers must always use these
-   named constants, never raw integers. */
+/* Causality key identifiers reported in Ca_Event.key.key and accepted by
+   ca_input_key_pressed(). Backends map native keys to these values. */
 typedef enum Ca_Key {
     CA_KEY_UNKNOWN        = -1,
 
@@ -858,8 +859,8 @@ typedef void (*Ca_DragFn)(const Ca_DragEvent *event, void *user_data);
 /*
  * Callback fired when the scroll wheel or trackpad scrolls over a div.
  *
- * dx         Horizontal scroll delta for this frame (raw GLFW value).
- * dy         Vertical scroll delta for this frame (raw GLFW value).
+ * dx         Horizontal scroll delta in platform wheel units.
+ * dy         Vertical scroll delta in platform wheel units.
  * user_data  Caller-supplied context pointer.
  */
 typedef void (*Ca_ScrollFn)(double dx, double dy, void *user_data);

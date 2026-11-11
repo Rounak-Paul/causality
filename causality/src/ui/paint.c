@@ -2,6 +2,7 @@
 // Copyright 2026 Sol/Causality contributors.
 
 /* paint.c — CPU-side draw command generation */
+#include "../platform/platform.h"
 #include "paint.h"
 #include "node.h"
 #include "widget.h"
@@ -10,10 +11,6 @@
 #include "style.h"
 #include "scrollbar.h"
 #include "../../include/ca_icons.h"
-#ifndef GLFW_INCLUDE_NONE
-#define GLFW_INCLUDE_NONE
-#endif
-#include <GLFW/glfw3.h>
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
@@ -2656,8 +2653,7 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
         /* Logical window size for bounds clamping (same coordinate space as
            node x/y and mouse_x/y — differs from sc.extent on HiDPI displays). */
         int tooltip_win_w = 0, tooltip_win_h = 0;
-        if (win->glfw)
-            glfwGetWindowSize(win->glfw, &tooltip_win_w, &tooltip_win_h);
+        ca_platform_window_size(win, &tooltip_win_w, &tooltip_win_h);
 
         for (uint32_t i = 0; i < ca_pool_slot_count(&win->tooltip_pool); ++i) {
             Ca_Tooltip *tt = CA_POOL_AT(win->tooltip_pool, Ca_Tooltip, i);
@@ -3104,7 +3100,7 @@ static void paint_overlays(Ca_Instance *inst, Ca_Window *win)
             if (!m->in_use || !m->visible) continue;
             if (ca_window_reserve_draw_commands(win, (size_t)win->draw_cmd_count + 1u)) {
                 int lw, lh;
-                glfwGetWindowSize(win->glfw, &lw, &lh);
+                ca_platform_window_size(win, &lw, &lh);
                 float or_r, or_g, or_b, or_a;
                 unpack_color(m->overlay_color, &or_r, &or_g, &or_b, &or_a);
                 Ca_DrawCmd *c = &win->draw_cmds[win->draw_cmd_count++];
@@ -3172,7 +3168,7 @@ static void paint_debug_overlay(Ca_Instance *inst, Ca_Window *win)
        Frame N: green shown.  Frame N+1: green gone (flags already cleared). */
     if (repainted_count > 0) {
         win->dbg_force_repaint = true;
-        glfwPostEmptyEvent();
+        ca_instance_wake();
     }
 
     /* --- Stats panel --- */
@@ -3314,11 +3310,11 @@ static void paint_debug_overlay(Ca_Instance *inst, Ca_Window *win)
     /* ---- Presentation ---- */
     DBG_HDR("Presentation");
     int fb_w, fb_h;
-    glfwGetFramebufferSize(win->glfw, &fb_w, &fb_h);
+    ca_platform_framebuffer_size(win, &fb_w, &fb_h);
     int win_w, win_h;
-    glfwGetWindowSize(win->glfw, &win_w, &win_h);
+    ca_platform_window_size(win, &win_w, &win_h);
     float xscale, yscale;
-    glfwGetWindowContentScale(win->glfw, &xscale, &yscale);
+    ca_platform_content_scale(win, &xscale, &yscale);
     DBG_LINE("  Window: %dx%d  FB: %dx%d", win_w, win_h, fb_w, fb_h);
     DBG_LINE("  DPI Scale: %.1fx  |  Images: %u  |  %s",
              xscale, win->sc.image_count, pm_str);

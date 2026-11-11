@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Sol/Causality contributors.
 
+#include "../platform/platform.h"
 #include "ca_internal.h"
 #include "window.h"
 
@@ -282,8 +283,7 @@ static bool popup_activate(Ca_Instance *inst, const Ca_PopupEntry *entry)
 
     popup_build_ui(inst, win, entry);
 
-    GLFWwindow *glfw = ca_window_glfw(win);
-    if (glfw) glfwFocusWindow(glfw);
+    ca_platform_window_focus(win);
 
     return true;
 }

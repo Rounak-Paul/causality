@@ -8,13 +8,6 @@
    VkShaderModule-producing half of ca_shader_compile itself is exercised
    only by running the real app (needs an actual Vulkan device). */
 
-/* ca_internal.h declares Ca_Instance/Ca_Window with a GLFWwindow* member
-   but does not itself #include GLFW — every real causality .c file gets
-   that via the causality target's precompiled header (src/pch.h), which
-   test executables don't share. This test computes sizeof(Ca_Instance),
-   so it needs the real declaration, not just an opaque pointer target. */
-#define GLFW_INCLUDE_NONE
-#include <GLFW/glfw3.h>
 
 #include "ca_internal.h"
 #include "../src/renderer/shader_cache.h"

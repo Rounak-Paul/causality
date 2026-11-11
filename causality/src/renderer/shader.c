@@ -44,6 +44,7 @@ VkShaderModule ca_shader_compile(Ca_Instance          *instance,
                                  const char           *glsl_source,
                                  VkShaderStageFlagBits stage)
 {
+    if (!instance || !glsl_source) return VK_NULL_HANDLE;
     VkDevice device = ca_gpu_device(instance);
 
     size_t cached_size = 0u;
@@ -65,8 +66,16 @@ VkShaderModule ca_shader_compile(Ca_Instance          *instance,
     }
 
     shaderc_compile_options_t opts = shaderc_compile_options_initialize();
+    if (!opts) {
+        shaderc_compiler_release(compiler);
+        return VK_NULL_HANDLE;
+    }
     shaderc_compile_options_set_target_env(opts,
         shaderc_target_env_vulkan, shaderc_env_version_vulkan_1_3);
+#ifdef CA_PLATFORM_IOS
+    const char macro[] = "CA_PORTABLE_INSTANCE_BASE";
+    shaderc_compile_options_add_macro_definition(opts, macro, sizeof macro - 1u, "1", 1u);
+#endif
     shaderc_compile_options_set_optimization_level(opts,
         shaderc_optimization_level_performance);
 
@@ -79,6 +88,7 @@ VkShaderModule ca_shader_compile(Ca_Instance          *instance,
 
     shaderc_compile_options_release(opts);
     shaderc_compiler_release(compiler);
+    if (!result) return VK_NULL_HANDLE;
 
     if (shaderc_result_get_compilation_status(result) !=
             shaderc_compilation_status_success) {

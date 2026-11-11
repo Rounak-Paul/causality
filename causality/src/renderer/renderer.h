@@ -19,6 +19,9 @@ bool ca_renderer_window_init(Ca_Instance *inst, Ca_Window *win);
 /* Destroy swapchain + surface for a window.  Called from ca_window_destroy. */
 void ca_renderer_window_shutdown(Ca_Instance *inst, Ca_Window *win);
 
+/** Release the current surface and swapchain while retaining the logical window and viewports. */
+void ca_renderer_window_detach(Ca_Instance *inst, Ca_Window *win);
+
 /* Rebuild swapchain after a resize. */
 bool ca_renderer_window_resize(Ca_Instance *inst, Ca_Window *win, int w, int h);
 

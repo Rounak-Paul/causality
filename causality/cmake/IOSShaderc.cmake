@@ -1,0 +1,15 @@
+set(shaderc_source "${CMAKE_CURRENT_SOURCE_DIR}/../vendors/shaderc")
+set(SHADERC_GLSLANG_DIR "${shaderc_source}/third_party/glslang" CACHE PATH "Bundled glslang" FORCE)
+set(SHADERC_SPIRV_HEADERS_DIR "${shaderc_source}/third_party/spirv-headers" CACHE PATH "Bundled SPIR-V headers" FORCE)
+set(SHADERC_SPIRV_TOOLS_DIR "${shaderc_source}/third_party/spirv-tools" CACHE PATH "Bundled SPIR-V Tools" FORCE)
+set(SHADERC_SKIP_TESTS ON CACHE BOOL "Skip shaderc tests" FORCE)
+# Upstream glslang expects the SPIRV-Tools export set. EXCLUDE_FROM_ALL
+# keeps the dependency's install rules out of Causality's install.
+set(SHADERC_SKIP_INSTALL OFF CACHE BOOL "Keep shaderc dependency export sets consistent" FORCE)
+set(SHADERC_SKIP_EXAMPLES ON CACHE BOOL "Skip shaderc examples" FORCE)
+set(SHADERC_SKIP_COPYRIGHT_CHECK ON CACHE BOOL "Skip shaderc development checks" FORCE)
+set(SHADERC_SKIP_EXECUTABLES ON CACHE BOOL "Build shaderc libraries only" FORCE)
+set(SHADERC_ENABLE_HLSL OFF CACHE BOOL "Causality compiles GLSL" FORCE)
+set(SPIRV_SKIP_EXECUTABLES ON CACHE BOOL "Skip SPIR-V command line tools" FORCE)
+set(ENABLE_GLSLANG_BINARIES OFF CACHE BOOL "Skip glslang command line tools" FORCE)
+add_subdirectory("${shaderc_source}" "${CMAKE_CURRENT_BINARY_DIR}/shaderc" EXCLUDE_FROM_ALL)

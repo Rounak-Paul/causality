@@ -1,10 +1,17 @@
 file(GLOB_RECURSE CAUSALITY_SOURCES CONFIGURE_DEPENDS src/*.c)
+list(FILTER CAUSALITY_SOURCES EXCLUDE REGEX "/src/platform/")
+list(APPEND CAUSALITY_SOURCES src/platform/window.c)
+if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    list(APPEND CAUSALITY_SOURCES src/platform/ios_backend.m)
+else()
+    list(APPEND CAUSALITY_SOURCES src/platform/glfw_backend.c)
+endif()
 
 # vma_impl.cpp is the sole translation unit compiling VMA's own
 # implementation (requires C++); every other source stays plain C.
 list(APPEND CAUSALITY_SOURCES src/core/vma_impl.cpp)
 
-if(APPLE)
+if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     list(APPEND CAUSALITY_SOURCES src/platform/mouse_state_mac.m)
 endif()
 
@@ -38,33 +45,39 @@ endif()
 # meaning every profiled number included full validation overhead baked into
 # every CPU-side render-graph timing, with no way to isolate real cost from
 # validation cost. Compiled out entirely in Release, as before.
-target_compile_definitions(causality PUBLIC
-    $<$<CONFIG:Debug>:CAUSALITY_VULKAN_VALIDATION>
-)
-
-# shaderc — bundled with the LunarG Vulkan SDK, used for runtime GLSL compilation
-# Derive the SDK root from find_package(Vulkan) or the VULKAN_SDK env var
-set(_VULKAN_SDK_HINT "")
-if(DEFINED ENV{VULKAN_SDK})
-    set(_VULKAN_SDK_HINT "$ENV{VULKAN_SDK}")
-elseif(Vulkan_INCLUDE_DIR)
-    get_filename_component(_VULKAN_SDK_HINT "${Vulkan_INCLUDE_DIR}" DIRECTORY)
+if(NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    target_compile_definitions(causality PUBLIC $<$<CONFIG:Debug>:CAUSALITY_VULKAN_VALIDATION>)
 endif()
 
-find_library(SHADERC_LIB
-    NAMES shaderc_combined
-    HINTS
-        "${_VULKAN_SDK_HINT}/lib"
-        "${_VULKAN_SDK_HINT}/Lib"
-    REQUIRED)
-message(STATUS "shaderc_combined: ${SHADERC_LIB}")
+# Desktop uses the SDK library. iOS builds shaderc for the selected Apple target.
+if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    if(NOT TARGET shaderc)
+        include(cmake/IOSShaderc.cmake)
+    endif()
+    set(SHADERC_LIB shaderc)
+else()
+    set(_VULKAN_SDK_HINT "")
+    if(DEFINED ENV{VULKAN_SDK})
+        set(_VULKAN_SDK_HINT "$ENV{VULKAN_SDK}")
+    elseif(Vulkan_INCLUDE_DIR)
+        get_filename_component(_VULKAN_SDK_HINT "${Vulkan_INCLUDE_DIR}" DIRECTORY)
+    endif()
 
-find_path(SHADERC_INCLUDE
-    NAMES shaderc/shaderc.h
-    HINTS
-        "${_VULKAN_SDK_HINT}/include"
-        "${_VULKAN_SDK_HINT}/Include"
-    REQUIRED)
+    find_library(SHADERC_LIB
+        NAMES shaderc_combined
+        HINTS
+            "${_VULKAN_SDK_HINT}/lib"
+            "${_VULKAN_SDK_HINT}/Lib"
+        REQUIRED)
+    message(STATUS "shaderc_combined: ${SHADERC_LIB}")
+
+    find_path(SHADERC_INCLUDE
+        NAMES shaderc/shaderc.h
+        HINTS
+            "${_VULKAN_SDK_HINT}/include"
+            "${_VULKAN_SDK_HINT}/Include"
+        REQUIRED)
+endif()
 
 target_include_directories(causality
     PUBLIC
@@ -81,9 +94,7 @@ target_include_directories(causality
 
 target_link_libraries(causality
     PRIVATE
-        Vulkan::Vulkan     # Vk* types only appear in the opt-in ca_gpu.h header;
-                           # consumers of that header provide Vulkan themselves
-        glfw               # internal windowing — not in public headers
+        ${CAUSALITY_VULKAN_TARGET}
         VulkanMemoryAllocator  # internal GPU memory — not in public headers
         glm-header-only    # internal math — not in public headers
         Threads::Threads   # internal threading — not in public headers
@@ -92,7 +103,11 @@ target_link_libraries(causality
 )
 
 # Platform-specific link libraries
-if(APPLE)
+if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    set_source_files_properties(src/platform/ios_backend.m PROPERTIES COMPILE_OPTIONS -fobjc-arc)
+    target_compile_definitions(causality PRIVATE VK_USE_PLATFORM_METAL_EXT)
+    target_link_libraries(causality PRIVATE "-framework UIKit")
+elseif(APPLE)
     # C-only consumers need VMA/shaderc's C++ runtime explicitly. C++ link
     # drivers already add it, so propagating another -lc++ only produces a
     # duplicate-library warning.
@@ -122,6 +137,9 @@ else()
         ${GLSLANG_GENCG_LIB} ${SPIRV_LIB} ${SPIRVTOOLS_OPT_LIB} ${SPIRVTOOLS_BASE_LIB}
     )
 endif()
+if(NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    target_link_libraries(causality PRIVATE glfw)
+endif()
 
 # Skip precompiled header for the large embedded font data files
 set_source_files_properties(src/renderer/embedded_font.c
@@ -139,7 +157,7 @@ set_source_files_properties(src/renderer/embedded_emoji_font.c
 
 target_precompile_headers(causality PRIVATE src/pch.h)
 
-if(BUILD_TESTING)
+if(BUILD_TESTING AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     # These test binaries link causality directly with no intervening DLL
     # (causality_array_tests even compiles a few of its sources directly),
     # so they need causality_EXPORTS too — the same "export" resolution as
@@ -161,7 +179,7 @@ if(BUILD_TESTING)
         $<$<CONFIG:Debug>:CAUSALITY_VULKAN_VALIDATION>
     )
     target_link_libraries(causality_reactive_tests PRIVATE
-        Vulkan::Vulkan VulkanMemoryAllocator glfw
+        Vulkan::Vulkan VulkanMemoryAllocator
     )
     add_test(NAME causality_reactive_tests COMMAND causality_reactive_tests)
 
@@ -207,7 +225,6 @@ if(BUILD_TESTING)
         causality
         Vulkan::Vulkan
         VulkanMemoryAllocator
-        glfw
     )
     add_test(NAME causality_style_tests COMMAND causality_style_tests)
 
@@ -240,7 +257,7 @@ if(BUILD_TESTING)
         $<$<CONFIG:Debug>:CAUSALITY_VULKAN_VALIDATION>
     )
     target_link_libraries(causality_splitter_tests PRIVATE
-        causality Vulkan::Vulkan VulkanMemoryAllocator glfw
+        causality Vulkan::Vulkan VulkanMemoryAllocator
     )
     add_test(NAME causality_splitter_tests COMMAND causality_splitter_tests)
 
@@ -253,7 +270,7 @@ if(BUILD_TESTING)
         $<$<CONFIG:Debug>:CAUSALITY_VULKAN_VALIDATION>
     )
     target_link_libraries(causality_tabbar_tests PRIVATE
-        causality Vulkan::Vulkan VulkanMemoryAllocator glfw
+        causality Vulkan::Vulkan VulkanMemoryAllocator
     )
     add_test(NAME causality_tabbar_tests COMMAND causality_tabbar_tests)
 
@@ -266,7 +283,7 @@ if(BUILD_TESTING)
         $<$<CONFIG:Debug>:CAUSALITY_VULKAN_VALIDATION>
     )
     target_link_libraries(causality_motion_tests PRIVATE
-        causality Vulkan::Vulkan VulkanMemoryAllocator glfw
+        causality Vulkan::Vulkan VulkanMemoryAllocator
     )
     add_test(NAME causality_motion_tests COMMAND causality_motion_tests)
 
@@ -279,7 +296,7 @@ if(BUILD_TESTING)
         $<$<CONFIG:Debug>:CAUSALITY_VULKAN_VALIDATION>
     )
     target_link_libraries(causality_color_picker_tests PRIVATE
-        causality Vulkan::Vulkan VulkanMemoryAllocator glfw
+        causality Vulkan::Vulkan VulkanMemoryAllocator
     )
     add_test(NAME causality_color_picker_tests COMMAND causality_color_picker_tests)
 
@@ -292,7 +309,7 @@ if(BUILD_TESTING)
         $<$<CONFIG:Debug>:CAUSALITY_VULKAN_VALIDATION>
     )
     target_link_libraries(causality_text_clip_tests PRIVATE
-        causality Vulkan::Vulkan VulkanMemoryAllocator glfw freetype
+        causality Vulkan::Vulkan VulkanMemoryAllocator freetype
     )
     add_test(NAME causality_text_clip_tests COMMAND causality_text_clip_tests)
 
@@ -302,7 +319,7 @@ if(BUILD_TESTING)
     )
     target_compile_definitions(causality_font_grid_tests PRIVATE causality_EXPORTS)
     target_link_libraries(causality_font_grid_tests PRIVATE
-        causality Vulkan::Vulkan VulkanMemoryAllocator glfw freetype
+        causality Vulkan::Vulkan VulkanMemoryAllocator freetype
     )
     add_test(NAME causality_font_grid_tests COMMAND causality_font_grid_tests)
 
@@ -326,9 +343,6 @@ if(BUILD_TESTING)
         causality
         Vulkan::Vulkan
         VulkanMemoryAllocator
-        glfw   # ca_internal.h's Ca_Window embeds a GLFWwindow* by value in
-               # Ca_Instance; this test computes sizeof(Ca_Instance), which
-               # needs the real GLFW header, not just an opaque handle.
     )
     add_test(NAME causality_shader_cache_tests COMMAND causality_shader_cache_tests)
 endif()

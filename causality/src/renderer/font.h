@@ -225,7 +225,7 @@ static inline uint32_t ca_utf8_decode(const char **pp)
     return cp;
 }
 
-bool ca_font_create(Ca_Instance *inst, GLFWwindow *glfw_win,
+bool ca_font_create(Ca_Instance *inst, float content_scale,
                     Ca_Font *out_font,
                     const char *regular_path, const char *bold_path);
 
@@ -234,7 +234,7 @@ bool ca_font_create(Ca_Instance *inst, GLFWwindow *glfw_win,
     bold_data/bold_size: optional (pass NULL/0 to skip bold tier).
     Glyphs and icons are rasterised lazily at scaled runtime sizes into the
     dynamic atlas; creation only uploads an empty atlas and primes defaults. */
-bool ca_font_create_from_memory(Ca_Instance *inst, GLFWwindow *glfw_win,
+bool ca_font_create_from_memory(Ca_Instance *inst, float content_scale,
                                 Ca_Font *out_font,
                                 const unsigned char *regular_data, unsigned int regular_size,
                                 const unsigned char *bold_data,    unsigned int bold_size);
@@ -244,8 +244,8 @@ void ca_font_begin_frame(Ca_Font *font);
 void ca_font_touch_page(Ca_Font *font, int page_index);
 void ca_font_flush_uploads(Ca_Instance *inst, Ca_Font *font);
 
-/** Re-query glfw_win's content scale and, if it differs from the font's
+/** If content_scale differs from the font's
     cached display_scale/content_scale (e.g. the window moved to a monitor
     with a different DPI), update both fields and re-bake every atlas page
     at the new physical pixel size. No-op when the scale is unchanged. */
-void ca_font_refresh_content_scale(Ca_Font *font, GLFWwindow *glfw_win);
+void ca_font_refresh_content_scale(Ca_Font *font, float content_scale);

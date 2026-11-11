@@ -2,6 +2,7 @@
 // Copyright 2026 Sol/Causality contributors.
 
 /* ui.c — wires reactive flush, node, layout, and paint passes together */
+#include "../platform/platform.h"
 #include "ui.h"
 #include "node.h"
 #include "motion.h"
@@ -14,7 +15,6 @@
 #include "font.h"
 #include "../platform/window.h"
 
-#include <GLFW/glfw3.h>
 #include <string.h>
 
 /* Saved geometry for incremental layout invalidation. */
@@ -231,7 +231,7 @@ void ca_ui_update(Ca_Instance *inst)
 
         /* 2. Transition tick — update animated properties, mark dirty */
         ca_profile_begin(inst, "Platform UI Transitions");
-        double now = glfwGetTime();
+        double now = ca_platform_time();
         bool any_transitions = false;
         uint32_t trans_count = 0;
         for (uint32_t j = 0; j < ca_pool_slot_count(&win->node_pool); ++j) {
@@ -275,11 +275,11 @@ void ca_ui_update(Ca_Instance *inst)
         /* 5. Resize pass — handle edge/corner drag for undecorated windows.
               Must run before input pass so that a resize drag suppresses
               normal widget hit-testing on the same click. */
-        ca_window_resize_pass(win);
+        ca_platform_window_resize_pass(win);
 
         bool titlebar_dragging = false;
         if (!win->resize_active)
-            titlebar_dragging = ca_window_titlebar_drag_pass(win);
+            titlebar_dragging = ca_platform_titlebar_drag_pass(win);
 
         /* 6. Input pass — hit-test buttons and fire click callbacks.
               Run BEFORE paint so that input-driven dirty flags are
@@ -422,8 +422,8 @@ void ca_ui_update(Ca_Instance *inst)
         }
 
         /* 7. Request another tick for active transitions so we don't stall
-              inside glfwWaitEvents() while animations are running.  */
+              waiting for events while animations are running.  */
         if (any_transitions)
-            glfwPostEmptyEvent();
+            ca_instance_wake();
     }
 }

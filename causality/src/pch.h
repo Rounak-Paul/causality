@@ -17,7 +17,3 @@
 
 /* Vulkan */
 #include <vulkan/vulkan.h>
-
-/* GLFW (no OpenGL, Vulkan surface only) */
-#define GLFW_INCLUDE_NONE
-#include <GLFW/glfw3.h>

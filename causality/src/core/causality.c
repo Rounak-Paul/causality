@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Sol/Causality contributors.
 
+#include "../platform/platform.h"
 #include "ca_internal.h"
 #include "window.h"
 #include "event.h"
@@ -20,7 +21,7 @@ void ca_popup_system_shutdown(Ca_Instance *inst);
 /*
  * Create and initialise a Causality instance.
  *
- * Initialises GLFW, allocates the instance, sets up the event system, UI
+ * Starts the platform backend, allocates the instance, sets up the event system, UI
  * subsystem, popup manager, and Vulkan renderer.  Font paths and the default
  * UI scale are copied from desc.  Returns NULL on any failure; all partial
  * state is cleaned up before returning.
@@ -30,26 +31,26 @@ void ca_popup_system_shutdown(Ca_Instance *inst);
  */
 Ca_Instance *ca_instance_create(const Ca_InstanceDesc *desc)
 {
-    if (!ca_window_system_init())
+    if (!ca_platform_init())
         return NULL;
 
     Ca_Instance *inst = (Ca_Instance *)CA_CALLOC(1, sizeof(Ca_Instance));
     if (!inst) {
-        glfwTerminate();
+        ca_platform_shutdown();
         return NULL;
     }
 
     if (!ca_pool_init(&inst->windows, sizeof(Ca_Window),
                       ca_pool_recommended_chunk_capacity(sizeof(Ca_Window)))) {
         CA_FREE(inst);
-        glfwTerminate();
+        ca_platform_shutdown();
         return NULL;
     }
 
     if (!ca_event_init(inst)) {
         ca_pool_destroy(&inst->windows, NULL, NULL);
         CA_FREE(inst);
-        glfwTerminate();
+        ca_platform_shutdown();
         return NULL;
     }
     ca_ui_init(inst);
@@ -57,7 +58,7 @@ Ca_Instance *ca_instance_create(const Ca_InstanceDesc *desc)
         ca_event_shutdown(inst);
         ca_pool_destroy(&inst->windows, NULL, NULL);
         CA_FREE(inst);
-        glfwTerminate();
+        ca_platform_shutdown();
         return NULL;
     }
 
@@ -81,7 +82,7 @@ Ca_Instance *ca_instance_create(const Ca_InstanceDesc *desc)
         ca_event_shutdown(inst);
         ca_pool_destroy(&inst->windows, NULL, NULL);
         CA_FREE(inst);
-        glfwTerminate();
+        ca_platform_shutdown();
         return NULL;
     }
 
@@ -112,6 +113,7 @@ void ca_instance_destroy(Ca_Instance *instance)
        require the device to still be alive for proper cleanup. */
     ca_window_system_shutdown(instance);
     ca_renderer_shutdown(instance);
+    ca_platform_shutdown();
     ca_pool_destroy(&instance->windows, NULL, NULL);
     ca_ui_shutdown(instance);
     ca_event_shutdown(instance);
@@ -135,59 +137,70 @@ bool ca_instance_renderer_failed(const Ca_Instance *instance)
  * and submits a renderer frame.
  *
  * instance  Instance to tick.
+ * wait      Allow the event pump to wait when the instance is idle.
  * Returns   true while a window is open and the renderer remains usable.
  */
-bool ca_instance_tick(Ca_Instance *instance)
+static bool run_frame(Ca_Instance *instance, bool wait)
 {
     if (!instance || instance->renderer_failed) return false;
-    const double tick_start = glfwGetTime();
+    const double tick_start = ca_platform_time();
     Ca_FrameTiming *timing = &instance->frame_timing;
     *timing = (Ca_FrameTiming){ .frame_index = instance->frame_timing_index };
 
-    double phase_start = glfwGetTime();
+    double phase_start = ca_platform_time();
     ca_profile_begin(instance, "Platform Events");
-    bool window_open = ca_window_system_tick(instance);
+    bool window_open = ca_window_system_tick(instance, wait);
     ca_profile_end(instance, "Platform Events");
     if (!window_open) return false;
-    timing->events_ms = (glfwGetTime() - phase_start) * 1000.0;
+    timing->events_ms = (ca_platform_time() - phase_start) * 1000.0;
 
-    phase_start = glfwGetTime();
+    phase_start = ca_platform_time();
     ca_profile_begin(instance, "Platform Popups");
     ca_popup_system_tick(instance);
     ca_profile_end(instance, "Platform Popups");
-    timing->popups_ms = (glfwGetTime() - phase_start) * 1000.0;
+    timing->popups_ms = (ca_platform_time() - phase_start) * 1000.0;
 
     /* Run reactive effects scheduled since the previous tick. */
-    phase_start = glfwGetTime();
+    phase_start = ca_platform_time();
     ca_profile_begin(instance, "Platform Reactive");
     ca_reactive_flush(instance);
     ca_profile_end(instance, "Platform Reactive");
-    timing->reactive_ms = (glfwGetTime() - phase_start) * 1000.0;
+    timing->reactive_ms = (ca_platform_time() - phase_start) * 1000.0;
 
     /* Run every ca_frame_effect unconditionally, every tick. */
-    phase_start = glfwGetTime();
+    phase_start = ca_platform_time();
     ca_profile_begin(instance, "Platform Frame Effects");
     ca_reactive_run_frame_effects(instance);
     ca_profile_end(instance, "Platform Frame Effects");
-    timing->frame_effects_ms = (glfwGetTime() - phase_start) * 1000.0;
+    timing->frame_effects_ms = (ca_platform_time() - phase_start) * 1000.0;
 
-    phase_start = glfwGetTime();
+    phase_start = ca_platform_time();
     ca_profile_begin(instance, "Platform UI");
     ca_ui_update(instance);
     ca_profile_end(instance, "Platform UI");
-    timing->ui_ms = (glfwGetTime() - phase_start) * 1000.0;
+    timing->ui_ms = (ca_platform_time() - phase_start) * 1000.0;
 
-    phase_start = glfwGetTime();
+    phase_start = ca_platform_time();
     ca_profile_begin(instance, "Platform Renderer");
     ca_renderer_frame(instance);
     ca_profile_end(instance, "Platform Renderer");
-    timing->renderer_ms = (glfwGetTime() - phase_start) * 1000.0;
-    timing->interval_ms = (glfwGetTime() - tick_start) * 1000.0;
+    timing->renderer_ms = (ca_platform_time() - phase_start) * 1000.0;
+    timing->interval_ms = (ca_platform_time() - tick_start) * 1000.0;
 
     if (instance->frame_timing_callback)
         instance->frame_timing_callback(instance->frame_timing_user_data, timing);
     instance->frame_timing_index++;
     return !instance->renderer_failed;
+}
+
+bool ca_instance_tick(Ca_Instance *instance)
+{
+    return run_frame(instance, true);
+}
+
+bool ca_instance_step(Ca_Instance *instance)
+{
+    return run_frame(instance, false);
 }
 
 void ca_instance_set_profile_hooks(Ca_Instance *instance,
@@ -209,12 +222,12 @@ void ca_instance_set_frame_timing_callback(Ca_Instance *instance,
 /*
  * Wake the event loop from another thread or an idle wait.
  *
- * Posts an empty GLFW event, causing glfwWaitEvents() to return immediately
- * so the main loop can process any pending reactive updates.
+ * Signals the platform event pump so the main loop can process pending
+ * reactive updates.
  */
 void ca_instance_wake(void)
 {
-    glfwPostEmptyEvent();
+    ca_platform_wake();
 }
 
 /**
@@ -229,7 +242,7 @@ void ca_instance_request_frame_after(Ca_Instance *instance,
     if (!instance) return;
     if (delay_seconds < 0.0) delay_seconds = 0.0;
 
-    const double deadline = glfwGetTime() + delay_seconds;
+    const double deadline = ca_platform_time() + delay_seconds;
     if (!instance->frame_deadline_pending ||
         deadline < instance->frame_deadline) {
         instance->frame_deadline = deadline;
@@ -241,7 +254,7 @@ void ca_instance_request_frame_after(Ca_Instance *instance,
  * Control whether the instance runs in continuous (polling) or event-driven mode.
  *
  * instance    Instance to configure; no-op if NULL.
- * continuous  true = call glfwPollEvents each tick; false = glfwWaitEvents.
+ * continuous  true polls the platform event pump every tick.
  */
 void ca_instance_set_continuous(Ca_Instance *instance, bool continuous)
 {

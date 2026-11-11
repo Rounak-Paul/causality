@@ -3,8 +3,6 @@
 
 #include "causality.h"
 #include "css.h"
-#define GLFW_INCLUDE_NONE
-#include <GLFW/glfw3.h>
 #include "style.h"
 #include "ca_internal.h"
 #include "ca_node_graph.h"

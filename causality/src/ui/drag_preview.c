@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Causality contributors.
 
+#include "../platform/platform.h"
 #include "widget.h"
 #include "scrollbar.h"
 #include "paint.h"
-#include <GLFW/glfw3.h>
 #include <math.h>
 #include <stdlib.h>
 
@@ -62,8 +62,7 @@ void ca_drag_preview_update(Ca_Window *win)
         Ca_Window *preview = ca_window_create(win->instance, &(Ca_WindowDesc){
             .title = "Drag preview", .width = w, .height = h, .no_focus = true});
         if (!preview) return;
-        glfwSetWindowAttrib(preview->glfw, GLFW_FLOATING, GLFW_TRUE);
-        glfwSetWindowAttrib(preview->glfw, GLFW_MOUSE_PASSTHROUGH, GLFW_TRUE);
+        ca_platform_window_set_drag_preview(preview);
         ca_window_set_title_bar_visible(preview, false);
         ca_window_set_opacity(preview, 0.85f);
         ca_ui_begin(preview, &(Ca_DivDesc){.width = w / win->ui_scale, .height = h / win->ui_scale});

@@ -84,7 +84,11 @@ static void ca_dir_sync(const char *dir)
    existing cached .spv incompatible or stale. Folding it into the cache
    key means such a change simply misses old entries and re-compiles —
    no explicit cache-versioning or migration step needed anywhere. */
+#ifdef CA_PLATFORM_IOS
+#define CA_SHADER_CACHE_KEY_VERSION "1-ios-base-vertex"
+#else
 #define CA_SHADER_CACHE_KEY_VERSION "1"
+#endif
 
 /* First word of every SPIR-V module (SPIR-V spec 2.3, "Physical Layout").
    A module written on a big-endian host appears byte-reversed here; such a

@@ -757,7 +757,7 @@ typedef struct Ca_NodeAnim Ca_NodeAnim;
 typedef struct {
     uint8_t      entry;      /* index into the motion property table */
     bool         active;
-    double       start_time; /* glfwGetTime() when the transition began */
+    double       start_time; /* monotonic time when the transition began */
     float        duration;   /* seconds */
     float        delay;      /* seconds the old value is held first */
     Ca_EasingDef easing;
@@ -1316,11 +1316,12 @@ typedef struct {
 } Ca_WindowCapture;
 
 struct Ca_Window {
-    GLFWwindow   *glfw;
+    void         *platform_handle; /* owned and interpreted by the selected backend */
     Ca_Instance  *instance;
     VkSurfaceKHR  surface;
     Ca_Swapchain  sc;
     bool          in_use;
+    bool          close_requested;
     bool          native_frame;   /* OS-drawn frame: no software resize/drag chrome */
 
     /* UI node tree */
@@ -1430,7 +1431,7 @@ struct Ca_Window {
        ratio at the start of the next frame (deferred to avoid mid-drag corruption). */
     float         pending_scale_ratio;
 
-    /* Input state (updated by GLFW callbacks each tick) */
+    /* Input state (updated by the backend each tick) */
     double        mouse_x, mouse_y;
     double        mouse_press_x, mouse_press_y;
     double        right_press_x, right_press_y;
@@ -1454,7 +1455,7 @@ struct Ca_Window {
     Ca_DynArray   key_storage;
     Ca_DynArray   key_action_storage;
     Ca_DynArray   key_mods_storage;
-    int          *key_buf;                /* GLFW key codes this frame */
+    int          *key_buf;                /* Causality key codes this frame */
     int          *key_action_buf;
     int          *key_mods_buf;
     uint32_t      key_count;
@@ -1541,9 +1542,9 @@ struct Ca_Window {
     int            resize_target_w;        /* setFrame mid-drag, which cancels     */
     int            resize_target_h;        /* the borderless mouse-tracking session */
 
-    /* Deferred swapchain resize — set by GLFW callbacks, applied at the start
+    /* Deferred swapchain resize — set by the platform backend, applied at the start
        of the next ca_renderer_frame after in-flight GPU work has completed.
-       Avoids calling vkDeviceWaitIdle from inside glfwPollEvents callbacks. */
+       Avoids GPU waits in native resize callbacks. */
     bool           pending_swapchain_resize;
     int            pending_sc_w;
     int            pending_sc_h;
@@ -1699,7 +1700,7 @@ struct Ca_Instance {
     void            *frame_timing_user_data;
     uint64_t         frame_timing_index;
 
-    /* Earliest requested timed frame, in GLFW monotonic seconds. */
+    /* Earliest requested timed frame, in backend monotonic seconds. */
     double frame_deadline;
     bool   frame_deadline_pending;
 

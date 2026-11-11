@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Sol/Causality contributors.
 
+#include "../platform/platform.h"
 #include "swapchain.h"
 #include "renderer.h"
 #include "pipeline.h"
@@ -753,6 +754,16 @@ static uint32_t range_types(const PaintCtx *ctx, int band, uint32_t lo, uint32_t
     return mask;
 }
 
+/** Draw a batch from first in the instance buffer, including GPUs without base-instance draws. */
+static void draw_quads(VkCommandBuffer cmd, uint32_t count, uint32_t first)
+{
+#ifdef CA_PLATFORM_IOS
+    vkCmdDraw(cmd, 6, count, first * 6u, 0);
+#else
+    vkCmdDraw(cmd, 6, count, 0, first);
+#endif
+}
+
 /**
  * Records every rect of `band` within paint positions [lo, hi), batched by
  * scissor and rounded-clip push constant.
@@ -807,7 +818,7 @@ static void record_rects(PaintCtx *ctx, int band, uint32_t lo, uint32_t hi)
                 vkCmdPushConstants(cb, inst->rect_pipeline.layout,
                                    VK_SHADER_STAGE_FRAGMENT_BIT, 0,
                                    sizeof(cur_clip), &cur_clip);
-                vkCmdDraw(cb, 6, ctx->rect_n - batch_start, 0, batch_start);
+                draw_quads(cb, ctx->rect_n - batch_start, batch_start);
                 ctx->batch_n++;
             }
             batch_start = ctx->rect_n;
@@ -845,7 +856,7 @@ static void record_rects(PaintCtx *ctx, int band, uint32_t lo, uint32_t hi)
         vkCmdSetScissor(cb, 0, 1, &cur_sc);
         vkCmdPushConstants(cb, inst->rect_pipeline.layout,
                            VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(cur_clip), &cur_clip);
-        vkCmdDraw(cb, 6, ctx->rect_n - batch_start, 0, batch_start);
+        draw_quads(cb, ctx->rect_n - batch_start, batch_start);
         ctx->batch_n++;
     }
 }
@@ -884,7 +895,7 @@ static void record_glyphs(PaintCtx *ctx, int band, uint32_t lo, uint32_t hi)
         if (!first && memcmp(&sc_new, &cur_sc, sizeof(VkRect2D)) != 0) {
             if (ctx->ti_n > batch_start) {
                 vkCmdSetScissor(cb, 0, 1, &cur_sc);
-                vkCmdDraw(cb, 6, ctx->ti_n - batch_start, 0, batch_start);
+                draw_quads(cb, ctx->ti_n - batch_start, batch_start);
                 ctx->batch_n++;
             }
             batch_start = ctx->ti_n;
@@ -901,7 +912,7 @@ static void record_glyphs(PaintCtx *ctx, int band, uint32_t lo, uint32_t hi)
     }
     if (ctx->ti_n > batch_start) {
         vkCmdSetScissor(cb, 0, 1, &cur_sc);
-        vkCmdDraw(cb, 6, ctx->ti_n - batch_start, 0, batch_start);
+        draw_quads(cb, ctx->ti_n - batch_start, batch_start);
         ctx->batch_n++;
     }
 }
@@ -945,7 +956,7 @@ static void record_images(PaintCtx *ctx, int band, uint32_t lo, uint32_t hi)
         if (sc_change || img_change) {
             if (ctx->ti_n > batch_start) {
                 vkCmdSetScissor(cb, 0, 1, &cur_sc);
-                vkCmdDraw(cb, 6, ctx->ti_n - batch_start, 0, batch_start);
+                draw_quads(cb, ctx->ti_n - batch_start, batch_start);
                 ctx->batch_n++;
             }
             batch_start = ctx->ti_n;
@@ -969,7 +980,7 @@ static void record_images(PaintCtx *ctx, int band, uint32_t lo, uint32_t hi)
     }
     if (ctx->ti_n > batch_start) {
         vkCmdSetScissor(cb, 0, 1, &cur_sc);
-        vkCmdDraw(cb, 6, ctx->ti_n - batch_start, 0, batch_start);
+        draw_quads(cb, ctx->ti_n - batch_start, batch_start);
         ctx->batch_n++;
     }
 }
@@ -1021,7 +1032,7 @@ static void record_viewports(PaintCtx *ctx, int band, uint32_t lo, uint32_t hi)
         if (sc_change || vp_change) {
             if (ctx->ti_n > batch_start) {
                 vkCmdSetScissor(cb, 0, 1, &cur_sc);
-                vkCmdDraw(cb, 6, ctx->ti_n - batch_start, 0, batch_start);
+                draw_quads(cb, ctx->ti_n - batch_start, batch_start);
                 ctx->batch_n++;
             }
             batch_start = ctx->ti_n;
@@ -1045,7 +1056,7 @@ static void record_viewports(PaintCtx *ctx, int band, uint32_t lo, uint32_t hi)
     }
     if (ctx->ti_n > batch_start) {
         vkCmdSetScissor(cb, 0, 1, &cur_sc);
-        vkCmdDraw(cb, 6, ctx->ti_n - batch_start, 0, batch_start);
+        draw_quads(cb, ctx->ti_n - batch_start, batch_start);
         ctx->batch_n++;
     }
 }
@@ -1222,7 +1233,7 @@ static void record_backdrop(PaintCtx *ctx, const Ca_DrawCmd *cmd)
             memcpy(&dst->_pad1[9], cutout, sizeof(float) * 4);
             dst->_pad1[13] = cutout[4] + 1.0f;
         }
-        vkCmdDraw(cb, 6, 1, 0, ctx->ti_n);
+        draw_quads(cb, 1, ctx->ti_n);
         ctx->ti_n++;
         ctx->batch_n++;
     }
@@ -1294,7 +1305,7 @@ static void record_ambient(PaintCtx *ctx, const Ca_DrawCmd *cmd)
     dst->_pad1[8] = (float)(region.offset.y + (int32_t)region.extent.height) * inv_y;
     dst->_pad1[9] = light[1];
     dst->_pad1[10] = light[2];
-    vkCmdDraw(cb, 6, 1, 0, ctx->ti_n);
+    draw_quads(cb, 1, ctx->ti_n);
     ctx->ti_n++;
     ctx->batch_n++;
 }
@@ -1389,9 +1400,9 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
     Ca_Frame     *f  = &sc->frames[sc->current_frame];
 
     ca_profile_begin(inst, "Platform Swapchain Fence");
-    double timing_start = glfwGetTime();
+    double timing_start = ca_platform_time();
     VkResult fence_result = vkWaitForFences(inst->vk_device, 1, &f->in_flight, VK_TRUE, UINT64_MAX);
-    inst->frame_timing.swapchain_fence_ms += (glfwGetTime() - timing_start) * 1000.0;
+    inst->frame_timing.swapchain_fence_ms += (ca_platform_time() - timing_start) * 1000.0;
     ca_profile_end(inst, "Platform Swapchain Fence");
     if (fence_result != VK_SUCCESS) {
         fprintf(stderr, "[vk] swapchain fence failed: %d\n", fence_result);
@@ -1419,16 +1430,16 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
 
     uint32_t image_index;
     ca_profile_begin(inst, "Platform Swapchain Acquire");
-    timing_start = glfwGetTime();
+    timing_start = ca_platform_time();
     VkResult result = vkAcquireNextImageKHR(
         inst->vk_device, sc->swapchain, UINT64_MAX,
         f->image_available, VK_NULL_HANDLE, &image_index);
-    inst->frame_timing.swapchain_acquire_ms += (glfwGetTime() - timing_start) * 1000.0;
+    inst->frame_timing.swapchain_acquire_ms += (ca_platform_time() - timing_start) * 1000.0;
     ca_profile_end(inst, "Platform Swapchain Acquire");
 
     if (result == VK_ERROR_OUT_OF_DATE_KHR) {
         int w, h;
-        glfwGetFramebufferSize(win->glfw, &w, &h);
+        ca_platform_framebuffer_size(win, &w, &h);
         ca_renderer_window_resize(inst, win, w, h);
         return;
     }
@@ -1461,7 +1472,7 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
         .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
     };
     ca_profile_begin(inst, "Platform UI Command Build");
-    timing_start = glfwGetTime();
+    timing_start = ca_platform_time();
     result = vkBeginCommandBuffer(f->cmd, &begin);
     if (result != VK_SUCCESS) {
         ca_profile_end(inst, "Platform UI Command Build");
@@ -1582,7 +1593,7 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
 
     /* Helper: convert logical clip rect to physical scissor rect */
     int log_w, log_h;
-    glfwGetWindowSize(win->glfw, &log_w, &log_h);
+    ca_platform_window_size(win, &log_w, &log_h);
     float scale_x = (log_w > 0) ? (float)sc->extent.width  / (float)log_w : 1.0f;
     float scale_y = (log_h > 0) ? (float)sc->extent.height / (float)log_h : 1.0f;
     VkRect2D full_scissor = { .offset = {0, 0}, .extent = sc->extent };
@@ -1645,7 +1656,7 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
 
     /* Frame timing for FPS / frame-time display */
     {
-        double now = glfwGetTime();
+        double now = ca_platform_time();
         win->dbg_fps_frames++;
         double elapsed = now - win->dbg_fps_last_time;
         if (elapsed >= 1.0) {
@@ -1672,7 +1683,7 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
             VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT,  VK_ACCESS_2_NONE);
 
     result = vkEndCommandBuffer(f->cmd);
-    inst->frame_timing.swapchain_record_ms += (glfwGetTime() - timing_start) * 1000.0;
+    inst->frame_timing.swapchain_record_ms += (ca_platform_time() - timing_start) * 1000.0;
     ca_profile_end(inst, "Platform UI Command Build");
     if (result != VK_SUCCESS) {
         fprintf(stderr, "[vk] vkEndCommandBuffer failed: %d\n", result);
@@ -1712,11 +1723,11 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
         .pSignalSemaphores    = &render_finished,
     };
     ca_profile_begin(inst, "Platform Swapchain Submit");
-    timing_start = glfwGetTime();
+    timing_start = ca_platform_time();
     /* Tagged before submitting; the abandon path below re-tags on failure. */
     f->submit_serial = ++sc->submit_serial;
     result = vkQueueSubmit(inst->gfx_queue, 1, &submit, f->in_flight);
-    inst->frame_timing.swapchain_submit_ms += (glfwGetTime() - timing_start) * 1000.0;
+    inst->frame_timing.swapchain_submit_ms += (ca_platform_time() - timing_start) * 1000.0;
     ca_profile_end(inst, "Platform Swapchain Submit");
     if (result != VK_SUCCESS) {
         fprintf(stderr, "[vk] vkQueueSubmit failed: %d\n", result);
@@ -1738,14 +1749,14 @@ void ca_swapchain_frame(Ca_Instance *inst, Ca_Window *win)
         .pImageIndices      = &image_index,
     };
     ca_profile_begin(inst, "Platform Present");
-    timing_start = glfwGetTime();
+    timing_start = ca_platform_time();
     result = vkQueuePresentKHR(inst->present_queue, &present);
-    inst->frame_timing.present_ms += (glfwGetTime() - timing_start) * 1000.0;
+    inst->frame_timing.present_ms += (ca_platform_time() - timing_start) * 1000.0;
     ca_profile_end(inst, "Platform Present");
     if (result == VK_ERROR_DEVICE_LOST) inst->renderer_failed = true;
     if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR) {
         int w, h;
-        glfwGetFramebufferSize(win->glfw, &w, &h);
+        ca_platform_framebuffer_size(win, &w, &h);
         ca_renderer_window_resize(inst, win, w, h);
     }
 

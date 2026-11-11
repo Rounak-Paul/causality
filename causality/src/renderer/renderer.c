@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Sol/Causality contributors.
 
+#include "../platform/platform.h"
 #include "renderer.h"
 #include "swapchain.h"
 #include "pipeline.h"
@@ -44,15 +45,15 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL debug_messenger_callback(
 
 static bool create_vk_instance(Ca_Instance *inst, const char *app_name)
 {
-    uint32_t     glfw_ext_count = 0;
-    const char **glfw_exts      = glfwGetRequiredInstanceExtensions(&glfw_ext_count);
-    if (!glfw_exts || glfw_ext_count == 0) {
-        fprintf(stderr, "[vk] GLFW returned no required instance extensions\n");
+    uint32_t     platform_ext_count = 0;
+    const char **platform_exts      = ca_platform_vk_extensions(&platform_ext_count);
+    if (!platform_exts || platform_ext_count == 0) {
+        fprintf(stderr, "[vk] Platform returned no required instance extensions\n");
         return false;
     }
 
     Ca_DynArray extension_storage = CA_DYN_ARRAY_INIT(const char *);
-    if (!ca_dyn_array_append(&extension_storage, glfw_exts, glfw_ext_count))
+    if (!ca_dyn_array_append(&extension_storage, platform_exts, platform_ext_count))
         return false;
 
     /* Check and opt-in to VK_KHR_portability_enumeration (required on macOS) */
@@ -288,10 +289,8 @@ static bool find_queue_families(Ca_Instance *inst)
             inst->gfx_family == UINT32_MAX)
             inst->gfx_family = i;
 
-        /* Present support checked against a temporary surface.
-           We use glfwGetPhysicalDevicePresentationSupport for simplicity since
-           a real surface may not exist yet. */
-        if (glfwGetPhysicalDevicePresentationSupport(inst->vk_instance, inst->vk_gpu, i) &&
+        /* Query the backend before the first window surface exists. */
+        if (ca_platform_vk_presentation_supported(inst->vk_instance, inst->vk_gpu, i, props[i].queueFlags) &&
             inst->present_family == UINT32_MAX)
             inst->present_family = i;
     }
@@ -364,14 +363,19 @@ static bool create_logical_device(Ca_Instance *inst)
         .pNext = &available13,
     };
     vkGetPhysicalDeviceFeatures2(inst->vk_gpu, &available);
+#ifdef CA_PLATFORM_IOS
+    const bool desktop_features = false;
+#else
+    const bool desktop_features = true;
+#endif
     if (!available13.dynamicRendering ||
         !available13.synchronization2 ||
-        !available13.shaderDemoteToHelperInvocation ||
+        (desktop_features && (!available13.shaderDemoteToHelperInvocation ||
         !available.features.samplerAnisotropy ||
         !available.features.fillModeNonSolid ||
         !available.features.multiDrawIndirect ||
         !available.features.fragmentStoresAndAtomics ||
-        !available.features.independentBlend) {
+        !available.features.independentBlend))) {
         fprintf(stderr,
                 "[vk] required Vulkan 1.3 features unavailable "
                 "(dynamicRendering=%u, synchronization2=%u, shaderDemoteToHelperInvocation=%u, "
@@ -395,7 +399,7 @@ static bool create_logical_device(Ca_Instance *inst)
        Required, not optional: confirmed supported on every Vulkan 1.1+
        driver including MoltenVK (no feature-support fallback path exists
        for the foliage draw, unlike bindless above). */
-    if (!available11.shaderDrawParameters) {
+    if (desktop_features && !available11.shaderDrawParameters) {
         fprintf(stderr, "[vk] required Vulkan 1.1 feature unavailable (shaderDrawParameters=0)\n");
         return false;
     }
@@ -437,7 +441,7 @@ static bool create_logical_device(Ca_Instance *inst)
 
     VkPhysicalDeviceVulkan11Features enabled11 = {
         .sType                   = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES,
-        .shaderDrawParameters    = VK_TRUE,
+        .shaderDrawParameters    = available11.shaderDrawParameters,
     };
     VkPhysicalDeviceVulkan12Features enabled12 = {
         .sType              = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,
@@ -455,7 +459,7 @@ static bool create_logical_device(Ca_Instance *inst)
         .pNext                           = &enabled12,
         .dynamicRendering                = VK_TRUE,
         .synchronization2                = VK_TRUE,
-        .shaderDemoteToHelperInvocation = VK_TRUE,
+        .shaderDemoteToHelperInvocation = available13.shaderDemoteToHelperInvocation,
     };
     /* dualSrcBlend is no longer required: the text pipeline uses grayscale
        antialiasing with standard premultiplied-alpha blending.          */
@@ -463,18 +467,18 @@ static bool create_logical_device(Ca_Instance *inst)
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
         .pNext = &enabled13,
         .features = {
-            .samplerAnisotropy = VK_TRUE,
-            .fillModeNonSolid  = VK_TRUE,
-            .multiDrawIndirect = VK_TRUE,
+            .samplerAnisotropy = available.features.samplerAnisotropy,
+            .fillModeNonSolid  = available.features.fillModeNonSolid,
+            .multiDrawIndirect = available.features.multiDrawIndirect,
             /* Block-compressed (BC4/5/7) sampled textures; consumers query
                format support per format, so this stays optional. */
             .textureCompressionBC = available.features.textureCompressionBC,
             /* Required for imageAtomicOr on a storage image bound in the
                fragment stage — the standard fragment-shader voxelization
                technique (rasterize triangles, atomic-write occupancy). */
-            .fragmentStoresAndAtomics = VK_TRUE,
+            .fragmentStoresAndAtomics = available.features.fragmentStoresAndAtomics,
             /* Per-attachment color write masks (pipelines that skip some targets). */
-            .independentBlend = VK_TRUE,
+            .independentBlend = available.features.independentBlend,
         },
     };
 
@@ -534,19 +538,20 @@ static bool create_vma_allocator(Ca_Instance *inst)
 
 bool ca_renderer_init(Ca_Instance *inst, const Ca_InstanceDesc *desc)
 {
-    if (!create_vk_instance(inst, desc ? desc->app_name : NULL))   return false;
-    if (!select_physical_device(inst, desc && desc->prefer_dedicated_gpu)) return false;
-    if (!find_queue_families(inst))   return false;
-    if (!create_logical_device(inst)) return false;
-    if (!create_command_pool(inst))   return false;
-    if (!create_vma_allocator(inst))  return false;
+    if (!create_vk_instance(inst, desc ? desc->app_name : NULL)) return false;
+    if (!select_physical_device(inst, desc && desc->prefer_dedicated_gpu) ||
+        !find_queue_families(inst) || !create_logical_device(inst) ||
+        !create_command_pool(inst) || !create_vma_allocator(inst)) {
+        ca_renderer_shutdown(inst);
+        return false;
+    }
     printf("[vk] renderer ready\n");
     return true;
 }
 
 void ca_renderer_shutdown(Ca_Instance *inst)
 {
-    if (inst->vk_device == VK_NULL_HANDLE) return;
+    if (inst->vk_device == VK_NULL_HANDLE) goto destroy_instance;
     vkDeviceWaitIdle(inst->vk_device);
 
     /* Give the external renderer sharing this device (if any) a chance to
@@ -577,10 +582,10 @@ void ca_renderer_shutdown(Ca_Instance *inst)
         vkDestroyCommandPool(inst->vk_device, inst->cmd_pool, NULL);
     inst->cmd_pool = VK_NULL_HANDLE;
 
-    if (inst->vk_device  != VK_NULL_HANDLE)
-        vkDestroyDevice(inst->vk_device, NULL);
+    vkDestroyDevice(inst->vk_device, NULL);
     inst->vk_device = VK_NULL_HANDLE;
 
+destroy_instance:
 #ifdef CAUSALITY_VULKAN_VALIDATION
     if (inst->vk_debug_messenger != VK_NULL_HANDLE && inst->vk_instance != VK_NULL_HANDLE) {
         PFN_vkDestroyDebugUtilsMessengerEXT destroy_messenger =
@@ -602,14 +607,21 @@ void ca_renderer_shutdown(Ca_Instance *inst)
 bool ca_renderer_window_init(Ca_Instance *inst, Ca_Window *win)
 {
     /* Surface */
-    if (glfwCreateWindowSurface(inst->vk_instance, win->glfw, NULL, &win->surface)
+    if (ca_platform_vk_surface_create(inst->vk_instance, win, &win->surface)
             != VK_SUCCESS) {
-        fprintf(stderr, "[vk] glfwCreateWindowSurface failed\n");
+        fprintf(stderr, "[vk] Platform surface creation failed\n");
+        return false;
+    }
+
+    VkBool32 supported = VK_FALSE;
+    if (vkGetPhysicalDeviceSurfaceSupportKHR(inst->vk_gpu, inst->present_family,
+                                             win->surface, &supported) != VK_SUCCESS || !supported) {
+        fprintf(stderr, "[vk] Selected queue cannot present to the window surface\n");
         return false;
     }
 
     int w, h;
-    glfwGetFramebufferSize(win->glfw, &w, &h);
+    ca_platform_framebuffer_size(win, &w, &h);
     if (!ca_swapchain_create(inst, win, (uint32_t)w, (uint32_t)h))
         return false;
 
@@ -676,8 +688,10 @@ bool ca_renderer_window_init(Ca_Instance *inst, Ca_Window *win)
             }
         }
 
+        float content_scale;
+        ca_platform_content_scale(win, &content_scale, NULL);
         font_ok = ca_font_create_from_memory(
-                    inst, win->glfw, inst->font,
+                    inst, content_scale, inst->font,
                     regular_data, regular_size,
                     bold_data,    bold_size);
 
@@ -726,9 +740,6 @@ bool ca_renderer_window_init(Ca_Instance *inst, Ca_Window *win)
 
 void ca_renderer_window_shutdown(Ca_Instance *inst, Ca_Window *win)
 {
-    /* Destroy backdrop blur images */
-    ca_blur_window_destroy(inst, win);
-
     /* Retire viewport GPU resources before tearing down the swapchain,
        whose destruction idles the device and releases the retired list. */
     if (ca_pool_slot_count(&win->viewport_pool) > 0) {
@@ -738,8 +749,15 @@ void ca_renderer_window_shutdown(Ca_Instance *inst, Ca_Window *win)
         }
     }
 
+    ca_renderer_window_detach(inst, win);
+}
+
+void ca_renderer_window_detach(Ca_Instance *inst, Ca_Window *win)
+{
     ca_swapchain_destroy(inst, win);
+    ca_blur_window_destroy(inst, win);
     ca_swapchain_capture_cancel(inst, win);
+    win->pending_swapchain_resize = false;
     if (win->surface != VK_NULL_HANDLE) {
         vkDestroySurfaceKHR(inst->vk_instance, win->surface, NULL);
         win->surface = VK_NULL_HANDLE;
@@ -772,7 +790,7 @@ void ca_renderer_frame(Ca_Instance *inst)
     /* content_scale (display DPI) can change without a resize event on this
        codepath — the window moving to a different monitor, or the OS
        reporting a live scale-factor change. Everything else that reads
-       content scale (viewport.c, widget.c) already re-queries GLFW per
+       content scale (viewport.c, widget.c) already queries the platform per
        frame; the font atlas must too, or glyphs stay baked for whichever
        display was active at startup. Checked against the first live
        window since inst->font is a single instance-wide atlas shared by
@@ -780,8 +798,10 @@ void ca_renderer_frame(Ca_Instance *inst)
     if (inst && inst->font) {
         for (size_t i = 0; i < ca_pool_slot_count(&inst->windows); ++i) {
             Ca_Window *scale_win = CA_POOL_AT(inst->windows, Ca_Window, i);
-            if (!scale_win->in_use || !scale_win->glfw) continue;
-            ca_font_refresh_content_scale(inst->font, scale_win->glfw);
+            if (!scale_win->in_use) continue;
+            float content_scale;
+            ca_platform_content_scale(scale_win, &content_scale, NULL);
+            ca_font_refresh_content_scale(inst->font, content_scale);
             break;
         }
     }
@@ -795,7 +815,7 @@ void ca_renderer_frame(Ca_Instance *inst)
         Ca_Window *win = CA_POOL_AT(inst->windows, Ca_Window, i);
         if (!win->in_use) continue;
 
-        /* Apply any deferred swapchain resize now that we are outside GLFW
+        /* Apply any deferred swapchain resize now that we are outside native
            callbacks — safe to call vkDeviceWaitIdle here. */
         if (win->pending_swapchain_resize) {
             ca_profile_begin(inst, "Platform Swapchain Resize");

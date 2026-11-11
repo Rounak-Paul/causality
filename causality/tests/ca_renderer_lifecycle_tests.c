@@ -1,4 +1,3 @@
-typedef struct GLFWwindow GLFWwindow;
 #include "ca_internal.h"
 #include <stdio.h>
 
