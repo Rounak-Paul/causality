@@ -216,6 +216,9 @@ typedef enum {
     /* `ambient-light: <blur> <falloff> [<strength>]`: the element's painted box, blurred, spills
        colour outward over everything around it, fading with distance (no hard limit). `keyword` is an ambient handle (mask.h). */
     CA_CSS_PROP_AMBIENT_LIGHT,
+    /* `translate: <x> [<y>]`: a visual offset applied at paint time; layout is untouched. */
+    CA_CSS_PROP_TRANSLATE_X,
+    CA_CSS_PROP_TRANSLATE_Y,
 
     CA_CSS_PROP_COUNT
 } Ca_CssPropId;

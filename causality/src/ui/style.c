@@ -913,6 +913,8 @@ void ca_style_apply_one_declaration(Ca_ResolvedStyle *out, Ca_CssPropId prop,
             break;
 
         /* New CSS3 properties */
+        case CA_CSS_PROP_TRANSLATE_X: out->translate_x = css_val_to_px(val); break;
+        case CA_CSS_PROP_TRANSLATE_Y: out->translate_y = css_val_to_px(val); break;
         case CA_CSS_PROP_ROW_GAP:    out->row_gap    = css_val_to_px(val); break;
         case CA_CSS_PROP_COLUMN_GAP: out->column_gap = css_val_to_px(val); break;
         case CA_CSS_PROP_ALIGN_SELF:
@@ -1245,6 +1247,8 @@ void ca_style_apply_to_node(const Ca_ResolvedStyle *style,
 
     /* Gap — prefer row/column, fall back to uniform gap */
     if (nd->gap        <= 0.0f && STYLE_SET(CA_CSS_PROP_GAP))        nd->gap        = style->gap;
+    if (STYLE_SET(CA_CSS_PROP_TRANSLATE_X)) nd->translate_x = style->translate_x;
+    if (STYLE_SET(CA_CSS_PROP_TRANSLATE_Y)) nd->translate_y = style->translate_y;
     if (nd->row_gap    <= 0.0f && STYLE_SET(CA_CSS_PROP_ROW_GAP))    nd->row_gap    = style->row_gap;
     if (nd->column_gap <= 0.0f && STYLE_SET(CA_CSS_PROP_COLUMN_GAP)) nd->column_gap = style->column_gap;
 

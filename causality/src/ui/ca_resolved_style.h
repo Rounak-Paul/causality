@@ -66,6 +66,7 @@ typedef struct {
     float    padding[4];     /* top, right, bottom, left */
     float    margin[4];
     float    gap, row_gap, column_gap;
+    float    translate_x, translate_y;
     /* Visual */
     float    border_radius;
     float    border_radius_tl, border_radius_tr, border_radius_br, border_radius_bl;

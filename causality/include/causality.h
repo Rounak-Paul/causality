@@ -1532,6 +1532,13 @@ CA_API void ca_image(const Ca_ImageDesc *desc);
      Timing: linear, ease, ease-in, ease-out, ease-in-out, ease-in-back,
        ease-out-back, ease-in-out-back, cubic-bezier(x1, y1, x2, y2); a
        y outside 0..1 overshoots.
+     translate: <x> [<y>]   a visual offset applied when painting; layout is untouched,
+       painting and hit-testing both follow it, and it composes down the subtree. Animatable
+       (transitions and keyframes), so it is the way to slide an element.
+     opacity: <0..1>   fades the element and everything inside it (text, images, borders and
+       descendants); nested opacities multiply.
+     An animation runs only while its element is displayed: it stops while the element (or an
+       ancestor) is `display: none` and starts over each time it is shown again.
      @keyframes <name> { from { ... } 40% { ... } to { ... } }
        any number of stops; var() resolves against the :root variables.
      animation: <name> <duration> <timing> <delay> <count|infinite>

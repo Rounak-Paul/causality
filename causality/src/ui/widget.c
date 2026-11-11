@@ -515,6 +515,8 @@ static void scale_resolved_style(Ca_ResolvedStyle *style, float scale)
     }
     style->gap *= scale;
     style->row_gap *= scale;
+    style->translate_x *= scale;
+    style->translate_y *= scale;
     style->column_gap *= scale;
     style->border_radius *= scale;
     style->border_radius_tl *= scale;

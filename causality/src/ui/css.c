@@ -2567,6 +2567,25 @@ static void parse_declarations(Parser *p, Ca_CssRule *rule)
             continue;
         }
 
+        /* translate: <x> [<y>] (CSS Transforms Level 2) */
+        if (strcasecmp(prop_name, "translate") == 0) {
+            int from = rule->decl_count;
+            Ca_CssValue x = parse_value(p, CA_CSS_PROP_TRANSLATE_X);
+            Ca_CssValue y = {0};
+            skip_ws(p);
+            Token next = parser_peek(p);
+            bool has_y = next.type != TOK_SEMICOLON && next.type != TOK_RBRACE && next.type != TOK_EOF &&
+                         next.type != TOK_BANG;
+            if (has_y) y = parse_value(p, CA_CSS_PROP_TRANSLATE_Y);
+            else y = (Ca_CssValue){.type = x.type, .number = 0.0f};
+            add_decl(rule, CA_CSS_PROP_TRANSLATE_X, x);
+            add_decl(rule, CA_CSS_PROP_TRANSLATE_Y, y);
+            consume_important(p, rule, from);
+            skip_ws(p); t = parser_peek(p);
+            if (t.type == TOK_SEMICOLON) parser_next(p);
+            continue;
+        }
+
         /* gap shorthand: gap: <row-gap> [<column-gap>] */
         if (strcasecmp(prop_name, "gap") == 0) {
             int from = rule->decl_count;

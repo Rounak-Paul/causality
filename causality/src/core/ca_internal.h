@@ -459,6 +459,7 @@ typedef struct {
     float        rotation;        /* degrees clockwise; 0 = none */
     float        scale_bias_x, scale_bias_y;  /* actual scale minus 1 */
     float        pivot_off_x, pivot_off_y;    /* normalized pivot minus 0.5 */
+    float        translate_x, translate_y;    /* paint-time offset in window pixels; set by CSS `translate` */
 } Ca_NodeDesc;
 
 enum {
@@ -503,7 +504,7 @@ static inline float ca_desc_pivot_y(const Ca_NodeDesc *d) { return 0.5f + d->piv
 
 static inline bool ca_desc_has_transform(const Ca_NodeDesc *d)
 {
-    return d->rotation != 0.0f ||
+    return d->rotation != 0.0f || d->translate_x != 0.0f || d->translate_y != 0.0f ||
            d->scale_bias_x != 0.0f || d->scale_bias_y != 0.0f;
 }
 

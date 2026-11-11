@@ -489,7 +489,7 @@ static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, Cli
         source.corner_br = ca_desc_corner_br(&node->desc);
         source.corner_bl = ca_desc_corner_bl(&node->desc);
         source.z_index = node->desc.z_index;
-        source.a = node->desc.opacity > 0.0f ? node->desc.opacity : 1.0f;
+        source.a = 1.0f;
         set_clip(&source, clip);
         paint_glow(win, &source, node->desc.glow_radius, node->desc.glow_color);
     }
@@ -522,10 +522,6 @@ static void paint_node_content(Ca_Window *win, Ca_Font *font, Ca_Node *node, Cli
             cmd->draw_mode = CA_DRAW_MODE_NORMAL;
             unpack_color(node->desc.background, &cmd->r, &cmd->g, &cmd->b, &cmd->a);
         }
-
-        float op = (node->desc.opacity > 0.0f) ? node->desc.opacity : 1.0f;
-        cmd->a       *= op;
-        cmd->color2_a *= op;
 
         cmd->z_index = node->desc.z_index;
         cmd->in_use  = true;
@@ -2384,6 +2380,23 @@ static void apply_inherited_z(Ca_Window *win, uint32_t start, uint32_t count,
             win->draw_cmds[ci].z_index = effective_z;
 }
 
+/* Multiply the alpha of the draw commands in [start, start+count) by the
+   opacity accumulated down the tree. An element's `opacity` therefore fades
+   everything it paints and everything inside it (text, images, borders and
+   descendants), as in CSS, with nested opacities multiplying. Applied after
+   commands are cached, so the cache keeps un-faded values and replays at
+   whatever opacity is current. */
+static void apply_inherited_opacity(Ca_Window *win, uint32_t start, uint32_t count, float opacity)
+{
+    if (opacity >= 0.999f) return;
+    for (uint32_t ci = start; ci < start + count; ++ci) {
+        Ca_DrawCmd *cmd = &win->draw_cmds[ci];
+        cmd->a *= opacity;
+        cmd->border_a *= opacity;
+        cmd->color2_a *= opacity;
+    }
+}
+
 /* Stamp the accumulated subtree transform onto freshly-emitted or replayed
    draw commands in [start, start+count).  Applied unconditionally (not only
    to untransformed commands, unlike inherited z) because a command's
@@ -2411,7 +2424,7 @@ static void apply_transform(Ca_Window *win, uint32_t start, uint32_t count,
 
 static void paint_tree_cached(Ca_Instance *inst, Ca_Window *win,
                               Ca_Node *node, ClipRect clip, int16_t inherited_z,
-                              Ca_Transform2D inherited_xf)
+                              Ca_Transform2D inherited_xf, float inherited_opacity)
 {
     if (!node || !node->in_use) return;
 
@@ -2448,6 +2461,9 @@ static void paint_tree_cached(Ca_Instance *inst, Ca_Window *win,
         ca_transform_from_desc(&node->desc, node->x, node->y,
                                node->w, node->h));
 
+    const float effective_opacity =
+        inherited_opacity * (node->desc.opacity > 0.0f ? node->desc.opacity : 1.0f);
+
     bool was_dirty = (node->dirty & CA_DIRTY_CONTENT) != 0;
 
     /* ---- Pre-children: background + widget visuals ---- */
@@ -2462,6 +2478,7 @@ static void paint_tree_cached(Ca_Instance *inst, Ca_Window *win,
         apply_inherited_z(win, start, count, effective_z);
         apply_transform(win, start, count, effective_xf, false);
         cache_commands(win, node, start, count, false);
+        apply_inherited_opacity(win, start, count, effective_opacity);
         node->dirty &= ~CA_DIRTY_CONTENT;
         if (win->debug_overlay && !win->dbg_force_repaint)
             node->dbg_repainted = true;
@@ -2479,6 +2496,7 @@ static void paint_tree_cached(Ca_Instance *inst, Ca_Window *win,
                                   node->cache_count);
         apply_inherited_z(win, replay_start, node->cache_count, effective_z);
         apply_transform(win, replay_start, node->cache_count, effective_xf, true);
+        apply_inherited_opacity(win, replay_start, node->cache_count, effective_opacity);
     }
 
     /* ---- Child clip ---- */
@@ -2507,7 +2525,7 @@ static void paint_tree_cached(Ca_Instance *inst, Ca_Window *win,
     if (!node->desc.inline_flow) {
         for (uint32_t i = 0; i < node->child_count; ++i)
             paint_tree_cached(inst, win, node->children[i], child_clip,
-                              effective_z, effective_xf);
+                              effective_z, effective_xf, effective_opacity);
     }
 
     /* ---- Post-children: border + scrollbars ---- */
@@ -2521,6 +2539,7 @@ static void paint_tree_cached(Ca_Instance *inst, Ca_Window *win,
         apply_inherited_z(win, sb_start, sb_count, effective_z);
         apply_transform(win, sb_start, sb_count, effective_xf, false);
         cache_commands(win, node, sb_start, sb_count, true);
+        apply_inherited_opacity(win, sb_start, sb_count, effective_opacity);
     } else if (node->cache_post_count > 0 &&
                ca_window_reserve_draw_commands(win, (size_t)win->draw_cmd_count + node->cache_post_count))
     {
@@ -2534,6 +2553,7 @@ static void paint_tree_cached(Ca_Instance *inst, Ca_Window *win,
                                   node->cache_post_count);
         apply_inherited_z(win, sb_replay, node->cache_post_count, effective_z);
         apply_transform(win, sb_replay, node->cache_post_count, effective_xf, true);
+        apply_inherited_opacity(win, sb_replay, node->cache_post_count, effective_opacity);
     }
 }
 
@@ -3420,7 +3440,7 @@ void ca_paint_pass(Ca_Instance *inst, Ca_Window *win)
     /* 2. Incremental tree walk: only dirty nodes repaint, clean reuse cache */
     ClipRect no_clip = { .active = false };
     paint_tree_cached(inst, win, win->root, no_clip, 0,
-                      ca_transform_identity());
+                      ca_transform_identity(), 1.0f);
 
     /* 3. Decorations — always fresh, never cached (depend on global focus state) */
     Ca_Font *font = inst->font;

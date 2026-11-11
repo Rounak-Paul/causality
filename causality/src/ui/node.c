@@ -40,8 +40,8 @@ Ca_Transform2D ca_transform_from_desc(const Ca_NodeDesc *desc,
     t.b = sn * sx;
     t.c = -sn * sy;
     t.d = cs * sy;
-    t.tx = ox - (t.a * ox + t.c * oy);
-    t.ty = oy - (t.b * ox + t.d * oy);
+    t.tx = ox - (t.a * ox + t.c * oy) + desc->translate_x;
+    t.ty = oy - (t.b * ox + t.d * oy) + desc->translate_y;
     t.active = true;
     return t;
 }

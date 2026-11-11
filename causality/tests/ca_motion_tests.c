@@ -510,6 +510,78 @@ static bool test_animation_survives_rebuild(void)
     return true;
 }
 
+/** Animations run only while their element is displayed, and start over each time it is shown. */
+static bool test_animation_restarts_when_displayed(void)
+{
+    Rig rig;
+    CHECK(rig_init(&rig, "@keyframes grow { from { width: 100px; } to { width: 200px; } }"));
+    Ca_Node *node = rig.node;
+    node->desc.width = 50.0f;
+    const Ca_AnimSpec spec = anim_spec("grow", 4.0f, 0.0f, 1.0f, CA_ANIM_NORMAL, CA_ANIM_FILL_NONE);
+    set_animation(node, &spec);
+
+    bool layout = false;
+    CHECK(ca_motion_tick(node, 100.0, &layout));
+    CHECK(ca_motion_tick(node, 101.0, &layout) && fabsf(node->desc.width - 125.0f) < 0.01f);
+
+    node->desc.hidden = true;
+    CHECK(!ca_motion_tick(node, 102.0, &layout));
+    CHECK(node->desc.width == 50.0f);
+    CHECK(!ca_motion_tick(node, 103.5, &layout));
+
+    node->desc.hidden = false;
+    CHECK(ca_motion_tick(node, 104.0, &layout) && node->desc.width == 100.0f);
+    CHECK(ca_motion_tick(node, 105.0, &layout) && fabsf(node->desc.width - 125.0f) < 0.01f);
+
+    Ca_Node *parent = node->parent;
+    CHECK(parent != NULL);
+    parent->desc.hidden = true;
+    CHECK(!ca_motion_tick(node, 106.0, &layout));
+    CHECK(node->desc.width == 50.0f);
+    parent->desc.hidden = false;
+    CHECK(ca_motion_tick(node, 107.0, &layout) && node->desc.width == 100.0f);
+
+    CHECK(ca_motion_tick(node, 112.0, &layout));
+    CHECK(!ca_motion_tick(node, 113.0, &layout));
+    node->desc.hidden = true;
+    ca_motion_tick(node, 114.0, &layout);
+    node->desc.hidden = false;
+    CHECK(ca_motion_tick(node, 115.0, &layout) && node->desc.width == 100.0f);
+
+    rig_destroy(&rig);
+    return true;
+}
+
+/** `translate` parses, resolves onto the node as a paint-time offset, and animates without touching layout. */
+static bool test_translate_property(void)
+{
+    Rig rig;
+    CHECK(rig_init(&rig, ".slid { translate: 30px -12px; } .flat { translate: 8px; }"
+                         "@keyframes slide { from { translate: 100px 0px; } to { translate: 0px 0px; } }"));
+    Ca_Node *node = rig.node;
+    snprintf(node->classes, CA_NODE_CLASS_MAX, "slid");
+    ca__set_style_node((Ca_Div *)node, "flat");
+    CHECK(node->desc.translate_x == 8.0f && node->desc.translate_y == 0.0f);
+    ca__set_style_node((Ca_Div *)node, "slid");
+    CHECK(node->desc.translate_x == 30.0f && node->desc.translate_y == -12.0f);
+
+    Ca_Transform2D xf = ca_transform_from_desc(&node->desc, 10.0f, 10.0f, 100.0f, 50.0f);
+    CHECK(xf.active && fabsf(xf.tx - 30.0f) < 0.001f && fabsf(xf.ty + 12.0f) < 0.001f);
+    CHECK(fabsf(xf.a - 1.0f) < 0.001f && fabsf(xf.d - 1.0f) < 0.001f);
+
+    ca__set_style_node((Ca_Div *)node, "");
+    CHECK(node->desc.translate_x == 0.0f && !ca_transform_from_desc(&node->desc, 0, 0, 10, 10).active);
+
+    const Ca_AnimSpec spec = anim_spec("slide", 2.0f, 0.0f, 1.0f, CA_ANIM_NORMAL, CA_ANIM_FILL_NONE);
+    set_animation(node, &spec);
+    bool layout = false;
+    CHECK(ca_motion_tick(node, 10.0, &layout) && node->desc.translate_x == 100.0f);
+    CHECK(ca_motion_tick(node, 11.0, &layout) && fabsf(node->desc.translate_x - 50.0f) < 0.01f);
+    CHECK(!layout);
+    rig_destroy(&rig);
+    return true;
+}
+
 /** A pseudo-state rule that moves a layout property takes effect, and transitions. */
 static bool test_hover_layout_follows_and_transitions(void)
 {
@@ -567,6 +639,8 @@ int main(void)
         { "keyframes_resolve_var", test_keyframes_resolve_var },
         { "gradient_keyframes", test_gradient_keyframes },
         { "animation_survives_rebuild", test_animation_survives_rebuild },
+        { "animation_restarts_when_displayed", test_animation_restarts_when_displayed },
+        { "translate_property", test_translate_property },
         { "hover_layout_follows_and_transitions", test_hover_layout_follows_and_transitions },
     };
     int failed = 0;

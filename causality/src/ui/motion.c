@@ -57,6 +57,8 @@ static const MotionProp k_props[] = {
     { P(MAX_WIDTH),        {0, 0}, {0}, true,  false, 0.0f, 1, { F(max_w) } },
     { P(MIN_HEIGHT),       {0, 0}, {0}, true,  false, 0.0f, 1, { F(min_h) } },
     { P(MAX_HEIGHT),       {0, 0}, {0}, true,  false, 0.0f, 1, { F(max_h) } },
+    { P(TRANSLATE_X),      {0, 0}, {0}, false, false, SIGNED, 1, { F(translate_x) } },
+    { P(TRANSLATE_Y),      {0, 0}, {0}, false, false, SIGNED, 1, { F(translate_y) } },
     { P(LEFT),             {0, 0}, {0}, true,  false, SIGNED, 1, { F(pos_x) } },
     { P(RIGHT),            {0, 0}, {0}, true,  false, SIGNED, 1, { F(pos_right) } },
     { P(TOP),              {0, 0}, {0}, true,  false, SIGNED, 1, { F(pos_y) } },
@@ -482,6 +484,7 @@ struct Ca_NodeAnim {
     bool        done;          /* finite animation that has finished */
     bool        applied;       /* tracks have written to the node (and need restoring) */
     bool        paused;
+    bool        suspended;     /* its element is not displayed; the animation restarts when it is */
     uint32_t    track_count;
     Track      *tracks;
 };
@@ -802,14 +805,47 @@ static void anim_reconcile(Ca_Node *node, double now, bool *layout_affected)
     CA_FREE(taken);
 }
 
+/** True while neither the node nor any ancestor is `display: none`. */
+static bool node_displayed(const Ca_Node *node)
+{
+    for (const Ca_Node *n = node; n; n = n->parent)
+        if (n->desc.hidden) return false;
+    return true;
+}
+
+/**
+ * Parks the animations of an element that is not displayed: each goes back to the node's own values
+ * and is rewound, to start over when the element is shown again (as in CSS, where `display: none`
+ * ends an animation).
+ */
+static void anims_suspend(Ca_Node *node, double now, bool *layout_affected)
+{
+    for (uint32_t i = 0; i < node->anim_count; ++i) {
+        Ca_NodeAnim *a = &node->anims[i];
+        anim_restore(node, a, layout_affected);
+        a->suspended = true;
+        a->done = false;
+        a->paused = false;
+        if (node->window) memory_forget(node->window, a->memory_key, a->spec.name);
+    }
+}
+
 static bool tick_animations(Ca_Node *node, double now, bool *layout_affected)
 {
     if (node->anim_spec_count == 0 && node->anim_count == 0) return false;
     anim_reconcile(node, now, layout_affected);
+    if (!node_displayed(node)) {
+        anims_suspend(node, now, layout_affected);
+        return false;
+    }
     bool busy = false;
     for (uint32_t i = 0; i < node->anim_count; ++i) {
         Ca_NodeAnim *a = &node->anims[i];
         const Ca_AnimSpec *spec = &a->spec;
+        if (a->suspended) {
+            a->suspended = false;
+            a->start = now;
+        }
 
         /* animation-play-state: a pause freezes progress; resuming shifts the start by the pause. */
         double clock = now;
