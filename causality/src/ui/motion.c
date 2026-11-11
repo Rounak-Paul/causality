@@ -161,6 +161,8 @@ static void read_values(const MotionProp *e, const Ca_NodeDesc *desc, uint32_t t
             n += 4;
         }
     }
+    /* An opacity of 0 in a descriptor means "not set", which paints fully opaque. */
+    if (e->prop == CA_CSS_PROP_OPACITY && out[0] <= 0.0f) out[0] = 1.0f;
 }
 
 /** Writes an entry's desc-backed components; text components are left to the caller. */

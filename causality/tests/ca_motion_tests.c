@@ -582,6 +582,25 @@ static bool test_translate_property(void)
     return true;
 }
 
+/** Fading in and finishing leaves the element fully visible, and an unset opacity reads as opaque. */
+static bool test_opacity_animation_ends_opaque(void)
+{
+    Rig rig;
+    CHECK(rig_init(&rig, "@keyframes fade { from { opacity: 0; } to { opacity: 1; } }"));
+    Ca_Node *node = rig.node;
+    CHECK(node->desc.opacity == 0.0f);                     /* unset */
+    const Ca_AnimSpec spec = anim_spec("fade", 1.0f, 0.0f, 1.0f, CA_ANIM_NORMAL, CA_ANIM_FILL_NONE);
+    set_animation(node, &spec);
+    bool layout = false;
+    CHECK(ca_motion_tick(node, 10.0, &layout) && node->desc.opacity < 0.01f);
+    CHECK(ca_motion_tick(node, 10.5, &layout) && fabsf(node->desc.opacity - 0.5f) < 0.01f);
+    CHECK(ca_motion_tick(node, 12.0, &layout));            /* lands */
+    CHECK(node->desc.opacity >= 0.999f);                   /* not stuck at the 0.001 floor */
+    CHECK(!ca_motion_tick(node, 12.1, &layout) && node->desc.opacity >= 0.999f);
+    rig_destroy(&rig);
+    return true;
+}
+
 /** A pseudo-state rule that moves a layout property takes effect, and transitions. */
 static bool test_hover_layout_follows_and_transitions(void)
 {
@@ -641,6 +660,7 @@ int main(void)
         { "animation_survives_rebuild", test_animation_survives_rebuild },
         { "animation_restarts_when_displayed", test_animation_restarts_when_displayed },
         { "translate_property", test_translate_property },
+        { "opacity_animation_ends_opaque", test_opacity_animation_ends_opaque },
         { "hover_layout_follows_and_transitions", test_hover_layout_follows_and_transitions },
     };
     int failed = 0;
