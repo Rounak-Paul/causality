@@ -1485,11 +1485,16 @@ static void node_set_style(Ca_Node *node, const char *style,
                                 out_text_color ? *out_text_color : 0u);
 }
 
+static void mark_subtree_content_dirty(Ca_Node *node);
+
 static void node_set_hidden(Ca_Node *node, bool hidden)
 {
     if (node->desc.hidden != hidden) {
         node->desc.hidden = hidden;
         node->dirty |= CA_DIRTY_LAYOUT | CA_DIRTY_CONTENT;
+        /* Painting skips hidden subtrees and clears their dirty flags, so anything built or changed
+           while hidden has no draw commands yet: repaint the whole subtree when it is shown. */
+        if (!hidden) mark_subtree_content_dirty(node);
         if (node->parent)
             node->parent->dirty |= CA_DIRTY_LAYOUT | CA_DIRTY_CONTENT;
     }
