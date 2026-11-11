@@ -467,23 +467,30 @@ static void layout_node(Ca_Node *node, float x, float y, float avail_w, float av
         Ca_Splitter *sp = (Ca_Splitter *)node->widget;
         bool is_h = (sp->direction == CA_HORIZONTAL);
         float total = is_h ? w : h;
-        float pane_space = total - sp->bar_size;
+        uint32_t visible_panes = 0;
+        for (uint32_t i = 0; i < node->child_count && visible_panes < 2; ++i)
+            visible_panes += !node->children[i]->desc.hidden;
+        sp->divider_hidden = visible_panes < 2;
+        if (sp->divider_hidden) {
+            sp->dragging = false;
+            sp->bar_hovered = false;
+        }
+        float bar_size = sp->divider_hidden ? 0.0f : sp->bar_size;
+        float pane_space = total - bar_size;
         if (pane_space < 0.0f) pane_space = 0.0f;
-        float pane1 = pane_space * sp->ratio;
-        if (sp->fixed_pane != CA_SPLIT_FIXED_NONE && pane_space > 0.0f) {
+        float pane1 = sp->divider_hidden ? pane_space : pane_space * sp->ratio;
+        if (!sp->divider_hidden && sp->fixed_pane != CA_SPLIT_FIXED_NONE && pane_space > 0.0f) {
             /* The fixed pane keeps its size; the other absorbs the change.
                Clamping to the ratio bounds leaves fixed_px intact, so the
                pane recovers its size when the container grows back. */
             if (sp->fixed_px <= 0.0f)
                 sp->fixed_px = pane_space * (sp->fixed_pane == CA_SPLIT_FIXED_FIRST ? sp->ratio : 1.0f - sp->ratio);
             pane1 = sp->fixed_pane == CA_SPLIT_FIXED_FIRST ? sp->fixed_px : pane_space - sp->fixed_px;
-            const float lo = pane_space * sp->min_ratio, hi = pane_space * sp->max_ratio;
-            if (pane1 < lo) pane1 = lo;
-            if (pane1 > hi) pane1 = hi;
+            pane1 = ca_split_clamp_first_size(sp, pane_space, pane1);
             sp->ratio = pane1 / pane_space;
         }
         float pane2 = pane_space - pane1;
-        sp->pane_px[0] = pane1;
+        sp->pane_px[0] = visible_panes ? pane1 : 0.0f;
         sp->pane_px[1] = pane2;
 
         /* Lay out visible children: first two non-hidden become pane1 and pane2 */
@@ -501,9 +508,9 @@ static void layout_node(Ca_Node *node, float x, float y, float avail_w, float av
                     layout_node(child, x, y, w, pane1);
             } else if (pane_idx == 1) {
                 if (is_h)
-                    layout_node(child, x + pane1 + sp->bar_size, y, pane2, h);
+                    layout_node(child, x + pane1 + bar_size, y, pane2, h);
                 else
-                    layout_node(child, x, y + pane1 + sp->bar_size, w, pane2);
+                    layout_node(child, x, y + pane1 + bar_size, w, pane2);
             } else {
                 /* Extra children beyond two: hide them */
                 layout_node(child, 0, 0, 0, 0);

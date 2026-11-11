@@ -1141,6 +1141,7 @@ struct Ca_Splitter {
     float         bar_size;   /* divider thickness in px */
     bool          dragging;   /* true while user drags the divider */
     bool          bar_hovered;/* true while the cursor sits on the bar's hit-zone */
+    bool          divider_hidden; /* fewer than two visible panes */
     bool          in_use;
     /* User callback fired when the user drags the divider and the
        ratio changes. Allows the application to persist the new ratio
@@ -1150,6 +1151,7 @@ struct Ca_Splitter {
     void         *user_data;
     int           fixed_pane; /* CA_SPLIT_FIXED_* */
     float         fixed_px;   /* fixed pane size in layout px; <= 0 = derive from ratio */
+    float         min_fixed_size, max_fixed_size; /* fixed pane bounds in logical px */
     float         pane_px[2]; /* pane sizes from the last layout pass, layout px */
     float         ui_scale;   /* layout px per logical px at the last build */
 };

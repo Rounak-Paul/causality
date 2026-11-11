@@ -1341,7 +1341,8 @@ CA_API void ca_window_set_on_frame(Ca_Window *window, void (*fn)(void *), void *
    ============================================================
 
    A splitter divides its area into two panes with a draggable divider.
-   Nest exactly two children inside ca_split_begin / ca_split_end.
+   Nest two children inside ca_split_begin / ca_split_end. If one child
+   is hidden, the visible child fills the splitter and the handle is hidden.
    Causality owns the line-and-five-dot handle and its hover/drag colors.
    The handle is hidden when neither hovered nor dragged; CSS styles the
    container, not the handle.
@@ -1382,6 +1383,10 @@ typedef struct Ca_SplitDesc {
     int      fixed_pane;
     float    fixed_size;
     const char *id, *style;
+    /* Optional bounds in logical pixels for the fixed pane. A nonpositive
+       bound is unset. These take precedence over ratio bounds and fit
+       within the space available to the two panes. */
+    float    min_fixed_size, max_fixed_size;
 } Ca_SplitDesc;
 
 /*

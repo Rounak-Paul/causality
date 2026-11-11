@@ -4001,6 +4001,25 @@ void ca_modal_set_visible(Ca_Modal *modal, bool visible)
    PUBLIC — Splitter (resizable split container)
    ============================================================ */
 
+float ca_split_clamp_first_size(const Ca_Splitter *sp, float pane_space, float first_px)
+{
+    const bool second = sp->fixed_pane == CA_SPLIT_FIXED_SECOND;
+    float lo = pane_space * (second ? 1.0f - sp->max_ratio : sp->min_ratio);
+    float hi = pane_space * (second ? 1.0f - sp->min_ratio : sp->max_ratio);
+    if (sp->fixed_pane != CA_SPLIT_FIXED_NONE && sp->min_fixed_size > 0.0f) {
+        lo = sp->min_fixed_size * sp->ui_scale;
+        hi = fmaxf(hi, lo);
+    }
+    if (sp->fixed_pane != CA_SPLIT_FIXED_NONE && sp->max_fixed_size > 0.0f) {
+        hi = sp->max_fixed_size * sp->ui_scale;
+        lo = fminf(lo, hi);
+    }
+    float size = second ? pane_space - first_px : first_px;
+    size = fminf(fmaxf(size, lo), hi);
+    size = fminf(fmaxf(size, 0.0f), pane_space);
+    return second ? pane_space - size : size;
+}
+
 Ca_Splitter *ca_split_begin(const Ca_SplitDesc *desc)
 {
     assert(g_ctx.active && desc);
@@ -4043,7 +4062,15 @@ Ca_Splitter *ca_split_begin(const Ca_SplitDesc *desc)
     sp->bar_size  = (desc->bar_size > 0.0f)  ? s(desc->bar_size)  : s(4.0f);
     sp->on_resize = desc->on_resize;
     sp->user_data = desc->user_data;
-    sp->ui_scale  = s(1.0f);
+    const float scale = s(1.0f);
+    if (reused && sp->ui_scale > 0.0f && sp->ui_scale != scale)
+        sp->fixed_px *= scale / sp->ui_scale;
+    sp->ui_scale = scale;
+    if (sp->min_fixed_size != desc->min_fixed_size || sp->max_fixed_size != desc->max_fixed_size) {
+        sp->min_fixed_size = desc->min_fixed_size;
+        sp->max_fixed_size = desc->max_fixed_size;
+        node->dirty |= CA_DIRTY_LAYOUT;
+    }
     if (!reused) {
         const int fixed = desc->fixed_pane;
         sp->fixed_pane = (fixed == CA_SPLIT_FIXED_FIRST || fixed == CA_SPLIT_FIXED_SECOND)
@@ -4946,7 +4973,7 @@ static void input_handle_keys(Ca_Window *win, Ca_TextInput *inp)
 static bool point_in_splitter_handle(Ca_Node *n, float px, float py)
 {
     Ca_Splitter *sp = n ? (Ca_Splitter *)n->widget : NULL;
-    if (!sp || !sp->in_use || !n->in_use || n->desc.no_hover ||
+    if (!sp || !sp->in_use || sp->divider_hidden || !n->in_use || n->desc.no_hover ||
         node_is_ancestor_hidden(n) || is_effectively_disabled(n) ||
         !point_within_clip_ancestors(n, px, py)) return false;
     float scale = n->window && n->window->ui_scale > 0.0f ? n->window->ui_scale : 1.0f;
@@ -6251,16 +6278,22 @@ void ca_widget_input_pass(Ca_Window *win)
                leading edge there — matches where the user actually grabbed
                the handle (its visual/hit-test center), instead of drifting
                the bar bar_size/2 to the right/below the cursor. */
-            float local = (is_h ? (mx - n->x) : (my - n->y)) - sp->bar_size * 0.5f;
-            float new_ratio = local / (total - sp->bar_size);
-            if (new_ratio < sp->min_ratio) new_ratio = sp->min_ratio;
-            if (new_ratio > sp->max_ratio) new_ratio = sp->max_ratio;
+            float cursor_x = mx, cursor_y = my;
+            if (mx < 0.0f || my < 0.0f) {
+                int window_x, window_y;
+                if (!ca_window_cursor_screen_position(win, &cursor_x, &cursor_y)) continue;
+                ca_window_get_rect(win, &window_x, &window_y, NULL, NULL);
+                cursor_x -= window_x;
+                cursor_y -= window_y;
+            }
+            float local = (is_h ? cursor_x - n->x : cursor_y - n->y) - sp->bar_size * 0.5f;
+            const float space = total - sp->bar_size;
+            const float first_px = ca_split_clamp_first_size(sp, space, local);
+            const float new_ratio = first_px / space;
             if (new_ratio != sp->ratio) {
                 sp->ratio = new_ratio;
-                if (sp->fixed_pane != CA_SPLIT_FIXED_NONE) {
-                    const float space = total - sp->bar_size;
-                    sp->fixed_px = space * (sp->fixed_pane == CA_SPLIT_FIXED_FIRST ? new_ratio : 1.0f - new_ratio);
-                }
+                if (sp->fixed_pane != CA_SPLIT_FIXED_NONE)
+                    sp->fixed_px = sp->fixed_pane == CA_SPLIT_FIXED_FIRST ? first_px : space - first_px;
                 n->dirty |= CA_DIRTY_LAYOUT | CA_DIRTY_CONTENT;
                 if (sp->on_resize)
                     sp->on_resize(new_ratio, sp->user_data);

@@ -235,12 +235,31 @@ static bool test_scrollbar_paint_order(void)
     return true;
 }
 
-/** Run both splitter orientations at standard and fractional UI scales. */
+/** Verify fixed pane bounds at scale and when the available space is narrower. */
+static bool test_fixed_pane_limits(void)
+{
+    Ca_Splitter sp = {
+        .fixed_pane = CA_SPLIT_FIXED_FIRST, .ui_scale = 1.5f,
+        .min_ratio = 0.1f, .max_ratio = 0.9f,
+        .min_fixed_size = 176.0f, .max_fixed_size = 320.0f,
+    };
+    CHECK(ca_split_clamp_first_size(&sp, 6000.0f, 100.0f) == 264.0f);
+    CHECK(ca_split_clamp_first_size(&sp, 800.0f, 300.0f) == 300.0f);
+    CHECK(ca_split_clamp_first_size(&sp, 800.0f, 700.0f) == 480.0f);
+    CHECK(ca_split_clamp_first_size(&sp, 200.0f, 100.0f) == 200.0f);
+    sp.fixed_pane = CA_SPLIT_FIXED_SECOND;
+    CHECK(ca_split_clamp_first_size(&sp, 800.0f, 100.0f) == 320.0f);
+    CHECK(ca_split_clamp_first_size(&sp, 800.0f, 700.0f) == 536.0f);
+    return true;
+}
+
+/** Run splitter tests at standard and fractional UI scales. */
 int main(void)
 {
     if (!test_glow()) return 1;
     if (!test_scrollbar_chrome()) return 1;
     if (!test_scrollbar_paint_order()) return 1;
+    if (!test_fixed_pane_limits()) return 1;
     const float scales[] = {1.0f, 1.12f, 2.0f};
     for (unsigned i = 0; i < sizeof(scales) / sizeof(scales[0]); ++i) {
         if (!test_splitter(CA_HORIZONTAL, scales[i])) return 1;

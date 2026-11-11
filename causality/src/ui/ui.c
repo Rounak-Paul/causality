@@ -71,6 +71,15 @@ static void rescale_nodes(Ca_Node *node, float ratio)
     rescale_desc(&node->desc, ratio);
     if (node->has_base_desc)
         rescale_desc(&node->base_desc, ratio);
+    if (node->widget_type == CA_WIDGET_SPLITTER && node->widget) {
+        Ca_Splitter *sp = node->widget;
+        if (sp->ui_scale > 0.0f && sp->ui_scale != node->window->ui_scale) {
+            float split_ratio = node->window->ui_scale / sp->ui_scale;
+            sp->bar_size *= split_ratio;
+            sp->fixed_px *= split_ratio;
+            sp->ui_scale = node->window->ui_scale;
+        }
+    }
     node->dirty |= CA_DIRTY_LAYOUT | CA_DIRTY_CONTENT;
     for (uint32_t ci = 0; ci < node->child_count; ci++)
         rescale_nodes(node->children[ci], ratio);

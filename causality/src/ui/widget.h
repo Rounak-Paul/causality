@@ -35,6 +35,9 @@ void ca_widget_resolve_keyframe(const Ca_Node *node, const Ca_Stylesheet *owner,
    Called once per window per frame inside ca_ui_update. */
 void ca_widget_input_pass(Ca_Window *win);
 
+/** Clamp first_px in pane_space to the splitter's ratio and fixed pane bounds. */
+float ca_split_clamp_first_size(const Ca_Splitter *splitter, float pane_space, float first_px);
+
 /**
  * Advances every tab bar's sliding indicator toward its active tab.
  *

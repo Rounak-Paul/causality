@@ -250,7 +250,7 @@ static void paint_splitter(Ca_Window *win, Ca_Node *node, ClipRect clip)
         is_node_effectively_disabled(node)) return;
     float ui_s = win->ui_scale > 0.0f ? win->ui_scale : 1.0f;
     Ca_Splitter *sp = (Ca_Splitter *)node->widget;
-    if (!sp || !sp->in_use) return;
+    if (!sp || !sp->in_use || sp->divider_hidden) return;
     /* Draw the divider bar between the two panes */
     bool is_h = (sp->direction == CA_HORIZONTAL);
     float bar_x, bar_y, bar_w, bar_h;
