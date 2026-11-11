@@ -19,6 +19,7 @@ static bool test_splitter(int direction, float scale)
     Ca_Instance instance = {0};
     Ca_Window window = {0};
     instance.font = &font;
+    instance.palette.accent = 0x808080FFu;
     window.instance = &instance;
     window.ui_scale = scale;
     CHECK(ca_dyn_array_init(&window.draw_cmd_storage, sizeof(Ca_DrawCmd)));
@@ -51,15 +52,27 @@ static bool test_splitter(int direction, float scale)
     CHECK(window.hovered_node == node && (node->dirty & CA_DIRTY_CONTENT));
     window.draw_cmd_count = 0;
     paint_tree_cached(&instance, &window, node, (ClipRect){0}, 0, ca_transform_identity());
-    CHECK(window.draw_cmd_count == 19 && node->cache_post_count == 18);
-    for (unsigned i = 10; i < 19; ++i) {
-        const Ca_DrawCmd *cmd = &window.draw_cmds[i];
-        CHECK(cmd->w > 0 && cmd->h > 0);
-        CHECK(cmd->x >= 0 && cmd->y >= 0);
-        CHECK(cmd->x + cmd->w <= node->w && cmd->y + cmd->h <= node->h);
-        CHECK((cmd->corner_radius > 0) == (i >= 12));
-        if (i >= 12) CHECK(cmd->w == cmd->h);
-    }
+    CHECK(window.draw_cmd_count == 2 && node->cache_post_count == 1);
+    const Ca_DrawCmd hover = window.draw_cmds[1];
+    const bool vertical = direction == CA_HORIZONTAL;
+    const float along = (vertical ? node->h : node->w) * 0.5f;
+    const float cross = (vertical ? node->w : node->h) * 0.5f;
+    CHECK(hover.draw_mode == CA_DRAW_MODE_SPLITTER && hover.gradient_angle == (float)vertical);
+    CHECK(hover.border_width == scale && hover.blur_radius == 44.0f * scale && hover.color2_r == 0.0f);
+    CHECK(fabsf((vertical ? hover.y : hover.x) + hover.gradient_cx - along) < 0.0001f);
+    CHECK(fabsf((vertical ? hover.x : hover.y) + hover.gradient_cy - cross) < 0.0001f);
+    CHECK((vertical ? hover.h : hover.w) < along * 2.0f);
+    CHECK(hover.r == 128.0f / 255.0f && hover.r == hover.g && hover.g == hover.b);
+    CHECK(hover.a == 0.55f);
+
+    if (vertical) window.mouse_y = 12.0f * scale;
+    else window.mouse_x = 12.0f * scale;
+    ca_widget_input_pass(&window);
+    CHECK(splitter->bar_hovered && (node->dirty & CA_DIRTY_CONTENT));
+    window.draw_cmd_count = 0;
+    paint_tree_cached(&instance, &window, node, (ClipRect){0}, 0, ca_transform_identity());
+    const Ca_DrawCmd moved = window.draw_cmds[1];
+    CHECK((vertical ? moved.y : moved.x) == 0.0f && moved.gradient_cx == 12.0f * scale);
     Ca_Node *pane = ca_pool_acquire(&window.node_pool);
     CHECK(pane);
     pane->in_use = true;
@@ -94,10 +107,20 @@ static bool test_splitter(int direction, float scale)
     CHECK(window.draw_cmd_count == 1 && node->cache_count == 1 && node->cache_post_count == 0 && window.draw_cmds[0].a == 0);
 
     splitter->dragging = true;
-    node->dirty = CA_DIRTY_CONTENT;
-    window.draw_cmd_count = 0;
-    paint_tree_cached(&instance, &window, node, (ClipRect){0}, 0, ca_transform_identity());
-    CHECK(node->cache_post_count == 18);
+    splitter->pointer_along = along;
+    splitter->pointer_cross = cross;
+    for (int sign = -1; sign <= 1; ++sign) {
+        splitter->drag_anchor = cross - sign * 32.0f * scale;
+        node->dirty = CA_DIRTY_CONTENT;
+        window.draw_cmd_count = 0;
+        paint_tree_cached(&instance, &window, node, (ClipRect){0}, 0, ca_transform_identity());
+        CHECK(window.draw_cmd_count == 2 && node->cache_post_count == 1);
+        const Ca_DrawCmd drag = window.draw_cmds[1];
+        CHECK(drag.draw_mode == CA_DRAW_MODE_SPLITTER && drag.border_width == hover.border_width);
+        CHECK(fabsf(drag.color2_r - sign * 6.4f * scale) < 0.0001f);
+        CHECK(fabsf((vertical ? drag.x : drag.y) + drag.gradient_cy - cross) < 0.0001f);
+        CHECK(drag.r == hover.r && drag.g == hover.g && drag.b == hover.b && drag.a == 1.0f);
+    }
     float ratio = splitter->ratio;
     ca_widget_input_pass(&window);
     CHECK(!splitter->dragging && splitter->ratio == ratio);
@@ -113,10 +136,7 @@ static bool test_splitter(int direction, float scale)
     node->dirty = CA_DIRTY_CONTENT;
     window.draw_cmd_count = 0;
     paint_tree_cached(&instance, &window, node, (ClipRect){0}, 0, ca_transform_identity());
-    for (unsigned i = 0; i < window.draw_cmd_count; ++i) {
-        CHECK(isfinite(window.draw_cmds[i].x) && isfinite(window.draw_cmds[i].y));
-        CHECK(window.draw_cmds[i].w > 0 && window.draw_cmds[i].h > 0);
-    }
+    CHECK(window.draw_cmd_count == 1 && node->cache_post_count == 0);
     ca_dyn_array_destroy(&window.draw_cmd_storage);
     ca_dyn_array_destroy(&window.paint_cache_storage);
     ca_pool_destroy(&window.splitter_pool, NULL, NULL);

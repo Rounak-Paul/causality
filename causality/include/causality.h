@@ -1343,9 +1343,8 @@ CA_API void ca_window_set_on_frame(Ca_Window *window, void (*fn)(void *), void *
    A splitter divides its area into two panes with a draggable divider.
    Nest two children inside ca_split_begin / ca_split_end. If one child
    is hidden, the visible child fills the splitter and the handle is hidden.
-   Causality owns the line-and-five-dot handle and its hover/drag colors.
-   The handle is hidden when neither hovered nor dragged; CSS styles the
-   container, not the handle.
+   The divider fades away from the pointer in the theme's --ca-accent
+   color. During a drag it bows around the grip with its ends in the gutter.
 
        ca_split_begin(&(Ca_SplitDesc){ .direction = CA_HORIZONTAL, .ratio = 0.3f });
          ca_div_begin(NULL);  // left pane  (30%)

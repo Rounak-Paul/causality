@@ -158,6 +158,11 @@ typedef enum {
        width; colour fades from the top colour (r,g,b,a) at the box top to
        color2 at the box bottom. */
     CA_DRAW_MODE_BORDER_RING = 8,
+    /* Fading splitter stroke. border_width is stroke thickness, blur_radius
+       is fade reach, gradient_angle selects vertical, gradient_cx/cy locate
+       the grip along the stroke and its resting cross-axis position, and
+       color2.r is the signed pull from rest to the grip. */
+    CA_DRAW_MODE_SPLITTER = 9,
 } Ca_DrawMode;
 
 /* GPU-side instance data — must exactly match RectData in VERT_GLSL (std430).
@@ -1143,6 +1148,8 @@ struct Ca_Splitter {
     bool          bar_hovered;/* true while the cursor sits on the bar's hit-zone */
     bool          divider_hidden; /* fewer than two visible panes */
     bool          in_use;
+    float         pointer_along, pointer_cross; /* pointer position in window layout px */
+    float         drag_anchor; /* pointer's cross-axis position at mouse-down */
     /* User callback fired when the user drags the divider and the
        ratio changes. Allows the application to persist the new ratio
        across rebuilds (since the splitter widget is destroyed and

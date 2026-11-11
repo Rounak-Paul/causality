@@ -248,78 +248,59 @@ static void paint_splitter(Ca_Window *win, Ca_Node *node, ClipRect clip)
 {
     if (node->widget_type != CA_WIDGET_SPLITTER || node->desc.visibility_hidden ||
         is_node_effectively_disabled(node)) return;
-    float ui_s = win->ui_scale > 0.0f ? win->ui_scale : 1.0f;
-    Ca_Splitter *sp = (Ca_Splitter *)node->widget;
+    const Ca_Splitter *sp = node->widget;
     if (!sp || !sp->in_use || sp->divider_hidden) return;
-    /* Draw the divider bar between the two panes */
-    bool is_h = (sp->direction == CA_HORIZONTAL);
-    float bar_x, bar_y, bar_w, bar_h;
-    if (is_h) {
-        float pane_space = node->w - sp->bar_size;
-        if (pane_space < 0) pane_space = 0;
-        bar_x = node->x + pane_space * sp->ratio;
-        bar_y = node->y;
-        bar_w = sp->bar_size;
-        bar_h = node->h;
-    } else {
-        float pane_space = node->h - sp->bar_size;
-        if (pane_space < 0) pane_space = 0;
-        bar_x = node->x;
-        bar_y = node->y + pane_space * sp->ratio;
-        bar_w = node->w;
-        bar_h = sp->bar_size;
-    }
-    /* Visibility tracks sp->bar_hovered (maintained in ca_widget_input_pass
-       via the same point_in_splitter_handle hit-zone drag-start uses), not
-       win->hovered_node — hovered_node is arbitrated against every other
-       node in the tree by z-index/area, and the splitter's own node spans
-       its full container (both panes), so it routinely loses that
-       arbitration to a pane or ancestor div even while the cursor sits
-       exactly on the bar, leaving the handle invisible on hover despite
-       drag (which hit-tests the bar directly) working fine. */
     if (!sp->dragging && !sp->bar_hovered) return;
-    float length = is_h ? bar_h : bar_w;
-    float thickness = is_h ? bar_w : bar_h;
-    if (length <= 0.0f || thickness <= 0.0f) return;
-    float dot = fminf(2.5f * ui_s, fminf(thickness, length / 17.0f));
-    float pitch = dot * 2.0f;
-    float gap = dot * 17.0f;
-    float line = fminf(ui_s, dot);
-    float center_x = bar_x + bar_w * 0.5f;
-    float center_y = bar_y + bar_h * 0.5f;
-    float segment = (length - gap) * 0.5f;
-    uint32_t line_color = sp->dragging ? 0xFFFFFFFFu : 0xE8E8E8FFu;
-    uint32_t dot_color  = sp->dragging ? 0xFFE58AFFu : 0xFFD34EFFu;
-    if (!ca_window_reserve_draw_commands(win, (size_t)win->draw_cmd_count + 18u)) return;
-    Ca_DrawCmd shapes[9];
-    unsigned count = 0;
-    for (int i = 0; i < 9; ++i) {
-        bool is_dot = i >= 2;
-        float extent = is_dot ? dot : segment;
-        if (extent <= 0.0f) continue;
-        float along = is_dot ? (float)(i - 5) * pitch - dot * 0.5f
-                             : (i == 0 ? -length * 0.5f : gap * 0.5f);
-        float across = is_dot ? dot : line;
-        Ca_DrawCmd *cmd = &shapes[count++];
-        memset(cmd, 0, sizeof(*cmd));
-        cmd->type = CA_DRAW_RECT;
-        cmd->x = center_x + (is_h ? -across * 0.5f : along);
-        cmd->y = center_y + (is_h ? along : -across * 0.5f);
-        cmd->w = is_h ? across : extent;
-        cmd->h = is_h ? extent : across;
-        cmd->corner_radius = is_dot ? dot * 0.5f : 0.0f;
-        cmd->corner_tl = cmd->corner_tr = cmd->corner_br = cmd->corner_bl = cmd->corner_radius;
-        unpack_color(is_dot ? dot_color : line_color, &cmd->r, &cmd->g, &cmd->b, &cmd->a);
-        cmd->z_index = node->desc.z_index;
-        cmd->in_use = true;
-        set_clip(cmd, clip);
+
+    const bool vertical = sp->direction == CA_HORIZONTAL;
+    const float length = vertical ? node->h : node->w;
+    const float span = vertical ? node->w : node->h;
+    const float pane_space = span - sp->bar_size;
+    if (length <= 0.0f || pane_space <= 0.0f || sp->bar_size <= 0.0f) return;
+
+    const float scale = win->ui_scale > 0.0f ? win->ui_scale : 1.0f;
+    const float thickness = fminf(sp->bar_size, scale);
+    const float reach = (sp->dragging ? 60.0f : 44.0f) * scale;
+    const float along_origin = vertical ? node->y : node->x;
+    const float cross_origin = vertical ? node->x : node->y;
+    const float focus = fminf(fmaxf(sp->pointer_along - along_origin, 0.0f), length);
+    const float along_start = fmaxf(focus - reach, 0.0f);
+    const float along_end = fminf(focus + reach, length);
+
+    const float divider = pane_space * sp->ratio + sp->bar_size * 0.5f;
+    float pull = 0.0f;
+    if (sp->dragging) {
+        const float travel = sp->pointer_cross - sp->drag_anchor;
+        const float limit = 8.0f * scale;
+        pull = limit * (travel / (limit + fabsf(travel)));
     }
-    float glow_radius = (sp->dragging ? 4.0f : 3.0f) * ui_s;
-    uint32_t glow_color = sp->dragging ? 0xFFD34E60u : 0xFFD34E40u;
-    for (unsigned i = 0; i < count; ++i)
-        paint_glow(win, &shapes[i], glow_radius, glow_color);
-    memcpy(&win->draw_cmds[win->draw_cmd_count], shapes, count * sizeof(*shapes));
-    win->draw_cmd_count += count;
+    const float grip = divider + pull;
+    const float padding = thickness * 0.5f + 2.0f;
+    const float cross_start = fmaxf(fminf(divider, grip) - padding, 0.0f);
+    const float cross_end = fminf(fmaxf(divider, grip) + padding, span);
+    if (cross_end <= cross_start || along_end <= along_start) return;
+
+    if (!ca_window_reserve_draw_commands(win, (size_t)win->draw_cmd_count + 1u)) return;
+    Ca_DrawCmd *cmd = &win->draw_cmds[win->draw_cmd_count++];
+    *cmd = (Ca_DrawCmd){
+        .type = CA_DRAW_RECT,
+        .draw_mode = CA_DRAW_MODE_SPLITTER,
+        .x = node->x + (vertical ? cross_start : along_start),
+        .y = node->y + (vertical ? along_start : cross_start),
+        .w = vertical ? cross_end - cross_start : along_end - along_start,
+        .h = vertical ? along_end - along_start : cross_end - cross_start,
+        .border_width = thickness,
+        .blur_radius = reach,
+        .gradient_angle = vertical ? 1.0f : 0.0f,
+        .gradient_cx = focus - along_start,
+        .gradient_cy = divider - cross_start,
+        .color2_r = pull,
+        .z_index = node->desc.z_index,
+        .in_use = true,
+    };
+    unpack_color(win->instance->palette.accent, &cmd->r, &cmd->g, &cmd->b, &cmd->a);
+    if (!sp->dragging) cmd->a *= 0.55f;
+    set_clip(cmd, clip);
 }
 
 /* Paint a single node's OWN visual content (background rect + widget-specific).

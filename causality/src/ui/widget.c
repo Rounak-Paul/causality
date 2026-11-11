@@ -6237,18 +6237,15 @@ void ca_widget_input_pass(Ca_Window *win)
                 if (!sp->in_use || !sp->node) continue;
                 Ca_Node *n = sp->node;
                 if (node_effective_z(n) >= top_z && point_in_splitter_handle(n, mx, my)) {
+                    sp->drag_anchor = sp->direction == CA_HORIZONTAL ? mx : my;
                     sp->dragging = true;
                     n->dirty |= CA_DIRTY_CONTENT;
                 }
             }
         }
 
-        /* Track per-bar hover so the handle repaints on enter/leave.
-           win->hovered_node is not used for this: it is arbitrated against
-           every other node by z-index/area, and the splitter's own node
-           spans its full container (both panes), so it routinely loses
-           that arbitration even while the cursor sits on the bar. A bar
-           covered by a higher stacking layer is occluded. */
+        /* Track hover separately from the hovered node, since a pane can
+           win hit testing inside the divider's expanded hit area. */
         for (uint32_t i = 0; i < ca_pool_slot_count(&win->splitter_pool); ++i) {
             Ca_Splitter *sp = CA_POOL_AT(win->splitter_pool, Ca_Splitter, i);
             if (!sp->in_use || !sp->node) continue;
@@ -6258,6 +6255,13 @@ void ca_widget_input_pass(Ca_Window *win)
             if (now_hovered != sp->bar_hovered) {
                 sp->bar_hovered = now_hovered;
                 sp->node->dirty |= CA_DIRTY_CONTENT;
+            }
+            if (now_hovered) {
+                const float along = sp->direction == CA_HORIZONTAL ? my : mx;
+                if (sp->pointer_along != along) {
+                    sp->pointer_along = along;
+                    sp->node->dirty |= CA_DIRTY_CONTENT;
+                }
             }
         }
 
@@ -6286,7 +6290,14 @@ void ca_widget_input_pass(Ca_Window *win)
                 cursor_x -= window_x;
                 cursor_y -= window_y;
             }
-            float local = (is_h ? cursor_x - n->x : cursor_y - n->y) - sp->bar_size * 0.5f;
+            const float along = is_h ? cursor_y : cursor_x;
+            const float cross = is_h ? cursor_x : cursor_y;
+            if (sp->pointer_along != along || sp->pointer_cross != cross) {
+                sp->pointer_along = along;
+                sp->pointer_cross = cross;
+                n->dirty |= CA_DIRTY_CONTENT;
+            }
+            float local = cross - (is_h ? n->x : n->y) - sp->bar_size * 0.5f;
             const float space = total - sp->bar_size;
             const float first_px = ca_split_clamp_first_size(sp, space, local);
             const float new_ratio = first_px / space;
