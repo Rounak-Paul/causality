@@ -72,6 +72,11 @@ void ca_widget_ctx_release_instance(Ca_Instance *instance);
    builders don't re-run every frame). */
 void ca_widget_reapply_css(Ca_Node *node);
 
+/* Re-resolve CSS for the descendants of a node whose pseudo-state just changed, when their style can
+   depend on it (a selector like `.row:hover .action`). Descendants whose style is determined by their own
+   state alone are skipped. */
+void ca_widget_reapply_css_dependents(Ca_Node *node);
+
 /* Re-resolve every CSS-owned field, including layout, after a stylesheet swap. */
 void ca_widget_refresh_css(Ca_Node *node);
 

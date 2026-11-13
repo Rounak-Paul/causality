@@ -573,6 +573,42 @@ static bool test_label_inline_color_survives_restyle(void)
     return true;
 }
 
+/** A rule on a hovered ancestor shows and hides a descendant, leaving explicitly hidden nodes alone. */
+static bool test_ancestor_hover_toggles_display(void)
+{
+    Ca_Instance instance = {0};
+    Ca_Window window = {0};
+    Ca_Node root = {0};
+    CHECK(widget_env_init(&instance, &window, &root,
+                          ".row .action { display: none; } .row:hover .action { display: flex; }"));
+
+    ca_widget_ctx_enter(&window);
+    ca_reconcile_begin((Ca_Div *)&root);
+    Ca_Div *row = ca_div_begin(&(Ca_DivDesc){ .style = "row" });
+    Ca_Label *name = ca_text(&(Ca_TextDesc){ .text = "name" });
+    Ca_Label *action = ca_text(&(Ca_TextDesc){ .text = "act", .style = "action" });
+    Ca_Label *kept = ca_text(&(Ca_TextDesc){ .text = "kept", .hidden = true });
+    ca_div_end();
+    ca_div_end();
+    ca_widget_ctx_leave();
+    CHECK(name && action && kept);
+    CHECK(action->node->desc.hidden && kept->node->desc.hidden);
+
+    window.hovered_node = name->node;
+    ca_widget_reapply_css((Ca_Node *)row);
+    ca_widget_reapply_css_dependents((Ca_Node *)row);
+    CHECK(!action->node->desc.hidden && (action->node->dirty & CA_DIRTY_LAYOUT));
+    CHECK(kept->node->desc.hidden);
+
+    window.hovered_node = NULL;
+    ca_widget_reapply_css((Ca_Node *)row);
+    ca_widget_reapply_css_dependents((Ca_Node *)row);
+    CHECK(action->node->desc.hidden && kept->node->desc.hidden);
+
+    widget_env_destroy(&instance, &window, &root);
+    return true;
+}
+
 /** Counts nodes under `node` whose class list starts with `cls` and labels in the subtree. */
 static void count_graph_parts(const Ca_Node *node, const char *cls, int *matches, int *labels)
 {
@@ -1035,6 +1071,7 @@ int main(void)
     if (!test_ambient_light()) return 1;
     if (!test_auto_keywords()) return 1;
     if (!test_label_inline_color_survives_restyle()) return 1;
+    if (!test_ancestor_hover_toggles_display()) return 1;
     if (!test_node_graph_stubs_unfit_text()) return 1;
     if (!test_node_graph_view()) return 1;
     if (!test_node_graph_orthogonal_routes()) return 1;

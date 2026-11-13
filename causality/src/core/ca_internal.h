@@ -818,6 +818,10 @@ struct Ca_Node {
     Ca_ResolvedStyle style_cache;
     char          style_cache_classes[CA_NODE_CLASS_MAX];
     bool          style_cache_valid;
+    /* True while the node's resolved style says display: none. Tracked apart from
+       desc.hidden, which widgets and ca_set_hidden also drive, so a pseudo-state
+       rule can hide and show a node without disturbing those. */
+    bool          style_hidden;
     Ca_Stylesheet *style_cache_scoped_stylesheet;
     bool          style_cache_hover, style_cache_active, style_cache_focus,
                   style_cache_focus_within, style_cache_disabled;

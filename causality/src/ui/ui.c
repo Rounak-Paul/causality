@@ -203,6 +203,33 @@ static void rescan_and_layout_if_dirty(Ca_Window *win, bool *any_content)
         *any_content = true;
 }
 
+/* Returns whether node is leaf or one of its ancestors. */
+static bool chain_contains(const Ca_Node *leaf, const Ca_Node *node)
+{
+    for (; leaf; leaf = leaf->parent)
+        if (leaf == node)
+            return true;
+    return false;
+}
+
+/* Re-resolves CSS after a pseudo-state (:hover, :focus, :active) moved from one node to another.
+   Every node on the old and new ancestor chains re-resolves in place. The nodes that gained or lost
+   the state (on exactly one chain) also refresh their descendants, whose style may depend on it
+   through a rule such as `.row:hover .action`. */
+static void restyle_state_change(Ca_Node *before, Ca_Node *after)
+{
+    for (Ca_Node *n = before; n; n = n->parent)
+        ca_widget_reapply_css(n);
+    for (Ca_Node *n = after; n; n = n->parent)
+        ca_widget_reapply_css(n);
+    for (Ca_Node *n = before; n; n = n->parent)
+        if (!chain_contains(after, n))
+            ca_widget_reapply_css_dependents(n);
+    for (Ca_Node *n = after; n; n = n->parent)
+        if (!chain_contains(before, n))
+            ca_widget_reapply_css_dependents(n);
+}
+
 void ca_ui_update(Ca_Instance *inst)
 {
     ca_profile_begin(inst, "Platform UI Font");
@@ -321,26 +348,12 @@ void ca_ui_update(Ca_Instance *inst)
              allocation. Chains are short (≤ widget tree depth, typically
              5–10), so this is cheap and only repaints nodes whose CSS
              actually changed. */
-        if (win->hovered_node != prev_hovered) {
-            for (Ca_Node *n = prev_hovered; n; n = n->parent)
-                ca_widget_reapply_css(n);
-            for (Ca_Node *n = win->hovered_node; n; n = n->parent)
-                ca_widget_reapply_css(n);
-        }
-        if (win->focused_node != prev_focused) {
-            /* :focus is exact-match, :focus-within walks ancestors. */
-            for (Ca_Node *n = prev_focused; n; n = n->parent)
-                ca_widget_reapply_css(n);
-            for (Ca_Node *n = win->focused_node; n; n = n->parent)
-                ca_widget_reapply_css(n);
-        }
-        if (win->drag_node != prev_drag) {
-            /* :active matches drag_node and its ancestors. */
-            for (Ca_Node *n = prev_drag; n; n = n->parent)
-                ca_widget_reapply_css(n);
-            for (Ca_Node *n = win->drag_node; n; n = n->parent)
-                ca_widget_reapply_css(n);
-        }
+        if (win->hovered_node != prev_hovered)
+            restyle_state_change(prev_hovered, win->hovered_node);
+        if (win->focused_node != prev_focused)
+            restyle_state_change(prev_focused, win->focused_node);
+        if (win->drag_node != prev_drag)
+            restyle_state_change(prev_drag, win->drag_node);
         ca_profile_end(inst, "Platform UI Input");
 
         /* Re-scan for content dirty after input (widget state changes may

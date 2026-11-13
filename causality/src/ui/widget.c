@@ -598,6 +598,20 @@ static void apply_widget_text_color(Ca_Node *node, uint32_t color)
     }
 }
 
+static void mark_subtree_content_dirty(Ca_Node *node);
+
+/* Returns whether a resolved style asks for display: none. */
+static bool style_display_none(const Ca_ResolvedStyle *rs)
+{
+    return (rs->set_mask & (1ULL << CA_CSS_PROP_DISPLAY)) && rs->display == CA_CSS_DISPLAY_NONE;
+}
+
+/* Returns the part of desc.hidden that does not come from CSS display: none. */
+static bool runtime_hidden(const Ca_Node *node)
+{
+    return node->desc.hidden && !node->style_hidden;
+}
+
 /* Resolve CSS styles and apply to a node descriptor + set node metadata.
    Inline (nonzero) descriptor values take precedence over CSS.
 
@@ -647,6 +661,7 @@ static void apply_css(Ca_Node *node, Ca_NodeDesc *nd,
     scale_resolved_style(&rs, g_ctx.window->ui_scale);
 
     ca_style_apply_to_node(&rs, nd, out_color);
+    node->style_hidden = style_display_none(&rs);
     apply_widget_text_color(node, out_color ? *out_color : 0u);
 
     /* Store transition config on the node */
@@ -671,6 +686,7 @@ void ca_widget_reapply_css(Ca_Node *node)
     if (!instance || (!instance->system_stylesheet && !instance->stylesheet)) return;
 
     Ca_NodeDesc old = node->desc;
+    const bool keep_hidden = runtime_hidden(node);
     const uint32_t old_text = ca_widget_text_color(node);
     /* The style this node resolved to last (cached per pseudo-state), to see
        which layout properties a pseudo-state change really moved. */
@@ -749,6 +765,8 @@ void ca_widget_reapply_css(Ca_Node *node)
 
     uint32_t out_color = 0;
     ca_style_apply_to_node(&rs, nd, &out_color);
+    node->style_hidden = style_display_none(&rs);
+    nd->hidden = keep_hidden || node->style_hidden;
 
     nd->width = saved_w;    nd->height = saved_h;
     nd->width_pct = saved_wp; nd->height_pct = saved_hp;
@@ -783,11 +801,24 @@ void ca_widget_reapply_css(Ca_Node *node)
        doesn't dirty unrelated ancestors. */
     if (content_desc_changed(&old, nd)) node->dirty |= CA_DIRTY_CONTENT;
     if (layout_desc_changed(&old, nd)) node->dirty |= CA_DIRTY_LAYOUT;
+    /* Painting skips hidden subtrees, so a subtree shown again has stale draw commands. */
+    if (old.hidden && !nd->hidden) mark_subtree_content_dirty(node);
 
     /* Pseudo-state fades: a transition started mid-fade continues from the
        interpolated value `old` still holds. */
     ca_motion_begin_transitions(node, &old, old_text, ca_widget_text_color(node));
     ca_motion_reassert(node, ca_platform_time());
+}
+
+void ca_widget_reapply_css_dependents(Ca_Node *node)
+{
+    if (!node || !node->in_use) return;
+    for (uint32_t i = 0; i < node->child_count; ++i) {
+        Ca_Node *child = node->children[i];
+        if (!child->style_cache_valid)
+            ca_widget_reapply_css(child);
+        ca_widget_reapply_css_dependents(child);
+    }
 }
 
 void ca_widget_refresh_css(Ca_Node *node)
@@ -805,6 +836,7 @@ void ca_widget_refresh_css(Ca_Node *node)
     node->style_cache_valid = false;
 
     const Ca_NodeDesc old = node->desc;
+    const bool keep_hidden = runtime_hidden(node);
     node->desc = node->base_desc;
 
     Ca_ResolvedStyle resolved;
@@ -818,7 +850,8 @@ void ca_widget_refresh_css(Ca_Node *node)
     apply_widget_text_color(node, text_color);
     ca_motion_store(node, &resolved);
 
-    node->desc.hidden = old.hidden;
+    node->style_hidden = style_display_none(&resolved);
+    node->desc.hidden = keep_hidden || node->style_hidden;
     node->desc.disabled = old.disabled;
     if (node->widget_type == CA_WIDGET_TREENODE)
         node->desc.height = old.height;
@@ -1439,7 +1472,8 @@ static void node_set_style(Ca_Node *node, const char *style,
 
     /* Reset desc so CSS values aren't blocked by stale inline values.
        Preserve hidden/disabled which are orthogonal to CSS classes. */
-    bool was_hidden   = node->desc.hidden;
+    bool was_hidden   = runtime_hidden(node);
+    node->style_hidden = false;
     bool was_disabled = node->desc.disabled;
     memset(&node->desc, 0, sizeof(node->desc));
     node->desc.hidden   = was_hidden;
@@ -1467,9 +1501,8 @@ static void node_set_style(Ca_Node *node, const char *style,
 
         ca_motion_store(node, &rs);
 
-        if ((rs.set_mask & (1ULL << CA_CSS_PROP_DISPLAY)) &&
-            rs.display == CA_CSS_DISPLAY_NONE)
-            node->desc.hidden = true;
+        node->style_hidden = style_display_none(&rs);
+        node->desc.hidden = was_hidden || node->style_hidden;
     }
 
     /* Dirty detection against old state */
