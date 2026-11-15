@@ -69,7 +69,7 @@ static bool test_color_picker(float scale)
     node->h = r.total_h;
     node->dirty = CA_DIRTY_CONTENT;
     window.draw_cmd_count = 0;
-    paint_tree_cached(&instance, &window, node, (ClipRect){0}, 0, ca_transform_identity());
+    paint_tree_cached(&instance, &window, node, (ClipRect){0}, 0, ca_transform_identity(), 1.0f);
     CHECK(window.draw_cmd_count == 3);
 
     press(&window, 10 * scale, 5 * scale, true);
@@ -103,7 +103,7 @@ static bool test_color_picker(float scale)
     node->dirty = CA_DIRTY_CONTENT;
     window.draw_cmd_count = 0;
     ClipRect clip = { .active = true, .x = 0, .y = 0, .w = node->w, .h = 20 * scale };
-    paint_tree_cached(&instance, &window, node, clip, 0, ca_transform_identity());
+    paint_tree_cached(&instance, &window, node, clip, 0, ca_transform_identity(), 1.0f);
     CHECK(window.draw_cmd_count > 10);
     for (unsigned i = 0; i < window.draw_cmd_count; ++i) {
         const Ca_DrawCmd *c = &window.draw_cmds[i];
