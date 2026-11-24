@@ -9,6 +9,7 @@
 #include "layout.h"
 #include "paint.h"
 #include "widget.h"
+#include "webview.h"
 #include "css.h"
 #include "title_bar.h"
 #include "menu_storage.h"
@@ -420,6 +421,8 @@ void ca_ui_update(Ca_Instance *inst)
         } else {
             win->dbg_dirty_count = 0;
         }
+
+        ca_webview_sync_window(win);
 
         /* 7. Request another tick for active transitions so we don't stall
               waiting for events while animations are running.  */

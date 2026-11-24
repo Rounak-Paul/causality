@@ -28,6 +28,7 @@
 #include "menu_storage.h"
 #include "../../include/ca_reactive.h"
 #include "viewport.h"
+#include "webview.h"
 #include "../platform/window.h"
 
 #include <assert.h>
@@ -4268,6 +4269,58 @@ Ca_Viewport *ca_viewport(const Ca_ViewportDesc *desc)
     if (desc->style) snprintf(node->classes, CA_NODE_CLASS_MAX, "%s", desc->style);
 
     return vp;
+}
+
+/* ============================================================
+   WEBVIEW — platform-native web engine hosted over a layout node
+   ============================================================ */
+
+Ca_WebView *ca_webview(const Ca_WebViewDesc *desc)
+{
+    assert(g_ctx.active);
+    if (!desc || !ca_webview_supported()) return NULL;
+
+    Ca_Window *win = g_ctx.window;
+    const char *next_key = consume_next_key();
+    const char *id = next_key ? next_key : desc->id;
+
+    float w = desc->width  > 0 ? s(desc->width)  : 0;
+    float h = desc->height > 0 ? s(desc->height) : 0;
+
+    Ca_NodeDesc nd = {0};
+    nd.width  = w;
+    nd.height = h;
+    if (w == 0 || h == 0) nd.flex_grow = 1.0f;
+
+    bool reused = false;
+    Ca_Node *node = claim_child(&nd, CA_WIDGET_WEBVIEW, CA_ELEM_DIV, id, &reused);
+    if (!node) return NULL;
+    if (reused && node->widget_type == CA_WIDGET_WEBVIEW && node->widget) {
+        Ca_WebView *view = node->widget;
+        node->desc.hidden = false;
+        if (id) snprintf(node->id, CA_NODE_ID_MAX, "%s", id);
+        if (desc->style) snprintf(node->classes, CA_NODE_CLASS_MAX, "%s", desc->style);
+        ca_webview_set_callbacks(view, desc->on_event, desc->on_navigate, desc->user_data);
+        return view;
+    }
+
+    Ca_WebView *view = ca_pool_acquire(&win->webview_pool);
+    if (!view) {
+        ca_node_remove(node);
+        return NULL;
+    }
+    memset(view, 0, sizeof(*view));
+    if (!ca_webview_attach(view, node, desc)) {
+        ca_pool_release(&win->webview_pool, view);
+        ca_node_remove(node);
+        return NULL;
+    }
+
+    node->widget_type = CA_WIDGET_WEBVIEW;
+    node->widget      = view;
+    if (id)          snprintf(node->id, CA_NODE_ID_MAX, "%s", id);
+    if (desc->style) snprintf(node->classes, CA_NODE_CLASS_MAX, "%s", desc->style);
+    return view;
 }
 
 VkCommandBuffer ca_viewport_cmd(Ca_Viewport *viewport)

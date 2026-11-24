@@ -6,6 +6,7 @@
 
 #include "causality.h"
 #include "ca_gpu.h"
+#include "ca_webview.h"
 #include "causality_config.h"
 #include "ca_pool.h"
 #include "../ui/ca_resolved_style.h"
@@ -701,6 +702,7 @@ typedef enum {
     CA_WIDGET_MODAL      = 16,
     CA_WIDGET_MENUBAR    = 17,
     CA_WIDGET_COLOR_PICKER = 18,
+    CA_WIDGET_WEBVIEW    = 19,
 } Ca_WidgetType;
 
 /* ======================================================
@@ -1233,6 +1235,35 @@ struct Ca_Viewport {
     uint32_t             last_rendered_frame;
 };
 
+typedef struct Ca_WebViewNative Ca_WebViewNative;
+
+/* Where a native web view sits, in logical window points, top-left origin. */
+typedef struct Ca_WebViewFrame {
+    float x, y, w, h;                     /* full page rectangle                    */
+    float clip_x, clip_y, clip_w, clip_h; /* visible part; subset of the rectangle  */
+    float corner_radius;                  /* applied only when nothing is clipped   */
+    bool  visible;
+} Ca_WebViewFrame;
+
+struct Ca_WebView {
+    Ca_Node             *node;
+    Ca_Window           *window;
+    Ca_WebViewNative    *native;
+    Ca_WebViewEventFn    on_event;
+    Ca_WebViewNavigateFn on_navigate;
+    void                *user_data;
+    char                *url;          /* heap copies of the last reported state */
+    char                *title;
+    double               progress;
+    bool                 loading;
+    bool                 can_go_back;
+    bool                 can_go_forward;
+    Ca_WebViewFrame      applied;      /* last frame handed to the native view   */
+    bool                 applied_valid;
+    uint32_t             dispatch_depth; /* user callbacks currently on the stack */
+    bool                 release_pending; /* node removed from inside a callback  */
+};
+
 /* Internal: one entry inside a sub-menu (one level of nesting only) */
 typedef struct {
     char             label[CA_MENU_LABEL_MAX];
@@ -1390,6 +1421,8 @@ struct Ca_Window {
     Ca_Pool       modal_pool;
     Ca_Pool       splitter_pool;
     Ca_Pool       viewport_pool;
+    Ca_Pool       webview_pool;
+    uint32_t      webview_count;   /* live web views; lets the per-tick sync skip empty windows */
     Ca_Pool       menubar_pool;
     Ca_Pool       color_picker_pool;
 

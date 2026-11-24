@@ -12,7 +12,11 @@ endif()
 list(APPEND CAUSALITY_SOURCES src/core/vma_impl.cpp)
 
 if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
-    list(APPEND CAUSALITY_SOURCES src/platform/mouse_state_mac.m)
+    list(APPEND CAUSALITY_SOURCES src/platform/mouse_state_mac.m src/platform/webview_cocoa.m)
+    set_source_files_properties(src/platform/webview_cocoa.m PROPERTIES
+        COMPILE_OPTIONS -fobjc-arc SKIP_PRECOMPILE_HEADERS ON)
+else()
+    list(APPEND CAUSALITY_SOURCES src/platform/webview_unsupported.c)
 endif()
 
 add_library(causality STATIC ${CAUSALITY_SOURCES})
@@ -112,7 +116,7 @@ elseif(APPLE)
     # drivers already add it, so propagating another -lc++ only produces a
     # duplicate-library warning.
     target_link_libraries(causality PUBLIC $<$<LINK_LANGUAGE:C>:c++>)
-    target_link_libraries(causality PRIVATE "-framework AppKit")
+    target_link_libraries(causality PRIVATE "-framework AppKit" "-framework WebKit")
 elseif(WIN32)
     # Nothing extra needed — MSVC links CRT automatically
 else()
@@ -322,6 +326,19 @@ if(BUILD_TESTING AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
         causality Vulkan::Vulkan VulkanMemoryAllocator freetype
     )
     add_test(NAME causality_font_grid_tests COMMAND causality_font_grid_tests)
+
+    add_executable(causality_webview_tests tests/ca_webview_tests.c)
+    target_include_directories(causality_webview_tests PRIVATE
+        include src/core src/ui src/renderer
+    )
+    target_compile_definitions(causality_webview_tests PRIVATE
+        causality_EXPORTS
+        $<$<CONFIG:Debug>:CAUSALITY_VULKAN_VALIDATION>
+    )
+    target_link_libraries(causality_webview_tests PRIVATE
+        causality Vulkan::Vulkan VulkanMemoryAllocator
+    )
+    add_test(NAME causality_webview_tests COMMAND causality_webview_tests)
 
     add_executable(causality_shader_cache_tests tests/ca_shader_cache_tests.c)
     target_include_directories(causality_shader_cache_tests PRIVATE

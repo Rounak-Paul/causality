@@ -8,6 +8,7 @@
 #include "inline_layout.h"
 #include "menu_storage.h"
 #include "viewport.h"
+#include "webview.h"
 
 #include <math.h>
 #include <stdlib.h>
@@ -125,6 +126,8 @@ bool ca_node_system_init(Ca_Window *win)
                      ca_pool_recommended_chunk_capacity(sizeof(Ca_Splitter))) &&
         ca_pool_init(&win->viewport_pool, sizeof(Ca_Viewport),
                      ca_pool_recommended_chunk_capacity(sizeof(Ca_Viewport))) &&
+        ca_pool_init(&win->webview_pool, sizeof(Ca_WebView),
+                     ca_pool_recommended_chunk_capacity(sizeof(Ca_WebView))) &&
         ca_pool_init(&win->menubar_pool, sizeof(Ca_MenuBar),
                      ca_pool_recommended_chunk_capacity(sizeof(Ca_MenuBar))) &&
         ca_pool_init(&win->color_picker_pool, sizeof(Ca_ColorPicker),
@@ -201,6 +204,8 @@ void ca_node_system_shutdown(Ca_Window *win)
     ca_pool_destroy(&win->ctxmenu_pool, NULL, NULL);
     ca_pool_destroy(&win->modal_pool, NULL, NULL);
     ca_pool_destroy(&win->splitter_pool, NULL, NULL);
+    ca_webview_release_all(win);
+    ca_pool_destroy(&win->webview_pool, NULL, NULL);
     ca_pool_destroy(&win->viewport_pool, NULL, NULL);
     ca_pool_destroy(&win->menubar_pool, NULL, NULL);
     ca_pool_destroy(&win->color_picker_pool, NULL, NULL);
@@ -336,6 +341,7 @@ static void release_widget(Ca_Node *node)
         ca_pool_release(&window->viewport_pool, vp);
         break;
     }
+    case CA_WIDGET_WEBVIEW: ca_webview_release(window, node->widget); break;
     case CA_WIDGET_MODAL: ca_pool_release(&window->modal_pool, node->widget); break;
     case CA_WIDGET_COLOR_PICKER: ca_pool_release(&window->color_picker_pool, node->widget); break;
     case CA_WIDGET_MENUBAR: {
