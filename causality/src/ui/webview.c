@@ -7,6 +7,7 @@
 #include "scrollbar.h"
 #include "widget.h"
 #include "../platform/webview_backend.h"
+#include "../platform/window.h"
 
 #include <math.h>
 #include <stdint.h>
@@ -213,6 +214,7 @@ void ca_webview_release_all(Ca_Window *window)
 void ca_webview_sync_window(Ca_Window *window)
 {
     if (window->webview_count == 0u) return;
+    ca_webview_native_pump(window);
     for (size_t i = 0; i < ca_pool_slot_count(&window->node_pool); ++i) {
         Ca_Node *node = CA_POOL_AT(window->node_pool, Ca_Node, i);
         if (!node->in_use || node->widget_type != CA_WIDGET_WEBVIEW || !node->widget) continue;
@@ -263,6 +265,13 @@ void ca_webview_host_event(Ca_WebView *owner, Ca_WebViewEventType type,
         owner->on_event(owner, &event, owner->user_data);
         dispatch_end(owner);
     }
+    ca_instance_wake();
+}
+
+void ca_webview_host_key(Ca_WebView *owner, int key, int action)
+{
+    if (!owner || owner->release_pending) return;
+    ca_window_input_key(owner->window, key, 0, action, 0);
     ca_instance_wake();
 }
 

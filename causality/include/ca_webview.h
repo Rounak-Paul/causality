@@ -5,8 +5,10 @@
  * ca_webview.h — embedded platform-native web view widget.
  *
  * A web view is a layout node whose content is drawn by the operating
- * system's own web engine, hosted as a native child view of the window
- * (WKWebView on macOS). It is not rendered through Vulkan, so:
+ * system's own web engine, hosted as a native child view of the window:
+ * WKWebView on macOS and iOS, WebView2 on Windows, WebKitGTK on Linux (X11) and
+ * android.webkit.WebView on Android. The backend is chosen when Causality is built and
+ * applications use this one API on every platform. It is not rendered through Vulkan, so:
  *
  *   - it always paints above Causality content inside its rectangle;
  *     popups, menus and tooltips cannot overlap it. While a modal is

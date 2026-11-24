@@ -48,6 +48,17 @@ static CaIOSWindowState *state_for(const Ca_Window *window)
     return window && window->in_use ? (__bridge CaIOSWindowState *)window->platform_handle : nil;
 }
 
+/** The UIView backing the window's render layer; web views attach to it. Nil when none is found. */
+UIView *ca_ios_window_host_view(const Ca_Window *window)
+{
+    CaIOSWindowState *state = state_for(window);
+    for (CALayer *layer = state ? state->layer : nil; layer; layer = layer.superlayer) {
+        id delegate = layer.delegate;
+        if ([delegate isKindOfClass:[UIView class]]) return delegate;
+    }
+    return nil;
+}
+
 /** Returns the editable input if its entire ancestor chain is enabled and visible. */
 static Ca_TextInput *focused_input(Ca_Window *window)
 {

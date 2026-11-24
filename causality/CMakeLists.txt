@@ -12,12 +12,84 @@ endif()
 list(APPEND CAUSALITY_SOURCES src/core/vma_impl.cpp)
 
 if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
-    list(APPEND CAUSALITY_SOURCES src/platform/mouse_state_mac.m src/platform/webview_cocoa.m)
-    set_source_files_properties(src/platform/webview_cocoa.m PROPERTIES
-        COMPILE_OPTIONS -fobjc-arc SKIP_PRECOMPILE_HEADERS ON)
-else()
-    list(APPEND CAUSALITY_SOURCES src/platform/webview_unsupported.c)
+    list(APPEND CAUSALITY_SOURCES src/platform/mouse_state_mac.m)
 endif()
+if(NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    list(APPEND CAUSALITY_SOURCES src/platform/native_handles.c)
+endif()
+
+# ---- Web view backend: one native engine per platform, chosen automatically ----
+# Applications call ca_webview() only; when a platform's engine SDK is missing at build time the
+# backend falls back to webview_unsupported.c and ca_webview_supported() reports false.
+set(CAUSALITY_WEBVIEW_SOURCES src/platform/webview_unsupported.c)
+set(CAUSALITY_WEBVIEW_INCLUDES "")
+set(CAUSALITY_WEBVIEW_LIBRARIES "")
+set(CAUSALITY_WEBVIEW_DEFINITIONS "")
+set(CAUSALITY_WEBVIEW_COMPILE_OPTIONS "")
+set(CAUSALITY_WEBVIEW_BACKEND "none")
+
+if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    set(CAUSALITY_WEBVIEW_SOURCES src/platform/webview_uikit.m src/platform/webview_wk.m)
+    set(CAUSALITY_WEBVIEW_LIBRARIES "-framework WebKit")
+    set(CAUSALITY_WEBVIEW_BACKEND "WKWebView (iOS)")
+elseif(APPLE)
+    set(CAUSALITY_WEBVIEW_SOURCES src/platform/webview_cocoa.m src/platform/webview_wk.m)
+    set(CAUSALITY_WEBVIEW_LIBRARIES "-framework WebKit")
+    set(CAUSALITY_WEBVIEW_BACKEND "WKWebView (macOS)")
+elseif(CMAKE_SYSTEM_NAME STREQUAL "Android")
+    set(CAUSALITY_WEBVIEW_SOURCES src/platform/webview_android.c)
+    set(CAUSALITY_WEBVIEW_LIBRARIES log)
+    set(CAUSALITY_WEBVIEW_BACKEND "android.webkit.WebView (needs a host platform layer)")
+elseif(WIN32)
+    # Microsoft.Web.WebView2 NuGet package: headers in build/native/include, static loader in
+    # build/native/<arch>/WebView2LoaderStatic.lib.
+    set(CAUSALITY_WEBVIEW2_SDK_DIR "$ENV{CAUSALITY_WEBVIEW2_SDK_DIR}" CACHE PATH
+        "Root of the extracted Microsoft.Web.WebView2 NuGet package")
+    if(CAUSALITY_WEBVIEW2_SDK_DIR)
+        if(CMAKE_SIZEOF_VOID_P EQUAL 8)
+            if(CMAKE_SYSTEM_PROCESSOR MATCHES "ARM64|arm64|aarch64")
+                set(_wv2_arch arm64)
+            else()
+                set(_wv2_arch x64)
+            endif()
+        else()
+            set(_wv2_arch x86)
+        endif()
+        find_path(CAUSALITY_WEBVIEW2_INCLUDE WebView2.h
+            HINTS "${CAUSALITY_WEBVIEW2_SDK_DIR}/build/native/include" NO_DEFAULT_PATH)
+        find_library(CAUSALITY_WEBVIEW2_LOADER WebView2LoaderStatic
+            HINTS "${CAUSALITY_WEBVIEW2_SDK_DIR}/build/native/${_wv2_arch}" NO_DEFAULT_PATH)
+        if(CAUSALITY_WEBVIEW2_INCLUDE AND CAUSALITY_WEBVIEW2_LOADER)
+            set(CAUSALITY_WEBVIEW_SOURCES src/platform/webview_win32.cpp)
+            set(CAUSALITY_WEBVIEW_INCLUDES "${CAUSALITY_WEBVIEW2_INCLUDE}")
+            set(CAUSALITY_WEBVIEW_LIBRARIES "${CAUSALITY_WEBVIEW2_LOADER}" shlwapi advapi32 ole32 version)
+            set(CAUSALITY_WEBVIEW_DEFINITIONS CAUSALITY_HAVE_WEBVIEW2)
+            set(CAUSALITY_WEBVIEW_BACKEND "WebView2")
+        endif()
+    endif()
+elseif(UNIX)
+    find_package(PkgConfig QUIET)
+    if(PkgConfig_FOUND)
+        pkg_check_modules(CAUSALITY_GTK3 QUIET gtk+-3.0)
+        pkg_check_modules(CAUSALITY_WEBKITGTK QUIET webkit2gtk-4.1)
+        if(NOT CAUSALITY_WEBKITGTK_FOUND)
+            pkg_check_modules(CAUSALITY_WEBKITGTK QUIET webkit2gtk-4.0)
+        endif()
+        if(CAUSALITY_GTK3_FOUND AND CAUSALITY_WEBKITGTK_FOUND)
+            set(CAUSALITY_WEBVIEW_SOURCES src/platform/webview_gtk.c)
+            set(CAUSALITY_WEBVIEW_INCLUDES ${CAUSALITY_GTK3_INCLUDE_DIRS} ${CAUSALITY_WEBKITGTK_INCLUDE_DIRS})
+            set(CAUSALITY_WEBVIEW_LIBRARIES ${CAUSALITY_GTK3_LIBRARIES} ${CAUSALITY_WEBKITGTK_LIBRARIES})
+            set(CAUSALITY_WEBVIEW_COMPILE_OPTIONS ${CAUSALITY_GTK3_CFLAGS_OTHER} ${CAUSALITY_WEBKITGTK_CFLAGS_OTHER})
+            set(CAUSALITY_WEBVIEW_DEFINITIONS CAUSALITY_HAVE_WEBKITGTK)
+            set(CAUSALITY_WEBVIEW_BACKEND "WebKitGTK")
+        endif()
+    endif()
+endif()
+message(STATUS "Causality web view backend: ${CAUSALITY_WEBVIEW_BACKEND}")
+list(APPEND CAUSALITY_SOURCES ${CAUSALITY_WEBVIEW_SOURCES})
+set_source_files_properties(
+    src/platform/webview_cocoa.m src/platform/webview_uikit.m src/platform/webview_wk.m
+    PROPERTIES COMPILE_OPTIONS -fobjc-arc SKIP_PRECOMPILE_HEADERS ON)
 
 add_library(causality STATIC ${CAUSALITY_SOURCES})
 
@@ -116,7 +188,7 @@ elseif(APPLE)
     # drivers already add it, so propagating another -lc++ only produces a
     # duplicate-library warning.
     target_link_libraries(causality PUBLIC $<$<LINK_LANGUAGE:C>:c++>)
-    target_link_libraries(causality PRIVATE "-framework AppKit" "-framework WebKit")
+    target_link_libraries(causality PRIVATE "-framework AppKit")
 elseif(WIN32)
     # Nothing extra needed — MSVC links CRT automatically
 else()
@@ -158,6 +230,11 @@ set_source_files_properties(src/renderer/embedded_fallback_font.c
     PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
 set_source_files_properties(src/renderer/embedded_emoji_font.c
     PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
+
+target_include_directories(causality PRIVATE ${CAUSALITY_WEBVIEW_INCLUDES})
+target_link_libraries(causality PRIVATE ${CAUSALITY_WEBVIEW_LIBRARIES})
+target_compile_definitions(causality PRIVATE ${CAUSALITY_WEBVIEW_DEFINITIONS})
+target_compile_options(causality PRIVATE ${CAUSALITY_WEBVIEW_COMPILE_OPTIONS})
 
 target_precompile_headers(causality PRIVATE src/pch.h)
 

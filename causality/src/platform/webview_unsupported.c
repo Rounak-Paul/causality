@@ -11,6 +11,8 @@ bool ca_webview_native_supported(void)
     return false;
 }
 
+void ca_webview_native_pump(Ca_Window *window) { (void)window; }
+
 Ca_WebViewNative *ca_webview_native_create(Ca_Window *window, Ca_WebView *owner,
                                            const Ca_WebViewDesc *desc)
 {

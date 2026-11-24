@@ -7,6 +7,7 @@
 #include "causality.h"
 #include "ca_gpu.h"
 #include "ca_webview.h"
+#include "../platform/webview_native.h"
 #include "causality_config.h"
 #include "ca_pool.h"
 #include "../ui/ca_resolved_style.h"
@@ -1234,16 +1235,6 @@ struct Ca_Viewport {
        compositor call site would be an easy off-by-one to get wrong. */
     uint32_t             last_rendered_frame;
 };
-
-typedef struct Ca_WebViewNative Ca_WebViewNative;
-
-/* Where a native web view sits, in logical window points, top-left origin. */
-typedef struct Ca_WebViewFrame {
-    float x, y, w, h;                     /* full page rectangle                    */
-    float clip_x, clip_y, clip_w, clip_h; /* visible part; subset of the rectangle  */
-    float corner_radius;                  /* applied only when nothing is clipped   */
-    bool  visible;
-} Ca_WebViewFrame;
 
 struct Ca_WebView {
     Ca_Node             *node;
