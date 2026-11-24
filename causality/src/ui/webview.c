@@ -104,7 +104,7 @@ static Ca_WebViewFrame resolve_frame(const Ca_WebView *view)
         frame.h < CA_WEBVIEW_MIN_VISIBLE_EXTENT ||
         frame.clip_w < CA_WEBVIEW_MIN_VISIBLE_EXTENT ||
         frame.clip_h < CA_WEBVIEW_MIN_VISIBLE_EXTENT ||
-        blocked_by_modal(node->window, node))
+        blocked_by_modal(node->window, node) || node->window->debug_overlay)
         frame.visible = false;
     return frame;
 }

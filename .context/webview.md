@@ -18,6 +18,8 @@ Platform-native web engine hosted as a child view over a layout node, like Tauri
 - Focus: pointer press elsewhere (`mouse_click_this_frame` outside the clip) returns first responder to the content view; while the web view is first responder Causality's `focused_node` is cleared. `CaWebViewPage` forwards Cmd+C/X/V/A/Z because GLFW's menu has no Edit menu.
 - JS dialogs (alert/confirm/prompt) and `<input type=file>` use sheets on the host window. `window.open`/`target=_blank` → `CA_WEBVIEW_EVENT_NEW_WINDOW`; no window is created.
 
+- Host keys: a local NSEvent monitor forwards F9 (debug overlay) from a focused web view to the GLFW content view, otherwise WebKit swallows it. While `window->debug_overlay` is on, web views are hidden (the overlay is Vulkan-drawn beneath them) and focus returns to the content view. `ca_window_input_key` wakes the idle loop on F9.
+
 ## Limits
 - Native overlay: always above Causality paint within its rect; popups/menus/tooltips cannot cover it (modals hide non-contained web views).
 - Pointer input inside the rect never reaches Causality.

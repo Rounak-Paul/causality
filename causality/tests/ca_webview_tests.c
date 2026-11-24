@@ -245,6 +245,15 @@ static bool test_geometry_and_visibility(Ca_Instance *instance, Probe *probe)
     CHECK(node->y > 0.0f);
     CHECK(fabsf(view->applied.clip_w - node->w) < 0.01f);
 
+    probe->view->window->debug_overlay = true;
+    ca_instance_wake();
+    pump_frames(instance, 10);
+    CHECK(!probe->view->applied.visible);
+    probe->view->window->debug_overlay = false;
+    ca_instance_wake();
+    pump_frames(instance, 10);
+    CHECK(probe->view->applied.visible);
+
     ca_signal_set_bool(probe->hidden, true);
     pump_frames(instance, 10);
     CHECK(probe->view && !probe->view->applied.visible);

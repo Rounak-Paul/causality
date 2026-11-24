@@ -17,6 +17,7 @@ void ca_window_input_key(Ca_Window *window, int key, int scancode, int action, i
     if (key == CA_KEY_F9 && action == CA_PRESS) {
         window->debug_overlay = !window->debug_overlay;
         window->dbg_force_repaint = true;
+        ca_instance_wake();
         return;
     }
     size_t index = window->key_count;

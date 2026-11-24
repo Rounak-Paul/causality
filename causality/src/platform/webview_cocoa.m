@@ -24,6 +24,9 @@ static NSString *const kBridgeScript =
      "typeof m==='string'?m:JSON.stringify(m));}}),configurable:false});";
 static const CGFloat kFrameEpsilon = 0.01;
 
+/* Keys the host window handles itself (debug overlay). WebKit would otherwise swallow them. */
+static const unsigned short kHostKeyCodeF9 = 101;
+
 static void *const kObserverContext = (void *)&kObserverContext;
 
 @class CaWebViewHost;
@@ -77,6 +80,7 @@ static void *const kObserverContext = (void *)&kObserverContext;
 @property (nonatomic, strong) CaWebViewPage *page;
 @property (nonatomic, strong) CaWebViewMessageProxy *proxy;
 @property (nonatomic, strong) WKUserContentController *controller;
+@property (nonatomic, strong) id keyMonitor;
 - (BOOL)hasFocus;
 - (void)publish:(Ca_WebViewEventType)type detail:(NSString *)detail;
 - (void)applyFrame:(const Ca_WebViewFrame *)frame;
@@ -143,6 +147,7 @@ static void *const kObserverContext = (void *)&kObserverContext;
 {
     NSView *content = self.window.contentView;
     if (!content || !frame->visible) {
+        if ([self hasFocus]) [self.window makeFirstResponder:content];
         self.clip.hidden = YES;
         return;
     }
@@ -160,8 +165,26 @@ static void *const kObserverContext = (void *)&kObserverContext;
     self.clip.hidden = NO;
 }
 
+/** Route host-reserved keys to the window's own input instead of the page. */
+- (void)installKeyMonitor
+{
+    __weak CaWebViewHost *weakSelf = self;
+    self.keyMonitor = [NSEvent addLocalMonitorForEventsMatchingMask:(NSEventMaskKeyDown | NSEventMaskKeyUp)
+                                                            handler:^NSEvent *(NSEvent *event) {
+        CaWebViewHost *host = weakSelf;
+        if (!host || event.window != host.window || event.keyCode != kHostKeyCodeF9 || ![host hasFocus])
+            return event;
+        NSView *content = host.window.contentView;
+        if (event.type == NSEventTypeKeyDown) [content keyDown:event];
+        else [content keyUp:event];
+        return nil;
+    }];
+}
+
 - (void)teardown
 {
+    if (self.keyMonitor) [NSEvent removeMonitor:self.keyMonitor];
+    self.keyMonitor = nil;
     self.owner = NULL;
     if ([self hasFocus]) [self.window makeFirstResponder:self.window.contentView];
     for (NSString *key in [CaWebViewHost observedKeys])
@@ -397,6 +420,7 @@ Ca_WebViewNative *ca_webview_native_create(Ca_Window *window, Ca_WebView *owner,
 
         host.clip = clip;
         host.page = page;
+        [host installKeyMonitor];
         for (NSString *key in [CaWebViewHost observedKeys])
             [page addObserver:host forKeyPath:key options:0 context:kObserverContext];
         return (__bridge_retained Ca_WebViewNative *)host;

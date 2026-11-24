@@ -10,7 +10,8 @@
  *
  *   - it always paints above Causality content inside its rectangle;
  *     popups, menus and tooltips cannot overlap it. While a modal is
- *     visible, web views outside that modal are hidden.
+ *     visible, or the F9 debug overlay is on, web views are hidden so
+ *     Causality's own UI can show.
  *   - it receives pointer, wheel and keyboard input directly from the OS
  *     while it has focus; Causality widgets beneath it see nothing.
  *   - its rectangle follows the node's layout, clipped by every ancestor
